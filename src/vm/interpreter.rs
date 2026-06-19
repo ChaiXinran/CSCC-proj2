@@ -245,6 +245,11 @@ impl Vm {
                 }
                 Instruction::Return => return self.pop_value(),
                 Instruction::ReturnUndefined => return Ok(JsValue::Undefined),
+                unsupported => {
+                    return Err(VmError::runtime(format!(
+                        "instruction {unsupported:?} is not implemented by the VM"
+                    )));
+                }
             }
         }
 
