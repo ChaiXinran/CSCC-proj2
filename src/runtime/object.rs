@@ -1,8 +1,6 @@
 //! JavaScript objects and prototype links.
 
-use std::collections::HashMap;
-
-use super::{JsValue, PropertyDescriptor};
+use super::{JsValue, PropertyDescriptor, PropertyMap};
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -14,7 +12,8 @@ pub enum ObjectKind {
     #[default]
     Ordinary,
     Array {
-        elements: Vec<JsValue>,
+        elements: Vec<Option<JsValue>>,
+        length_writable: bool,
     },
 }
 
@@ -23,7 +22,7 @@ pub enum ObjectKind {
 pub struct JsObject {
     pub prototype: Option<ObjectId>,
     pub kind: ObjectKind,
-    pub properties: HashMap<String, PropertyDescriptor>,
+    pub properties: PropertyMap,
 }
 
 impl JsObject {
@@ -36,13 +35,28 @@ impl JsObject {
     pub fn array(elements: Vec<JsValue>) -> Self {
         Self {
             prototype: None,
-            kind: ObjectKind::Array { elements },
-            properties: HashMap::new(),
+            kind: ObjectKind::Array {
+                elements: elements.into_iter().map(Some).collect(),
+                length_writable: true,
+            },
+            properties: PropertyMap::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn sparse_array(length: usize) -> Self {
+        Self {
+            prototype: None,
+            kind: ObjectKind::Array {
+                elements: vec![None; length],
+                length_writable: true,
+            },
+            properties: PropertyMap::default(),
         }
     }
 
     pub fn define_property(&mut self, name: impl Into<String>, descriptor: PropertyDescriptor) {
-        self.properties.insert(name.into(), descriptor);
+        self.properties.define(name, descriptor);
     }
 
     #[must_use]
@@ -52,52 +66,128 @@ impl JsObject {
 
     #[must_use]
     pub fn get_own_property_value(&self, name: &str) -> Option<JsValue> {
-        if let ObjectKind::Array { elements } = &self.kind {
+        if let ObjectKind::Array { elements, .. } = &self.kind {
             if name == "length" {
                 return Some(JsValue::Number(elements.len() as f64));
             }
             if let Some(index) = array_index(name) {
-                return elements.get(index).cloned();
+                return elements.get(index).cloned().flatten();
             }
         }
 
         self.own_property(name)
-            .map(|descriptor| descriptor.value.clone())
+            .and_then(PropertyDescriptor::value_cloned)
     }
 
     pub fn set_own_property_value(&mut self, name: impl Into<String>, value: JsValue) -> bool {
         let name = name.into();
-        if let ObjectKind::Array { elements } = &mut self.kind {
+        if let ObjectKind::Array {
+            elements,
+            length_writable,
+        } = &mut self.kind
+        {
             if name == "length" {
                 return false;
             }
             if let Some(index) = array_index(&name) {
-                if index > elements.len() {
+                if !*length_writable {
                     return false;
                 }
-                if index == elements.len() {
-                    elements.push(value);
-                } else {
-                    elements[index] = value;
+                if index >= elements.len() {
+                    elements.resize(index + 1, None);
                 }
+                elements[index] = Some(value);
                 return true;
             }
         }
 
         if let Some(descriptor) = self.properties.get_mut(&name) {
-            if !descriptor.writable {
-                return false;
-            }
-            descriptor.value = value;
-            true
+            descriptor.set_value(value)
         } else {
             self.define_property(name, PropertyDescriptor::data(value));
             true
         }
     }
+
+    #[must_use]
+    pub fn has_own_property(&self, name: &str) -> bool {
+        if let ObjectKind::Array { elements, .. } = &self.kind {
+            if name == "length" {
+                return true;
+            }
+            if let Some(index) = array_index(name) {
+                return elements.get(index).is_some_and(Option::is_some);
+            }
+        }
+        self.properties.contains_key(name)
+    }
+
+    pub fn delete_own_property(&mut self, name: &str) -> Option<PropertyDescriptor> {
+        if let ObjectKind::Array { elements, .. } = &mut self.kind
+            && let Some(index) = array_index(name)
+        {
+            if let Some(slot) = elements.get_mut(index)
+                && slot.is_some()
+            {
+                *slot = None;
+                return Some(PropertyDescriptor::data(JsValue::Undefined));
+            }
+            return None;
+        }
+        self.properties.delete(name)
+    }
+
+    #[must_use]
+    pub fn array_length(&self) -> Option<usize> {
+        match &self.kind {
+            ObjectKind::Array { elements, .. } => Some(elements.len()),
+            ObjectKind::Ordinary => None,
+        }
+    }
+
+    #[must_use]
+    pub fn array_length_writable(&self) -> Option<bool> {
+        match &self.kind {
+            ObjectKind::Array {
+                length_writable, ..
+            } => Some(*length_writable),
+            ObjectKind::Ordinary => None,
+        }
+    }
+
+    pub fn set_array_length(&mut self, length: usize) -> bool {
+        let ObjectKind::Array {
+            elements,
+            length_writable,
+        } = &mut self.kind
+        else {
+            return false;
+        };
+        if !*length_writable {
+            return false;
+        }
+        elements.resize(length, None);
+        true
+    }
+
+    #[must_use]
+    pub fn own_property_keys(&self) -> Vec<String> {
+        let mut keys = Vec::new();
+        if let ObjectKind::Array { elements, .. } = &self.kind {
+            keys.extend(
+                elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, value)| value.is_some())
+                    .map(|(index, _)| index.to_string()),
+            );
+        }
+        keys.extend(self.properties.keys());
+        keys
+    }
 }
 
-fn array_index(name: &str) -> Option<usize> {
+pub(crate) fn array_index(name: &str) -> Option<usize> {
     if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_digit()) {
         return None;
     }

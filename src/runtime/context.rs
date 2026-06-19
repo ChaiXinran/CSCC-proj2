@@ -1,9 +1,14 @@
 //! Persistent state shared by native execution and integration.
 
+use std::collections::HashMap;
+
 use super::{
     Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject, JsValue, ObjectId,
+    ObjectKind, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, object::array_index,
 };
 use crate::vm::{CallFrame, VmError};
+
+const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
 
 /// Per-isolate language state passed to the bytecode executor.
 #[derive(Debug)]
@@ -13,6 +18,7 @@ pub struct NativeContext {
     current_environment: EnvironmentId,
     environment_stack: Vec<EnvironmentId>,
     call_frames: Vec<CallFrame>,
+    function_prototypes: HashMap<FunctionId, ObjectId>,
     strict: bool,
     output: Vec<String>,
     loop_budget_remaining: u64,
@@ -33,6 +39,7 @@ impl Default for NativeContext {
             current_environment: global_environment,
             environment_stack: Vec::new(),
             call_frames: Vec::new(),
+            function_prototypes: HashMap::new(),
             strict: false,
             output: Vec::new(),
             loop_budget_remaining: u64::MAX,
@@ -173,14 +180,31 @@ impl NativeContext {
     }
 
     pub fn allocate_function(&mut self, function: JsFunction) -> Result<FunctionId, VmError> {
-        self.heap
+        let id = self
+            .heap
             .allocate_function(function)
-            .ok_or_else(|| VmError::runtime("function arena exhausted"))
+            .ok_or_else(|| VmError::runtime("function arena exhausted"))?;
+        let mut prototype = JsObject::ordinary();
+        prototype.define_property(
+            "constructor",
+            PropertyDescriptor::data_with(JsValue::Function(id), true, false, true),
+        );
+        let prototype_id = self
+            .heap
+            .allocate_object(prototype)
+            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+        self.function_prototypes.insert(id, prototype_id);
+        Ok(id)
     }
 
     #[must_use]
     pub fn function(&self, id: FunctionId) -> Option<&JsFunction> {
         self.heap.function(id)
+    }
+
+    #[must_use]
+    pub fn function_prototype(&self, id: FunctionId) -> Option<ObjectId> {
+        self.function_prototypes.get(&id).copied()
     }
 
     pub fn push_call_frame(&mut self, frame: CallFrame) -> Result<(), VmError> {
@@ -211,7 +235,7 @@ impl NativeContext {
     ) -> Result<JsValue, VmError> {
         let mut object = JsObject::ordinary();
         for (name, value) in properties {
-            object.set_own_property_value(name, value);
+            object.define_property(name, PropertyDescriptor::data(value));
         }
         let id = self
             .heap
@@ -228,11 +252,316 @@ impl NativeContext {
         Ok(JsValue::Object(id))
     }
 
-    pub fn get_property(&self, object: JsValue, name: &str) -> Result<JsValue, VmError> {
-        let JsValue::Object(id) = object else {
-            return Err(VmError::type_error(format!("cannot read property {name}")));
+    pub fn create_sparse_array(&mut self, length: usize) -> Result<JsValue, VmError> {
+        let id = self
+            .heap
+            .allocate_object(JsObject::sparse_array(length))
+            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+        Ok(JsValue::Object(id))
+    }
+
+    pub fn get(&mut self, receiver: JsValue, key: &str) -> Result<JsValue, VmError> {
+        let object = object_id(receiver.clone(), "read property", key)?;
+        let Some((_, descriptor)) = self.find_property_descriptor(object, key)? else {
+            return Ok(JsValue::Undefined);
         };
-        Ok(get_object_property(&self.heap, id, name).unwrap_or(JsValue::Undefined))
+
+        match descriptor.kind {
+            PropertyKind::Data { value, .. } => Ok(value),
+            PropertyKind::Accessor { get: None, .. } => Ok(JsValue::Undefined),
+            PropertyKind::Accessor { get: Some(_), .. } => Err(VmError::type_error(
+                "accessor getter invocation requires the VM call path",
+            )),
+        }
+    }
+
+    pub fn set(
+        &mut self,
+        receiver: JsValue,
+        key: &str,
+        value: JsValue,
+        strict: bool,
+    ) -> Result<bool, VmError> {
+        let object = object_id(receiver, "write property", key)?;
+        self.set_object_property(object, key, value, strict)
+    }
+
+    pub fn define_own_property(
+        &mut self,
+        object: ObjectId,
+        key: String,
+        descriptor: PropertyDescriptor,
+    ) -> Result<bool, VmError> {
+        if key == "length" && self.is_array(object)? {
+            if let Some(value) = descriptor.value_cloned() {
+                let length = self.array_length_from_value(value)?;
+                return self.set_array_length(object, length);
+            }
+            return Ok(false);
+        }
+        if self.is_array(object)?
+            && let Some(_) = array_index(&key)
+        {
+            let Some(value) = descriptor.value_cloned() else {
+                return Ok(false);
+            };
+            let object = self
+                .heap
+                .object_mut(object)
+                .ok_or_else(|| VmError::runtime("missing object"))?;
+            return Ok(object.set_own_property_value(key, value));
+        }
+
+        let object = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        object.define_property(key, descriptor);
+        Ok(true)
+    }
+
+    pub fn validate_and_apply_property_descriptor(
+        &mut self,
+        object: ObjectId,
+        key: String,
+        update: PropertyDescriptorUpdate,
+    ) -> Result<bool, VmError> {
+        if key == "length" && self.is_array(object)? {
+            if let Some(value) = update.value {
+                let length = self.array_length_from_value(value)?;
+                return self.set_array_length(object, length);
+            }
+            return Ok(true);
+        }
+
+        let current = self.get_own_property_descriptor(object, &key);
+        let Some(current) = current else {
+            let descriptor = descriptor_from_update(update);
+            return self.define_own_property(object, key, descriptor);
+        };
+
+        if !current.configurable {
+            if update.configurable == Some(true) {
+                return Ok(false);
+            }
+            if let Some(enumerable) = update.enumerable
+                && enumerable != current.enumerable
+            {
+                return Ok(false);
+            }
+        }
+
+        let mut descriptor = current;
+        match &mut descriptor.kind {
+            PropertyKind::Data { value, writable } => {
+                if let Some(new_value) = update.value {
+                    if !*writable && !value.same_value(&new_value) {
+                        return Ok(false);
+                    }
+                    *value = new_value;
+                }
+                if let Some(new_writable) = update.writable {
+                    if !descriptor.configurable && !*writable && new_writable {
+                        return Ok(false);
+                    }
+                    *writable = new_writable;
+                }
+                if update.get.is_some() || update.set.is_some() {
+                    if !descriptor.configurable {
+                        return Ok(false);
+                    }
+                    descriptor.kind = PropertyKind::Accessor {
+                        get: update.get.flatten(),
+                        set: update.set.flatten(),
+                    };
+                }
+            }
+            PropertyKind::Accessor { get, set } => {
+                if update.value.is_some() || update.writable.is_some() {
+                    if !descriptor.configurable {
+                        return Ok(false);
+                    }
+                    descriptor.kind = PropertyKind::Data {
+                        value: update.value.unwrap_or(JsValue::Undefined),
+                        writable: update.writable.unwrap_or(false),
+                    };
+                } else {
+                    if let Some(new_get) = update.get {
+                        *get = new_get;
+                    }
+                    if let Some(new_set) = update.set {
+                        *set = new_set;
+                    }
+                }
+            }
+        }
+        if let Some(enumerable) = update.enumerable {
+            descriptor.enumerable = enumerable;
+        }
+        if let Some(configurable) = update.configurable {
+            descriptor.configurable = configurable;
+        }
+        self.define_own_property(object, key, descriptor)
+    }
+
+    #[must_use]
+    pub fn get_own_property(&self, object: ObjectId, key: &str) -> Option<&PropertyDescriptor> {
+        self.heap.object(object)?.own_property(key)
+    }
+
+    #[must_use]
+    pub fn get_own_property_descriptor(
+        &self,
+        object: ObjectId,
+        key: &str,
+    ) -> Option<PropertyDescriptor> {
+        let object = self.heap.object(object)?;
+        if key == "length"
+            && let Some(length) = object.array_length()
+        {
+            return Some(PropertyDescriptor::data_with(
+                JsValue::Number(length as f64),
+                object.array_length_writable().unwrap_or(false),
+                false,
+                false,
+            ));
+        }
+        if let Some(index) = array_index(key)
+            && matches!(object.kind, ObjectKind::Array { .. })
+            && let Some(value) = object.get_own_property_value(&index.to_string())
+        {
+            return Some(PropertyDescriptor::data(value));
+        }
+        object.own_property(key).cloned()
+    }
+
+    pub fn delete_property(
+        &mut self,
+        object: ObjectId,
+        key: &str,
+        strict: bool,
+    ) -> Result<bool, VmError> {
+        if key == "length" && self.is_array(object)? {
+            return strict_error_or_false(strict, "cannot delete array length");
+        }
+
+        if let Some(descriptor) = self.get_own_property_descriptor(object, key)
+            && !descriptor.configurable
+        {
+            return strict_error_or_false(strict, "cannot delete non-configurable property");
+        }
+
+        let Some(object) = self.heap.object_mut(object) else {
+            return Err(VmError::runtime("missing object"));
+        };
+        if !object.has_own_property(key) {
+            return Ok(true);
+        }
+        Ok(object.delete_own_property(key).is_some())
+    }
+
+    pub fn has_property(&self, object: ObjectId, key: &str) -> Result<bool, VmError> {
+        let mut current = Some(object);
+        let mut depth = 0usize;
+        while let Some(id) = current {
+            if depth > PROTOTYPE_CHAIN_LIMIT {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
+            let object = self
+                .heap
+                .object(id)
+                .ok_or_else(|| VmError::runtime("missing object"))?;
+            if object.has_own_property(key) {
+                return Ok(true);
+            }
+            current = object.prototype;
+            depth += 1;
+        }
+        Ok(false)
+    }
+
+    #[must_use]
+    pub fn get_prototype_of(&self, object: ObjectId) -> Option<ObjectId> {
+        self.heap.object(object)?.prototype
+    }
+
+    pub fn set_prototype_of(
+        &mut self,
+        object: ObjectId,
+        prototype: Option<ObjectId>,
+    ) -> Result<bool, VmError> {
+        if prototype == Some(object) {
+            return Err(VmError::type_error("prototype cycle rejected"));
+        }
+
+        let mut current = prototype;
+        let mut depth = 0usize;
+        while let Some(id) = current {
+            if id == object {
+                return Err(VmError::type_error("prototype cycle rejected"));
+            }
+            if depth > PROTOTYPE_CHAIN_LIMIT {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
+            current = self
+                .heap
+                .object(id)
+                .ok_or_else(|| VmError::runtime("missing prototype object"))?
+                .prototype;
+            depth += 1;
+        }
+
+        let object = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        object.prototype = prototype;
+        Ok(true)
+    }
+
+    pub fn ordinary_object_with_prototype(
+        &mut self,
+        prototype: Option<ObjectId>,
+    ) -> Result<JsValue, VmError> {
+        let mut object = JsObject::ordinary();
+        object.prototype = prototype;
+        let id = self
+            .heap
+            .allocate_object(object)
+            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+        Ok(JsValue::Object(id))
+    }
+
+    pub fn instance_of(&self, value: JsValue, constructor: JsValue) -> Result<bool, VmError> {
+        let JsValue::Object(object) = value else {
+            return Ok(false);
+        };
+        let JsValue::Function(function) = constructor else {
+            return Err(VmError::type_error(
+                "right-hand side of instanceof is not a constructor",
+            ));
+        };
+        let prototype = self
+            .function_prototype(function)
+            .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?;
+
+        let mut current = self.get_prototype_of(object);
+        let mut depth = 0usize;
+        while let Some(id) = current {
+            if depth > PROTOTYPE_CHAIN_LIMIT {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
+            if id == prototype {
+                return Ok(true);
+            }
+            current = self.get_prototype_of(id);
+            depth += 1;
+        }
+        Ok(false)
+    }
+
+    pub fn get_property(&mut self, object: JsValue, name: &str) -> Result<JsValue, VmError> {
+        self.get(object, name)
     }
 
     pub fn set_property(
@@ -242,21 +571,14 @@ impl NativeContext {
         value: JsValue,
     ) -> Result<JsValue, VmError> {
         let name = name.into();
-        let JsValue::Object(id) = object else {
-            return Err(VmError::type_error(format!("cannot write property {name}")));
-        };
-        let object = self
-            .heap
-            .object_mut(id)
-            .ok_or_else(|| VmError::runtime("missing object"))?;
-        if object.set_own_property_value(&name, value.clone()) {
+        if self.set(object, &name, value.clone(), false)? {
             Ok(value)
         } else {
             Err(VmError::type_error(format!("cannot write property {name}")))
         }
     }
 
-    pub fn get_element(&self, object: JsValue, key: JsValue) -> Result<JsValue, VmError> {
+    pub fn get_element(&mut self, object: JsValue, key: JsValue) -> Result<JsValue, VmError> {
         let key = to_property_key(&key)?;
         self.get_property(object, &key)
     }
@@ -269,6 +591,119 @@ impl NativeContext {
     ) -> Result<JsValue, VmError> {
         let key = to_property_key(&key)?;
         self.set_property(object, key, value)
+    }
+
+    fn set_object_property(
+        &mut self,
+        object: ObjectId,
+        key: &str,
+        value: JsValue,
+        strict: bool,
+    ) -> Result<bool, VmError> {
+        if key == "length" && self.is_array(object)? {
+            let length = self.array_length_from_value(value)?;
+            return self.set_array_length(object, length);
+        }
+
+        if let Some(descriptor) = self.get_own_property_descriptor(object, key) {
+            return match descriptor.kind {
+                PropertyKind::Data {
+                    writable: false, ..
+                } => strict_error_or_false(strict, "cannot write non-writable property"),
+                PropertyKind::Data { .. } => {
+                    let object = self
+                        .heap
+                        .object_mut(object)
+                        .ok_or_else(|| VmError::runtime("missing object"))?;
+                    Ok(object.set_own_property_value(key, value))
+                }
+                PropertyKind::Accessor { set: None, .. } => {
+                    strict_error_or_false(strict, "property setter is undefined")
+                }
+                PropertyKind::Accessor { set: Some(_), .. } => Err(VmError::type_error(
+                    "accessor setter invocation requires the VM call path",
+                )),
+            };
+        }
+
+        if let Some(prototype) = self.get_prototype_of(object)
+            && let Some((_, descriptor)) = self.find_property_descriptor(prototype, key)?
+        {
+            match descriptor.kind {
+                PropertyKind::Data {
+                    writable: false, ..
+                } => {
+                    return strict_error_or_false(
+                        strict,
+                        "cannot write inherited non-writable property",
+                    );
+                }
+                PropertyKind::Accessor { set: None, .. } => {
+                    return strict_error_or_false(strict, "inherited property setter is undefined");
+                }
+                PropertyKind::Accessor { set: Some(_), .. } => {
+                    return Err(VmError::type_error(
+                        "accessor setter invocation requires the VM call path",
+                    ));
+                }
+                PropertyKind::Data { .. } => {}
+            }
+        }
+
+        self.define_own_property(object, key.into(), PropertyDescriptor::data(value))
+    }
+
+    fn find_property_descriptor(
+        &self,
+        object: ObjectId,
+        key: &str,
+    ) -> Result<Option<(ObjectId, PropertyDescriptor)>, VmError> {
+        let mut current = Some(object);
+        let mut depth = 0usize;
+        while let Some(id) = current {
+            if depth > PROTOTYPE_CHAIN_LIMIT {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
+            if let Some(descriptor) = self.get_own_property_descriptor(id, key) {
+                return Ok(Some((id, descriptor)));
+            }
+            current = self
+                .heap
+                .object(id)
+                .ok_or_else(|| VmError::runtime("missing object"))?
+                .prototype;
+            depth += 1;
+        }
+        Ok(None)
+    }
+
+    fn is_array(&self, object: ObjectId) -> Result<bool, VmError> {
+        Ok(matches!(
+            self.heap
+                .object(object)
+                .ok_or_else(|| VmError::runtime("missing object"))?
+                .kind,
+            ObjectKind::Array { .. }
+        ))
+    }
+
+    fn set_array_length(&mut self, object: ObjectId, length: usize) -> Result<bool, VmError> {
+        let object = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        Ok(object.set_array_length(length))
+    }
+
+    fn array_length_from_value(&self, value: JsValue) -> Result<usize, VmError> {
+        let Some(length) = value.to_number() else {
+            return Err(VmError::range("invalid array length"));
+        };
+        if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > u32::MAX as f64
+        {
+            return Err(VmError::range("invalid array length"));
+        }
+        Ok(length as usize)
     }
 
     pub fn reset_execution_budget(&mut self, loop_limit: u64) {
@@ -341,13 +776,39 @@ pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
     }
 }
 
-fn get_object_property(heap: &Heap, id: ObjectId, name: &str) -> Option<JsValue> {
-    let object = heap.object(id)?;
-    object.get_own_property_value(name).or_else(|| {
-        object
-            .prototype
-            .and_then(|prototype| get_object_property(heap, prototype, name))
-    })
+fn object_id(value: JsValue, operation: &str, key: &str) -> Result<ObjectId, VmError> {
+    let JsValue::Object(id) = value else {
+        return Err(VmError::type_error(format!(
+            "cannot {operation} {key} on non-object value"
+        )));
+    };
+    Ok(id)
+}
+
+fn descriptor_from_update(update: PropertyDescriptorUpdate) -> PropertyDescriptor {
+    if update.get.is_some() || update.set.is_some() {
+        return PropertyDescriptor::accessor(
+            update.get.flatten(),
+            update.set.flatten(),
+            update.enumerable.unwrap_or(false),
+            update.configurable.unwrap_or(false),
+        );
+    }
+
+    PropertyDescriptor::data_with(
+        update.value.unwrap_or(JsValue::Undefined),
+        update.writable.unwrap_or(false),
+        update.enumerable.unwrap_or(false),
+        update.configurable.unwrap_or(false),
+    )
+}
+
+fn strict_error_or_false(strict: bool, message: &str) -> Result<bool, VmError> {
+    if strict {
+        Err(VmError::type_error(message))
+    } else {
+        Ok(false)
+    }
 }
 
 #[cfg(test)]
