@@ -1,0 +1,13 @@
+[submodule "boa"]
+	path = boa
+	url = https://github.com/boa-dev/boa.git
+[submodule "quickjs"]
+	path = quickjs
+	url = https://github.com/bellard/quickjs.git
+[submodule "test262"]
+	path = test262
+	url = https://github.com/tc39/test262.git
+[submodule "benchmarks/JetStream2"]
+	path = benchmarks/JetStream2
+	url = https://github.com/WebKit/JetStream.git
+	branch = JetStream2.0

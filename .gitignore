@@ -1,0 +1,40 @@
+# Rust build output
+/target/
+
+# Generated benchmark runners and raw measurements
+/benchmarks/generated/
+/reports/*
+!/reports/test262-summary.json
+!/reports/test262-report.md
+!/reports/jetstream2-summary.json
+!/reports/jetstream2-report.md
+
+# Local editor and agent state
+/.vscode/
+/.idea/
+/.codex/
+/.agents/
+*.code-workspace
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Tool caches and generated dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+
+# Logs, profiles, coverage, and crash artifacts
+*.log
+*.profraw
+*.profdata
+*.pdb
+*.dmp
+coverage/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini

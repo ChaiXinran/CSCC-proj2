@@ -1,0 +1,37 @@
+[package]
+name = "agentjs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+description = "A lightweight JavaScript execution runtime for AI agents"
+license = "MIT"
+
+[features]
+default = ["conformance"]
+conformance = [
+    "boa_engine/experimental",
+    "boa_engine/intl_bundled",
+    "boa_engine/temporal",
+]
+
+[dependencies]
+boa_engine = { path = "boa/core/engine", default-features = false, features = [
+    "annex-b",
+    "float16",
+    "xsum",
+] }
+boa_runtime = { path = "boa/core/runtime", default-features = false, features = [
+    "annex-b",
+    "test262",
+] }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "unwind"
+strip = "symbols"
+
+[profile.bench]
+inherits = "release"
+debug = true
