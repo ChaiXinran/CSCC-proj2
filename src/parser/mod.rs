@@ -9,7 +9,7 @@ use std::fmt;
 
 use crate::{
     ast::Program,
-    lexer::{Span, Token, TokenKind},
+    lexer::{Keyword, Span, Token, TokenKind},
 };
 
 /// Syntax error with source location.
@@ -39,6 +39,9 @@ impl std::error::Error for ParseError {}
 pub struct Parser {
     tokens: Vec<Token>,
     cursor: usize,
+    /// Number of enclosing loops. Used to reject `break`/`continue` that appear
+    /// outside any iteration statement.
+    loop_depth: usize,
 }
 
 impl Parser {
@@ -48,7 +51,11 @@ impl Parser {
             matches!(tokens.last().map(|token| &token.kind), Some(TokenKind::Eof)),
             "token stream must be terminated by Eof"
         );
-        Self { tokens, cursor: 0 }
+        Self {
+            tokens,
+            cursor: 0,
+            loop_depth: 0,
+        }
     }
 
     /// Parses a complete script, consuming every token up to and including EOF.
@@ -104,6 +111,19 @@ impl Parser {
 
     fn eat_operator(&mut self, op: &str) -> bool {
         if matches!(&self.peek().kind, TokenKind::Operator(value) if value == op) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn check_keyword(&self, keyword: Keyword) -> bool {
+        matches!(&self.peek().kind, TokenKind::Keyword(value) if *value == keyword)
+    }
+
+    fn eat_keyword(&mut self, keyword: Keyword) -> bool {
+        if self.check_keyword(keyword) {
             self.advance();
             true
         } else {

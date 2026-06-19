@@ -30,9 +30,12 @@ impl Parser {
     }
 
     /// Parses `target = value`. Assignment is right associative and binds looser
-    /// than every binary operator.
-    fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
-        let left = self.parse_binary(0)?;
+    /// than the conditional operator and every binary operator.
+    ///
+    /// Exposed to the statement module so variable initializers stop at a
+    /// top-level comma between declarators.
+    pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
+        let left = self.parse_conditional()?;
         if self.eat_operator("=") {
             if !is_assignment_target(&left) {
                 return Err(self.error("invalid assignment target".into()));
@@ -44,6 +47,27 @@ impl Parser {
             })
         } else {
             Ok(left)
+        }
+    }
+
+    /// Parses `test ? consequent : alternate`.
+    ///
+    /// The conditional operator sits just above assignment: its branches are
+    /// assignment-level expressions, which makes it right associative so that
+    /// `a ? b : c ? d : e` nests as `a ? b : (c ? d : e)`.
+    fn parse_conditional(&mut self) -> Result<Expression, ParseError> {
+        let test = self.parse_binary(0)?;
+        if self.eat_punctuator('?') {
+            let consequent = self.parse_assignment()?;
+            self.expect_punctuator(':')?;
+            let alternate = self.parse_assignment()?;
+            Ok(Expression::Conditional {
+                test: Box::new(test),
+                consequent: Box::new(consequent),
+                alternate: Box::new(alternate),
+            })
+        } else {
+            Ok(test)
         }
     }
 
@@ -74,9 +98,18 @@ impl Parser {
         }
     }
 
-    /// Parses prefix unary operators (`+`, `-`, `!`), which are right
-    /// associative so chains such as `- - x` and `!!x` nest correctly.
+    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`), which are right
+    /// associative so chains such as `- - x`, `!!x`, and `typeof -x` nest
+    /// correctly.
     fn parse_unary(&mut self) -> Result<Expression, ParseError> {
+        if self.check_keyword(Keyword::TypeOf) {
+            self.advance();
+            let argument = self.parse_unary()?;
+            return Ok(Expression::Unary {
+                operator: UnaryOperator::TypeOf,
+                argument: Box::new(argument),
+            });
+        }
         if let TokenKind::Operator(operator) = &self.peek().kind {
             let operator = match operator.as_str() {
                 "+" => Some(UnaryOperator::Plus),
@@ -97,9 +130,14 @@ impl Parser {
     }
 
     /// Parses the highest-precedence postfix forms: member access `a.b` and
-    /// calls `f(args)`, applied left to right.
+    /// calls `f(args)`, applied left to right. A leading `new` produces a
+    /// construct expression before any postfix is applied.
     fn parse_call_member(&mut self) -> Result<Expression, ParseError> {
-        let mut expression = self.parse_primary()?;
+        let mut expression = if self.check_keyword(Keyword::New) {
+            self.parse_new()?
+        } else {
+            self.parse_primary()?
+        };
         loop {
             if self.eat_punctuator('.') {
                 let property = self.expect_identifier()?;
@@ -119,6 +157,35 @@ impl Parser {
             }
         }
         Ok(expression)
+    }
+
+    /// Parses `new callee` and `new callee(args)`.
+    ///
+    /// The callee is a member expression: the first parenthesis after it belongs
+    /// to the constructor, so `new a.b(x)` constructs `a.b` with `x`. When no
+    /// argument list is present the constructor receives no arguments. The
+    /// resulting node still flows through the postfix loop in
+    /// [`Parser::parse_call_member`], so `new X().y` is well formed.
+    fn parse_new(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // `new`
+        let mut callee = self.parse_primary()?;
+        while self.eat_punctuator('.') {
+            let property = self.expect_identifier()?;
+            callee = Expression::Member {
+                object: Box::new(callee),
+                property: Box::new(Expression::Identifier(property)),
+                computed: false,
+            };
+        }
+        let arguments = if self.check_punctuator('(') {
+            self.parse_arguments()?
+        } else {
+            Vec::new()
+        };
+        Ok(Expression::Construct {
+            callee: Box::new(callee),
+            arguments,
+        })
     }
 
     /// Parses a parenthesized, comma-separated argument list. Each argument is an
@@ -398,5 +465,69 @@ mod tests {
     fn reports_missing_operand() {
         let tokens = Lexer::new("1 +").tokenize().unwrap();
         assert!(Parser::new(tokens).parse_program().is_err());
+    }
+
+    #[test]
+    fn conditional_is_right_associative() {
+        // a ? b : (c ? d : e)
+        let expression = parse_expression("a ? b : c ? d : e");
+        let Expression::Conditional {
+            test, alternate, ..
+        } = expression
+        else {
+            panic!("expected a conditional");
+        };
+        assert_eq!(*test, Expression::Identifier("a".into()));
+        assert!(matches!(*alternate, Expression::Conditional { .. }));
+    }
+
+    #[test]
+    fn conditional_binds_looser_than_binary() {
+        // (1 < 2) ? 3 : 4
+        let expression = parse_expression("1 < 2 ? 3 : 4");
+        let Expression::Conditional { test, .. } = expression else {
+            panic!("expected a conditional");
+        };
+        assert!(matches!(
+            *test,
+            Expression::Binary {
+                operator: BinaryOperator::LessThan,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn typeof_parses_as_unary() {
+        assert_eq!(
+            parse_expression("typeof x"),
+            Expression::Unary {
+                operator: UnaryOperator::TypeOf,
+                argument: Box::new(Expression::Identifier("x".into())),
+            }
+        );
+    }
+
+    #[test]
+    fn new_with_arguments_builds_construct() {
+        let expression = parse_expression("new Test262Error(\"boom\")");
+        let Expression::Construct { callee, arguments } = expression else {
+            panic!("expected a construct expression");
+        };
+        assert_eq!(*callee, Expression::Identifier("Test262Error".into()));
+        assert_eq!(
+            arguments,
+            [Expression::Literal(Literal::String("boom".into()))]
+        );
+    }
+
+    #[test]
+    fn new_without_arguments_has_empty_argument_list() {
+        let expression = parse_expression("new Widget");
+        let Expression::Construct { callee, arguments } = expression else {
+            panic!("expected a construct expression");
+        };
+        assert_eq!(*callee, Expression::Identifier("Widget".into()));
+        assert!(arguments.is_empty());
     }
 }

@@ -4,4 +4,4 @@ mod expression;
 mod statement;
 
 pub use expression::{BinaryOperator, Expression, Literal, LogicalOperator, UnaryOperator};
-pub use statement::{Program, Statement, VariableKind};
+pub use statement::{Program, Statement, VariableDeclarator, VariableKind};

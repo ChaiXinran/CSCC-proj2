@@ -16,6 +16,14 @@ pub enum VariableKind {
     Const,
 }
 
+/// One binding inside a variable declaration, e.g. the `b = 1` in
+/// `var a, b = 1;`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct VariableDeclarator {
+    pub name: String,
+    pub initializer: Option<Expression>,
+}
+
 /// Statement subset implemented incrementally by AgentJS.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
@@ -24,8 +32,9 @@ pub enum Statement {
     Block(Vec<Statement>),
     VariableDeclaration {
         kind: VariableKind,
-        name: String,
-        initializer: Option<Expression>,
+        /// Always holds at least one declarator; the parser never produces an
+        /// empty list.
+        declarations: Vec<VariableDeclarator>,
     },
     Return(Option<Expression>),
     If {
@@ -37,4 +46,7 @@ pub enum Statement {
         test: Expression,
         body: Box<Statement>,
     },
+    Break,
+    Continue,
+    Throw(Expression),
 }
