@@ -2,6 +2,8 @@
 
 mod expression;
 mod statement;
+#[cfg(test)]
+mod token_tests;
 
 use std::fmt;
 
@@ -29,7 +31,11 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Recursive-descent parser state.
+/// Recursive-descent parser with Pratt expression precedence.
+///
+/// The token stream must be terminated by a single [`TokenKind::Eof`], which is
+/// the contract produced by [`crate::lexer::Lexer::tokenize`]. The parser never
+/// advances past that terminator, so [`Parser::peek`] always resolves.
 pub struct Parser {
     tokens: Vec<Token>,
     cursor: usize,
@@ -38,29 +44,120 @@ pub struct Parser {
 impl Parser {
     #[must_use]
     pub fn new(tokens: Vec<Token>) -> Self {
+        debug_assert!(
+            matches!(tokens.last().map(|token| &token.kind), Some(TokenKind::Eof)),
+            "token stream must be terminated by Eof"
+        );
         Self { tokens, cursor: 0 }
     }
 
-    /// Parses a script. The scaffold currently accepts only an empty program.
+    /// Parses a complete script, consuming every token up to and including EOF.
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
-        let token = self.current().ok_or_else(|| ParseError {
-            span: Span::default(),
-            message: "token stream must end with EOF".into(),
-        })?;
+        let mut body = Vec::new();
+        while !self.at_eof() {
+            body.push(self.parse_statement()?);
+        }
+        Ok(Program { body })
+    }
 
-        if token.kind == TokenKind::Eof {
+    /// Returns the token at the cursor. The EOF terminator keeps this in bounds.
+    fn peek(&self) -> &Token {
+        &self.tokens[self.cursor.min(self.tokens.len() - 1)]
+    }
+
+    /// Consumes and returns the current token, never moving past EOF.
+    fn advance(&mut self) -> Token {
+        let token = self.peek().clone();
+        if !matches!(token.kind, TokenKind::Eof) {
             self.cursor += 1;
-            Ok(Program::default())
+        }
+        token
+    }
+
+    fn at_eof(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Eof)
+    }
+
+    fn check_punctuator(&self, ch: char) -> bool {
+        matches!(self.peek().kind, TokenKind::Punctuator(value) if value == ch)
+    }
+
+    fn eat_punctuator(&mut self, ch: char) -> bool {
+        if self.check_punctuator(ch) {
+            self.advance();
+            true
         } else {
-            Err(ParseError {
-                span: token.span,
-                message: "syntax is not implemented by the native parser yet".into(),
-            })
+            false
         }
     }
 
-    fn current(&self) -> Option<&Token> {
-        self.tokens.get(self.cursor)
+    fn expect_punctuator(&mut self, ch: char) -> Result<(), ParseError> {
+        if self.eat_punctuator(ch) {
+            Ok(())
+        } else {
+            Err(self.error(format!(
+                "expected `{ch}` but found {}",
+                describe(&self.peek().kind)
+            )))
+        }
+    }
+
+    fn eat_operator(&mut self, op: &str) -> bool {
+        if matches!(&self.peek().kind, TokenKind::Operator(value) if value == op) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect_identifier(&mut self) -> Result<String, ParseError> {
+        if let TokenKind::Identifier(name) = &self.peek().kind {
+            let name = name.clone();
+            self.advance();
+            Ok(name)
+        } else {
+            Err(self.error(format!(
+                "expected identifier but found {}",
+                describe(&self.peek().kind)
+            )))
+        }
+    }
+
+    /// Consumes a statement terminator: an explicit `;`, or end of input.
+    ///
+    /// V1 does not implement automatic semicolon insertion at line terminators;
+    /// the only implicit terminator is EOF.
+    fn expect_semicolon(&mut self) -> Result<(), ParseError> {
+        match &self.peek().kind {
+            TokenKind::Punctuator(';') => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::Eof => Ok(()),
+            other => Err(self.error(format!("expected `;` but found {}", describe(other)))),
+        }
+    }
+
+    /// Builds a [`ParseError`] anchored at the current token's span.
+    fn error(&self, message: String) -> ParseError {
+        ParseError {
+            span: self.peek().span,
+            message,
+        }
+    }
+}
+
+/// Renders a token kind for human-readable error messages.
+fn describe(kind: &TokenKind) -> String {
+    match kind {
+        TokenKind::Eof => "end of input".into(),
+        TokenKind::Identifier(name) => format!("identifier `{name}`"),
+        TokenKind::Number(_) => "number".into(),
+        TokenKind::String(_) => "string".into(),
+        TokenKind::Keyword(keyword) => format!("keyword `{keyword:?}`"),
+        TokenKind::Punctuator(ch) => format!("`{ch}`"),
+        TokenKind::Operator(op) => format!("`{op}`"),
     }
 }
 
