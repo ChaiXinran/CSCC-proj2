@@ -102,6 +102,66 @@ pub trait ProgramCompiler {
 - 每条可执行路径必须以 `Return`、`ReturnUndefined` 或后续定义的终止指令结束。
 - 指令的栈效果必须确定；编译器不得依赖 VM 猜测缺失操作数。
 - 常量池索引超过 `u16` 范围时必须返回错误，不得截断。
+- `Chunk::validate()` 必须在编译成功返回前检查常量索引、跳转目标和终止指令。
+
+V1 指令操作数约定：
+
+| 指令类别 | 操作数含义 |
+|---|---|
+| `Constant`、全局变量、`GetProperty` | `u16` 常量池索引 |
+| `JumpIfFalse`、`JumpIfTrue` | 当前 Chunk 的绝对指令偏移 |
+| `Call` | `u16` 参数数量 |
+
+`Instruction::stack_effect()` 是 B/C 两组共享的栈契约。`required` 表示执行前
+最低栈深度，`pops/pushes` 表示实际变化。条件跳转要求一个栈顶条件值但不
+弹出它；`StoreGlobal` 保存变量后也保留赋值表达式的结果。
+
+V1 二元表达式按 JavaScript 求值顺序先编译左操作数，再编译右操作数，最后
+发出运算指令。AST 中的 `BinaryOperator::Equal` 表示宽松相等 `==`，V1
+编译器必须明确拒绝；严格相等使用 `StrictEqual` 和 `StrictNotEqual`。
+
+V1 全局变量约定：
+
+- `var x = value` 编译为 `value`、`DeclareGlobal(name)`；
+- `var x` 先压入 `Undefined`；
+- 标识符读取编译为 `LoadGlobal(name)`；
+- `x = value` 编译为 `value`、`StoreGlobal(name)`，并保留赋值结果；
+- 名称操作数必须引用字符串常量；
+- `let`、`const` 和非标识符赋值目标必须返回 `CompileError`。
+
+V1 短路逻辑固定编译为：
+
+```text
+left && right: left, JumpIfFalse(end), Pop, right, end
+left || right: left, JumpIfTrue(end),  Pop, right, end
+```
+
+跳转指令观察但保留左值；只有进入右侧求值路径时才用 `Pop` 移除左值。因此
+两条路径最终都必须在栈上保留恰好一个表达式结果。跳转目标必须回填为右侧
+表达式之后的下一条指令。
+
+V1 成员访问与调用约定：
+
+```text
+object.property  -> object, GetProperty(property_name)
+callee(a, b)     -> callee, a, b, Call(2)
+```
+
+成员名必须是非计算形式的标识符，存入字符串常量池。Callee 先求值，参数严格
+从左到右求值。`Call(n)` 执行前的栈布局为 `[callee, arg0, ..., argN]`。
+V1 普通 `Call` 不保存成员接收者作为 `this`；它只保证
+`assert.sameValue(...)` 这类不依赖 `this` 的宿主函数可调用。计算属性、
+通用方法 `this` 绑定以及超过 `u16` 的参数数量必须明确拒绝或延期。
+
+编译结束必须运行 `Chunk::validate()`。验证器对所有可达控制流执行静态栈
+分析，必须拒绝：
+
+- 操作数栈下溢；
+- 同一指令由不同路径以不同栈高度到达；
+- `Return` 前不是恰好一个值；
+- `ReturnUndefined` 前仍有残留值。
+
+`Chunk::analyze_stack()` 返回 `StackAnalysis::max_depth`，供 VM 预留操作数栈。
 
 ### 独立验收
 
@@ -113,6 +173,16 @@ Program → 常量池
 控制流 AST → 跳转结构
 未支持 AST → CompileError
 ```
+
+B 组的直接调用入口固定为：
+
+```rust
+let chunk = Compiler::new().compile_program(&program)?;
+```
+
+跨组组装时由 `ProgramCompiler` Trait 委托到同一入口。B 组测试位于
+`tests/bytecode_contract.rs`，不得通过 Parser 生成测试输入，也不得通过 VM
+判断编译是否正确。
 
 ## 5. C 部分：执行内核接口
 

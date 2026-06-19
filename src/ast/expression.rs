@@ -27,6 +27,7 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
+    /// Abstract equality (`==`), intentionally outside Native V1.
     Equal,
     StrictEqual,
     StrictNotEqual,
@@ -34,6 +35,8 @@ pub enum BinaryOperator {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    LogicalAnd,
+    LogicalOr,
 }
 
 /// Short-circuiting logical operators.

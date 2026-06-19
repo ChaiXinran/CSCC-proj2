@@ -79,7 +79,7 @@ V1 暂不实现 `if`、循环、函数、数组/对象字面量、`new`、`throw
 
 ### 2.3 Bytecode
 
-建议第一版指令：
+第一版共享指令集固定为：
 
 ```text
 Constant
@@ -111,6 +111,14 @@ ReturnUndefined
 
 `&&` 和 `||` 必须通过跳转实现短路，不能提前计算右操作数。每条执行路径必须
 保持确定的栈高度。
+
+名称和属性操作数使用 `u16` 常量池索引，跳转使用当前 `Chunk` 内的绝对指令
+偏移，`Call(n)` 的操作数表示参数数量。`StoreGlobal` 保留赋值结果；
+`JumpIfFalse` 和 `JumpIfTrue` 观察但不弹出条件值。
+
+V1 的 `object.property` 仅支持非计算属性名。调用栈布局固定为
+`[callee, arg0, ..., argN]`，参数从左到右求值。普通 `Call` 暂不保留成员
+接收者作为 `this`，首批仅用于不依赖 `this` 的 Native Harness 函数。
 
 ### 2.4 Runtime 与 VM 语义
 
@@ -212,6 +220,14 @@ missingName            -> ReferenceError/Execute error
 - 编译变量、运算符、短路跳转、成员访问和调用；
 - 编译器测试只使用手工 AST；
 - 校验常量索引和栈效果。
+
+Program 的完成值规则：非最后的表达式语句生成 `Pop`；最后一个表达式语句
+生成 `Return`；空语句不覆盖已有完成值；不存在表达式时生成
+`ReturnUndefined`。
+
+B 组完成前必须对所有可达路径执行静态栈分析：检测栈下溢和分支汇合高度
+冲突，要求 `Return` 前恰好一个值、`ReturnUndefined` 前没有值，并计算最大
+操作数栈深度。表达式之后出现 `var` 或空语句时，之前的完成值仍应保留。
 
 ### C. VM/Runtime 组
 
