@@ -242,13 +242,6 @@ impl Vm {
                 }
                 Instruction::Return => return self.pop_value(),
                 Instruction::ReturnUndefined => return Ok(JsValue::Undefined),
-                unsupported => {
-                    return Err(VmError {
-                        message: format!(
-                            "instruction {unsupported:?} is not implemented by the VM"
-                        ),
-                    });
-                }
             }
         }
 
@@ -428,6 +421,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "all V1 instructions are now implemented; this placeholder test is no longer valid"]
     fn reports_v1_instructions_not_implemented_by_vm_yet() {
         let chunk = Chunk {
             instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
@@ -437,6 +431,9 @@ mod tests {
 
         assert!(error.message.contains("Pop"));
         assert!(error.message.contains("not implemented"));
+    }
+
+    #[test]
     fn executes_numeric_and_string_operations() {
         let mut chunk = Chunk::default();
         let empty = constant(&mut chunk, Constant::String(String::new()));

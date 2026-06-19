@@ -49,12 +49,6 @@ pub enum Instruction {
     Negate,
     LogicalNot,
 
-    DeclareGlobal(u16),
-    LoadGlobal(u16),
-    StoreGlobal(u16),
-    UnaryPlus,
-    Negate,
-    LogicalNot,
     Add,
     Subtract,
     Multiply,
@@ -77,10 +71,6 @@ pub enum Instruction {
     /// Pops the callee and `argument_count` arguments, then pushes the result.
     Call(u16),
 
-    JumpIfFalse(usize),
-    JumpIfTrue(usize),
-    GetProperty(u16),
-    Call(u16),
     Return,
     ReturnUndefined,
 }

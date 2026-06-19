@@ -7,16 +7,14 @@
 use std::{error::Error, fmt};
 
 pub use crate::{
-    ast::{BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableKind},
-    bytecode::{
-        Chunk, ChunkError, CompileError, Compiler, Constant, Instruction, StackAnalysis,
-        StackEffect,
-    },
     ast::{
         BinaryOperator, Expression, Literal, LogicalOperator, Program, Statement, UnaryOperator,
         VariableKind,
     },
-    bytecode::{Chunk, CompileError, Compiler, Constant, Instruction},
+    bytecode::{
+        Chunk, ChunkError, CompileError, Compiler, Constant, Instruction, StackAnalysis,
+        StackEffect,
+    },
     lexer::{Keyword, LexError, Span, Token, TokenKind},
     parser::{ParseError, Parser},
     runtime::{
