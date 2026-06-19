@@ -147,6 +147,9 @@ Only an empty program is supported by the default Native pipeline at present.
 This is an intentional scaffold, not a conformance claim.
 The first end-to-end implementation target is defined in
 [Native V1 expression milestone](docs/native-v1-scope.md).
+The next collaborative milestone is defined in
+[Native V2 control-flow milestone](docs/native-v2-scope.md), with shared
+contracts in [Native V2 interface specification](docs/native-v2-interface.md).
 
 ## Parallel Development
 
