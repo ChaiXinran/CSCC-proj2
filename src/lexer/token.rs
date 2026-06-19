@@ -26,6 +26,11 @@ pub enum Keyword {
     Else,
     While,
     For,
+    Break,
+    Continue,
+    Throw,
+    New,
+    TypeOf,
     True,
     False,
     Null,
@@ -48,11 +53,38 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
+    /// Whether an ECMAScript line terminator appeared between the end of the
+    /// previous token and the start of this one, counting terminators inside
+    /// skipped comments. The parser uses this for restricted productions such
+    /// as `throw`, which forbids a newline before its expression.
+    pub line_terminator_before: bool,
 }
 
 impl Token {
+    /// Builds a token with no preceding line terminator.
+    ///
+    /// This keeps hand-written tokens in tests concise; only the lexer needs to
+    /// record real newline information via [`Token::with_line_terminator_before`].
     #[must_use]
     pub const fn new(kind: TokenKind, span: Span) -> Self {
-        Self { kind, span }
+        Self {
+            kind,
+            span,
+            line_terminator_before: false,
+        }
+    }
+
+    /// Builds a token, recording whether a line terminator preceded it.
+    #[must_use]
+    pub const fn with_line_terminator_before(
+        kind: TokenKind,
+        span: Span,
+        line_terminator_before: bool,
+    ) -> Self {
+        Self {
+            kind,
+            span,
+            line_terminator_before,
+        }
     }
 }

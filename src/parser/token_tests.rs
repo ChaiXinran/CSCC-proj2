@@ -8,7 +8,7 @@
 use crate::{
     ast::{
         BinaryOperator, Expression, Literal, LogicalOperator, Statement, UnaryOperator,
-        VariableKind,
+        VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, Span, Token, TokenKind},
     parser::Parser,
@@ -46,6 +46,12 @@ fn kw(keyword: Keyword) -> Token {
 
 fn eof() -> Token {
     tok(TokenKind::Eof)
+}
+
+/// Like [`tok`], but marks the token as preceded by a line terminator. Used to
+/// exercise restricted productions such as `throw` without involving the lexer.
+fn tok_nl(kind: TokenKind) -> Token {
+    Token::with_line_terminator_before(kind, Span::new(0, 0), true)
 }
 
 /// Parses a token stream and returns the single expression it contains.
@@ -398,8 +404,10 @@ fn var_without_initializer() {
         parse_stmt(tokens),
         Statement::VariableDeclaration {
             kind: VariableKind::Var,
-            name: "x".into(),
-            initializer: None,
+            declarations: vec![VariableDeclarator {
+                name: "x".into(),
+                initializer: None,
+            }],
         }
     );
 }
@@ -419,8 +427,234 @@ fn var_with_number_initializer() {
         parse_stmt(tokens),
         Statement::VariableDeclaration {
             kind: VariableKind::Var,
-            name: "y".into(),
-            initializer: Some(Expression::Literal(Literal::Number(42.0))),
+            declarations: vec![VariableDeclarator {
+                name: "y".into(),
+                initializer: Some(Expression::Literal(Literal::Number(42.0))),
+            }],
+        }
+    );
+}
+
+/// `var a , b = 1 ;` → two declarators, only the second initialized.
+#[test]
+fn var_with_multiple_declarators() {
+    let tokens = vec![
+        kw(Keyword::Var),
+        ident("a"),
+        punc(','),
+        ident("b"),
+        op("="),
+        num(1.0),
+        punc(';'),
+        eof(),
+    ];
+    assert_eq!(
+        parse_stmt(tokens),
+        Statement::VariableDeclaration {
+            kind: VariableKind::Var,
+            declarations: vec![
+                VariableDeclarator {
+                    name: "a".into(),
+                    initializer: None,
+                },
+                VariableDeclarator {
+                    name: "b".into(),
+                    initializer: Some(Expression::Literal(Literal::Number(1.0))),
+                },
+            ],
+        }
+    );
+}
+
+// ---------------------------------------------------------------------------
+// V2 control flow
+// ---------------------------------------------------------------------------
+
+/// `{ ; }` → an empty block holding one empty statement.
+#[test]
+fn block_groups_statements() {
+    let tokens = vec![punc('{'), punc(';'), punc('}'), eof()];
+    assert_eq!(parse_stmt(tokens), Statement::Block(vec![Statement::Empty]));
+}
+
+/// `if ( 1 ) 2 ; else 3 ;` → if/else with both branches present.
+#[test]
+fn if_else_parses_both_branches() {
+    let tokens = vec![
+        kw(Keyword::If),
+        punc('('),
+        num(1.0),
+        punc(')'),
+        num(2.0),
+        punc(';'),
+        kw(Keyword::Else),
+        num(3.0),
+        punc(';'),
+        eof(),
+    ];
+    assert_eq!(
+        parse_stmt(tokens),
+        Statement::If {
+            test: Expression::Literal(Literal::Number(1.0)),
+            consequent: Box::new(Statement::Expression(Expression::Literal(Literal::Number(
+                2.0
+            )))),
+            alternate: Some(Box::new(Statement::Expression(Expression::Literal(
+                Literal::Number(3.0)
+            )))),
+        }
+    );
+}
+
+/// `if ( 1 ) if ( 2 ) 3 ; else 4 ;` → the `else` binds to the inner `if`.
+#[test]
+fn dangling_else_binds_to_innermost_if() {
+    let tokens = vec![
+        kw(Keyword::If),
+        punc('('),
+        num(1.0),
+        punc(')'),
+        kw(Keyword::If),
+        punc('('),
+        num(2.0),
+        punc(')'),
+        num(3.0),
+        punc(';'),
+        kw(Keyword::Else),
+        num(4.0),
+        punc(';'),
+        eof(),
+    ];
+    let Statement::If {
+        consequent,
+        alternate,
+        ..
+    } = parse_stmt(tokens)
+    else {
+        panic!("expected an if statement");
+    };
+    assert!(alternate.is_none(), "outer if must not own the else");
+    assert!(matches!(
+        consequent.as_ref(),
+        Statement::If {
+            alternate: Some(_),
+            ..
+        }
+    ));
+}
+
+/// `while ( 1 ) { break ; }` → break is legal inside the loop body.
+#[test]
+fn while_body_allows_break() {
+    let tokens = vec![
+        kw(Keyword::While),
+        punc('('),
+        num(1.0),
+        punc(')'),
+        punc('{'),
+        kw(Keyword::Break),
+        punc(';'),
+        punc('}'),
+        eof(),
+    ];
+    assert_eq!(
+        parse_stmt(tokens),
+        Statement::While {
+            test: Expression::Literal(Literal::Number(1.0)),
+            body: Box::new(Statement::Block(vec![Statement::Break])),
+        }
+    );
+}
+
+/// `break ;` at the top level is a parse error.
+#[test]
+fn top_level_break_is_a_parse_error() {
+    let tokens = vec![kw(Keyword::Break), punc(';'), eof()];
+    assert!(parse_err(tokens).message.contains("break"));
+}
+
+/// `continue ;` at the top level is a parse error.
+#[test]
+fn top_level_continue_is_a_parse_error() {
+    let tokens = vec![kw(Keyword::Continue), punc(';'), eof()];
+    assert!(parse_err(tokens).message.contains("continue"));
+}
+
+/// `throw 1 ;` → a throw statement carrying the literal.
+#[test]
+fn throw_carries_its_expression() {
+    let tokens = vec![kw(Keyword::Throw), num(1.0), punc(';'), eof()];
+    assert_eq!(
+        parse_stmt(tokens),
+        Statement::Throw(Expression::Literal(Literal::Number(1.0)))
+    );
+}
+
+/// A line terminator between `throw` and its operand is a parse error, even
+/// though the same tokens without the newline are valid.
+#[test]
+fn newline_after_throw_is_a_parse_error() {
+    let tokens = vec![
+        kw(Keyword::Throw),
+        tok_nl(TokenKind::Number(1.0)),
+        punc(';'),
+        eof(),
+    ];
+    assert!(parse_err(tokens).message.contains("throw"));
+}
+
+/// `a ? b : c` → a conditional expression.
+#[test]
+fn conditional_expression_builds_conditional_node() {
+    let tokens = vec![
+        ident("a"),
+        punc('?'),
+        ident("b"),
+        punc(':'),
+        ident("c"),
+        punc(';'),
+        eof(),
+    ];
+    assert_eq!(
+        parse_expr(tokens),
+        Expression::Conditional {
+            test: Box::new(Expression::Identifier("a".into())),
+            consequent: Box::new(Expression::Identifier("b".into())),
+            alternate: Box::new(Expression::Identifier("c".into())),
+        }
+    );
+}
+
+/// `typeof x` → a unary `typeof` expression.
+#[test]
+fn typeof_builds_unary_node() {
+    let tokens = vec![kw(Keyword::TypeOf), ident("x"), punc(';'), eof()];
+    assert_eq!(
+        parse_expr(tokens),
+        Expression::Unary {
+            operator: UnaryOperator::TypeOf,
+            argument: Box::new(Expression::Identifier("x".into())),
+        }
+    );
+}
+
+/// `new E ( 1 )` → a construct expression with one argument.
+#[test]
+fn new_builds_construct_node() {
+    let tokens = vec![
+        kw(Keyword::New),
+        ident("E"),
+        punc('('),
+        num(1.0),
+        punc(')'),
+        punc(';'),
+        eof(),
+    ];
+    assert_eq!(
+        parse_expr(tokens),
+        Expression::Construct {
+            callee: Box::new(Expression::Identifier("E".into())),
+            arguments: vec![Expression::Literal(Literal::Number(1.0))],
         }
     );
 }

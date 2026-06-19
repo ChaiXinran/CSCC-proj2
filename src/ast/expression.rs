@@ -82,11 +82,16 @@ pub enum Expression {
         property: Box<Expression>,
         computed: bool,
     },
+    /// `test ? consequent : alternate`, right associative. Kept distinct from
+    /// [`Expression::Logical`] because the compiler lowers it to a balanced
+    /// branch that leaves exactly one value on every path.
     Conditional {
         test: Box<Expression>,
         consequent: Box<Expression>,
         alternate: Box<Expression>,
     },
+    /// `new callee(arguments)`. V2 only constructs the minimal `Test262Error`,
+    /// but the AST does not hard-code the callee name.
     Construct {
         callee: Box<Expression>,
         arguments: Vec<Expression>,

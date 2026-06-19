@@ -60,6 +60,30 @@ impl Compiler {
                 &mut context,
                 Some(index) == completion_expression,
             )?;
+            match statement {
+                Statement::Empty => {}
+                Statement::Expression(expression) => {
+                    self.compile_expression(expression, &mut chunk)?;
+                    if Some(index) != last_expression {
+                        chunk.emit(Instruction::Pop);
+                    }
+                }
+                Statement::VariableDeclaration { kind, declarations } => {
+                    for declarator in declarations {
+                        self.compile_variable_declaration(
+                            *kind,
+                            &declarator.name,
+                            declarator.initializer.as_ref(),
+                            &mut chunk,
+                        )?;
+                    }
+                }
+                unsupported => {
+                    return Err(CompileError::unsupported(format!(
+                        "statement {unsupported:?}"
+                    )));
+                }
+            }
         }
 
         chunk.emit(if completion_expression.is_some() {
