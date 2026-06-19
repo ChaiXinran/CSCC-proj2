@@ -29,8 +29,22 @@ pub enum BinaryOperator {
     Remainder,
     Equal,
     StrictEqual,
+    StrictNotEqual,
     LessThan,
+    LessThanOrEqual,
     GreaterThan,
+    GreaterThanOrEqual,
+}
+
+/// Short-circuiting logical operators.
+///
+/// These are kept separate from [`BinaryOperator`] because the right operand is
+/// only evaluated conditionally; the compiler lowers them to jumps rather than a
+/// single binary instruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogicalOperator {
+    And,
+    Or,
 }
 
 /// Expression subset implemented incrementally by AgentJS.
@@ -44,6 +58,11 @@ pub enum Expression {
     },
     Binary {
         operator: BinaryOperator,
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    Logical {
+        operator: LogicalOperator,
         left: Box<Expression>,
         right: Box<Expression>,
     },

@@ -3,5 +3,5 @@
 mod expression;
 mod statement;
 
-pub use expression::{BinaryOperator, Expression, Literal, UnaryOperator};
+pub use expression::{BinaryOperator, Expression, Literal, LogicalOperator, UnaryOperator};
 pub use statement::{Program, Statement, VariableKind};
