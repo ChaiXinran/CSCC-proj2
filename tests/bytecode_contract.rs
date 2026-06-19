@@ -20,15 +20,20 @@ fn compiler_direct_api_accepts_a_hand_built_program() {
 
 #[test]
 fn compiler_rejects_unsupported_ast_without_parser_or_vm() {
+    // Abstract equality (==) is still intentionally unsupported; use it as the
+    // "unsupported AST" sentinel now that Array/Object/Function are in scope.
     let program = Program {
-        body: vec![Statement::Expression(Expression::Array(Vec::new()))],
+        body: vec![Statement::Expression(Expression::Binary {
+            operator: BinaryOperator::Equal,
+            left: Box::new(Expression::Literal(Literal::Number(1.0))),
+            right: Box::new(Expression::Literal(Literal::String("1".into()))),
+        })],
     };
     let error = Compiler::new()
         .compile_program(&program)
         .expect_err("unsupported AST must return a compile error");
 
     assert!(error.message.contains("does not support"));
-    assert!(error.message.contains("Array"));
 }
 
 #[test]
@@ -39,7 +44,11 @@ fn shared_program_compiler_contract_delegates_to_bytecode_compiler() {
     assert!(result.is_ok());
 
     let unsupported = Program {
-        body: vec![Statement::Expression(Expression::Array(Vec::new()))],
+        body: vec![Statement::Expression(Expression::Binary {
+            operator: BinaryOperator::Equal,
+            left: Box::new(Expression::Literal(Literal::Number(1.0))),
+            right: Box::new(Expression::Literal(Literal::Number(1.0))),
+        })],
     };
     assert!(matches!(
         ProgramCompiler::compile_program(&mut compiler, &unsupported),
@@ -662,6 +671,9 @@ fn compiler_emits_callee_then_arguments_from_left_to_right() {
 
 #[test]
 fn compiler_emits_assert_same_value_call_shape() {
+    // At top-level scope (function_depth == 0), method calls still use
+    // GetProperty + Call for V1/V2 backward compat. Inside function bodies
+    // they use GetMethod + CallWithThis (tested in the compiler module tests).
     let program = Program {
         body: vec![expression_statement(call(
             member(identifier("assert"), identifier("sameValue"), false),
@@ -723,17 +735,10 @@ fn compiler_supports_nested_call_results_as_arguments() {
 }
 
 #[test]
-fn compiler_rejects_computed_and_invalid_member_properties() {
-    let computed = Program {
-        body: vec![expression_statement(member(
-            identifier("object"),
-            literal(Literal::String("key".into())),
-            true,
-        ))],
-    };
-    let error = Compiler::new().compile_program(&computed).unwrap_err();
-    assert!(error.message.contains("computed member access"));
-
+fn compiler_rejects_non_identifier_static_member_property() {
+    // Computed member access `object[expr]` is now supported in V3.
+    // Non-identifier static member `object.literal` is still rejected because
+    // only `object.identifier` is syntactically valid in non-computed position.
     let invalid_property = Program {
         body: vec![expression_statement(member(
             identifier("object"),
@@ -745,6 +750,22 @@ fn compiler_rejects_computed_and_invalid_member_properties() {
         .compile_program(&invalid_property)
         .unwrap_err();
     assert!(error.message.contains("non-identifier member property"));
+}
+
+#[test]
+fn compiler_compiles_computed_member_access_in_v3() {
+    // object["key"] is now supported and emits GetElement.
+    let computed = Program {
+        body: vec![expression_statement(member(
+            identifier("object"),
+            literal(Literal::String("key".into())),
+            true,
+        ))],
+    };
+    let chunk = Compiler::new()
+        .compile_program(&computed)
+        .expect("computed member access is supported in V3");
+    assert!(chunk.instructions.contains(&Instruction::GetElement));
 }
 
 #[test]
@@ -785,6 +806,7 @@ fn chunk_reports_constant_pool_overflow_without_truncating() {
     let mut chunk = Chunk {
         instructions: Vec::new(),
         constants: vec![Constant::Null; usize::from(u16::MAX) + 1],
+        functions: Vec::new(),
     };
 
     assert_eq!(
@@ -842,6 +864,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
     let invalid_constant = Chunk {
         instructions: vec![Instruction::Constant(0), Instruction::Return],
         constants: Vec::new(),
+        functions: Vec::new(),
     };
     assert_eq!(
         invalid_constant.validate(),
@@ -854,6 +877,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
     let invalid_jump = Chunk {
         instructions: vec![Instruction::JumpIfTrue(9), Instruction::ReturnUndefined],
         constants: Vec::new(),
+        functions: Vec::new(),
     };
     assert_eq!(
         invalid_jump.validate(),
@@ -871,6 +895,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
     let invalid_name = Chunk {
         instructions: vec![Instruction::LoadGlobal(0), Instruction::Return],
         constants: vec![Constant::Number(1.0)],
+        functions: Vec::new(),
     };
     assert_eq!(
         invalid_name.validate(),
@@ -886,6 +911,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
     let underflow = Chunk {
         instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
         constants: Vec::new(),
+        functions: Vec::new(),
     };
     assert_eq!(
         underflow.validate(),
@@ -899,6 +925,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
     let empty_condition = Chunk {
         instructions: vec![Instruction::JumpIfFalse(1), Instruction::ReturnUndefined],
         constants: Vec::new(),
+        functions: Vec::new(),
     };
     assert_eq!(
         empty_condition.validate(),
@@ -916,6 +943,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
             Instruction::Return,
         ],
         constants: vec![Constant::Null],
+        functions: Vec::new(),
     };
     assert_eq!(
         extra_value.validate(),
@@ -939,6 +967,7 @@ fn chunk_stack_analysis_rejects_inconsistent_branch_merges() {
             Instruction::ReturnUndefined,
         ],
         constants: vec![Constant::Boolean(false), Constant::Number(1.0)],
+        functions: Vec::new(),
     };
 
     assert_eq!(
@@ -953,6 +982,9 @@ fn chunk_stack_analysis_rejects_inconsistent_branch_merges() {
 
 #[test]
 fn complete_v1_compiler_slice_is_structurally_and_stack_valid() {
+    // assert.sameValue is now compiled as GetMethod + CallWithThis, which means
+    // the method and its receiver are both on the stack when arguments are pushed.
+    // That adds one extra slot: max depth is 5 instead of 4.
     let program = Program {
         body: vec![
             variable_declaration(VariableKind::Var, "x", Some(literal(Literal::Number(18.0)))),

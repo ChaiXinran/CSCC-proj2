@@ -34,8 +34,8 @@ const OPERATORS: &[&str] = &[
 ];
 
 /// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional
-/// operator.
-const PUNCTUATORS: &[char] = &['(', ')', '{', '}', ';', ',', '.', '?', ':'];
+/// operator. V3 adds `[` and `]` for array literals and computed member access.
+const PUNCTUATORS: &[char] = &['(', ')', '{', '}', '[', ']', ';', ',', '.', '?', ':'];
 
 /// Stateful tokenizer for AgentJS source text.
 pub struct Lexer<'source> {
@@ -145,6 +145,8 @@ impl<'source> Lexer<'source> {
         let text = self.cursor.slice(Span::new(start, end));
         let kind = match text {
             "var" => TokenKind::Keyword(Keyword::Var),
+            "function" => TokenKind::Keyword(Keyword::Function),
+            "return" => TokenKind::Keyword(Keyword::Return),
             "if" => TokenKind::Keyword(Keyword::If),
             "else" => TokenKind::Keyword(Keyword::Else),
             "while" => TokenKind::Keyword(Keyword::While),
@@ -459,6 +461,37 @@ mod tests {
                 TokenKind::Keyword(Keyword::TypeOf),
                 TokenKind::Punctuator('?'),
                 TokenKind::Punctuator(':'),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_v3_keywords_and_bracket_punctuators() {
+        assert_eq!(
+            kinds("function return [ ]"),
+            [
+                TokenKind::Keyword(Keyword::Function),
+                TokenKind::Keyword(Keyword::Return),
+                TokenKind::Punctuator('['),
+                TokenKind::Punctuator(']'),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_array_literal_syntax() {
+        assert_eq!(
+            kinds("[1, 2, 3]"),
+            [
+                TokenKind::Punctuator('['),
+                TokenKind::Number(1.0),
+                TokenKind::Punctuator(','),
+                TokenKind::Number(2.0),
+                TokenKind::Punctuator(','),
+                TokenKind::Number(3.0),
+                TokenKind::Punctuator(']'),
                 TokenKind::Eof,
             ]
         );

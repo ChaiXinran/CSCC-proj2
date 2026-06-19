@@ -1,6 +1,6 @@
 //! Program and statement nodes.
 
-use super::Expression;
+use super::expression::{Expression, FunctionBody, FunctionParam};
 
 /// Complete script AST.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -35,6 +35,12 @@ pub enum Statement {
         /// Always holds at least one declarator; the parser never produces an
         /// empty list.
         declarations: Vec<VariableDeclarator>,
+    },
+    /// `function name(params) { body }` — hoisted function declaration.
+    FunctionDeclaration {
+        name: String,
+        params: Vec<FunctionParam>,
+        body: FunctionBody,
     },
     Return(Option<Expression>),
     If {

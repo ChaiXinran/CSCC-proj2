@@ -3,5 +3,8 @@
 mod expression;
 mod statement;
 
-pub use expression::{BinaryOperator, Expression, Literal, LogicalOperator, UnaryOperator};
+pub use expression::{
+    BinaryOperator, Expression, FunctionBody, FunctionLiteral, FunctionParam, Literal,
+    LogicalOperator, ObjectProperty, PropertyName, UnaryOperator,
+};
 pub use statement::{Program, Statement, VariableDeclarator, VariableKind};

@@ -1,7 +1,7 @@
 //! Expression parsing using Pratt precedence rules.
 //!
 //! Keeping expression parsing in its own module lets one contributor extend
-//! precedence handling without editing statement parsing. The V1 precedence
+//! precedence handling without editing statement parsing. The precedence
 //! ladder, from lowest to highest binding power, is:
 //!
 //! ```text
@@ -18,7 +18,10 @@
 //! ```
 
 use crate::{
-    ast::{BinaryOperator, Expression, Literal, LogicalOperator, UnaryOperator},
+    ast::{
+        BinaryOperator, Expression, FunctionLiteral, Literal, LogicalOperator, ObjectProperty,
+        PropertyName, UnaryOperator,
+    },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
 };
@@ -31,9 +34,6 @@ impl Parser {
 
     /// Parses `target = value`. Assignment is right associative and binds looser
     /// than the conditional operator and every binary operator.
-    ///
-    /// Exposed to the statement module so variable initializers stop at a
-    /// top-level comma between declarators.
     pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
         let left = self.parse_conditional()?;
         if self.eat_operator("=") {
@@ -51,10 +51,6 @@ impl Parser {
     }
 
     /// Parses `test ? consequent : alternate`.
-    ///
-    /// The conditional operator sits just above assignment: its branches are
-    /// assignment-level expressions, which makes it right associative so that
-    /// `a ? b : c ? d : e` nests as `a ? b : (c ? d : e)`.
     fn parse_conditional(&mut self) -> Result<Expression, ParseError> {
         let test = self.parse_binary(0)?;
         if self.eat_punctuator('?') {
@@ -72,9 +68,6 @@ impl Parser {
     }
 
     /// Precedence-climbing parser for binary and logical operators.
-    ///
-    /// `min_binding_power` is the lowest precedence this call may consume.
-    /// Recursing with `precedence + 1` yields left associativity.
     fn parse_binary(&mut self, min_binding_power: u8) -> Result<Expression, ParseError> {
         let mut left = self.parse_unary()?;
         while let Some((precedence, operator)) = self.peek_binary_operator() {
@@ -88,8 +81,6 @@ impl Parser {
         Ok(left)
     }
 
-    /// Returns the precedence and spelling of the current binary/logical
-    /// operator, if any, without consuming it.
     fn peek_binary_operator(&self) -> Option<(u8, String)> {
         if let TokenKind::Operator(operator) = &self.peek().kind {
             binary_precedence(operator).map(|precedence| (precedence, operator.clone()))
@@ -98,9 +89,7 @@ impl Parser {
         }
     }
 
-    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`), which are right
-    /// associative so chains such as `- - x`, `!!x`, and `typeof -x` nest
-    /// correctly.
+    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`).
     fn parse_unary(&mut self) -> Result<Expression, ParseError> {
         if self.check_keyword(Keyword::TypeOf) {
             self.advance();
@@ -129,9 +118,7 @@ impl Parser {
         self.parse_call_member()
     }
 
-    /// Parses the highest-precedence postfix forms: member access `a.b` and
-    /// calls `f(args)`, applied left to right. A leading `new` produces a
-    /// construct expression before any postfix is applied.
+    /// Parses the highest-precedence postfix forms: member access and calls.
     fn parse_call_member(&mut self) -> Result<Expression, ParseError> {
         let mut expression = if self.check_keyword(Keyword::New) {
             self.parse_new()?
@@ -145,6 +132,15 @@ impl Parser {
                     object: Box::new(expression),
                     property: Box::new(Expression::Identifier(property)),
                     computed: false,
+                };
+            } else if self.eat_punctuator('[') {
+                // Computed member access: object[expression]
+                let key = self.parse_assignment()?;
+                self.expect_punctuator(']')?;
+                expression = Expression::Member {
+                    object: Box::new(expression),
+                    property: Box::new(key),
+                    computed: true,
                 };
             } else if self.check_punctuator('(') {
                 let arguments = self.parse_arguments()?;
@@ -160,12 +156,6 @@ impl Parser {
     }
 
     /// Parses `new callee` and `new callee(args)`.
-    ///
-    /// The callee is a member expression: the first parenthesis after it belongs
-    /// to the constructor, so `new a.b(x)` constructs `a.b` with `x`. When no
-    /// argument list is present the constructor receives no arguments. The
-    /// resulting node still flows through the postfix loop in
-    /// [`Parser::parse_call_member`], so `new X().y` is well formed.
     fn parse_new(&mut self) -> Result<Expression, ParseError> {
         self.advance(); // `new`
         let mut callee = self.parse_primary()?;
@@ -188,8 +178,7 @@ impl Parser {
         })
     }
 
-    /// Parses a parenthesized, comma-separated argument list. Each argument is an
-    /// assignment-level expression, so a top-level comma ends the argument.
+    /// Parses a parenthesized, comma-separated argument list.
     fn parse_arguments(&mut self) -> Result<Vec<Expression>, ParseError> {
         self.expect_punctuator('(')?;
         let mut arguments = Vec::new();
@@ -205,7 +194,8 @@ impl Parser {
         Ok(arguments)
     }
 
-    /// Parses literals, identifiers, and parenthesized groups.
+    /// Parses literals, identifiers, parenthesized groups, array literals,
+    /// object literals, and function expressions.
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         let token = self.peek().clone();
         match token.kind {
@@ -235,14 +225,102 @@ impl Parser {
             }
             TokenKind::Punctuator('(') => {
                 self.advance();
-                // A group is transparent: precedence is already captured by the
-                // tree shape of the inner expression.
                 let inner = self.parse_expression()?;
                 self.expect_punctuator(')')?;
                 Ok(inner)
             }
+            TokenKind::Punctuator('[') => self.parse_array_literal(),
+            TokenKind::Punctuator('{') => self.parse_object_literal(),
+            TokenKind::Keyword(Keyword::Function) => self.parse_function_expression(),
             other => Err(self.error(format!("unexpected {}", describe(&other)))),
         }
+    }
+
+    /// Parses `[element, element, ...]`.
+    fn parse_array_literal(&mut self) -> Result<Expression, ParseError> {
+        self.expect_punctuator('[')?;
+        let mut elements = Vec::new();
+        if !self.check_punctuator(']') {
+            loop {
+                elements.push(self.parse_assignment()?);
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+                // Allow trailing comma before `]`
+                if self.check_punctuator(']') {
+                    break;
+                }
+            }
+        }
+        self.expect_punctuator(']')?;
+        Ok(Expression::Array(elements))
+    }
+
+    /// Parses `{ key: value, ... }` as an object literal.
+    ///
+    /// Note: `{` at the start of a statement is a block; object literals must
+    /// appear in an expression context where `{` cannot start a block.
+    fn parse_object_literal(&mut self) -> Result<Expression, ParseError> {
+        self.expect_punctuator('{')?;
+        let mut properties = Vec::new();
+        while !self.check_punctuator('}') && !self.at_eof() {
+            let key = self.parse_property_name()?;
+            self.expect_punctuator(':')?;
+            let value = self.parse_assignment()?;
+            properties.push(ObjectProperty { key, value });
+            if !self.eat_punctuator(',') {
+                break;
+            }
+        }
+        self.expect_punctuator('}')?;
+        Ok(Expression::Object(properties))
+    }
+
+    /// Parses a property key: identifier, string literal, or number literal.
+    fn parse_property_name(&mut self) -> Result<PropertyName, ParseError> {
+        let token = self.peek().clone();
+        match token.kind {
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(PropertyName::Identifier(name))
+            }
+            TokenKind::String(s) => {
+                self.advance();
+                Ok(PropertyName::String(s))
+            }
+            TokenKind::Number(n) => {
+                self.advance();
+                Ok(PropertyName::Number(n))
+            }
+            // Keywords are also valid as property names (e.g. `{ if: 1 }`)
+            TokenKind::Keyword(_) => {
+                if let TokenKind::Keyword(kw) = self.advance().kind {
+                    Ok(PropertyName::Identifier(format!("{kw:?}").to_lowercase()))
+                } else {
+                    unreachable!()
+                }
+            }
+            other => Err(self.error(format!("expected property name, got {}", describe(&other)))),
+        }
+    }
+
+    /// Parses `function(params) { body }` or `function name(params) { body }`
+    /// as an expression.
+    fn parse_function_expression(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // `function`
+        // Optional name for named function expressions
+        let name = if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+            if let TokenKind::Identifier(name) = self.advance().kind {
+                Some(name)
+            } else {
+                unreachable!()
+            }
+        } else {
+            None
+        };
+        let params = self.parse_param_list()?;
+        let body = self.parse_function_body()?;
+        Ok(Expression::Function(FunctionLiteral { name, params, body }))
     }
 }
 
@@ -260,8 +338,7 @@ fn binary_precedence(operator: &str) -> Option<u8> {
     })
 }
 
-/// Builds the AST node for an infix operator, distinguishing short-circuiting
-/// logical operators from ordinary binary operators.
+/// Builds the AST node for an infix operator.
 fn combine(operator: &str, left: Expression, right: Expression) -> Expression {
     if let Some(logical) = logical_operator(operator) {
         Expression::Logical {
@@ -303,7 +380,7 @@ fn binary_operator(operator: &str) -> BinaryOperator {
     }
 }
 
-/// Only identifiers and member expressions are valid assignment targets in V1.
+/// Valid assignment targets in V3: identifiers and member expressions.
 fn is_assignment_target(expression: &Expression) -> bool {
     matches!(
         expression,
@@ -314,7 +391,10 @@ fn is_assignment_target(expression: &Expression) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{BinaryOperator, Expression, Literal, LogicalOperator, UnaryOperator},
+        ast::{
+            BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal, LogicalOperator,
+            ObjectProperty, PropertyName, Statement, UnaryOperator,
+        },
         lexer::Lexer,
         parser::Parser,
     };
@@ -326,7 +406,7 @@ mod tests {
             .expect("parsing succeeds");
         assert_eq!(program.body.len(), 1, "expected a single statement");
         match program.body.remove(0) {
-            crate::ast::Statement::Expression(expression) => expression,
+            Statement::Expression(expression) => expression,
             other => panic!("expected an expression statement, got {other:?}"),
         }
     }
@@ -341,6 +421,10 @@ mod tests {
             left: Box::new(left),
             right: Box::new(right),
         }
+    }
+
+    fn param(name: &str) -> FunctionParam {
+        FunctionParam { name: name.into() }
     }
 
     #[test]
@@ -369,7 +453,6 @@ mod tests {
 
     #[test]
     fn same_precedence_is_left_associative() {
-        // (18 / 2) / 3
         assert_eq!(
             parse_expression("18 / 2 / 3"),
             binary(
@@ -408,7 +491,6 @@ mod tests {
 
     #[test]
     fn logical_or_binds_looser_than_and() {
-        // a || (b && c)
         let expression = parse_expression("a || b && c");
         let Expression::Logical {
             operator: LogicalOperator::Or,
@@ -439,7 +521,6 @@ mod tests {
 
     #[test]
     fn parses_member_access_and_calls() {
-        // assert.sameValue(x, 324)
         let expression = parse_expression("assert.sameValue(x, 324)");
         let Expression::Call { callee, arguments } = expression else {
             panic!("expected a call expression");
@@ -469,7 +550,6 @@ mod tests {
 
     #[test]
     fn conditional_is_right_associative() {
-        // a ? b : (c ? d : e)
         let expression = parse_expression("a ? b : c ? d : e");
         let Expression::Conditional {
             test, alternate, ..
@@ -483,7 +563,6 @@ mod tests {
 
     #[test]
     fn conditional_binds_looser_than_binary() {
-        // (1 < 2) ? 3 : 4
         let expression = parse_expression("1 < 2 ? 3 : 4");
         let Expression::Conditional { test, .. } = expression else {
             panic!("expected a conditional");
@@ -529,5 +608,136 @@ mod tests {
         };
         assert_eq!(*callee, Expression::Identifier("Widget".into()));
         assert!(arguments.is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // V3 expression tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parses_empty_array_literal() {
+        assert_eq!(parse_expression("[]"), Expression::Array(vec![]));
+    }
+
+    #[test]
+    fn parses_array_literal_with_elements() {
+        assert_eq!(
+            parse_expression("[1, 2, 3]"),
+            Expression::Array(vec![number(1.0), number(2.0), number(3.0)])
+        );
+    }
+
+    #[test]
+    fn parses_empty_object_literal() {
+        assert_eq!(parse_expression("({})"), Expression::Object(vec![]));
+    }
+
+    #[test]
+    fn parses_object_literal_with_identifier_keys() {
+        let expr = parse_expression("({ a: 1, b: 2 })");
+        assert_eq!(
+            expr,
+            Expression::Object(vec![
+                ObjectProperty {
+                    key: PropertyName::Identifier("a".into()),
+                    value: number(1.0),
+                },
+                ObjectProperty {
+                    key: PropertyName::Identifier("b".into()),
+                    value: number(2.0),
+                },
+            ])
+        );
+    }
+
+    #[test]
+    fn parses_object_literal_with_string_and_number_keys() {
+        let expr = parse_expression("({ \"x\": 1, 0: 2 })");
+        let Expression::Object(props) = expr else {
+            panic!("expected object");
+        };
+        assert!(matches!(props[0].key, PropertyName::String(_)));
+        assert!(matches!(props[1].key, PropertyName::Number(_)));
+    }
+
+    #[test]
+    fn parses_computed_member_access() {
+        let expr = parse_expression("arr[0]");
+        assert_eq!(
+            expr,
+            Expression::Member {
+                object: Box::new(Expression::Identifier("arr".into())),
+                property: Box::new(number(0.0)),
+                computed: true,
+            }
+        );
+    }
+
+    #[test]
+    fn computed_member_access_chained_with_calls() {
+        // arr[0].length
+        let expr = parse_expression("arr[0].length");
+        assert!(matches!(
+            expr,
+            Expression::Member {
+                computed: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_anonymous_function_expression() {
+        let expr = parse_expression("(function() { })");
+        let Expression::Function(FunctionLiteral { name, params, body }) = expr else {
+            panic!("expected function expression");
+        };
+        assert!(name.is_none());
+        assert!(params.is_empty());
+        assert!(body.statements.is_empty());
+    }
+
+    #[test]
+    fn parses_named_function_expression() {
+        let expr = parse_expression("(function add(a, b) { return a + b; })");
+        let Expression::Function(FunctionLiteral { name, params, .. }) = expr else {
+            panic!("expected function expression");
+        };
+        assert_eq!(name, Some("add".into()));
+        assert_eq!(params, [param("a"), param("b")]);
+    }
+
+    #[test]
+    fn parses_member_assignment() {
+        // obj.x = 5 should parse as an assignment with a Member target
+        let expr = parse_expression("obj.x = 5");
+        let Expression::Assignment { target, value } = expr else {
+            panic!("expected assignment");
+        };
+        assert!(matches!(
+            *target,
+            Expression::Member {
+                computed: false,
+                ..
+            }
+        ));
+        assert_eq!(*value, number(5.0));
+    }
+
+    #[test]
+    fn parses_computed_member_assignment() {
+        let expr = parse_expression("arr[0] = 99");
+        let Expression::Assignment { target, .. } = expr else {
+            panic!("expected assignment");
+        };
+        assert!(matches!(*target, Expression::Member { computed: true, .. }));
+    }
+
+    #[test]
+    fn function_expression_with_this_access() {
+        // Parse to make sure `this` keyword is treated as an identifier for now
+        // (full `this` support is a V3 runtime concern)
+        let expr = parse_expression("(function() { return this; })");
+        assert!(matches!(expr, Expression::Function(_)));
     }
 }

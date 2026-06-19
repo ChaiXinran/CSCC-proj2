@@ -32,11 +32,13 @@ impl StackEffect {
 /// One decoded bytecode instruction.
 ///
 /// Constant and name operands are indexes into [`super::Chunk::constants`].
+/// Function operands are indexes into [`super::Chunk::functions`].
 /// Jump operands are absolute instruction offsets inside the same chunk.
-/// Keeping instructions decoded makes the first implementation easy to test;
-/// compact byte encoding can be added later without changing their semantics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Instruction {
+    // -----------------------------------------------------------------------
+    // V1/V2 instructions
+    // -----------------------------------------------------------------------
     Constant(u16),
     Pop,
 
@@ -69,7 +71,6 @@ pub enum Instruction {
     /// Observes, but does not remove, the top stack value.
     JumpIfTrue(usize),
     /// Unconditionally transfers control to an absolute instruction offset.
-    /// Transfers control without falling through to the next instruction.
     Jump(usize),
 
     GetProperty(u16),
@@ -81,6 +82,79 @@ pub enum Instruction {
     Throw,
     Return,
     ReturnUndefined,
+
+    // -----------------------------------------------------------------------
+    // V3 instructions
+    // -----------------------------------------------------------------------
+    /// Creates a function value from the function constant table and pushes it.
+    /// Operand is an index into [`super::Chunk::functions`].
+    /// Stack: [] → [fn_value]
+    CreateFunction(u16),
+
+    /// Declares a function binding in the current environment without leaving a
+    /// value on the stack. Operand `name` is a string constant index;
+    /// `function` is a function table index.
+    /// Stack: [] → []
+    DeclareFunction {
+        name: u16,
+        function: u16,
+    },
+
+    /// Declares a local `var` binding in the current function environment by
+    /// popping the initializer off the stack.
+    /// Stack: [value] → []
+    DeclareLocal(u16),
+
+    /// Looks up a name along the environment chain and pushes its value.
+    /// Returns `ReferenceError` if not found.
+    /// Stack: [] → [value]
+    LoadName(u16),
+
+    /// Like `LoadName` but never throws: used for `typeof undeclared`.
+    /// Stack: [] → [typeof_string]
+    TypeOfName(u16),
+
+    /// Writes a value to an existing binding along the environment chain,
+    /// leaving the value on the stack (like `StoreGlobal`).
+    /// Stack: [value] → [value]
+    StoreName(u16),
+
+    /// Pushes the `this` value of the current call frame.
+    /// Stack: [] → [this_value]
+    LoadThis,
+
+    /// Pops `n` elements (left-to-right order on stack) and creates an array.
+    /// Stack: [e0, e1, ..., en-1] → [array]
+    ArrayCreate(u16),
+
+    /// Pops `2n` values (key0, value0, key1, value1, ...) and creates an object.
+    /// Stack: [k0, v0, k1, v1, ...] → [object]
+    ObjectCreate(u16),
+
+    /// Pops `object` and `key`, pushes `object[key]`.
+    /// Stack: [object, key] → [value]
+    GetElement,
+
+    /// Reads a property by name from the top-of-stack object and rearranges
+    /// the stack so the callee and `this` are in position for `CallWithThis`.
+    /// Pops `object`, pushes `method_value` then `object` back.
+    /// Stack: [object] → [method_value, object]
+    GetMethod(u16),
+
+    /// Sets a named property on an object, preserving the value as the
+    /// assignment result. Stack layout: `[object, value]`.
+    /// Stack: [object, value] → [value]
+    SetProperty(u16),
+
+    /// Sets a computed property, preserving the value as the assignment result.
+    /// Stack layout: `[object, key, value]`.
+    /// Stack: [object, key, value] → [value]
+    SetElement,
+
+    /// Calls a method with an explicit `this`. Stack layout:
+    /// `[callee, this_value, arg0, ..., argN]`.
+    /// Stack: [callee, this, args...] → [result]
+    CallWithThis(u16),
 }
 
 impl Instruction {
@@ -88,18 +162,32 @@ impl Instruction {
     #[must_use]
     pub const fn stack_effect(self) -> StackEffect {
         match self {
-            Self::Constant(_) | Self::LoadGlobal(_) | Self::TypeOfGlobal(_) => {
-                StackEffect::new(0, 1)
-            }
-            Self::Pop | Self::DeclareGlobal(_) | Self::Throw | Self::Return => {
-                StackEffect::new(1, 0)
-            }
+            // push 1
+            Self::Constant(_)
+            | Self::LoadGlobal(_)
+            | Self::TypeOfGlobal(_)
+            | Self::CreateFunction(_)
+            | Self::LoadName(_)
+            | Self::TypeOfName(_)
+            | Self::LoadThis => StackEffect::new(0, 1),
+
+            // pop 1, push 0
+            Self::Pop
+            | Self::DeclareGlobal(_)
+            | Self::Throw
+            | Self::Return
+            | Self::DeclareLocal(_) => StackEffect::new(1, 0),
+
+            // pop 1, push 1 (net 0)
             Self::StoreGlobal(_)
+            | Self::StoreName(_)
             | Self::UnaryPlus
             | Self::Negate
             | Self::LogicalNot
             | Self::GetProperty(_)
             | Self::TypeOf => StackEffect::new(1, 1),
+
+            // pop 2, push 1
             Self::Add
             | Self::Subtract
             | Self::Multiply
@@ -110,12 +198,39 @@ impl Instruction {
             | Self::LessThan
             | Self::LessThanOrEqual
             | Self::GreaterThan
-            | Self::GreaterThanOrEqual => StackEffect::new(2, 1),
+            | Self::GreaterThanOrEqual
+            | Self::GetElement => StackEffect::new(2, 1),
+
+            // observe top (no stack change)
             Self::JumpIfFalse(_) | Self::JumpIfTrue(_) => StackEffect::with_required(1, 0, 0),
-            Self::Jump(_) | Self::ReturnUndefined => StackEffect::new(0, 0),
+
+            // no stack effect
+            Self::Jump(_) | Self::ReturnUndefined | Self::DeclareFunction { .. } => {
+                StackEffect::new(0, 0)
+            }
+
+            // call variants
             Self::Call(argument_count) | Self::Construct(argument_count) => {
                 StackEffect::new(argument_count as u32 + 1, 1)
             }
+            Self::CallWithThis(argument_count) => {
+                StackEffect::with_required(argument_count as u32 + 2, argument_count as u32 + 2, 1)
+            }
+
+            // GetMethod: pops object, pushes (method, object) — net +1
+            Self::GetMethod(_) => StackEffect::new(1, 2),
+
+            // SetProperty: [object, value] → [value]  (net -1)
+            Self::SetProperty(_) => StackEffect::with_required(2, 2, 1),
+
+            // SetElement: [object, key, value] → [value]  (net -2)
+            Self::SetElement => StackEffect::with_required(3, 3, 1),
+
+            // ArrayCreate(n): pops n, pushes 1
+            Self::ArrayCreate(n) => StackEffect::with_required(n as u32, n as u32, 1),
+
+            // ObjectCreate(n): pops 2n (n key-value pairs), pushes 1
+            Self::ObjectCreate(n) => StackEffect::with_required(n as u32 * 2, n as u32 * 2, 1),
         }
     }
 

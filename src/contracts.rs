@@ -8,12 +8,13 @@ use std::{error::Error, fmt};
 
 pub use crate::{
     ast::{
-        BinaryOperator, Expression, Literal, LogicalOperator, Program, Statement, UnaryOperator,
+        BinaryOperator, Expression, FunctionBody, FunctionLiteral, FunctionParam, Literal,
+        LogicalOperator, ObjectProperty, Program, PropertyName, Statement, UnaryOperator,
         VariableDeclarator, VariableKind,
     },
     bytecode::{
-        Chunk, ChunkError, CompileError, Compiler, Constant, Instruction, StackAnalysis,
-        StackEffect,
+        Chunk, ChunkError, CompileError, Compiler, Constant, EnvironmentCapturePolicy,
+        FunctionTemplate, Instruction, StackAnalysis, StackEffect,
     },
     lexer::{Keyword, LexError, Span, Token, TokenKind},
     parser::{ParseError, Parser},
@@ -223,6 +224,7 @@ mod tests {
                 Ok(Chunk {
                     instructions: vec![Instruction::ReturnUndefined],
                     constants: Vec::new(),
+                    functions: Vec::new(),
                 })
             }
         }

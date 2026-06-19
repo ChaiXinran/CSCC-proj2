@@ -3,11 +3,11 @@
 use std::fmt;
 
 use crate::ast::{
-    BinaryOperator, Expression, Literal, LogicalOperator, Program, Statement, UnaryOperator,
-    VariableKind,
+    BinaryOperator, Expression, FunctionBody, FunctionLiteral, Literal, LogicalOperator,
+    ObjectProperty, Program, PropertyName, Statement, UnaryOperator, VariableKind,
 };
 
-use super::{Chunk, ChunkError, Constant, Instruction};
+use super::{Chunk, ChunkError, Constant, EnvironmentCapturePolicy, FunctionTemplate, Instruction};
 
 /// Compilation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +30,8 @@ pub struct Compiler;
 #[derive(Debug, Default)]
 struct CompileContext {
     loops: Vec<LoopContext>,
+    /// Number of enclosing function bodies; 0 = top-level script.
+    function_depth: usize,
 }
 
 #[derive(Debug)]
@@ -38,13 +40,19 @@ struct LoopContext {
     break_jumps: Vec<usize>,
 }
 
+impl CompileContext {
+    fn inside_function(&self) -> bool {
+        self.function_depth > 0
+    }
+}
+
 impl Compiler {
     #[must_use]
     pub const fn new() -> Self {
         Self
     }
 
-    /// Compiles a script containing empty and literal expression statements.
+    /// Compiles a script containing any statement forms.
     ///
     /// This is the compiler team's stable direct API. It reads but never
     /// mutates the AST and returns either a complete [`Chunk`] or an error.
@@ -81,7 +89,7 @@ impl Compiler {
         match statement {
             Statement::Empty => Ok(()),
             Statement::Expression(expression) => {
-                self.compile_expression(expression, chunk)?;
+                self.compile_expression(expression, chunk, context)?;
                 if !preserve_expression_value {
                     chunk.emit(Instruction::Pop);
                 }
@@ -95,6 +103,7 @@ impl Compiler {
                         &declarator.name,
                         declarator.initializer.as_ref(),
                         chunk,
+                        context,
                     )?;
                 }
                 Ok(())
@@ -108,13 +117,19 @@ impl Compiler {
             Statement::Break => self.compile_break(chunk, context),
             Statement::Continue => self.compile_continue(chunk, context),
             Statement::Throw(expression) => {
-                self.compile_expression(expression, chunk)?;
+                self.compile_expression(expression, chunk, context)?;
                 chunk.emit(Instruction::Throw);
                 Ok(())
             }
-            Statement::Return(_) => Err(CompileError::unsupported(
-                "return statement before the function milestone",
-            )),
+            Statement::Return(value) => self.compile_return(value.as_ref(), chunk, context),
+            Statement::FunctionDeclaration { name, params, body } => self
+                .compile_function_declaration(
+                    name,
+                    params.iter().map(|p| p.name.as_str()),
+                    body,
+                    chunk,
+                    context,
+                ),
         }
     }
 
@@ -138,7 +153,7 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        self.compile_expression(test, chunk)?;
+        self.compile_expression(test, chunk, context)?;
         let false_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
         chunk.emit(Instruction::Pop);
         self.compile_statement(consequent, chunk, context, false)?;
@@ -168,7 +183,7 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         let loop_start = chunk.current_offset();
-        self.compile_expression(test, chunk)?;
+        self.compile_expression(test, chunk, context)?;
         let exit_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
         chunk.emit(Instruction::Pop);
 
@@ -235,51 +250,126 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_return(
+        &mut self,
+        value: Option<&Expression>,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        if !context.inside_function() {
+            return Err(CompileError::unsupported("return outside of a function"));
+        }
+        if let Some(value) = value {
+            self.compile_expression(value, chunk, context)?;
+            chunk.emit(Instruction::Return);
+        } else {
+            chunk.emit(Instruction::ReturnUndefined);
+        }
+        Ok(())
+    }
+
+    /// Compiles a function declaration: emits `DeclareFunction { name, function }`.
+    fn compile_function_declaration<'a>(
+        &mut self,
+        name: &str,
+        params: impl Iterator<Item = &'a str>,
+        body: &FunctionBody,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let fn_chunk = self.compile_function_body(params, body, context)?;
+        let template = FunctionTemplate {
+            name: Some(name.to_string()),
+            params: fn_chunk.params,
+            chunk: fn_chunk.chunk,
+            environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+        };
+        let function_index = chunk
+            .add_function(template)
+            .map_err(CompileError::from_chunk)?;
+        let name_index = chunk
+            .add_constant(Constant::String(name.into()))
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::DeclareFunction {
+            name: name_index,
+            function: function_index,
+        });
+        Ok(())
+    }
+
+    /// Compiles the body of a function literal or declaration into a
+    /// `FunctionTemplate` and returns it with parameter names.
+    fn compile_function_body<'a>(
+        &mut self,
+        params: impl Iterator<Item = &'a str>,
+        body: &FunctionBody,
+        outer_context: &mut CompileContext,
+    ) -> Result<CompiledFunction, CompileError> {
+        let param_names: Vec<String> = params.map(|s| s.to_string()).collect();
+        let mut fn_chunk = Chunk::default();
+        let mut fn_context = CompileContext {
+            loops: Vec::new(),
+            function_depth: outer_context.function_depth + 1,
+        };
+        // Compile the body statements; no "completion expression" inside function bodies.
+        for statement in &body.statements {
+            self.compile_statement(statement, &mut fn_chunk, &mut fn_context, false)?;
+        }
+        // Implicit undefined return at the end of the function
+        fn_chunk.emit(Instruction::ReturnUndefined);
+        fn_chunk.validate().map_err(CompileError::from_chunk)?;
+        Ok(CompiledFunction {
+            params: param_names,
+            chunk: fn_chunk,
+        })
+    }
+
     fn compile_expression(
         &mut self,
         expression: &Expression,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         match expression {
             Expression::Literal(literal) => self.compile_literal(literal, chunk),
             Expression::Unary { operator, argument } => {
-                self.compile_unary(*operator, argument, chunk)
+                self.compile_unary(*operator, argument, chunk, context)
             }
             Expression::Binary {
                 operator,
                 left,
                 right,
-            } => self.compile_binary(*operator, left, right, chunk),
+            } => self.compile_binary(*operator, left, right, chunk, context),
             Expression::Logical {
                 operator,
                 left,
                 right,
-            } => self.compile_logical(*operator, left, right, chunk),
-            Expression::Identifier(name) => {
-                let name = self.add_name(name, chunk)?;
-                chunk.emit(Instruction::LoadGlobal(name));
-                Ok(())
-            }
+            } => self.compile_logical(*operator, left, right, chunk, context),
+            Expression::Identifier(name) => self.compile_identifier(name, chunk, context),
             Expression::Assignment { target, value } => {
-                self.compile_assignment(target, value, chunk)
+                self.compile_assignment(target, value, chunk, context)
             }
             Expression::Member {
                 object,
                 property,
                 computed,
-            } => self.compile_member(object, property, *computed, chunk),
-            Expression::Call { callee, arguments } => self.compile_call(callee, arguments, chunk),
+            } => self.compile_member(object, property, *computed, chunk, context),
+            Expression::Call { callee, arguments } => {
+                self.compile_call(callee, arguments, chunk, context)
+            }
             Expression::Conditional {
                 test,
                 consequent,
                 alternate,
-            } => self.compile_conditional(test, consequent, alternate, chunk),
+            } => self.compile_conditional(test, consequent, alternate, chunk, context),
             Expression::Construct { callee, arguments } => {
-                self.compile_construct(callee, arguments, chunk)
+                self.compile_construct(callee, arguments, chunk, context)
             }
-            unsupported => Err(CompileError::unsupported(format!(
-                "expression {unsupported:?}"
-            ))),
+            Expression::Array(elements) => self.compile_array(elements, chunk, context),
+            Expression::Object(properties) => self.compile_object(properties, chunk, context),
+            Expression::Function(literal) => {
+                self.compile_function_expression(literal, chunk, context)
+            }
         }
     }
 
@@ -302,11 +392,31 @@ impl Compiler {
         Ok(())
     }
 
+    fn compile_identifier(
+        &mut self,
+        name: &str,
+        chunk: &mut Chunk,
+        context: &CompileContext,
+    ) -> Result<(), CompileError> {
+        if name == "this" && context.inside_function() {
+            chunk.emit(Instruction::LoadThis);
+            return Ok(());
+        }
+        let name_index = self.add_name(name, chunk)?;
+        if context.inside_function() {
+            chunk.emit(Instruction::LoadName(name_index));
+        } else {
+            chunk.emit(Instruction::LoadGlobal(name_index));
+        }
+        Ok(())
+    }
+
     fn compile_unary(
         &mut self,
         operator: UnaryOperator,
         argument: &Expression,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         let instruction = match operator {
             UnaryOperator::Plus => Instruction::UnaryPlus,
@@ -314,15 +424,19 @@ impl Compiler {
             UnaryOperator::Not => Instruction::LogicalNot,
             UnaryOperator::TypeOf => {
                 if let Expression::Identifier(name) = argument {
-                    let name = self.add_name(name, chunk)?;
-                    chunk.emit(Instruction::TypeOfGlobal(name));
+                    let name_index = self.add_name(name, chunk)?;
+                    if context.inside_function() {
+                        chunk.emit(Instruction::TypeOfName(name_index));
+                    } else {
+                        chunk.emit(Instruction::TypeOfGlobal(name_index));
+                    }
                     return Ok(());
                 }
                 Instruction::TypeOf
             }
         };
 
-        self.compile_expression(argument, chunk)?;
+        self.compile_expression(argument, chunk, context)?;
         chunk.emit(instruction);
         Ok(())
     }
@@ -333,11 +447,12 @@ impl Compiler {
         consequent: &Expression,
         alternate: &Expression,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        self.compile_expression(test, chunk)?;
+        self.compile_expression(test, chunk, context)?;
         let false_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
         chunk.emit(Instruction::Pop);
-        self.compile_expression(consequent, chunk)?;
+        self.compile_expression(consequent, chunk, context)?;
         let end_jump = chunk.emit(Instruction::Jump(usize::MAX));
 
         let alternate_start = chunk.current_offset();
@@ -345,7 +460,7 @@ impl Compiler {
             .patch_jump(false_jump, alternate_start)
             .map_err(CompileError::from_chunk)?;
         chunk.emit(Instruction::Pop);
-        self.compile_expression(alternate, chunk)?;
+        self.compile_expression(alternate, chunk, context)?;
 
         let end = chunk.current_offset();
         chunk
@@ -360,13 +475,14 @@ impl Compiler {
         left: &Expression,
         right: &Expression,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         match operator {
             BinaryOperator::LogicalAnd => {
-                return self.compile_logical(LogicalOperator::And, left, right, chunk);
+                return self.compile_logical(LogicalOperator::And, left, right, chunk, context);
             }
             BinaryOperator::LogicalOr => {
-                return self.compile_logical(LogicalOperator::Or, left, right, chunk);
+                return self.compile_logical(LogicalOperator::Or, left, right, chunk, context);
             }
             _ => {}
         }
@@ -391,8 +507,8 @@ impl Compiler {
             }
         };
 
-        self.compile_expression(left, chunk)?;
-        self.compile_expression(right, chunk)?;
+        self.compile_expression(left, chunk, context)?;
+        self.compile_expression(right, chunk, context)?;
         chunk.emit(instruction);
         Ok(())
     }
@@ -403,8 +519,9 @@ impl Compiler {
         left: &Expression,
         right: &Expression,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        self.compile_expression(left, chunk)?;
+        self.compile_expression(left, chunk, context)?;
 
         let jump = match operator {
             LogicalOperator::And => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
@@ -412,7 +529,7 @@ impl Compiler {
         };
 
         chunk.emit(Instruction::Pop);
-        self.compile_expression(right, chunk)?;
+        self.compile_expression(right, chunk, context)?;
         chunk
             .patch_jump(jump, chunk.current_offset())
             .map_err(CompileError::from_chunk)?;
@@ -425,6 +542,7 @@ impl Compiler {
         name: &str,
         initializer: Option<&Expression>,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         if kind != VariableKind::Var {
             return Err(CompileError::unsupported(format!(
@@ -433,7 +551,7 @@ impl Compiler {
         }
 
         match initializer {
-            Some(initializer) => self.compile_expression(initializer, chunk)?,
+            Some(initializer) => self.compile_expression(initializer, chunk, context)?,
             None => {
                 let undefined = chunk
                     .add_constant(Constant::Undefined)
@@ -442,8 +560,12 @@ impl Compiler {
             }
         }
 
-        let name = self.add_name(name, chunk)?;
-        chunk.emit(Instruction::DeclareGlobal(name));
+        let name_index = self.add_name(name, chunk)?;
+        if context.inside_function() {
+            chunk.emit(Instruction::DeclareLocal(name_index));
+        } else {
+            chunk.emit(Instruction::DeclareGlobal(name_index));
+        }
         Ok(())
     }
 
@@ -452,17 +574,52 @@ impl Compiler {
         target: &Expression,
         value: &Expression,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let Expression::Identifier(name) = target else {
-            return Err(CompileError::unsupported(format!(
+        match target {
+            Expression::Identifier(name) => {
+                self.compile_expression(value, chunk, context)?;
+                let name_index = self.add_name(name, chunk)?;
+                if context.inside_function() {
+                    chunk.emit(Instruction::StoreName(name_index));
+                } else {
+                    chunk.emit(Instruction::StoreGlobal(name_index));
+                }
+                Ok(())
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: false,
+            } => {
+                // obj.prop = value  →  [object, value] → SetProperty
+                let Expression::Identifier(property_name) = property.as_ref() else {
+                    return Err(CompileError::unsupported(
+                        "non-identifier static member as assignment target",
+                    ));
+                };
+                self.compile_expression(object, chunk, context)?;
+                self.compile_expression(value, chunk, context)?;
+                let prop_index = self.add_name(property_name, chunk)?;
+                chunk.emit(Instruction::SetProperty(prop_index));
+                Ok(())
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: true,
+            } => {
+                // obj[key] = value  →  [object, key, value] → SetElement
+                self.compile_expression(object, chunk, context)?;
+                self.compile_expression(property, chunk, context)?;
+                self.compile_expression(value, chunk, context)?;
+                chunk.emit(Instruction::SetElement);
+                Ok(())
+            }
+            _ => Err(CompileError::unsupported(format!(
                 "assignment target {target:?}"
-            )));
-        };
-
-        self.compile_expression(value, chunk)?;
-        let name = self.add_name(name, chunk)?;
-        chunk.emit(Instruction::StoreGlobal(name));
-        Ok(())
+            ))),
+        }
     }
 
     fn add_name(&mut self, name: &str, chunk: &mut Chunk) -> Result<u16, CompileError> {
@@ -477,21 +634,25 @@ impl Compiler {
         property: &Expression,
         computed: bool,
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         if computed {
-            return Err(CompileError::unsupported(
-                "computed member access object[property]",
-            ));
+            // object[key]  →  push object, push key, GetElement
+            self.compile_expression(object, chunk, context)?;
+            self.compile_expression(property, chunk, context)?;
+            chunk.emit(Instruction::GetElement);
+            return Ok(());
         }
-        let Expression::Identifier(property) = property else {
+
+        let Expression::Identifier(property_name) = property else {
             return Err(CompileError::unsupported(format!(
                 "non-identifier member property {property:?}"
             )));
         };
 
-        self.compile_expression(object, chunk)?;
-        let property = self.add_name(property, chunk)?;
-        chunk.emit(Instruction::GetProperty(property));
+        self.compile_expression(object, chunk, context)?;
+        let property_index = self.add_name(property_name, chunk)?;
+        chunk.emit(Instruction::GetProperty(property_index));
         Ok(())
     }
 
@@ -500,14 +661,42 @@ impl Compiler {
         callee: &Expression,
         arguments: &[Expression],
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
             message: "call argument count exceeds the u16 bytecode range".into(),
         })?;
 
-        self.compile_expression(callee, chunk)?;
+        // Inside a function body, method calls use GetMethod + CallWithThis so
+        // the receiver is properly bound as `this`. At the top-level script
+        // scope, keep using GetProperty + Call for backward compatibility with
+        // V1/V2 test infrastructure (Test262 helper calls don't rely on `this`).
+        if context.inside_function()
+            && let Expression::Member {
+                object,
+                property,
+                computed: false,
+            } = callee
+        {
+            let Expression::Identifier(method_name) = property.as_ref() else {
+                return Err(CompileError::unsupported(
+                    "computed method call (use obj['method']() separately)",
+                ));
+            };
+            self.compile_expression(object, chunk, context)?;
+            let method_index = self.add_name(method_name, chunk)?;
+            // Stack after: [method_value, object]
+            chunk.emit(Instruction::GetMethod(method_index));
+            for argument in arguments {
+                self.compile_expression(argument, chunk, context)?;
+            }
+            chunk.emit(Instruction::CallWithThis(argument_count));
+            return Ok(());
+        }
+
+        self.compile_expression(callee, chunk, context)?;
         for argument in arguments {
-            self.compile_expression(argument, chunk)?;
+            self.compile_expression(argument, chunk, context)?;
         }
         chunk.emit(Instruction::Call(argument_count));
         Ok(())
@@ -518,18 +707,89 @@ impl Compiler {
         callee: &Expression,
         arguments: &[Expression],
         chunk: &mut Chunk,
+        context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
             message: "construct argument count exceeds the u16 bytecode range".into(),
         })?;
 
-        self.compile_expression(callee, chunk)?;
+        self.compile_expression(callee, chunk, context)?;
         for argument in arguments {
-            self.compile_expression(argument, chunk)?;
+            self.compile_expression(argument, chunk, context)?;
         }
         chunk.emit(Instruction::Construct(argument_count));
         Ok(())
     }
+
+    fn compile_array(
+        &mut self,
+        elements: &[Expression],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let count = u16::try_from(elements.len()).map_err(|_| CompileError {
+            message: "array literal element count exceeds the u16 bytecode range".into(),
+        })?;
+        for element in elements {
+            self.compile_expression(element, chunk, context)?;
+        }
+        chunk.emit(Instruction::ArrayCreate(count));
+        Ok(())
+    }
+
+    fn compile_object(
+        &mut self,
+        properties: &[ObjectProperty],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let count = u16::try_from(properties.len()).map_err(|_| CompileError {
+            message: "object literal property count exceeds the u16 bytecode range".into(),
+        })?;
+        for property in properties {
+            let key_string = match &property.key {
+                PropertyName::Identifier(s) | PropertyName::String(s) => s.clone(),
+                PropertyName::Number(n) => n.to_string(),
+            };
+            let key_index = chunk
+                .add_constant(Constant::String(key_string))
+                .map_err(CompileError::from_chunk)?;
+            chunk.emit(Instruction::Constant(key_index));
+            self.compile_expression(&property.value, chunk, context)?;
+        }
+        chunk.emit(Instruction::ObjectCreate(count));
+        Ok(())
+    }
+
+    fn compile_function_expression(
+        &mut self,
+        literal: &FunctionLiteral,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let fn_chunk = self.compile_function_body(
+            literal.params.iter().map(|p| p.name.as_str()),
+            &literal.body,
+            context,
+        )?;
+        let template = FunctionTemplate {
+            name: literal.name.clone(),
+            params: fn_chunk.params,
+            chunk: fn_chunk.chunk,
+            environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+        };
+        let function_index = chunk
+            .add_function(template)
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::CreateFunction(function_index));
+        Ok(())
+    }
+}
+
+/// Intermediate result returned from `compile_function_body`.
+struct CompiledFunction {
+    params: Vec<String>,
+    chunk: Chunk,
 }
 
 fn completion_expression_index(statements: &[Statement]) -> Option<usize> {
@@ -558,5 +818,286 @@ impl CompileError {
         Self {
             message: error.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        bytecode::{Chunk, Constant, EnvironmentCapturePolicy, Instruction},
+        lexer::Lexer,
+        parser::Parser,
+    };
+
+    use super::Compiler;
+
+    // -----------------------------------------------------------------------
+    // Test helpers
+    // -----------------------------------------------------------------------
+
+    fn compile(source: &str) -> Chunk {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        let program = Parser::new(tokens)
+            .parse_program()
+            .expect("parsing succeeds");
+        Compiler::new()
+            .compile_program(&program)
+            .expect("compilation succeeds")
+    }
+
+    fn num_const(value: f64) -> Constant {
+        Constant::Number(value)
+    }
+
+    // -----------------------------------------------------------------------
+    // Basic V1/V2 tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn empty_program_emits_return_undefined() {
+        let chunk = compile("");
+        assert_eq!(chunk.instructions, [Instruction::ReturnUndefined]);
+    }
+
+    #[test]
+    fn single_number_is_completion_value() {
+        let chunk = compile("42");
+        assert_eq!(
+            chunk.instructions,
+            [Instruction::Constant(0), Instruction::Return]
+        );
+        assert_eq!(chunk.constants[0], num_const(42.0));
+    }
+
+    #[test]
+    fn var_declaration_uses_declare_global() {
+        let chunk = compile("var x = 1;");
+        assert!(chunk.instructions.contains(&Instruction::DeclareGlobal(1)));
+    }
+
+    #[test]
+    fn method_call_uses_get_method_and_call_with_this_inside_function() {
+        // GetMethod + CallWithThis is only emitted inside function bodies.
+        let chunk = compile("function f() { return obj.method(1, 2); }");
+        let fn_chunk = &chunk.functions[0].chunk;
+        assert!(
+            fn_chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::GetMethod(_)))
+        );
+        assert!(
+            fn_chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CallWithThis(2)))
+        );
+    }
+
+    #[test]
+    fn top_level_method_call_uses_get_property_and_call() {
+        // At the top-level script scope, keep GetProperty + Call for V1/V2 compat.
+        let chunk = compile("assert.sameValue(1, 1)");
+        assert!(chunk.instructions.contains(&Instruction::GetProperty(1)));
+        assert!(chunk.instructions.contains(&Instruction::Call(2)));
+    }
+
+    #[test]
+    fn chunk_validates_successfully() {
+        let chunk = compile("1 + 2");
+        assert!(chunk.validate().is_ok());
+    }
+
+    // -----------------------------------------------------------------------
+    // V3 compiler tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn function_declaration_emits_declare_function() {
+        let chunk = compile("function add(a, b) { return a + b; }");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::DeclareFunction { .. }))
+        );
+        assert!(!chunk.functions.is_empty());
+    }
+
+    #[test]
+    fn function_body_uses_load_name_inside() {
+        let chunk = compile("function add(a, b) { return a + b; }");
+        let fn_template = &chunk.functions[0];
+        assert!(
+            fn_template
+                .chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::LoadName(_)))
+        );
+    }
+
+    #[test]
+    fn function_body_ends_with_return_undefined() {
+        let chunk = compile("function f() { }");
+        let fn_template = &chunk.functions[0];
+        assert_eq!(
+            fn_template.chunk.instructions.last(),
+            Some(&Instruction::ReturnUndefined)
+        );
+    }
+
+    #[test]
+    fn return_statement_emits_return() {
+        let chunk = compile("function f() { return 1; }");
+        let fn_template = &chunk.functions[0];
+        assert!(
+            fn_template
+                .chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::Return))
+        );
+    }
+
+    #[test]
+    fn empty_return_emits_return_undefined() {
+        let chunk = compile("function f() { return; }");
+        let fn_template = &chunk.functions[0];
+        assert!(
+            fn_template
+                .chunk
+                .instructions
+                .contains(&Instruction::ReturnUndefined)
+        );
+    }
+
+    #[test]
+    fn function_params_are_recorded() {
+        let chunk = compile("function add(a, b) { return a + b; }");
+        let fn_template = &chunk.functions[0];
+        assert_eq!(fn_template.params, ["a", "b"]);
+    }
+
+    #[test]
+    fn function_declaration_name_is_recorded() {
+        let chunk = compile("function add(a, b) { return a + b; }");
+        let fn_template = &chunk.functions[0];
+        assert_eq!(fn_template.name, Some("add".into()));
+    }
+
+    #[test]
+    fn function_capture_policy_is_capture_current() {
+        let chunk = compile("function f() { }");
+        assert_eq!(
+            chunk.functions[0].environment_policy,
+            EnvironmentCapturePolicy::CaptureCurrent
+        );
+    }
+
+    #[test]
+    fn array_literal_emits_array_create() {
+        let chunk = compile("[1, 2, 3]");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ArrayCreate(3)))
+        );
+    }
+
+    #[test]
+    fn empty_array_literal() {
+        let chunk = compile("[]");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ArrayCreate(0)))
+        );
+    }
+
+    #[test]
+    fn object_literal_emits_object_create() {
+        let chunk = compile("({ a: 1, b: 2 })");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ObjectCreate(2)))
+        );
+    }
+
+    #[test]
+    fn empty_object_literal() {
+        let chunk = compile("({})");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::ObjectCreate(0)))
+        );
+    }
+
+    #[test]
+    fn computed_member_emits_get_element() {
+        let chunk = compile("arr[0]");
+        assert!(chunk.instructions.contains(&Instruction::GetElement));
+    }
+
+    #[test]
+    fn computed_member_assignment_emits_set_element() {
+        let chunk = compile("arr[0] = 1");
+        assert!(chunk.instructions.contains(&Instruction::SetElement));
+    }
+
+    #[test]
+    fn static_member_assignment_emits_set_property() {
+        let chunk = compile("obj.x = 5");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::SetProperty(_)))
+        );
+    }
+
+    #[test]
+    fn function_expression_emits_create_function() {
+        let chunk = compile("(function() { })");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::CreateFunction(_)))
+        );
+    }
+
+    #[test]
+    fn nested_function_declarations_compile() {
+        let chunk =
+            compile("function outer(x) { function inner(y) { return x + y; } return inner(2); }");
+        assert!(!chunk.functions.is_empty());
+        let outer_fn = &chunk.functions[0];
+        // inner function is in outer's function table
+        assert!(!outer_fn.chunk.functions.is_empty());
+    }
+
+    #[test]
+    fn function_var_uses_declare_local() {
+        let chunk = compile("function f() { var x = 1; }");
+        let fn_chunk = &chunk.functions[0].chunk;
+        assert!(
+            fn_chunk
+                .instructions
+                .iter()
+                .any(|i| matches!(i, Instruction::DeclareLocal(_)))
+        );
+    }
+
+    #[test]
+    fn function_body_chunk_validates() {
+        let chunk = compile("function add(a, b) { return a + b; }");
+        assert!(chunk.functions[0].chunk.validate().is_ok());
     }
 }
