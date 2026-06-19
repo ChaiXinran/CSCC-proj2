@@ -214,6 +214,7 @@ Run the fixed Native V1 acceptance gate:
 
 ```sh
 cargo run -- test262 --native-v1 --jobs 1 --verbose
+cargo run -- test262 --native-v2 --jobs 1 --verbose
 cargo test --test native_test262
 ```
 

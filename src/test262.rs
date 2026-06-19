@@ -23,6 +23,25 @@ pub const NATIVE_V1_TESTS: [&str; 6] = [
     "test/language/expressions/unary-minus/11.4.7-4-1.js",
 ];
 
+/// Official Test262 files used as the Native V2 control-flow acceptance gate.
+pub const NATIVE_V2_TESTS: [&str; 15] = [
+    "test/language/statements/if/empty-statement.js",
+    "test/language/statements/if/S12.5_A1_T1.js",
+    "test/language/statements/if/S12.5_A1.1_T1.js",
+    "test/language/statements/if/S12.5_A12_T1.js",
+    "test/language/statements/if/S12.5_A12_T2.js",
+    "test/language/statements/if/S12.5_A12_T3.js",
+    "test/language/statements/if/S12.5_A12_T4.js",
+    "test/language/expressions/conditional/S11.12_A3_T4.js",
+    "test/language/expressions/conditional/S11.12_A4_T4.js",
+    "test/language/statements/while/S12.6.2_A1.js",
+    "test/language/statements/while/S12.6.2_A4_T1.js",
+    "test/language/statements/if/S12.5_A6_T1.js",
+    "test/language/statements/if/S12.5_A6_T2.js",
+    "test/language/statements/if/S12.5_A8.js",
+    "test/language/statements/while/S12.6.2_A6_T1.js",
+];
+
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
     pub test262_root: PathBuf,
@@ -62,6 +81,12 @@ impl RunnerOptions {
     pub fn select_native_v1(&mut self) {
         self.backend = BackendKind::Native;
         self.files = NATIVE_V1_TESTS.iter().map(PathBuf::from).collect();
+    }
+
+    /// Selects the official Test262 files that define the Native V2 gate.
+    pub fn select_native_v2(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files = NATIVE_V2_TESTS.iter().map(PathBuf::from).collect();
     }
 }
 
@@ -355,7 +380,7 @@ fn run_variant(
         }
     } else if backend == BackendKind::Native && !metadata.includes.is_empty() {
         return Err(format!(
-            "native V1 does not support harness includes: {}",
+            "native backend does not support harness includes: {}",
             metadata.includes.join(", ")
         ));
     }
