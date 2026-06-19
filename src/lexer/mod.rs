@@ -33,8 +33,9 @@ const OPERATORS: &[&str] = &[
     "===", "!==", "<=", ">=", "&&", "||", "+", "-", "*", "/", "%", "!", "=", "<", ">",
 ];
 
-/// Punctuators recognized by the V1 lexer.
-const PUNCTUATORS: &[char] = &['(', ')', '{', '}', ';', ',', '.'];
+/// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional
+/// operator.
+const PUNCTUATORS: &[char] = &['(', ')', '{', '}', ';', ',', '.', '?', ':'];
 
 /// Stateful tokenizer for AgentJS source text.
 pub struct Lexer<'source> {
@@ -59,14 +60,18 @@ impl<'source> Lexer<'source> {
     pub fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
         loop {
-            self.skip_trivia()?;
+            let line_terminator_before = self.skip_trivia()?;
             let start = self.cursor.offset();
             let Some(ch) = self.cursor.peek() else {
-                tokens.push(Token::new(TokenKind::Eof, Span::new(start, start)));
+                tokens.push(Token::with_line_terminator_before(
+                    TokenKind::Eof,
+                    Span::new(start, start),
+                    line_terminator_before,
+                ));
                 return Ok(tokens);
             };
 
-            let token = if is_identifier_start(ch) {
+            let mut token = if is_identifier_start(ch) {
                 self.read_identifier_or_keyword()
             } else if ch.is_ascii_digit()
                 || (ch == '.' && self.cursor.second().is_some_and(|c| c.is_ascii_digit()))
@@ -77,14 +82,29 @@ impl<'source> Lexer<'source> {
             } else {
                 self.read_operator_or_punctuator()?
             };
+            token.line_terminator_before = line_terminator_before;
             tokens.push(token);
         }
     }
 
     /// Consumes whitespace, line terminators, and comments between tokens.
-    fn skip_trivia(&mut self) -> Result<(), LexError> {
+    ///
+    /// Returns whether any ECMAScript line terminator was skipped, including
+    /// terminators inside comments. The parser relies on this for restricted
+    /// productions such as `throw expression`.
+    fn skip_trivia(&mut self) -> Result<bool, LexError> {
+        let mut saw_line_terminator = false;
         loop {
-            self.cursor.skip_while(is_whitespace);
+            while let Some(ch) = self.cursor.peek() {
+                if is_line_terminator(ch) {
+                    saw_line_terminator = true;
+                    self.cursor.bump();
+                } else if is_whitespace(ch) {
+                    self.cursor.bump();
+                } else {
+                    break;
+                }
+            }
             let rest = self.cursor.rest();
             if rest.starts_with("//") {
                 self.cursor.bump();
@@ -100,15 +120,19 @@ impl<'source> Lexer<'source> {
                         self.cursor.bump();
                         break;
                     }
-                    if self.cursor.bump().is_none() {
-                        return Err(LexError {
-                            span: Span::new(start, self.cursor.offset()),
-                            message: "unterminated block comment".into(),
-                        });
+                    match self.cursor.bump() {
+                        Some(ch) if is_line_terminator(ch) => saw_line_terminator = true,
+                        Some(_) => {}
+                        None => {
+                            return Err(LexError {
+                                span: Span::new(start, self.cursor.offset()),
+                                message: "unterminated block comment".into(),
+                            });
+                        }
                     }
                 }
             } else {
-                return Ok(());
+                return Ok(saw_line_terminator);
             }
         }
     }
@@ -121,6 +145,14 @@ impl<'source> Lexer<'source> {
         let text = self.cursor.slice(Span::new(start, end));
         let kind = match text {
             "var" => TokenKind::Keyword(Keyword::Var),
+            "if" => TokenKind::Keyword(Keyword::If),
+            "else" => TokenKind::Keyword(Keyword::Else),
+            "while" => TokenKind::Keyword(Keyword::While),
+            "break" => TokenKind::Keyword(Keyword::Break),
+            "continue" => TokenKind::Keyword(Keyword::Continue),
+            "throw" => TokenKind::Keyword(Keyword::Throw),
+            "new" => TokenKind::Keyword(Keyword::New),
+            "typeof" => TokenKind::Keyword(Keyword::TypeOf),
             "true" => TokenKind::Keyword(Keyword::True),
             "false" => TokenKind::Keyword(Keyword::False),
             "null" => TokenKind::Keyword(Keyword::Null),
@@ -294,7 +326,11 @@ mod tests {
     fn tokenizes_empty_program() {
         assert_eq!(
             Lexer::new(" \n\t").tokenize().unwrap(),
-            [Token::new(TokenKind::Eof, Span::new(3, 3))]
+            [Token::with_line_terminator_before(
+                TokenKind::Eof,
+                Span::new(3, 3),
+                true,
+            )]
         );
     }
 
@@ -406,5 +442,41 @@ mod tests {
     fn rejects_unsupported_character() {
         let error = Lexer::new("@").tokenize().unwrap_err();
         assert_eq!(error.span, Span::new(0, 1));
+    }
+
+    #[test]
+    fn tokenizes_v2_keywords_and_conditional_punctuators() {
+        assert_eq!(
+            kinds("if else while break continue throw new typeof ? :"),
+            [
+                TokenKind::Keyword(Keyword::If),
+                TokenKind::Keyword(Keyword::Else),
+                TokenKind::Keyword(Keyword::While),
+                TokenKind::Keyword(Keyword::Break),
+                TokenKind::Keyword(Keyword::Continue),
+                TokenKind::Keyword(Keyword::Throw),
+                TokenKind::Keyword(Keyword::New),
+                TokenKind::Keyword(Keyword::TypeOf),
+                TokenKind::Punctuator('?'),
+                TokenKind::Punctuator(':'),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn records_line_terminator_before_each_token() {
+        let tokens = Lexer::new("throw\nx").tokenize().unwrap();
+        // `throw` is preceded only by start-of-input.
+        assert!(!tokens[0].line_terminator_before);
+        // `x` sits on the next line, so the parser can reject `throw \n x`.
+        assert!(tokens[1].line_terminator_before);
+    }
+
+    #[test]
+    fn counts_line_terminators_inside_block_comments() {
+        let tokens = Lexer::new("a /* \n */ b").tokenize().unwrap();
+        assert!(!tokens[0].line_terminator_before);
+        assert!(tokens[1].line_terminator_before);
     }
 }

@@ -78,3 +78,36 @@ fn reference_to_unknown_name_parses_and_defers_to_runtime() {
     let program = parse_ok("missingName;");
     assert_eq!(program.body.len(), 1);
 }
+
+/// The self-contained V2 control-flow scripts from `docs/native-v2-scope.md`.
+/// The front end only needs to accept them; their values are exercised once the
+/// compiler and VM gain V2 support.
+#[test]
+fn parses_v2_control_flow_scripts() {
+    let sources = [
+        "var x = 0; if (true) { x = 1; } else { x = 2; } x;",
+        "var x = false ? 1 : true ? 2 : 3; x;",
+        "var i = 0; while (i < 5) { i = i + 1; } i;",
+        "var i = 0; while (true) { i = 1; break; } i;",
+        "var i = 0; while (i < 3) { i = i + 1; if (i === 2) continue; } i;",
+        "throw new Test262Error(\"expected\");",
+        "var t = typeof missingName;",
+        "var a, b = 1; b;",
+    ];
+
+    for source in sources {
+        parse_ok(source);
+    }
+}
+
+/// V2 negative cases that the front end must reject before reaching the compiler.
+#[test]
+fn rejects_v2_syntax_errors() {
+    // `break`/`continue` outside any loop.
+    assert!(matches!(parse("break;"), Err(NativeError::Parse(_))));
+    assert!(matches!(parse("continue;"), Err(NativeError::Parse(_))));
+    // A line terminator between `throw` and its expression.
+    assert!(matches!(parse("throw\n1;"), Err(NativeError::Parse(_))));
+    // `else` with no matching `if`.
+    assert!(matches!(parse("else 1;"), Err(NativeError::Parse(_))));
+}

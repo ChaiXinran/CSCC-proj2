@@ -1,5 +1,8 @@
 use agentjs::{
-    ast::{BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableKind},
+    ast::{
+        BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableDeclarator,
+        VariableKind,
+    },
     bytecode::{Chunk, ChunkError, Compiler, Constant, Instruction, StackAnalysis, StackEffect},
     contracts::{NativeError, ProgramCompiler},
 };
@@ -1018,8 +1021,10 @@ fn variable_declaration(
 ) -> Statement {
     Statement::VariableDeclaration {
         kind,
-        name: name.into(),
-        initializer,
+        declarations: vec![VariableDeclarator {
+            name: name.into(),
+            initializer,
+        }],
     }
 }
 

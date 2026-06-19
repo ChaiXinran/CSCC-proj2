@@ -53,16 +53,16 @@ impl Compiler {
                         chunk.emit(Instruction::Pop);
                     }
                 }
-                Statement::VariableDeclaration {
-                    kind,
-                    name,
-                    initializer,
-                } => self.compile_variable_declaration(
-                    *kind,
-                    name,
-                    initializer.as_ref(),
-                    &mut chunk,
-                )?,
+                Statement::VariableDeclaration { kind, declarations } => {
+                    for declarator in declarations {
+                        self.compile_variable_declaration(
+                            *kind,
+                            &declarator.name,
+                            declarator.initializer.as_ref(),
+                            &mut chunk,
+                        )?;
+                    }
+                }
                 unsupported => {
                     return Err(CompileError::unsupported(format!(
                         "statement {unsupported:?}"
