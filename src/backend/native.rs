@@ -32,6 +32,8 @@ impl NativeRuntime {
 
     fn evaluate(&mut self, source: &str) -> Result<crate::runtime::JsValue, EvalFailure> {
         self.context.reset_execution_budget(self.config.loop_limit);
+        self.context
+            .reset_call_depth(self.config.recursion_limit as u64);
         self.pipeline
             .evaluate(source, &mut self.context)
             .map_err(classify_native_error)

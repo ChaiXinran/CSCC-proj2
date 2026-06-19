@@ -667,16 +667,14 @@ impl Compiler {
             message: "call argument count exceeds the u16 bytecode range".into(),
         })?;
 
-        // Inside a function body, method calls use GetMethod + CallWithThis so
-        // the receiver is properly bound as `this`. At the top-level script
-        // scope, keep using GetProperty + Call for backward compatibility with
-        // V1/V2 test infrastructure (Test262 helper calls don't rely on `this`).
-        if context.inside_function()
-            && let Expression::Member {
-                object,
-                property,
-                computed: false,
-            } = callee
+        // Static member calls preserve their receiver as `this`. Native
+        // functions ignore the receiver, so this also remains compatible with
+        // calls such as `assert.sameValue(...)`.
+        if let Expression::Member {
+            object,
+            property,
+            computed: false,
+        } = callee
         {
             let Expression::Identifier(method_name) = property.as_ref() else {
                 return Err(CompileError::unsupported(
@@ -895,11 +893,15 @@ mod tests {
     }
 
     #[test]
-    fn top_level_method_call_uses_get_property_and_call() {
-        // At the top-level script scope, keep GetProperty + Call for V1/V2 compat.
+    fn top_level_method_call_preserves_receiver() {
         let chunk = compile("assert.sameValue(1, 1)");
-        assert!(chunk.instructions.contains(&Instruction::GetProperty(1)));
-        assert!(chunk.instructions.contains(&Instruction::Call(2)));
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::GetMethod(_)))
+        );
+        assert!(chunk.instructions.contains(&Instruction::CallWithThis(2)));
     }
 
     #[test]

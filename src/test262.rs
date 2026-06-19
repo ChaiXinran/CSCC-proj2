@@ -42,6 +42,39 @@ pub const NATIVE_V2_TESTS: [&str; 15] = [
     "test/language/statements/while/S12.6.2_A6_T1.js",
 ];
 
+/// Official Test262 files used as the Native V3 function acceptance gate.
+///
+/// These are the V3 candidates from `docs/native-v3-scope.md` that exist in
+/// the pinned Test262 revision and only depend on the implemented V3 subset.
+pub const NATIVE_V3_TESTS: [&str; 26] = [
+    "test/language/statements/function/S10.1.1_A1_T1.js",
+    "test/language/statements/function/S13_A1.js",
+    "test/language/statements/function/S13_A3_T1.js",
+    "test/language/statements/function/S13_A3_T2.js",
+    "test/language/statements/function/S13_A3_T3.js",
+    "test/language/statements/function/S13_A4_T1.js",
+    "test/language/statements/function/S13_A7_T3.js",
+    "test/language/statements/function/S13_A9.js",
+    "test/language/statements/function/S13_A15_T1.js",
+    "test/language/statements/function/S14_A2.js",
+    "test/language/statements/return/line-terminators.js",
+    "test/language/statements/return/S12.9_A1_T1.js",
+    "test/language/statements/return/S12.9_A1_T2.js",
+    "test/language/statements/return/S12.9_A1_T3.js",
+    "test/language/statements/return/S12.9_A1_T4.js",
+    "test/language/statements/return/S12.9_A1_T5.js",
+    "test/language/statements/return/S12.9_A1_T6.js",
+    "test/language/statements/return/S12.9_A1_T7.js",
+    "test/language/statements/return/S12.9_A1_T8.js",
+    "test/language/statements/return/S12.9_A1_T9.js",
+    "test/language/statements/return/S12.9_A1_T10.js",
+    "test/language/statements/return/S12.9_A3.js",
+    "test/language/expressions/object/S11.1.5_A3.js",
+    "test/language/expressions/object/S11.1.5_A4.1.js",
+    "test/language/expressions/object/S11.1.5_A4.2.js",
+    "test/language/expressions/object/S11.1.5_A4.3.js",
+];
+
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
     pub test262_root: PathBuf,
@@ -87,6 +120,12 @@ impl RunnerOptions {
     pub fn select_native_v2(&mut self) {
         self.backend = BackendKind::Native;
         self.files = NATIVE_V2_TESTS.iter().map(PathBuf::from).collect();
+    }
+
+    /// Selects the official Test262 files that define the Native V3 gate.
+    pub fn select_native_v3(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files = NATIVE_V3_TESTS.iter().map(PathBuf::from).collect();
     }
 }
 

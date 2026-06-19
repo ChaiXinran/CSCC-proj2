@@ -303,30 +303,49 @@ while (true) { function f(){} }   -> 仍受 loop_limit 约束
 递归无出口                         -> RuntimeLimit / CallStackLimit
 ```
 
-## 5. 固定 Test262 候选对象
+## 5. 固定 Test262 对象
 
-V3 固定清单应优先选择只依赖函数、return、对象/数组字面量和基础成员访问的文件。建议先建立候选清单，逐个本地验证依赖后再冻结。
+V3 固定清单定义在
+[`src/test262.rs`](../src/test262.rs) 的 `NATIVE_V3_TESTS` 中。当前冻结
+26 个官方文件，全部经过 default 与 strict 两种模式验证；跳过项不计入通过。
 
-### 5.1 函数与 return 候选门
+### 5.1 函数门
 
 ```text
+test/language/statements/function/S10.1.1_A1_T1.js
 test/language/statements/function/S13_A1.js
+test/language/statements/function/S13_A3_T1.js
+test/language/statements/function/S13_A3_T2.js
+test/language/statements/function/S13_A3_T3.js
 test/language/statements/function/S13_A4_T1.js
-test/language/statements/function/S13_A5_T1.js
-test/language/statements/return/S12.9_A1.js
+test/language/statements/function/S13_A7_T3.js
+test/language/statements/function/S13_A9.js
+test/language/statements/function/S13_A15_T1.js
+test/language/statements/function/S14_A2.js
+```
+
+### 5.2 Return 门
+
+```text
+test/language/statements/return/line-terminators.js
+test/language/statements/return/S12.9_A1_T1.js ... S12.9_A1_T10.js
 test/language/statements/return/S12.9_A3.js
 ```
 
-### 5.2 对象与数组候选门
+### 5.3 对象门
 
 ```text
-test/language/expressions/object/S11.1.5_A1.1_T1.js
-test/language/expressions/object/S11.1.5_A2.1_T1.js
-test/language/expressions/array/S11.1.4_A1.js
-test/language/expressions/array/S11.1.4_A2.1.js
+test/language/expressions/object/S11.1.5_A3.js
+test/language/expressions/object/S11.1.5_A4.1.js
+test/language/expressions/object/S11.1.5_A4.2.js
+test/language/expressions/object/S11.1.5_A4.3.js
 ```
 
-### 5.3 暂不纳入 V3 的相邻测试
+完整路径以代码中的固定数组为准，防止文档与 runner 漂移。
+当前验收结果和相邻目录基线见
+[`reports/native-v3-test262-report.md`](../reports/native-v3-test262-report.md)。
+
+### 5.4 暂不纳入 V3 的相邻测试
 
 * 依赖 `eval` 的函数测试；
 * 依赖 `arguments` 对象的函数测试；

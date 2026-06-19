@@ -671,9 +671,8 @@ fn compiler_emits_callee_then_arguments_from_left_to_right() {
 
 #[test]
 fn compiler_emits_assert_same_value_call_shape() {
-    // At top-level scope (function_depth == 0), method calls still use
-    // GetProperty + Call for V1/V2 backward compat. Inside function bodies
-    // they use GetMethod + CallWithThis (tested in the compiler module tests).
+    // V3 preserves the receiver for every static member call. Native Test262
+    // helpers ignore `this`, so this shape remains compatible with V1/V2.
     let program = Program {
         body: vec![expression_statement(call(
             member(identifier("assert"), identifier("sameValue"), false),
@@ -695,13 +694,13 @@ fn compiler_emits_assert_same_value_call_shape() {
         chunk.instructions,
         [
             Instruction::LoadGlobal(0),
-            Instruction::GetProperty(1),
+            Instruction::GetMethod(1),
             Instruction::Constant(2),
             Instruction::Constant(3),
             Instruction::Multiply,
             Instruction::Constant(4),
             Instruction::Constant(5),
-            Instruction::Call(3),
+            Instruction::CallWithThis(3),
             Instruction::Return,
         ]
     );
@@ -1010,7 +1009,7 @@ fn complete_v1_compiler_slice_is_structurally_and_stack_valid() {
     let chunk = Compiler::new().compile_program(&program).unwrap();
 
     assert_eq!(chunk.validate(), Ok(()));
-    assert_eq!(chunk.analyze_stack(), Ok(StackAnalysis { max_depth: 4 }));
+    assert_eq!(chunk.analyze_stack(), Ok(StackAnalysis { max_depth: 5 }));
     assert_eq!(chunk.instructions.last(), Some(&Instruction::Return));
 }
 

@@ -4,8 +4,9 @@ use std::fmt;
 
 use crate::{
     builtins,
-    bytecode::{Chunk, Constant, Instruction},
-    runtime::{Heap, JsValue, NativeContext, NativeErrorKind, ObjectId},
+    bytecode::{Chunk, Constant, EnvironmentCapturePolicy, Instruction},
+    runtime::{FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, to_property_key},
+    vm::CallFrame,
 };
 
 /// Native VM failure category.
@@ -264,18 +265,13 @@ impl Vm {
                 Instruction::GetProperty(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let object = self.pop_value()?;
-                    let value = get_property(context.heap(), object, name, current_instruction)?;
+                    let value = context.get_property(object, name)?;
                     self.stack.push(value);
                 }
                 Instruction::Call(argument_count) => {
-                    let mut arguments = Vec::with_capacity(argument_count as usize);
-                    for _ in 0..argument_count {
-                        arguments.push(self.pop_value()?);
-                    }
-                    arguments.reverse();
-
+                    let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
-                    let result = call_value(callee, arguments)?;
+                    let result = self.call_value(callee, JsValue::Undefined, arguments, context)?;
                     self.stack.push(result);
                 }
                 Instruction::Construct(argument_count) => {
@@ -306,12 +302,100 @@ impl Vm {
                 }
                 Instruction::Return => return self.pop_value(),
                 Instruction::ReturnUndefined => return Ok(JsValue::Undefined),
-                // V3 instructions: not yet executed by this VM stage.
-                // The VM team will implement these in a subsequent milestone.
-                other => {
-                    return Err(VmError::runtime(format!(
-                        "V3 instruction {other:?} is not yet implemented by the VM stage"
-                    )));
+                Instruction::CreateFunction(function) => {
+                    let value = self.create_function(chunk, function, context)?;
+                    self.stack.push(value);
+                }
+                Instruction::DeclareFunction { name, function } => {
+                    let name = self
+                        .constant_string(chunk, name, current_instruction)?
+                        .to_string();
+                    let value = self.create_function(chunk, function, context)?;
+                    context.declare_binding(context.current_environment(), name, value, true)?;
+                }
+                Instruction::DeclareLocal(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let value = self.pop_value()?;
+                    context.declare_binding(context.current_environment(), name, value, true)?;
+                }
+                Instruction::LoadName(index) => {
+                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    let value = context
+                        .resolve_binding(name)
+                        .map(|(_, value)| value)
+                        .ok_or_else(|| {
+                            VmError::reference(format!(
+                                "{name} is not defined at instruction {current_instruction}"
+                            ))
+                        })?;
+                    self.stack.push(value);
+                }
+                Instruction::TypeOfName(index) => {
+                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    let type_name = context
+                        .resolve_binding(name)
+                        .map_or("undefined", |(_, value)| value.type_of());
+                    self.stack.push(JsValue::String(type_name.into()));
+                }
+                Instruction::StoreName(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let value = self.pop_value()?;
+                    context.set_binding(&name, value.clone())?;
+                    self.stack.push(value);
+                }
+                Instruction::LoadThis => {
+                    self.stack.push(context.current_this());
+                }
+                Instruction::ArrayCreate(count) => {
+                    let elements = self.pop_arguments(count)?;
+                    self.stack.push(context.create_array(elements)?);
+                }
+                Instruction::ObjectCreate(count) => {
+                    let mut properties = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        let value = self.pop_value()?;
+                        let key = to_property_key(&self.pop_value()?)?;
+                        properties.push((key, value));
+                    }
+                    properties.reverse();
+                    self.stack.push(context.create_object(properties)?);
+                }
+                Instruction::GetElement => {
+                    let key = self.pop_value()?;
+                    let object = self.pop_value()?;
+                    self.stack.push(context.get_element(object, key)?);
+                }
+                Instruction::GetMethod(index) => {
+                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    let object = self.pop_value()?;
+                    let method = context.get_property(object.clone(), name)?;
+                    self.stack.push(method);
+                    self.stack.push(object);
+                }
+                Instruction::SetProperty(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let value = self.pop_value()?;
+                    let object = self.pop_value()?;
+                    self.stack.push(context.set_property(object, name, value)?);
+                }
+                Instruction::SetElement => {
+                    let value = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let object = self.pop_value()?;
+                    self.stack.push(context.set_element(object, key, value)?);
+                }
+                Instruction::CallWithThis(argument_count) => {
+                    let arguments = self.pop_arguments(argument_count)?;
+                    let this_value = self.pop_value()?;
+                    let callee = self.pop_value()?;
+                    let result = self.call_value(callee, this_value, arguments, context)?;
+                    self.stack.push(result);
                 }
             }
         }
@@ -365,6 +449,111 @@ impl Vm {
         value
             .to_number()
             .ok_or_else(|| VmError::type_error("value cannot be converted to number in V1"))
+    }
+
+    fn pop_arguments(&mut self, count: u16) -> Result<Vec<JsValue>, VmError> {
+        let mut arguments = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            arguments.push(self.pop_value()?);
+        }
+        arguments.reverse();
+        Ok(arguments)
+    }
+
+    fn create_function(
+        &mut self,
+        chunk: &Chunk,
+        index: u16,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let template = chunk
+            .functions
+            .get(index as usize)
+            .cloned()
+            .ok_or_else(|| VmError::runtime(format!("function index {index} is out of bounds")))?;
+        let environment = match template.environment_policy {
+            EnvironmentCapturePolicy::None => None,
+            EnvironmentCapturePolicy::CaptureCurrent => Some(context.current_environment()),
+        };
+        let id = context.allocate_function(JsFunction {
+            name: template.name,
+            params: template.params,
+            chunk: template.chunk,
+            environment,
+        })?;
+        Ok(JsValue::Function(id))
+    }
+
+    fn call_value(
+        &mut self,
+        callee: JsValue,
+        this_value: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match callee {
+            JsValue::NativeFunction(function) => builtins::call_native(function, arguments),
+            JsValue::Function(function) => {
+                self.call_user_function(function, this_value, arguments, context)
+            }
+            other => Err(VmError::type_error(format!("{other} is not callable"))),
+        }
+    }
+
+    fn call_user_function(
+        &mut self,
+        function_id: FunctionId,
+        this_value: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let function = context
+            .function(function_id)
+            .cloned()
+            .ok_or_else(|| VmError::runtime("missing function value"))?;
+        let stack_base = self.stack.len();
+        let environment = context.push_environment(function.environment)?;
+
+        for (index, parameter) in function.params.iter().enumerate() {
+            let value = arguments.get(index).cloned().unwrap_or(JsValue::Undefined);
+            if let Err(error) = context.declare_binding(environment, parameter.clone(), value, true)
+            {
+                let _ = context.pop_environment();
+                return Err(error);
+            }
+        }
+
+        if let Some(name) = &function.name
+            && let Err(error) = context.declare_binding(
+                environment,
+                name.clone(),
+                JsValue::Function(function_id),
+                true,
+            )
+        {
+            let _ = context.pop_environment();
+            return Err(error);
+        }
+
+        let frame = CallFrame::new(Some(function_id), 0, environment, this_value, stack_base);
+        if let Err(error) = context.push_call_frame(frame) {
+            let _ = context.pop_environment();
+            return Err(error);
+        }
+
+        let result = self.run(&function.chunk, context);
+        self.stack.truncate(stack_base);
+        let frame_result = context.pop_call_frame();
+        let environment_result = context.pop_environment();
+
+        match result {
+            Err(error) => Err(error),
+            Ok(value) => {
+                frame_result?;
+                environment_result?;
+                Ok(value)
+            }
+        }
     }
 
     fn validate_jump_target(
@@ -446,37 +635,6 @@ fn compare_values(
         return Ok(false);
     };
     Ok(predicate(ordering))
-}
-
-fn get_property(
-    heap: &Heap,
-    object: JsValue,
-    name: &str,
-    instruction_pointer: usize,
-) -> Result<JsValue, VmError> {
-    let JsValue::Object(id) = object else {
-        return Err(VmError::type_error(format!(
-            "cannot read property {name} at instruction {instruction_pointer}"
-        )));
-    };
-
-    Ok(get_object_property(heap, id, name).unwrap_or(JsValue::Undefined))
-}
-
-fn get_object_property(heap: &Heap, id: ObjectId, name: &str) -> Option<JsValue> {
-    let object = heap.object(id)?;
-    object.get_own_property_value(name).or_else(|| {
-        object
-            .prototype
-            .and_then(|prototype| get_object_property(heap, prototype, name))
-    })
-}
-
-fn call_value(callee: JsValue, arguments: Vec<JsValue>) -> Result<JsValue, VmError> {
-    match callee {
-        JsValue::NativeFunction(function) => builtins::call_native(function, arguments),
-        other => Err(VmError::type_error(format!("{other} is not callable"))),
-    }
 }
 
 fn construct_value(callee: JsValue, arguments: Vec<JsValue>) -> Result<JsValue, VmError> {

@@ -143,15 +143,19 @@ fn run_native_pipeline() -> Result<(), agentjs::NativeError> {
 }
 ```
 
-Only an empty program is supported by the default Native pipeline at present.
-This is an intentional scaffold, not a conformance claim.
-The first end-to-end implementation target is defined in
-[Native V1 expression milestone](docs/native-v1-scope.md).
-The next collaborative milestone is defined in
-[Native V2 control-flow milestone](docs/native-v2-scope.md), with shared
-contracts in [Native V2 interface specification](docs/native-v2-interface.md).
-[Native V3 control-flow milestone](docs/native-v3-scope.md), with shared
-contracts in [Native V3 interface specification](docs/native-v3-interface.md).
+The Native pipeline currently implements the scoped V1-V3 milestones:
+
+- [Native V1 expressions](docs/native-v1-scope.md)
+- [Native V2 control flow](docs/native-v2-scope.md) and its
+  [shared interface](docs/native-v2-interface.md)
+- [Native V3 functions and compound values](docs/native-v3-scope.md) and its
+  [shared interface](docs/native-v3-interface.md)
+
+Runnable integration coverage lives in
+[`tests/native_v2.rs`](tests/native_v2.rs),
+[`tests/frontend_bytecode_v3.rs`](tests/frontend_bytecode_v3.rs), and
+[`tests/native_v3.rs`](tests/native_v3.rs). A compact V3 sample is available at
+[`examples/v3.js`](examples/v3.js).
 
 ## Parallel Development
 
@@ -212,18 +216,21 @@ differs.
 
 ## Test262
 
-Run the fixed Native V1 acceptance gate:
+Run the fixed Native milestone acceptance gates:
 
 ```sh
 cargo run -- test262 --native-v1 --jobs 1 --verbose
 cargo run -- test262 --native-v2 --jobs 1 --verbose
+cargo run -- test262 --native-v3 --jobs 1 --verbose
 cargo test --test native_test262
 ```
 
-This runs the six official expression tests listed in
-`docs/native-v1-scope.md` through the self-developed lexer, parser, compiler,
-VM, runtime, and minimal host-provided Test262 harness. Every file is checked
-in default and strict mode; Boa is not used.
+These commands run the pinned files listed in the V1-V3 milestone documents
+through the self-developed lexer, parser, compiler, VM, runtime, and minimal
+host-provided Test262 harness. Every file is checked in default and strict
+mode; Boa is not used. Current Native V3 results and broader directory
+baselines are recorded in the
+[Native V3 Test262 report](reports/native-v3-test262-report.md).
 
 Start with the feature directory affected by a change:
 

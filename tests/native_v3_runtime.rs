@@ -8,6 +8,7 @@ fn empty_function_chunk() -> Chunk {
     Chunk {
         instructions: vec![Instruction::ReturnUndefined],
         constants: Vec::new(),
+        functions: Vec::new(),
     }
 }
 
