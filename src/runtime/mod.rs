@@ -14,4 +14,4 @@ pub use gc::{CollectionStats, Collector};
 pub use heap::Heap;
 pub use object::{JsObject, ObjectId};
 pub use property::PropertyDescriptor;
-pub use value::{JsValue, NativeFunction};
+pub use value::{JsValue, NativeErrorKind, NativeErrorValue, NativeFunction};

@@ -1,6 +1,7 @@
 //! Persistent state shared by native execution and integration.
 
 use super::{Environment, EnvironmentId, Heap, JsValue};
+use crate::vm::VmError;
 
 /// Per-isolate language state passed to the bytecode executor.
 #[derive(Debug)]
@@ -9,6 +10,7 @@ pub struct NativeContext {
     global_environment: EnvironmentId,
     strict: bool,
     output: Vec<String>,
+    loop_budget_remaining: u64,
 }
 
 impl Default for NativeContext {
@@ -23,6 +25,7 @@ impl Default for NativeContext {
             global_environment,
             strict: false,
             output: Vec::new(),
+            loop_budget_remaining: u64::MAX,
         };
         context.declare_global("undefined", JsValue::Undefined);
         context.declare_global("NaN", JsValue::Number(f64::NAN));
@@ -67,6 +70,24 @@ impl NativeContext {
             return false;
         };
         environment.set_mutable_binding(name, value)
+    }
+
+    pub fn reset_execution_budget(&mut self, loop_limit: u64) {
+        self.loop_budget_remaining = loop_limit;
+    }
+
+    pub fn consume_loop_iteration(&mut self) -> Result<(), VmError> {
+        if self.loop_budget_remaining == 0 {
+            return Err(VmError::runtime_limit("loop iteration limit exceeded"));
+        }
+
+        self.loop_budget_remaining -= 1;
+        Ok(())
+    }
+
+    #[must_use]
+    pub const fn loop_budget_remaining(&self) -> u64 {
+        self.loop_budget_remaining
     }
 
     #[must_use]
@@ -116,5 +137,15 @@ mod tests {
         first.declare_global("secret", JsValue::Number(42.0));
         assert_eq!(first.get_global("secret"), Some(JsValue::Number(42.0)));
         assert_eq!(second.get_global("secret"), None);
+    }
+
+    #[test]
+    fn consumes_loop_budget() {
+        let mut context = NativeContext::default();
+        context.reset_execution_budget(1);
+
+        context.consume_loop_iteration().unwrap();
+        let error = context.consume_loop_iteration().unwrap_err();
+        assert!(error.message.contains("loop"));
     }
 }
