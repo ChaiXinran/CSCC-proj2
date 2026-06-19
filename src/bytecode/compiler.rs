@@ -3,7 +3,8 @@
 use std::fmt;
 
 use crate::ast::{
-    BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableKind,
+    BinaryOperator, Expression, Literal, LogicalOperator, Program, Statement, UnaryOperator,
+    VariableKind,
 };
 
 use super::{Chunk, ChunkError, Constant, Instruction};
@@ -108,6 +109,11 @@ impl Compiler {
                 computed,
             } => self.compile_member(object, property, *computed, chunk),
             Expression::Call { callee, arguments } => self.compile_call(callee, arguments, chunk),
+            Expression::Logical {
+                operator,
+                left,
+                right,
+            } => self.compile_logical_node(*operator, left, right, chunk),
             unsupported => Err(CompileError::unsupported(format!(
                 "expression {unsupported:?}"
             ))),
@@ -208,6 +214,31 @@ impl Compiler {
             _ => unreachable!(),
         };
 
+        chunk.emit(Instruction::Pop);
+        self.compile_expression(right, chunk)?;
+        chunk
+            .patch_jump(jump, chunk.current_offset())
+            .map_err(CompileError::from_chunk)?;
+        Ok(())
+    }
+
+    /// Compiles `Expression::Logical` nodes produced by the parser.
+    ///
+    /// The right operand is only evaluated when the left operand does not
+    /// short-circuit, so it is lowered to a conditional jump rather than a
+    /// plain binary instruction.
+    fn compile_logical_node(
+        &mut self,
+        operator: LogicalOperator,
+        left: &Expression,
+        right: &Expression,
+        chunk: &mut Chunk,
+    ) -> Result<(), CompileError> {
+        self.compile_expression(left, chunk)?;
+        let jump = match operator {
+            LogicalOperator::And => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
+            LogicalOperator::Or => chunk.emit(Instruction::JumpIfTrue(usize::MAX)),
+        };
         chunk.emit(Instruction::Pop);
         self.compile_expression(right, chunk)?;
         chunk
