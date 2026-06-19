@@ -1,12 +1,13 @@
 //! Object and environment allocation.
 
-use super::{Environment, EnvironmentId, JsObject, ObjectId};
+use super::{Environment, EnvironmentId, FunctionId, JsFunction, JsObject, ObjectId};
 
 /// Arena owning native runtime objects and lexical environments.
 #[derive(Debug, Default)]
 pub struct Heap {
     objects: Vec<Option<JsObject>>,
     environments: Vec<Option<Environment>>,
+    functions: Vec<Option<JsFunction>>,
 }
 
 impl Heap {
@@ -38,6 +39,17 @@ impl Heap {
 
     pub fn environment_mut(&mut self, id: EnvironmentId) -> Option<&mut Environment> {
         self.environments.get_mut(id.0 as usize)?.as_mut()
+    }
+
+    pub fn allocate_function(&mut self, function: JsFunction) -> Option<FunctionId> {
+        let id = FunctionId(u32::try_from(self.functions.len()).ok()?);
+        self.functions.push(Some(function));
+        Some(id)
+    }
+
+    #[must_use]
+    pub fn function(&self, id: FunctionId) -> Option<&JsFunction> {
+        self.functions.get(id.0 as usize)?.as_ref()
     }
 
     #[must_use]
