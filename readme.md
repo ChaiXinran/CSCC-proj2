@@ -150,6 +150,8 @@ The first end-to-end implementation target is defined in
 The next collaborative milestone is defined in
 [Native V2 control-flow milestone](docs/native-v2-scope.md), with shared
 contracts in [Native V2 interface specification](docs/native-v2-interface.md).
+[Native V3 control-flow milestone](docs/native-v3-scope.md), with shared
+contracts in [Native V3 interface specification](docs/native-v3-interface.md).
 
 ## Parallel Development
 
