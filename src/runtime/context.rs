@@ -653,7 +653,7 @@ impl NativeContext {
         self.define_own_property(object, key.into(), PropertyDescriptor::data(value))
     }
 
-    fn find_property_descriptor(
+    pub(crate) fn find_property_descriptor(
         &self,
         object: ObjectId,
         key: &str,

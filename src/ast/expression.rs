@@ -38,8 +38,6 @@ pub enum BinaryOperator {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
-    In,
-    InstanceOf,
     LogicalAnd,
     LogicalOr,
     In,
@@ -88,9 +86,6 @@ pub struct FunctionLiteral {
 // V3/V4 object literal types
 // ---------------------------------------------------------------------------
 
-/// One property definition in an object literal.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ObjectProperty {
 /// One property in an object literal. V4 extends V3's plain data property with
 /// getter, setter, and `__proto__` setter forms.
 #[derive(Debug, Clone, PartialEq)]
@@ -110,9 +105,6 @@ pub enum ObjectProperty {
         key: PropertyName,
         parameter: FunctionParam,
         body: FunctionBody,
-    },
-    PrototypeSetter {
-        value: Expression,
     },
     /// `__proto__: value` — sets the object's prototype. At most one per literal.
     PrototypeSetter { value: Expression },
@@ -142,14 +134,6 @@ impl PropertyName {
             }
         }
     }
-}
-
-/// One array literal position. A hole is distinct from an explicit
-/// `undefined` value.
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArrayElement {
-    Hole,
-    Expression(Expression),
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +200,6 @@ pub enum Expression {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
     },
-    /// `[element, ...]` array literal.
     /// `[element, ...]` array literal, potentially sparse.
     Array(Vec<ArrayElement>),
     /// `{ key: value, ... }` object literal.

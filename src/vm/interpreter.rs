@@ -5,7 +5,10 @@ use std::fmt;
 use crate::{
     builtins,
     bytecode::{Chunk, Constant, EnvironmentCapturePolicy, Instruction},
-    runtime::{FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, to_property_key},
+    runtime::{
+        FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, ObjectId,
+        PropertyDescriptor, PropertyKind, to_property_key,
+    },
     vm::CallFrame,
 };
 
@@ -265,7 +268,7 @@ impl Vm {
                 Instruction::GetProperty(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let object = self.pop_value()?;
-                    let value = context.get_property(object, name)?;
+                    let value = self.get_property_value(object, name, context)?;
                     self.stack.push(value);
                 }
                 Instruction::Call(argument_count) => {
@@ -362,12 +365,14 @@ impl Vm {
                 Instruction::GetElement => {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
-                    self.stack.push(context.get_element(object, key)?);
+                    let key = to_property_key(&key)?;
+                    let value = self.get_property_value(object, &key, context)?;
+                    self.stack.push(value);
                 }
                 Instruction::GetMethod(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let object = self.pop_value()?;
-                    let method = context.get_property(object.clone(), name)?;
+                    let method = self.get_property_value(object.clone(), name, context)?;
                     self.stack.push(method);
                     self.stack.push(object);
                 }
@@ -377,13 +382,16 @@ impl Vm {
                         .to_string();
                     let value = self.pop_value()?;
                     let object = self.pop_value()?;
-                    self.stack.push(context.set_property(object, name, value)?);
+                    let result = self.set_property_value(object, &name, value, context)?;
+                    self.stack.push(result);
                 }
                 Instruction::SetElement => {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
-                    self.stack.push(context.set_element(object, key, value)?);
+                    let key = to_property_key(&key)?;
+                    let result = self.set_property_value(object, &key, value, context)?;
+                    self.stack.push(result);
                 }
                 Instruction::CallWithThis(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
@@ -392,20 +400,90 @@ impl Vm {
                     let result = self.call_value(callee, this_value, arguments, context)?;
                     self.stack.push(result);
                 }
-                Instruction::ObjectCreateEmpty
-                | Instruction::ArrayCreateSparse(_)
-                | Instruction::DefineDataProperty(_)
-                | Instruction::DefineGetter(_)
-                | Instruction::DefineSetter(_)
-                | Instruction::SetObjectPrototype
-                | Instruction::DefineElement(_)
-                | Instruction::DeleteProperty(_)
-                | Instruction::DeleteElement
-                | Instruction::HasProperty
-                | Instruction::InstanceOf => {
-                    return Err(VmError::runtime(format!(
-                        "V4 instruction {instruction:?} is not implemented by the VM yet"
-                    )));
+                Instruction::ObjectCreateEmpty => {
+                    self.stack.push(context.create_object([])?);
+                }
+                Instruction::ArrayCreateSparse(length) => {
+                    self.stack
+                        .push(context.create_sparse_array(length as usize)?);
+                }
+                Instruction::DefineDataProperty(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let value = self.pop_value()?;
+                    let object = object_id(self.peek_value()?, "define property")?;
+                    context.define_own_property(object, name, PropertyDescriptor::data(value))?;
+                }
+                Instruction::DefineGetter(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let getter = self.pop_value()?;
+                    let object = object_id(self.peek_value()?, "define getter")?;
+                    let setter = existing_accessor_setter(context, object, &name);
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::accessor(Some(getter), setter, true, true),
+                    )?;
+                }
+                Instruction::DefineSetter(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let setter = self.pop_value()?;
+                    let object = object_id(self.peek_value()?, "define setter")?;
+                    let getter = existing_accessor_getter(context, object, &name);
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::accessor(getter, Some(setter), true, true),
+                    )?;
+                }
+                Instruction::SetObjectPrototype => {
+                    let prototype = self.pop_value()?;
+                    let object = object_id(self.peek_value()?, "set prototype")?;
+                    match prototype {
+                        JsValue::Null => {
+                            context.set_prototype_of(object, None)?;
+                        }
+                        JsValue::Object(prototype) => {
+                            context.set_prototype_of(object, Some(prototype))?;
+                        }
+                        _ => {}
+                    }
+                }
+                Instruction::DefineElement(index) => {
+                    let value = self.pop_value()?;
+                    let array = self.peek_value()?.clone();
+                    context.set_element(array, JsValue::Number(index as f64), value)?;
+                }
+                Instruction::DeleteProperty(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let object = object_id(&self.pop_value()?, "delete property")?;
+                    let deleted = context.delete_property(object, &name, context.strict())?;
+                    self.stack.push(JsValue::Boolean(deleted));
+                }
+                Instruction::DeleteElement => {
+                    let key = to_property_key(&self.pop_value()?)?;
+                    let object = object_id(&self.pop_value()?, "delete property")?;
+                    let deleted = context.delete_property(object, &key, context.strict())?;
+                    self.stack.push(JsValue::Boolean(deleted));
+                }
+                Instruction::HasProperty => {
+                    let object = object_id(&self.pop_value()?, "test property")?;
+                    let key = to_property_key(&self.pop_value()?)?;
+                    self.stack
+                        .push(JsValue::Boolean(context.has_property(object, &key)?));
+                }
+                Instruction::InstanceOf => {
+                    let constructor = self.pop_value()?;
+                    let value = self.pop_value()?;
+                    self.stack
+                        .push(JsValue::Boolean(context.instance_of(value, constructor)?));
                 }
             }
         }
@@ -508,6 +586,50 @@ impl Vm {
             }
             other => Err(VmError::type_error(format!("{other} is not callable"))),
         }
+    }
+
+    fn get_property_value(
+        &mut self,
+        receiver: JsValue,
+        key: &str,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let object = object_id(&receiver, "read property")?;
+        let Some((_, descriptor)) = context.find_property_descriptor(object, key)? else {
+            return Ok(JsValue::Undefined);
+        };
+        match descriptor.kind {
+            PropertyKind::Data { value, .. } => Ok(value),
+            PropertyKind::Accessor { get: None, .. } => Ok(JsValue::Undefined),
+            PropertyKind::Accessor {
+                get: Some(getter), ..
+            } => self.call_value(getter, receiver, Vec::new(), context),
+        }
+    }
+
+    fn set_property_value(
+        &mut self,
+        receiver: JsValue,
+        key: &str,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let object = object_id(&receiver, "write property")?;
+        if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
+            match descriptor.kind {
+                PropertyKind::Accessor {
+                    set: Some(setter), ..
+                } => {
+                    self.call_value(setter, receiver, vec![value.clone()], context)?;
+                    return Ok(value);
+                }
+                PropertyKind::Accessor { set: None, .. } => {
+                    return Err(VmError::type_error("property setter is undefined"));
+                }
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        context.set_property(receiver, key, value)
     }
 
     fn call_user_function(
@@ -615,6 +737,39 @@ impl Vm {
         }
         *instruction_pointer = target;
         Ok(())
+    }
+}
+
+fn object_id(value: &JsValue, operation: &str) -> Result<ObjectId, VmError> {
+    match value {
+        JsValue::Object(object) => Ok(*object),
+        other => Err(VmError::type_error(format!(
+            "cannot {operation} on {other}"
+        ))),
+    }
+}
+
+fn existing_accessor_getter(
+    context: &NativeContext,
+    object: ObjectId,
+    key: &str,
+) -> Option<JsValue> {
+    let descriptor = context.get_own_property_descriptor(object, key)?;
+    match descriptor.kind {
+        PropertyKind::Accessor { get, .. } => get,
+        PropertyKind::Data { .. } => None,
+    }
+}
+
+fn existing_accessor_setter(
+    context: &NativeContext,
+    object: ObjectId,
+    key: &str,
+) -> Option<JsValue> {
+    let descriptor = context.get_own_property_descriptor(object, key)?;
+    match descriptor.kind {
+        PropertyKind::Accessor { set, .. } => set,
+        PropertyKind::Data { .. } => None,
     }
 }
 
