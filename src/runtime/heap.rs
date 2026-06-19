@@ -36,6 +36,10 @@ impl Heap {
         self.environments.get(id.0 as usize)?.as_ref()
     }
 
+    pub fn environment_mut(&mut self, id: EnvironmentId) -> Option<&mut Environment> {
+        self.environments.get_mut(id.0 as usize)?.as_mut()
+    }
+
     #[must_use]
     pub fn object_count(&self) -> usize {
         self.objects.iter().flatten().count()

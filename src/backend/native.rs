@@ -20,6 +20,9 @@ impl NativeRuntime {
     pub fn new(config: RuntimeConfig) -> Self {
         let mut context = NativeContext::default();
         builtins::install_foundation(context.heap_mut());
+        if config.install_test262_host {
+            builtins::install_test262_harness(&mut context);
+        }
         Self {
             _config: config,
             context,

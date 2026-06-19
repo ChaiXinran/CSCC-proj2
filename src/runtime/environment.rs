@@ -49,4 +49,22 @@ impl Environment {
     pub fn binding(&self, name: &str) -> Option<&Binding> {
         self.bindings.get(name)
     }
+
+    #[must_use]
+    pub fn has_binding(&self, name: &str) -> bool {
+        self.bindings.contains_key(name)
+    }
+
+    pub fn set_mutable_binding(&mut self, name: &str, value: JsValue) -> bool {
+        let Some(binding) = self.bindings.get_mut(name) else {
+            return false;
+        };
+
+        if !binding.mutable || !binding.initialized {
+            return false;
+        }
+
+        binding.value = value;
+        true
+    }
 }
