@@ -109,7 +109,10 @@ impl Vm {
                 }
                 Instruction::DeclareGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
-                    context.declare_global(name, JsValue::Undefined);
+                    let value = self.pop_value()?;
+                    if !context.declare_global(name, value.clone()) {
+                        context.set_global(name, value);
+                    }
                 }
                 Instruction::LoadGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
@@ -421,16 +424,15 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "all V1 instructions are now implemented; this placeholder test is no longer valid"]
-    fn reports_v1_instructions_not_implemented_by_vm_yet() {
+    fn reports_operand_stack_underflow() {
         let chunk = Chunk {
             instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
             constants: Vec::new(),
         };
         let error = Vm::default().execute(&chunk).unwrap_err();
 
-        assert!(error.message.contains("Pop"));
-        assert!(error.message.contains("not implemented"));
+        assert_eq!(error.kind, VmErrorKind::Runtime);
+        assert!(error.message.contains("underflow"));
     }
 
     #[test]
@@ -494,10 +496,8 @@ mod tests {
         let value = constant(&mut chunk, Constant::Number(18.0));
         let divisor = constant(&mut chunk, Constant::Number(3.0));
 
-        chunk.emit(Instruction::DeclareGlobal(name));
         chunk.emit(Instruction::Constant(value));
-        chunk.emit(Instruction::StoreGlobal(name));
-        chunk.emit(Instruction::Pop);
+        chunk.emit(Instruction::DeclareGlobal(name));
         chunk.emit(Instruction::LoadGlobal(name));
         chunk.emit(Instruction::Constant(divisor));
         chunk.emit(Instruction::Divide);

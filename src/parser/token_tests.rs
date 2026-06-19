@@ -6,7 +6,10 @@
 //! wrong, never the lexer.
 
 use crate::{
-    ast::{BinaryOperator, Expression, Literal, LogicalOperator, Statement, UnaryOperator, VariableKind},
+    ast::{
+        BinaryOperator, Expression, Literal, LogicalOperator, Statement, UnaryOperator,
+        VariableKind,
+    },
     lexer::{Keyword, Span, Token, TokenKind},
     parser::Parser,
 };
@@ -75,7 +78,15 @@ fn parse_err(tokens: Vec<Token>) -> crate::parser::ParseError {
 /// `1 + 2 * 3` must produce `Add(1, Mul(2, 3))` — multiplication binds tighter.
 #[test]
 fn addition_binds_looser_than_multiplication() {
-    let tokens = vec![num(1.0), op("+"), num(2.0), op("*"), num(3.0), punc(';'), eof()];
+    let tokens = vec![
+        num(1.0),
+        op("+"),
+        num(2.0),
+        op("*"),
+        num(3.0),
+        punc(';'),
+        eof(),
+    ];
     let expr = parse_expr(tokens);
     assert_eq!(
         expr,
@@ -94,7 +105,15 @@ fn addition_binds_looser_than_multiplication() {
 /// `18 / 2 / 3` must produce `Div(Div(18, 2), 3)` — left associativity.
 #[test]
 fn division_is_left_associative() {
-    let tokens = vec![num(18.0), op("/"), num(2.0), op("/"), num(3.0), punc(';'), eof()];
+    let tokens = vec![
+        num(18.0),
+        op("/"),
+        num(2.0),
+        op("/"),
+        num(3.0),
+        punc(';'),
+        eof(),
+    ];
     let expr = parse_expr(tokens);
     assert_eq!(
         expr,
@@ -117,7 +136,10 @@ fn strict_equal_produces_binary_node() {
     let expr = parse_expr(tokens);
     assert!(matches!(
         expr,
-        Expression::Binary { operator: BinaryOperator::StrictEqual, .. }
+        Expression::Binary {
+            operator: BinaryOperator::StrictEqual,
+            ..
+        }
     ));
 }
 
@@ -128,7 +150,10 @@ fn strict_not_equal_produces_binary_node() {
     let expr = parse_expr(tokens);
     assert!(matches!(
         expr,
-        Expression::Binary { operator: BinaryOperator::StrictNotEqual, .. }
+        Expression::Binary {
+            operator: BinaryOperator::StrictNotEqual,
+            ..
+        }
     ));
 }
 
@@ -139,7 +164,10 @@ fn less_than_or_equal_produces_binary_node() {
     let expr = parse_expr(tokens);
     assert!(matches!(
         expr,
-        Expression::Binary { operator: BinaryOperator::LessThanOrEqual, .. }
+        Expression::Binary {
+            operator: BinaryOperator::LessThanOrEqual,
+            ..
+        }
     ));
 }
 
@@ -150,7 +178,10 @@ fn greater_than_or_equal_produces_binary_node() {
     let expr = parse_expr(tokens);
     assert!(matches!(
         expr,
-        Expression::Binary { operator: BinaryOperator::GreaterThanOrEqual, .. }
+        Expression::Binary {
+            operator: BinaryOperator::GreaterThanOrEqual,
+            ..
+        }
     ));
 }
 
@@ -164,7 +195,13 @@ fn logical_and_produces_logical_node_not_binary() {
     let tokens = vec![ident("a"), op("&&"), ident("b"), punc(';'), eof()];
     let expr = parse_expr(tokens);
     assert!(
-        matches!(expr, Expression::Logical { operator: LogicalOperator::And, .. }),
+        matches!(
+            expr,
+            Expression::Logical {
+                operator: LogicalOperator::And,
+                ..
+            }
+        ),
         "expected Logical(And), got {expr:?}"
     );
 }
@@ -175,7 +212,13 @@ fn logical_or_produces_logical_node_not_binary() {
     let tokens = vec![ident("a"), op("||"), ident("b"), punc(';'), eof()];
     let expr = parse_expr(tokens);
     assert!(
-        matches!(expr, Expression::Logical { operator: LogicalOperator::Or, .. }),
+        matches!(
+            expr,
+            Expression::Logical {
+                operator: LogicalOperator::Or,
+                ..
+            }
+        ),
         "expected Logical(Or), got {expr:?}"
     );
 }
@@ -184,14 +227,29 @@ fn logical_or_produces_logical_node_not_binary() {
 #[test]
 fn and_binds_tighter_than_or() {
     let tokens = vec![
-        ident("a"), op("||"), ident("b"), op("&&"), ident("c"), punc(';'), eof(),
+        ident("a"),
+        op("||"),
+        ident("b"),
+        op("&&"),
+        ident("c"),
+        punc(';'),
+        eof(),
     ];
     let expr = parse_expr(tokens);
-    let Expression::Logical { operator, right, .. } = expr else {
+    let Expression::Logical {
+        operator, right, ..
+    } = expr
+    else {
         panic!("expected top-level Logical, got {expr:?}");
     };
     assert_eq!(operator, LogicalOperator::Or);
-    assert!(matches!(*right, Expression::Logical { operator: LogicalOperator::And, .. }));
+    assert!(matches!(
+        *right,
+        Expression::Logical {
+            operator: LogicalOperator::And,
+            ..
+        }
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -215,7 +273,12 @@ fn unary_minus_wraps_operand() {
 /// `+ ""` → Unary { Plus, String("") }.
 #[test]
 fn unary_plus_on_empty_string() {
-    let tokens = vec![op("+"), tok(TokenKind::String(String::new())), punc(';'), eof()];
+    let tokens = vec![
+        op("+"),
+        tok(TokenKind::String(String::new())),
+        punc(';'),
+        eof(),
+    ];
     let expr = parse_expr(tokens);
     assert_eq!(
         expr,
@@ -233,7 +296,10 @@ fn logical_not_wraps_boolean() {
     let expr = parse_expr(tokens);
     assert!(matches!(
         expr,
-        Expression::Unary { operator: UnaryOperator::Not, .. }
+        Expression::Unary {
+            operator: UnaryOperator::Not,
+            ..
+        }
     ));
 }
 
@@ -271,9 +337,16 @@ fn call_with_no_arguments() {
 #[test]
 fn call_with_two_arguments() {
     let tokens = vec![
-        ident("assert"), punc('.'), ident("sameValue"),
-        punc('('), ident("x"), punc(','), num(1.0), punc(')'),
-        punc(';'), eof(),
+        ident("assert"),
+        punc('.'),
+        ident("sameValue"),
+        punc('('),
+        ident("x"),
+        punc(','),
+        num(1.0),
+        punc(')'),
+        punc(';'),
+        eof(),
     ];
     let expr = parse_expr(tokens);
     let Expression::Call { callee, arguments } = expr else {
@@ -282,7 +355,10 @@ fn call_with_two_arguments() {
     assert_eq!(arguments.len(), 2);
     assert!(matches!(
         *callee,
-        Expression::Member { computed: false, .. }
+        Expression::Member {
+            computed: false,
+            ..
+        }
     ));
 }
 
@@ -305,7 +381,8 @@ fn assignment_to_literal_is_a_parse_error() {
     let err = parse_err(tokens);
     assert!(
         err.message.contains("assignment target"),
-        "unexpected message: {}", err.message
+        "unexpected message: {}",
+        err.message
     );
 }
 
@@ -330,7 +407,14 @@ fn var_without_initializer() {
 /// `var y = 42 ;` → VariableDeclaration with number initializer.
 #[test]
 fn var_with_number_initializer() {
-    let tokens = vec![kw(Keyword::Var), ident("y"), op("="), num(42.0), punc(';'), eof()];
+    let tokens = vec![
+        kw(Keyword::Var),
+        ident("y"),
+        op("="),
+        num(42.0),
+        punc(';'),
+        eof(),
+    ];
     assert_eq!(
         parse_stmt(tokens),
         Statement::VariableDeclaration {

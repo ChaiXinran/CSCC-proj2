@@ -38,9 +38,9 @@ cargo run -- repl
 cargo build --release
 ```
 
-These CLI commands currently use `BackendKind::Boa`. The Native backend remains
-explicitly unsupported at the public runtime boundary until its complete
-source-to-value pipeline is ready.
+These general CLI commands still default to `BackendKind::Boa`. The Native
+backend now executes the V1 expression subset and can be selected explicitly;
+unsupported syntax returns a categorized error instead of falling back to Boa.
 
 Rust callers can select a backend explicitly:
 
@@ -206,6 +206,18 @@ ECMAScript specification text and Test262 remain authoritative when behavior
 differs.
 
 ## Test262
+
+Run the fixed Native V1 acceptance gate:
+
+```sh
+cargo run -- test262 --native-v1 --jobs 1 --verbose
+cargo test --test native_test262
+```
+
+This runs the six official expression tests listed in
+`docs/native-v1-scope.md` through the self-developed lexer, parser, compiler,
+VM, runtime, and minimal host-provided Test262 harness. Every file is checked
+in default and strict mode; Boa is not used.
 
 Start with the feature directory affected by a change:
 

@@ -95,6 +95,11 @@ impl Compiler {
                 left,
                 right,
             } => self.compile_binary(*operator, left, right, chunk),
+            Expression::Logical {
+                operator,
+                left,
+                right,
+            } => self.compile_logical(*operator, left, right, chunk),
             Expression::Identifier(name) => {
                 let name = self.add_name(name, chunk)?;
                 chunk.emit(Instruction::LoadGlobal(name));
@@ -109,11 +114,6 @@ impl Compiler {
                 computed,
             } => self.compile_member(object, property, *computed, chunk),
             Expression::Call { callee, arguments } => self.compile_call(callee, arguments, chunk),
-            Expression::Logical {
-                operator,
-                left,
-                right,
-            } => self.compile_logical_node(*operator, left, right, chunk),
             unsupported => Err(CompileError::unsupported(format!(
                 "expression {unsupported:?}"
             ))),
@@ -166,11 +166,14 @@ impl Compiler {
         right: &Expression,
         chunk: &mut Chunk,
     ) -> Result<(), CompileError> {
-        if matches!(
-            operator,
-            BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr
-        ) {
-            return self.compile_logical(operator, left, right, chunk);
+        match operator {
+            BinaryOperator::LogicalAnd => {
+                return self.compile_logical(LogicalOperator::And, left, right, chunk);
+            }
+            BinaryOperator::LogicalOr => {
+                return self.compile_logical(LogicalOperator::Or, left, right, chunk);
+            }
+            _ => {}
         }
 
         let instruction = match operator {
@@ -201,44 +204,18 @@ impl Compiler {
 
     fn compile_logical(
         &mut self,
-        operator: BinaryOperator,
-        left: &Expression,
-        right: &Expression,
-        chunk: &mut Chunk,
-    ) -> Result<(), CompileError> {
-        self.compile_expression(left, chunk)?;
-
-        let jump = match operator {
-            BinaryOperator::LogicalAnd => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
-            BinaryOperator::LogicalOr => chunk.emit(Instruction::JumpIfTrue(usize::MAX)),
-            _ => unreachable!(),
-        };
-
-        chunk.emit(Instruction::Pop);
-        self.compile_expression(right, chunk)?;
-        chunk
-            .patch_jump(jump, chunk.current_offset())
-            .map_err(CompileError::from_chunk)?;
-        Ok(())
-    }
-
-    /// Compiles `Expression::Logical` nodes produced by the parser.
-    ///
-    /// The right operand is only evaluated when the left operand does not
-    /// short-circuit, so it is lowered to a conditional jump rather than a
-    /// plain binary instruction.
-    fn compile_logical_node(
-        &mut self,
         operator: LogicalOperator,
         left: &Expression,
         right: &Expression,
         chunk: &mut Chunk,
     ) -> Result<(), CompileError> {
         self.compile_expression(left, chunk)?;
+
         let jump = match operator {
             LogicalOperator::And => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
             LogicalOperator::Or => chunk.emit(Instruction::JumpIfTrue(usize::MAX)),
         };
+
         chunk.emit(Instruction::Pop);
         self.compile_expression(right, chunk)?;
         chunk

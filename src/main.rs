@@ -7,7 +7,7 @@ use std::{
 };
 
 use agentjs::{
-    Engine, ExecutionOptions, Runtime, RuntimeConfig,
+    BackendKind, Engine, ExecutionOptions, Runtime, RuntimeConfig,
     test262::{RunnerOptions, Status},
 };
 
@@ -153,6 +153,11 @@ fn command_test262(args: &[String]) -> Result<(), String> {
                 index += 1;
                 options.jobs = parse_usize(required_value(args, index, "--jobs")?)?;
             }
+            "--backend" => {
+                index += 1;
+                options.backend = parse_backend(required_value(args, index, "--backend")?)?;
+            }
+            "--native-v1" => options.select_native_v1(),
             "--json" => {
                 index += 1;
                 json_path = Some(PathBuf::from(required_value(args, index, "--json")?));
@@ -275,6 +280,16 @@ fn parse_usize(value: &str) -> Result<usize, String> {
         .map_err(|_| format!("`{value}` is not a positive integer"))
 }
 
+fn parse_backend(value: &str) -> Result<BackendKind, String> {
+    match value {
+        "boa" => Ok(BackendKind::Boa),
+        "native" => Ok(BackendKind::Native),
+        _ => Err(format!(
+            "unknown backend `{value}`; expected `boa` or `native`"
+        )),
+    }
+}
+
 fn print_help() {
     println!(
         "\
@@ -286,7 +301,8 @@ USAGE:
   agentjs jetstream <generated-runner.js>
   agentjs repl
   agentjs test262 [--root test262] [--suite test] [--filter text]
-                  [--limit N] [--jobs N] [--json result.json] [-v]
+                  [--backend boa|native] [--limit N] [--jobs N]
+                  [--native-v1] [--json result.json] [-v]
   agentjs bench [iterations]"
     );
 }

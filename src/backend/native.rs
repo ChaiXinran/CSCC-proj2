@@ -1,7 +1,7 @@
 use crate::{
     backend::{BackendExecution, RuntimeBackend},
     builtins,
-    contracts::{NativeContext, NativePipeline},
+    contracts::{NativeContext, NativeError, NativePipeline, VmErrorKind},
     engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig},
 };
 
@@ -12,7 +12,7 @@ use crate::{
 pub struct NativeRuntime {
     _config: RuntimeConfig,
     context: NativeContext,
-    _pipeline: NativePipeline,
+    pipeline: NativePipeline,
 }
 
 impl NativeRuntime {
@@ -26,29 +26,34 @@ impl NativeRuntime {
         Self {
             _config: config,
             context,
-            _pipeline: NativePipeline::default(),
+            pipeline: NativePipeline::default(),
         }
     }
 
-    fn not_implemented() -> EvalFailure {
-        EvalFailure::new(
-            FailureKind::Unsupported,
-            "the native AgentJS backend is not implemented yet",
-        )
+    fn evaluate(&mut self, source: &str) -> Result<crate::runtime::JsValue, EvalFailure> {
+        self.pipeline
+            .evaluate(source, &mut self.context)
+            .map_err(classify_native_error)
     }
 }
 
 impl RuntimeBackend for NativeRuntime {
     fn eval(
         &mut self,
-        _source: &str,
-        _options: ExecutionOptions,
+        source: &str,
+        options: ExecutionOptions,
     ) -> Result<BackendExecution, EvalFailure> {
-        Err(Self::not_implemented())
+        self.context.clear_output();
+        self.context.set_strict(options.strict);
+        let value = self.evaluate(source)?;
+        Ok(BackendExecution {
+            value: value.to_string(),
+            output: self.context.take_output(),
+        })
     }
 
-    fn eval_fragment(&mut self, _source: &str) -> Result<(), EvalFailure> {
-        Err(Self::not_implemented())
+    fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure> {
+        self.evaluate(source).map(|_| ())
     }
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure> {
@@ -66,4 +71,19 @@ impl RuntimeBackend for NativeRuntime {
     fn take_output(&mut self) -> Vec<String> {
         self.context.take_output()
     }
+}
+
+fn classify_native_error(error: NativeError) -> EvalFailure {
+    let kind = match &error {
+        NativeError::Lex(_) | NativeError::Parse(_) => FailureKind::Syntax,
+        NativeError::Compile(_) => FailureKind::Unsupported,
+        NativeError::Execute(error) => match error.kind {
+            VmErrorKind::Reference => FailureKind::Reference,
+            VmErrorKind::Type => FailureKind::Type,
+            VmErrorKind::Range => FailureKind::Range,
+            VmErrorKind::Test262 => FailureKind::Test262,
+            VmErrorKind::Runtime => FailureKind::Other,
+        },
+    };
+    EvalFailure::new(kind, error.to_string())
 }

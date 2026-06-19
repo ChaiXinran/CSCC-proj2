@@ -8,7 +8,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::engine::{EvalFailure, ExecutionOptions, FailureKind, Runtime, RuntimeConfig};
+use crate::{
+    backend::BackendKind,
+    engine::{EvalFailure, ExecutionOptions, FailureKind, Runtime, RuntimeConfig},
+};
+
+/// Official Test262 files used as the Native V1 end-to-end acceptance gate.
+pub const NATIVE_V1_TESTS: [&str; 6] = [
+    "test/language/expressions/multiplication/line-terminator.js",
+    "test/language/expressions/division/line-terminator.js",
+    "test/language/expressions/division/no-magic-asi.js",
+    "test/language/expressions/modulus/line-terminator.js",
+    "test/language/expressions/unary-plus/11.4.6-2-1.js",
+    "test/language/expressions/unary-minus/11.4.7-4-1.js",
+];
 
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
@@ -17,6 +30,8 @@ pub struct RunnerOptions {
     pub filter: Option<String>,
     pub limit: Option<usize>,
     pub jobs: usize,
+    pub backend: BackendKind,
+    pub files: Vec<PathBuf>,
     pub runtime: RuntimeConfig,
 }
 
@@ -28,6 +43,8 @@ impl Default for RunnerOptions {
             filter: None,
             limit: None,
             jobs: thread::available_parallelism().map_or(1, usize::from),
+            backend: BackendKind::Boa,
+            files: Vec::new(),
             runtime: RuntimeConfig {
                 loop_limit: 100_000_000,
                 recursion_limit: 512,
@@ -37,6 +54,14 @@ impl Default for RunnerOptions {
                 install_test262_host: true,
             },
         }
+    }
+}
+
+impl RunnerOptions {
+    /// Selects the six official Test262 files that define the Native V1 gate.
+    pub fn select_native_v1(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files = NATIVE_V1_TESTS.iter().map(PathBuf::from).collect();
     }
 }
 
@@ -114,12 +139,41 @@ struct Harness {
     includes: Arc<HashMap<String, Arc<str>>>,
 }
 
+impl Harness {
+    fn minimal_native() -> Self {
+        Self {
+            assert: Arc::from(""),
+            sta: Arc::from(""),
+            doneprint: Arc::from(""),
+            includes: Arc::new(HashMap::new()),
+        }
+    }
+}
+
 pub fn run(options: RunnerOptions) -> Result<Summary, String> {
     let started = Instant::now();
-    let harness = Arc::new(load_harness(&options.test262_root)?);
-    let suite = options.test262_root.join(&options.suite);
-    let mut paths = Vec::new();
-    collect_tests(&suite, &mut paths)?;
+    let harness = Arc::new(if options.backend == BackendKind::Boa {
+        load_harness(&options.test262_root)?
+    } else {
+        Harness::minimal_native()
+    });
+    let mut paths = if options.files.is_empty() {
+        let suite = options.test262_root.join(&options.suite);
+        let mut paths = Vec::new();
+        collect_tests(&suite, &mut paths)?;
+        paths
+    } else {
+        options
+            .files
+            .iter()
+            .map(|path| options.test262_root.join(path))
+            .collect()
+    };
+    for path in &paths {
+        if !path.is_file() {
+            return Err(format!("Test262 file does not exist: `{}`", path.display()));
+        }
+    }
     paths.sort();
 
     if let Some(filter) = &options.filter {
@@ -140,6 +194,7 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
         let sender = sender.clone();
         let harness = Arc::clone(&harness);
         let config = options.runtime;
+        let backend = options.backend;
         workers.push(thread::spawn(move || {
             loop {
                 let path = match queue.lock() {
@@ -158,7 +213,7 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
                     break;
                 };
                 let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_case(&path, &harness, config)
+                    run_case(&path, &harness, backend, config)
                 })) {
                     Ok(result) => result,
                     Err(payload) => CaseResult {
@@ -207,7 +262,12 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
         .unwrap_or("unknown panic payload")
 }
 
-fn run_case(path: &Path, harness: &Harness, config: RuntimeConfig) -> CaseResult {
+fn run_case(
+    path: &Path,
+    harness: &Harness,
+    backend: BackendKind,
+    config: RuntimeConfig,
+) -> CaseResult {
     let started = Instant::now();
     let result = (|| {
         let source = fs::read_to_string(path).map_err(|error| error.to_string())?;
@@ -234,12 +294,14 @@ fn run_case(path: &Path, harness: &Harness, config: RuntimeConfig) -> CaseResult
         };
 
         for strict in strict_modes {
-            run_variant(path, &source, &metadata, harness, config, *strict).map_err(|detail| {
-                format!(
-                    "{} mode: {detail}",
-                    if *strict { "strict" } else { "default" }
-                )
-            })?;
+            run_variant(path, &source, &metadata, harness, backend, config, *strict).map_err(
+                |detail| {
+                    format!(
+                        "{} mode: {detail}",
+                        if *strict { "strict" } else { "default" }
+                    )
+                },
+            )?;
         }
         Ok((Status::Passed, String::new()))
     })();
@@ -261,14 +323,15 @@ fn run_variant(
     source: &str,
     metadata: &Metadata,
     harness: &Harness,
+    backend: BackendKind,
     config: RuntimeConfig,
     strict: bool,
 ) -> Result<(), String> {
-    let mut runtime = Runtime::new(config).map_err(|error| error.to_string())?;
+    let mut runtime = Runtime::with_backend(backend, config).map_err(|error| error.to_string())?;
     runtime.clear_output();
     runtime.set_strict(false);
 
-    if !metadata.flags.contains("raw") {
+    if backend == BackendKind::Boa && !metadata.flags.contains("raw") {
         runtime
             .eval_fragment(&harness.assert)
             .map_err(|error| format!("assert.js failed: {error}"))?;
@@ -290,6 +353,11 @@ fn run_variant(
                 .eval_fragment(code)
                 .map_err(|error| format!("harness `{include}` failed: {error}"))?;
         }
+    } else if backend == BackendKind::Native && !metadata.includes.is_empty() {
+        return Err(format!(
+            "native V1 does not support harness includes: {}",
+            metadata.includes.join(", ")
+        ));
     }
 
     runtime.set_strict(strict);
