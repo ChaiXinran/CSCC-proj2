@@ -7,6 +7,9 @@ The root is the AgentJS implementation. It uses three bundled upstream trees for
 - `src/`: AgentJS runtime, CLI, and Test262 runner. `engine.rs` is
   backend-neutral; backend implementations live in `src/backend/`. Integration
   tests live in `tests/`; runnable JavaScript samples live in `examples/`.
+- `src/contracts.rs`: stable native-engine collaboration boundary. Import
+  cross-team types and traits here; change its public contracts only with team
+  review. Keep implementations in their owning `src/<module>/` directory.
 - `docs/`: architecture, status, and benchmark methodology.
 - `boa/`: current Rust ECMAScript backend and implementation reference. Do not modify it for AgentJS features unless an upstream patch is intentional.
 - `quickjs/`: C implementation used as a compact engine reference. Sources are at the directory root, with examples, tests, and fuzz targets under `examples/`, `tests/`, and `fuzz/`.

@@ -1,6 +1,9 @@
 use crate::{
     backend::{BackendExecution, RuntimeBackend},
+    builtins,
+    contracts::NativePipeline,
     engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig},
+    runtime::Heap,
 };
 
 /// Self-developed AgentJS runtime.
@@ -11,15 +14,21 @@ pub struct NativeRuntime {
     _config: RuntimeConfig,
     strict: bool,
     output: Vec<String>,
+    _heap: Heap,
+    _pipeline: NativePipeline,
 }
 
 impl NativeRuntime {
     #[must_use]
     pub fn new(config: RuntimeConfig) -> Self {
+        let mut heap = Heap::default();
+        builtins::install_foundation(&mut heap);
         Self {
             _config: config,
             strict: false,
             output: Vec::new(),
+            _heap: heap,
+            _pipeline: NativePipeline::default(),
         }
     }
 

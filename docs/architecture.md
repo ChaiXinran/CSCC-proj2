@@ -8,22 +8,25 @@ the ECMAScript backend so the two can evolve independently.
 
 1. `engine.rs` owns backend-neutral configuration, errors, reports, `Engine`,
    and `Runtime`. It contains no Boa imports.
-2. `backend/mod.rs` defines `BackendKind` and the internal `RuntimeBackend`
+2. `contracts.rs` is the reviewed collaboration boundary. It re-exports shared
+   native types, defines the parser/compiler/executor traits, and provides the
+   replaceable `NativePipeline`.
+3. `backend/mod.rs` defines `BackendKind` and the internal `RuntimeBackend`
    contract used by the CLI and Test262 runner.
-3. `backend/boa.rs` contains the complete compatibility implementation:
+4. `backend/boa.rs` contains the complete compatibility implementation:
    context creation, host functions, limits, script caching, jobs, and error
    conversion.
-4. `backend/native.rs` is the compiling entry point for the self-developed
+5. `backend/native.rs` is the compiling entry point for the self-developed
    engine. It currently returns an explicit `Unsupported` error.
-5. `Engine` creates a fresh isolate for each unrelated execution. This prevents
+6. `Engine` creates a fresh isolate for each unrelated execution. This prevents
    globals and prototype mutations from leaking between agent actions.
-6. `Runtime` keeps one isolate alive for related calls such as a REPL session.
-7. The host surface is intentionally small: `print` and a frozen `console`
+7. `Runtime` keeps one isolate alive for related calls such as a REPL session.
+8. The host surface is intentionally small: `print` and a frozen `console`
    facade. Filesystem, process, and network access are not exposed.
-8. Runtime limits bound loops, recursion, VM stack growth, and backtrace size.
-9. A bounded per-isolate LRU reuses parsed and compiled scripts for repeated
+9. Runtime limits bound loops, recursion, VM stack growth, and backtrace size.
+10. A bounded per-isolate LRU reuses parsed and compiled scripts for repeated
    agent calls without sharing mutable globals across isolates.
-10. `test262` discovers tests, loads harness files, runs strict/non-strict
+11. `test262` discovers tests, loads harness files, runs strict/non-strict
    variants in parallel, catches per-case engine panics, and reports
    pass/fail/skip counts.
 
@@ -41,11 +44,24 @@ used as a design and performance reference, not linked into the binary.
 
 The replacement path is incremental:
 
-1. Add native lexer and parser modules.
-2. Compile the native AST into AgentJS bytecode.
-3. Execute bytecode in `NativeRuntime`.
-4. Add native values, environments, objects, GC, and built-ins.
-5. Change the default backend only after targeted Test262 suites pass.
+1. `lexer/`, `ast/`, and `parser/` define the native front end.
+2. `bytecode/` compiles the native AST into stack-based instructions.
+3. `vm/` executes bytecode independently from the parser.
+4. `runtime/` owns values, environments, objects, the heap, and GC boundary.
+5. `builtins/` installs standard constructors without exposing host APIs.
+6. `contracts.rs::NativePipeline` assembles replaceable stages for isolated
+   development and tests.
+7. `backend/native.rs` owns persistent native state and calls that pipeline.
+8. Change the default backend only after targeted Test262 suites pass.
+
+## Collaboration Boundary
+
+Cross-module code should import shared definitions through `contracts.rs`.
+Lexer/parser, bytecode, and VM/runtime contributors implement `SourceParser`,
+`ProgramCompiler`, and `ChunkExecutor` respectively. Tests can replace any
+unfinished stage with a fake implementation by constructing
+`NativePipeline::from_stages`. Changes to these traits or shared data types
+require team review; implementation details remain inside their owning folder.
 
 This is an explicit bootstrap architecture. AgentJS already owns the bounded
 script cache and isolation policy; planned native backend work includes:

@@ -1,93 +1,255 @@
 # AgentJS
 
-AgentJS is a Rust-based lightweight JavaScript execution runtime for AI agent
-workloads. It focuses on short-lived, high-frequency script calls, isolated
-global state, restricted host capabilities, measurable startup cost, and
-ECMAScript conformance through the bundled `test262/` suite.
+AgentJS is a lightweight JavaScript engine written in Rust for short-lived,
+high-frequency AI agent workloads. The repository currently provides a stable
+Boa-backed compatibility runtime while a self-developed lexer, parser,
+bytecode compiler, VM, runtime, and built-in library are developed in parallel.
 
-The repository also contains `boa/` and `quickjs/` as implementation references.
-The current bootstrap backend uses Boa's parser and VM; AgentJS adds its own
-isolate lifecycle, resource policy, CLI, Test262 orchestration, and benchmark
-workflow. See [implementation status](docs/status.md) for the exact boundary.
+Boa is the executable baseline and behavior oracle, not the final engine.
+QuickJS is a compact architecture and performance reference. Neither upstream
+tree should receive AgentJS features. The final native execution path must not
+depend on Boa or QuickJS internals.
 
-Clone with submodules, or run `git submodule update --init --recursive` after
-cloning. Pinned revisions are listed in
-[docs/dependencies.md](docs/dependencies.md).
+Clone all pinned dependencies with:
+
+```sh
+git clone --recurse-submodules <repository-url>
+# Existing checkout:
+git submodule update --init --recursive
+```
+
+Pinned revisions are listed in
+[docs/dependencies.md](docs/dependencies.md). Current limitations are recorded
+in [docs/status.md](docs/status.md).
 
 ## Requirements
 
 - Rust 1.91 or newer
-- A C toolchain only when building the QuickJS reference
 - Linux, macOS, or Windows
+- A C toolchain only when building the QuickJS reference
 
 ## Build and Run
 
 ```sh
-cargo build --release
-cargo run -- eval "Array.from({length: 5}, (_, i) => i * i)"
+cargo build
+cargo run -- eval "1 + 2"
 cargo run -- run examples/hello.js
 cargo run -- repl
+cargo build --release
 ```
 
-The default `conformance` feature enables Intl, Temporal, and experimental
-language support for the highest Test262 coverage. Build a smaller agent binary
-with `cargo build --release --no-default-features`.
+These CLI commands currently use `BackendKind::Boa`. The Native backend remains
+explicitly unsupported at the public runtime boundary until its complete
+source-to-value pipeline is ready.
 
-Independent `Engine::execute` calls receive fresh isolates. A persistent
-`Runtime` is available for related calls and REPL use; it keeps a bounded LRU
-of parsed and compiled scripts for high-frequency repeated calls. JavaScript
-has no direct filesystem, process, or network API.
+Rust callers can select a backend explicitly:
 
-## Test
+```rust
+use agentjs::{BackendKind, Engine, ExecutionOptions, RuntimeConfig};
+
+fn run_script() -> Result<(), agentjs::EvalFailure> {
+    let engine = Engine::with_backend(BackendKind::Boa, RuntimeConfig::default());
+    let result = engine.execute("6 * 7", ExecutionOptions::default())?;
+    assert_eq!(result.value, "42");
+    Ok(())
+}
+```
+
+## Architecture
+
+```text
+CLI / Test262
+      |
+      v
+Engine / Runtime
+      |
+      +-------------------+
+      |                   |
+      v                   v
+ BoaRuntime          NativeRuntime
+                          |
+                          v
+ source -> lexer -> parser/AST -> bytecode -> VM -> JsValue
+                                             |
+                                             v
+                                  runtime + builtins + heap
+```
+
+Native implementation directories:
+
+```text
+src/
+├── contracts.rs       # reviewed cross-team API
+├── lexer/             # source -> Token
+├── ast/               # shared syntax representation
+├── parser/            # Token -> Program
+├── bytecode/          # Program -> Chunk
+├── vm/                # Chunk -> JsValue
+├── runtime/           # values, objects, environments, heap, GC
+├── builtins/          # Object, Function, Array, etc.
+└── backend/
+    ├── boa.rs          # compatibility baseline
+    └── native.rs       # native pipeline assembly
+```
+
+Dependencies should flow in one direction:
+
+```text
+lexer -> parser/AST -> bytecode -> VM -> runtime
+                                      -> builtins
+```
+
+`backend/native.rs` assembles modules but should not contain lexer, parser, VM,
+or object-model implementations. See
+[docs/architecture.md](docs/architecture.md) for the full boundary.
+
+## Shared Interfaces
+
+Cross-team code should import shared types and traits through
+`src/contracts.rs`:
+
+```rust
+use agentjs::contracts::{
+    ChunkExecutor, NativePipeline, ProgramCompiler, SourceParser,
+};
+```
+
+The stable collaboration contracts are:
+
+```text
+SourceParser::parse_source        source  -> Program
+ProgramCompiler::compile_program  Program -> Chunk
+ChunkExecutor::execute_chunk      Chunk   -> JsValue
+NativePipeline::evaluate          source  -> JsValue
+```
+
+`Token`, `Program`, `Chunk`, `Instruction`, and `JsValue` are important shared
+data contracts. Changes to these types or the three traits require team review.
+Implementation details should remain inside their owning directory.
+
+The complete native pipeline can be called directly during development:
+
+```rust
+use agentjs::contracts::{JsValue, NativePipeline};
+
+fn run_native_pipeline() -> Result<(), agentjs::NativeError> {
+    let value = NativePipeline::default().evaluate("")?;
+    assert_eq!(value, JsValue::Undefined);
+    Ok(())
+}
+```
+
+Only an empty program is supported by the default Native pipeline at present.
+This is an intentional scaffold, not a conformance claim.
+
+## Parallel Development
+
+Suggested ownership:
+
+- Front end: `lexer/`, `ast/`, and `parser/`
+- Compiler: `bytecode/`
+- Execution: `vm/`, `runtime/`, and `builtins/`
+- Integration: `backend/`, Test262, benchmarks, and reports
+
+Avoid editing another team's implementation directory. When an upstream or
+downstream stage is unfinished, replace it in a unit test:
+
+```rust
+let mut pipeline =
+    NativePipeline::from_stages(fake_parser, compiler_under_test, fake_vm);
+let value = pipeline.evaluate("ignored")?;
+```
+
+This permits:
+
+- parser tests without a compiler or VM;
+- compiler tests with hand-built ASTs;
+- VM tests with hand-built bytecode;
+- runtime tests using values and objects directly;
+- end-to-end differential tests against Boa.
+
+Keep commits scoped, for example `feat(lexer): tokenize numeric literals` or
+`fix(vm): preserve operands across calls`. Merge shared-contract changes before
+dependent implementation branches to reduce conflicts.
+
+## Testing Strategy
+
+Every module should contain normal, boundary, and error-path tests beside its
+implementation.
+
+```text
+Lexer:     source -> expected token sequence
+Parser:    tokens/source -> expected AST
+Compiler:  hand-built AST -> expected instructions
+VM:        hand-built Chunk -> expected JsValue/error
+Runtime:   direct object, property, scope, and heap operations
+Builtins:  direct calls in a controlled native runtime
+```
+
+Run the project gate before every merge:
 
 ```sh
+cargo fmt --all -- --check
+cargo check --all-targets
 cargo test
 cargo clippy --all-targets -- -D warnings
-cargo fmt --all -- --check
 ```
 
-Run a focused Test262 sample first:
+Boa differential tests should compare values, output, and error categories, but
+ECMAScript specification text and Test262 remain authoritative when behavior
+differs.
+
+## Test262
+
+Start with the feature directory affected by a change:
 
 ```sh
 cargo run --release -- test262 \
   --root test262 \
   --suite test/language/expressions \
-  --limit 1000 \
+  --limit 100 \
   --jobs 8 \
-  --json reports/test262-sample.json
+  --verbose
 ```
 
-Run the complete suite by changing `--suite` to `test` and removing `--limit`.
-Module tests are currently reported as skipped, never as passed.
+Windows users can run:
 
-The pinned June 19, 2026 sharded run executed 47,516 non-staging tests and
-passed 45,310 (95.36% of executed tests). Counting every remaining unexecuted
-test as a failure still gives an 87.31% full non-staging lower bound. See
-[reports/test262-report.md](reports/test262-report.md).
+```powershell
+.\scripts\test262-sample.ps1 -Suite test/language/expressions -Limit 100
+```
 
-## Benchmark
+Do not count skipped tests as passes. Pull requests that affect language
+behavior should report newly passed, newly failed, skipped, and regressed
+cases. Run the full suite only after focused suites pass.
+
+The existing Test262 report is a **Boa-backed baseline**: 45,310 of 47,516
+executed non-staging tests passed. It does not measure native engine
+conformance. See [reports/test262-report.md](reports/test262-report.md).
+
+## Benchmarking
 
 ```sh
 cargo run --release -- bench 1000
 ```
 
-This measures cold isolate creation and warm isolate reuse. The broader
-comparison methodology is documented in [docs/benchmark.md](docs/benchmark.md).
+This compares cold isolates, warm uncached runtimes, and warm cached runtimes.
+JetStream methodology and results are documented in
+[docs/benchmark.md](docs/benchmark.md) and
+[reports/jetstream2-report.md](reports/jetstream2-report.md). Existing benchmark
+numbers are also Boa-backed baselines; native results must be reported
+separately.
 
-A pinned JetStream 2.0 pure-JavaScript subset has also been run with the
-official 120 iterations. AgentJS scored a 4.169 geometric mean across six
-selected workloads; Node/V8 scored 749.849 on the same generated inputs. See
-[reports/jetstream2-report.md](reports/jetstream2-report.md).
+## Contribution Checklist
 
-## Contest Targets
+Before requesting review:
 
-The project follows the 2026 OS Functional Challenge requirements:
+- modify only the intended module and necessary shared contracts;
+- add focused unit tests for new behavior;
+- run formatting, checks, tests, and Clippy;
+- record relevant Test262 or benchmark changes;
+- document unsupported behavior instead of silently falling back to Boa;
+- avoid committing generated files, build output, or local configuration.
 
-- Rust implementation and native binaries for Linux, macOS, and Windows;
-- more than 60% of ECMAScript Test262;
-- complete technical documentation;
-- competitive benchmark results;
-- measurable innovation beyond simply wrapping another engine.
-
-The 60% result is a release gate, not a current unverified claim. Architecture
-and the native optimization roadmap are in [docs/architecture.md](docs/architecture.md).
+The contest release gate is a self-developed Rust engine with more than 60%
+Test262 conformance, complete documentation, and measurable performance—not a
+wrapper around the compatibility backend.
