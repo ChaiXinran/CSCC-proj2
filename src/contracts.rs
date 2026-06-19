@@ -18,11 +18,11 @@ pub use crate::{
     lexer::{Keyword, LexError, Span, Token, TokenKind},
     parser::{ParseError, Parser},
     runtime::{
-        Binding, CollectionStats, Collector, Environment, EnvironmentId, Heap, JsObject, JsValue,
-        NativeContext, NativeErrorKind, NativeErrorValue, NativeFunction, ObjectId,
-        PropertyDescriptor,
+        Binding, CollectionStats, Collector, Environment, EnvironmentId, FunctionId, Heap,
+        JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
+        NativeFunction, ObjectId, ObjectKind, PropertyDescriptor,
     },
-    vm::{CallFrame, Vm, VmError, VmErrorKind},
+    vm::{CallFrame, Completion, Vm, VmError, VmErrorKind},
 };
 
 /// Unified failure type passed between native engine stages.
