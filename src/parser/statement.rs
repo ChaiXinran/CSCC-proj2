@@ -1,19 +1,13 @@
 //! Statement parsing helpers.
-//!
-//! Statement productions stay separate from Pratt expression parsing so both
-//! areas can be developed and reviewed independently.
 
 use crate::{
-    ast::{Statement, VariableDeclarator, VariableKind},
+    ast::{FunctionBody, FunctionParam, Statement, VariableDeclarator, VariableKind},
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
 };
 
 impl Parser {
     /// Parses a single statement.
-    ///
-    /// The V2 grammar adds blocks, `if`/`else`, `while`, `break`, `continue`,
-    /// and `throw` on top of the V1 expression and `var` statements.
     pub(super) fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.peek().kind {
             TokenKind::Punctuator(';') => {
@@ -22,6 +16,8 @@ impl Parser {
             }
             TokenKind::Punctuator('{') => self.parse_block(),
             TokenKind::Keyword(Keyword::Var) => self.parse_variable_declaration(),
+            TokenKind::Keyword(Keyword::Function) => self.parse_function_declaration(),
+            TokenKind::Keyword(Keyword::Return) => self.parse_return(),
             TokenKind::Keyword(Keyword::If) => self.parse_if(),
             TokenKind::Keyword(Keyword::While) => self.parse_while(),
             TokenKind::Keyword(Keyword::Break) => self.parse_break(),
@@ -32,7 +28,7 @@ impl Parser {
     }
 
     /// Parses `{ statement* }`.
-    fn parse_block(&mut self) -> Result<Statement, ParseError> {
+    pub(super) fn parse_block(&mut self) -> Result<Statement, ParseError> {
         self.expect_punctuator('{')?;
         let mut body = Vec::new();
         while !self.check_punctuator('}') && !self.at_eof() {
@@ -42,16 +38,83 @@ impl Parser {
         Ok(Statement::Block(body))
     }
 
-    /// Parses `var name (= expr)? (, name (= expr)?)* ;`.
+    /// Parses `function name(params) { body }`.
     ///
-    /// The result always carries at least one declarator.
+    /// Function declarations are not allowed at statement level inside other
+    /// functions in strict mode, but V3 permits them anywhere a statement is
+    /// allowed.
+    fn parse_function_declaration(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `function`
+        let name = self.expect_identifier()?;
+        let params = self.parse_param_list()?;
+        let body = self.parse_function_body()?;
+        Ok(Statement::FunctionDeclaration { name, params, body })
+    }
+
+    /// Parses a parameter list `(name, name, ...)`.
+    pub(super) fn parse_param_list(&mut self) -> Result<Vec<FunctionParam>, ParseError> {
+        self.expect_punctuator('(')?;
+        let mut params = Vec::new();
+        if !self.check_punctuator(')') {
+            loop {
+                let name = self.expect_identifier()?;
+                params.push(FunctionParam { name });
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+            }
+        }
+        self.expect_punctuator(')')?;
+        Ok(params)
+    }
+
+    /// Parses `{ statement* }` as a function body, tracking function_depth so
+    /// that `return` inside is accepted.
+    pub(super) fn parse_function_body(&mut self) -> Result<FunctionBody, ParseError> {
+        self.expect_punctuator('{')?;
+        self.function_depth += 1;
+        let mut statements = Vec::new();
+        while !self.check_punctuator('}') && !self.at_eof() {
+            statements.push(self.parse_statement()?);
+        }
+        self.function_depth -= 1;
+        self.expect_punctuator('}')?;
+        Ok(FunctionBody { statements })
+    }
+
+    /// Parses `return;` or `return expression;`.
+    ///
+    /// ECMAScript treats a line terminator between `return` and its expression
+    /// as an implicit semicolon (restricted production). If the next token is on
+    /// a new line, `return;` is produced without consuming the expression.
+    fn parse_return(&mut self) -> Result<Statement, ParseError> {
+        if self.function_depth == 0 {
+            return Err(self.error("illegal `return` statement outside of a function".into()));
+        }
+        self.advance(); // `return`
+
+        // Restricted production: a line terminator after `return` = implicit `;`
+        if self.peek().line_terminator_before
+            || matches!(
+                self.peek().kind,
+                TokenKind::Punctuator(';') | TokenKind::Eof
+            )
+        {
+            self.eat_punctuator(';');
+            return Ok(Statement::Return(None));
+        }
+
+        let value = self.parse_expression()?;
+        self.expect_semicolon()?;
+        Ok(Statement::Return(Some(value)))
+    }
+
+    /// Parses `var name (= expr)? (, name (= expr)?)* ;`.
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `var`
         let mut declarations = Vec::new();
         loop {
             let name = self.expect_identifier()?;
-            // Initializers parse at assignment level so a top-level comma ends
-            // the current declarator instead of being read as an operator.
             let initializer = if self.eat_operator("=") {
                 Some(self.parse_assignment()?)
             } else {
@@ -70,9 +133,6 @@ impl Parser {
     }
 
     /// Parses `if (test) consequent` with an optional `else`.
-    ///
-    /// `else` is consumed eagerly right after the consequent, so it always binds
-    /// to the nearest unmatched `if`.
     fn parse_if(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `if`
         self.expect_punctuator('(')?;
@@ -130,10 +190,6 @@ impl Parser {
     }
 
     /// Parses `throw expression;`.
-    ///
-    /// ECMAScript forbids a line terminator between `throw` and its expression,
-    /// so a newline (recorded by the lexer) is a syntax error rather than an
-    /// implicit empty operand.
     fn parse_throw(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `throw`
         if self.peek().line_terminator_before {
@@ -151,8 +207,6 @@ impl Parser {
     }
 
     fn parse_expression_statement(&mut self) -> Result<Statement, ParseError> {
-        // Reject obvious non-starters up front so the error points at the token
-        // rather than failing deeper inside expression parsing.
         if self.at_eof() {
             return Err(self.error(format!(
                 "expected a statement but found {}",
@@ -168,7 +222,10 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use crate::{
-        ast::{Expression, Literal, Statement, VariableDeclarator, VariableKind},
+        ast::{
+            Expression, FunctionBody, FunctionParam, Literal, Statement, VariableDeclarator,
+            VariableKind,
+        },
         lexer::Lexer,
         parser::Parser,
     };
@@ -193,6 +250,14 @@ mod tests {
             name: name.into(),
             initializer,
         }
+    }
+
+    fn param(name: &str) -> FunctionParam {
+        FunctionParam { name: name.into() }
+    }
+
+    fn body(statements: Vec<Statement>) -> FunctionBody {
+        FunctionBody { statements }
     }
 
     #[test]
@@ -261,7 +326,6 @@ mod tests {
         else {
             panic!("expected an if statement");
         };
-        // The outer `if` has no `else`; the `else` attaches to the inner `if`.
         assert!(alternate.is_none());
         assert!(matches!(
             consequent.as_ref(),
@@ -321,5 +385,93 @@ mod tests {
     fn requires_separator_between_statements() {
         let tokens = Lexer::new("1 2").tokenize().unwrap();
         assert!(Parser::new(tokens).parse_program().is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // V3 function declaration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn parses_function_declaration_no_params() {
+        let stmts = parse("function f() { }");
+        assert_eq!(
+            stmts,
+            [Statement::FunctionDeclaration {
+                name: "f".into(),
+                params: vec![],
+                body: body(vec![]),
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_function_declaration_with_params_and_return() {
+        let stmts = parse("function add(a, b) { return a + b; }");
+        let Statement::FunctionDeclaration {
+            name,
+            params,
+            body: fn_body,
+        } = &stmts[0]
+        else {
+            panic!("expected FunctionDeclaration");
+        };
+        assert_eq!(name, "add");
+        assert_eq!(params, &[param("a"), param("b")]);
+        assert_eq!(fn_body.statements.len(), 1);
+        assert!(matches!(fn_body.statements[0], Statement::Return(Some(_))));
+    }
+
+    #[test]
+    fn parses_return_without_value() {
+        let stmts = parse("function f() { return; }");
+        let Statement::FunctionDeclaration { body: fn_body, .. } = &stmts[0] else {
+            panic!();
+        };
+        assert_eq!(fn_body.statements, [Statement::Return(None)]);
+    }
+
+    #[test]
+    fn parses_return_with_line_terminator_as_empty_return() {
+        // `return\n1` should parse as `return;` then `1;` (restricted production)
+        let stmts = parse("function f() { return\n1; }");
+        let Statement::FunctionDeclaration { body: fn_body, .. } = &stmts[0] else {
+            panic!();
+        };
+        assert_eq!(fn_body.statements.len(), 2);
+        assert_eq!(fn_body.statements[0], Statement::Return(None));
+    }
+
+    #[test]
+    fn rejects_return_outside_function() {
+        let err = parse_error("return 1;");
+        assert!(err.message.contains("return"));
+    }
+
+    #[test]
+    fn rejects_missing_function_name() {
+        // anonymous function at statement level is not a valid declaration
+        assert!(!parse_error("function () {}").message.is_empty());
+    }
+
+    #[test]
+    fn rejects_missing_function_body_brace() {
+        assert!(!parse_error("function f()").message.is_empty());
+    }
+
+    #[test]
+    fn parses_nested_function_declarations() {
+        let stmts =
+            parse("function outer(x) { function inner(y) { return x + y; } return inner(2); }");
+        let Statement::FunctionDeclaration {
+            body: outer_body, ..
+        } = &stmts[0]
+        else {
+            panic!();
+        };
+        assert_eq!(outer_body.statements.len(), 2);
+        assert!(matches!(
+            outer_body.statements[0],
+            Statement::FunctionDeclaration { .. }
+        ));
     }
 }

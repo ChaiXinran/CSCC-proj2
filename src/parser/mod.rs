@@ -42,6 +42,9 @@ pub struct Parser {
     /// Number of enclosing loops. Used to reject `break`/`continue` that appear
     /// outside any iteration statement.
     loop_depth: usize,
+    /// Number of enclosing function bodies. Used to reject `return` that appears
+    /// outside any function.
+    function_depth: usize,
 }
 
 impl Parser {
@@ -55,6 +58,7 @@ impl Parser {
             tokens,
             cursor: 0,
             loop_depth: 0,
+            function_depth: 0,
         }
     }
 

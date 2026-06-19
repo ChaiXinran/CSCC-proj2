@@ -1,5 +1,7 @@
 //! Expression nodes.
 
+use super::statement::Statement;
+
 /// Literal values represented directly in the AST.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -50,6 +52,74 @@ pub enum LogicalOperator {
     Or,
 }
 
+// ---------------------------------------------------------------------------
+// V3 function-related AST types
+// ---------------------------------------------------------------------------
+
+/// One formal parameter in a function definition.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionParam {
+    pub name: String,
+}
+
+/// The body of a function: a list of statements.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionBody {
+    pub statements: Vec<Statement>,
+}
+
+/// A function value: either a declaration or an expression.
+///
+/// `name` is `None` for anonymous function expressions; non-empty for
+/// declarations and named expressions.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionLiteral {
+    pub name: Option<String>,
+    pub params: Vec<FunctionParam>,
+    pub body: FunctionBody,
+}
+
+// ---------------------------------------------------------------------------
+// V3 object literal types
+// ---------------------------------------------------------------------------
+
+/// One property in an object literal: `key: value`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectProperty {
+    pub key: PropertyName,
+    pub value: Expression,
+}
+
+/// The key of an object property. V3 supports identifier, string, and number
+/// keys; computed keys (`[expr]: value`) are deferred to a later milestone.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PropertyName {
+    Identifier(String),
+    String(String),
+    Number(f64),
+}
+
+impl PropertyName {
+    /// Converts the property name to the string key used in the object's
+    /// property table.
+    pub fn to_key_string(&self) -> String {
+        match self {
+            Self::Identifier(name) | Self::String(name) => name.clone(),
+            Self::Number(n) => {
+                if n.fract() == 0.0 && n.is_finite() {
+                    format!("{}", *n as i64)
+                } else {
+                    format!("{n}")
+                }
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Expression enum
+// ---------------------------------------------------------------------------
+
 /// Expression subset implemented incrementally by AgentJS.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
@@ -90,12 +160,15 @@ pub enum Expression {
         consequent: Box<Expression>,
         alternate: Box<Expression>,
     },
-    /// `new callee(arguments)`. V2 only constructs the minimal `Test262Error`,
-    /// but the AST does not hard-code the callee name.
+    /// `new callee(arguments)`.
     Construct {
         callee: Box<Expression>,
         arguments: Vec<Expression>,
     },
+    /// `[element, ...]` array literal.
     Array(Vec<Expression>),
-    Object(Vec<(String, Expression)>),
+    /// `{ key: value, ... }` object literal.
+    Object(Vec<ObjectProperty>),
+    /// Function expression or named function expression.
+    Function(FunctionLiteral),
 }

@@ -12,6 +12,8 @@ mod chunk;
 mod compiler;
 mod opcode;
 
-pub use chunk::{Chunk, ChunkError, Constant, StackAnalysis};
+pub use chunk::{
+    Chunk, ChunkError, Constant, EnvironmentCapturePolicy, FunctionTemplate, StackAnalysis,
+};
 pub use compiler::{CompileError, Compiler};
 pub use opcode::{Instruction, StackEffect};

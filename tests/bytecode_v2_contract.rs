@@ -48,6 +48,7 @@ fn chunk_does_not_follow_fallthrough_after_jump_or_throw() {
             Instruction::ReturnUndefined,
         ],
         constants: Vec::new(),
+        functions: Vec::new(),
     };
     assert_eq!(jump_over_underflow.validate(), Ok(()));
 
@@ -59,6 +60,7 @@ fn chunk_does_not_follow_fallthrough_after_jump_or_throw() {
             Instruction::ReturnUndefined,
         ],
         constants: vec![Constant::String("expected".into())],
+        functions: Vec::new(),
     };
     assert_eq!(throw_ends_flow.validate(), Ok(()));
 }
@@ -68,6 +70,7 @@ fn chunk_validates_typeof_global_name_constants() {
     let chunk = Chunk {
         instructions: vec![Instruction::TypeOfGlobal(0), Instruction::Return],
         constants: vec![Constant::Number(1.0)],
+        functions: Vec::new(),
     };
 
     assert_eq!(

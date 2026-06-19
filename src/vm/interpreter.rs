@@ -306,6 +306,13 @@ impl Vm {
                 }
                 Instruction::Return => return self.pop_value(),
                 Instruction::ReturnUndefined => return Ok(JsValue::Undefined),
+                // V3 instructions: not yet executed by this VM stage.
+                // The VM team will implement these in a subsequent milestone.
+                other => {
+                    return Err(VmError::runtime(format!(
+                        "V3 instruction {other:?} is not yet implemented by the VM stage"
+                    )));
+                }
             }
         }
 
@@ -521,6 +528,7 @@ mod tests {
         let chunk = Chunk {
             instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
             constants: Vec::new(),
+            functions: Vec::new(),
         };
         let error = Vm::default().execute(&chunk).unwrap_err();
 
@@ -751,6 +759,7 @@ mod tests {
         let chunk = Chunk {
             instructions: vec![Instruction::Jump(0), Instruction::ReturnUndefined],
             constants: Vec::new(),
+            functions: Vec::new(),
         };
 
         let error = Vm::default()

@@ -1,5 +1,6 @@
 # Rust build output
 /target/
+/target-linux/
 
 # Generated benchmark runners and raw measurements
 /benchmarks/generated/
@@ -38,3 +39,6 @@ coverage/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+CUsers31247AppDataLocalTemptest_native_pipeline.rs
+

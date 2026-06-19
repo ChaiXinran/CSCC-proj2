@@ -18,6 +18,7 @@ pub enum Constant {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChunkError {
     ConstantPoolOverflow,
+    FunctionTableOverflow,
     InvalidInstructionOffset {
         offset: usize,
     },
@@ -35,6 +36,10 @@ pub enum ChunkError {
     InvalidJumpTarget {
         offset: usize,
         target: usize,
+    },
+    InvalidFunctionIndex {
+        offset: usize,
+        index: u16,
     },
     MissingTerminator,
     StackUnderflow {
@@ -60,6 +65,9 @@ impl fmt::Display for ChunkError {
             Self::ConstantPoolOverflow => {
                 f.write_str("bytecode constant pool exceeds the u16 index range")
             }
+            Self::FunctionTableOverflow => {
+                f.write_str("bytecode function table exceeds the u16 index range")
+            }
             Self::InvalidInstructionOffset { offset } => {
                 write!(f, "instruction offset {offset} is out of bounds")
             }
@@ -82,6 +90,12 @@ impl fmt::Display for ChunkError {
                 write!(
                     f,
                     "instruction at offset {offset} has invalid jump target {target}"
+                )
+            }
+            Self::InvalidFunctionIndex { offset, index } => {
+                write!(
+                    f,
+                    "instruction at offset {offset} references missing function {index}"
                 )
             }
             Self::MissingTerminator => {
@@ -117,11 +131,43 @@ impl fmt::Display for ChunkError {
 
 impl std::error::Error for ChunkError {}
 
+// ---------------------------------------------------------------------------
+// V3: Function template types
+// ---------------------------------------------------------------------------
+
+/// Whether a function captures its declaration environment (for closures).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnvironmentCapturePolicy {
+    /// V3.1: function does not capture any outer environment.
+    None,
+    /// V3.2+: function captures the environment at declaration time.
+    CaptureCurrent,
+}
+
+/// Compiled representation of one function definition, stored in the parent
+/// chunk's function table and referenced by index.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionTemplate {
+    pub name: Option<String>,
+    /// Formal parameter names, in declaration order.
+    pub params: Vec<String>,
+    /// Bytecode for the function body.
+    pub chunk: Chunk,
+    pub environment_policy: EnvironmentCapturePolicy,
+}
+
+// ---------------------------------------------------------------------------
+// Chunk
+// ---------------------------------------------------------------------------
+
 /// Bytecode for one script or function.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Chunk {
     pub instructions: Vec<Instruction>,
     pub constants: Vec<Constant>,
+    /// Compiled function bodies referenced by `CreateFunction` /
+    /// `DeclareFunction` instructions.
+    pub functions: Vec<FunctionTemplate>,
 }
 
 /// Stack requirements computed from all reachable bytecode paths.
@@ -136,6 +182,14 @@ impl Chunk {
         let index =
             u16::try_from(self.constants.len()).map_err(|_| ChunkError::ConstantPoolOverflow)?;
         self.constants.push(constant);
+        Ok(index)
+    }
+
+    /// Adds a function template and returns its lossless `u16` index.
+    pub fn add_function(&mut self, template: FunctionTemplate) -> Result<u16, ChunkError> {
+        let index =
+            u16::try_from(self.functions.len()).map_err(|_| ChunkError::FunctionTableOverflow)?;
+        self.functions.push(template);
         Ok(index)
     }
 
@@ -173,13 +227,21 @@ impl Chunk {
     /// Checks structural invariants required by the VM.
     pub fn validate(&self) -> Result<(), ChunkError> {
         for (offset, instruction) in self.instructions.iter().copied().enumerate() {
-            let constant_index = match instruction {
+            // Check single constant indices (string or any value)
+            let constant_index: Option<u16> = match instruction {
                 Instruction::Constant(index)
                 | Instruction::DeclareGlobal(index)
                 | Instruction::LoadGlobal(index)
                 | Instruction::StoreGlobal(index)
                 | Instruction::GetProperty(index)
-                | Instruction::TypeOfGlobal(index) => Some(index),
+                | Instruction::TypeOfGlobal(index)
+                | Instruction::DeclareLocal(index)
+                | Instruction::LoadName(index)
+                | Instruction::TypeOfName(index)
+                | Instruction::StoreName(index)
+                | Instruction::SetProperty(index)
+                | Instruction::GetMethod(index) => Some(index),
+                Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };
             if let Some(index) = constant_index
@@ -188,12 +250,20 @@ impl Chunk {
                 return Err(ChunkError::InvalidConstantIndex { offset, index });
             }
 
-            let name_index = match instruction {
+            // Check that name-bearing instructions have a string constant
+            let name_index: Option<u16> = match instruction {
                 Instruction::DeclareGlobal(index)
                 | Instruction::LoadGlobal(index)
                 | Instruction::StoreGlobal(index)
                 | Instruction::GetProperty(index)
-                | Instruction::TypeOfGlobal(index) => Some(index),
+                | Instruction::TypeOfGlobal(index)
+                | Instruction::DeclareLocal(index)
+                | Instruction::LoadName(index)
+                | Instruction::TypeOfName(index)
+                | Instruction::StoreName(index)
+                | Instruction::SetProperty(index)
+                | Instruction::GetMethod(index) => Some(index),
+                Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };
             if let Some(index) = name_index
@@ -205,6 +275,19 @@ impl Chunk {
                 return Err(ChunkError::ExpectedStringConstant { offset, index });
             }
 
+            // Check function indices
+            let function_index: Option<u16> = match instruction {
+                Instruction::CreateFunction(f) => Some(f),
+                Instruction::DeclareFunction { function, .. } => Some(function),
+                _ => None,
+            };
+            if let Some(index) = function_index
+                && usize::from(index) >= self.functions.len()
+            {
+                return Err(ChunkError::InvalidFunctionIndex { offset, index });
+            }
+
+            // Check jump targets
             if let Some(target) = instruction.jump_target()
                 && target >= self.instructions.len()
             {
