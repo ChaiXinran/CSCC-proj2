@@ -33,7 +33,7 @@ fn run() -> Result<(), String> {
         "eval" => command_eval(&args),
         "run" => command_run(&args),
         "jetstream" => command_jetstream(&args),
-        "repl" => command_repl(),
+        "repl" => command_repl(&args),
         "test262" => command_test262(&args),
         "bench" => command_bench(&args),
         "help" | "--help" | "-h" => {
@@ -49,11 +49,10 @@ fn run() -> Result<(), String> {
 }
 
 fn command_eval(args: &[String]) -> Result<(), String> {
-    if args.is_empty() {
-        return Err("usage: agentjs eval <source>".into());
-    }
-    let source = args.join(" ");
-    let report = Engine::default()
+    let (backend, source_args) =
+        parse_backend_prefixed_args(args, "usage: agentjs eval [--backend boa|native] <source>")?;
+    let source = source_args.join(" ");
+    let report = Engine::with_backend(backend, RuntimeConfig::default())
         .execute(&source, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
     print_report(report);
@@ -61,11 +60,13 @@ fn command_eval(args: &[String]) -> Result<(), String> {
 }
 
 fn command_run(args: &[String]) -> Result<(), String> {
-    let path = args
+    let (backend, file_args) =
+        parse_backend_prefixed_args(args, "usage: agentjs run [--backend boa|native] <file.js>")?;
+    let path = file_args
         .first()
-        .ok_or_else(|| "usage: agentjs run <file.js>".to_string())?;
+        .ok_or_else(|| "usage: agentjs run [--backend boa|native] <file.js>".to_string())?;
     let source = fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
-    let report = Engine::default()
+    let report = Engine::with_backend(backend, RuntimeConfig::default())
         .execute(&source, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
     print_report(report);
@@ -93,13 +94,19 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn command_repl() -> Result<(), String> {
-    let mut runtime = Runtime::new(RuntimeConfig::default()).map_err(|error| error.to_string())?;
+fn command_repl(args: &[String]) -> Result<(), String> {
+    let backend = parse_backend_only_args(args, "usage: agentjs repl [--backend boa|native]")?;
+    let mut runtime = Runtime::with_backend(backend, RuntimeConfig::default())
+        .map_err(|error| error.to_string())?;
     let stdin = io::stdin();
-    println!("AgentJS {} - Ctrl-D to exit", env!("CARGO_PKG_VERSION"));
+    println!(
+        "AgentJS {} ({}) - Ctrl-D to exit",
+        env!("CARGO_PKG_VERSION"),
+        backend.name()
+    );
 
     loop {
-        print!("agentjs> ");
+        print!("agentjs:{}> ", backend.name());
         io::stdout().flush().map_err(|error| error.to_string())?;
         let mut line = String::new();
         if stdin
@@ -281,6 +288,64 @@ fn parse_usize(value: &str) -> Result<usize, String> {
         .map_err(|_| format!("`{value}` is not a positive integer"))
 }
 
+fn parse_backend_prefixed_args<'a>(
+    args: &'a [String],
+    usage: &str,
+) -> Result<(BackendKind, &'a [String]), String> {
+    let mut backend = BackendKind::Boa;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--backend" => {
+                index += 1;
+                backend = parse_backend(required_value(args, index, "--backend")?)?;
+                index += 1;
+            }
+            "--" => {
+                index += 1;
+                break;
+            }
+            value if value.starts_with("--") => {
+                return Err(format!("unknown option `{value}`; {usage}"));
+            }
+            _ => break,
+        }
+    }
+
+    if index >= args.len() {
+        return Err(usage.into());
+    }
+
+    Ok((backend, &args[index..]))
+}
+
+fn parse_backend_only_args(args: &[String], usage: &str) -> Result<BackendKind, String> {
+    let mut backend = BackendKind::Boa;
+    let mut index = 0;
+
+    while index < args.len() {
+        match args[index].as_str() {
+            "--backend" => {
+                index += 1;
+                backend = parse_backend(required_value(args, index, "--backend")?)?;
+                index += 1;
+            }
+            "--" => {
+                index += 1;
+                break;
+            }
+            value => return Err(format!("unknown option `{value}`; {usage}")),
+        }
+    }
+
+    if index != args.len() {
+        return Err(usage.into());
+    }
+
+    Ok(backend)
+}
+
 fn parse_backend(value: &str) -> Result<BackendKind, String> {
     match value {
         "boa" => Ok(BackendKind::Boa),
@@ -291,16 +356,29 @@ fn parse_backend(value: &str) -> Result<BackendKind, String> {
     }
 }
 
+trait BackendName {
+    fn name(self) -> &'static str;
+}
+
+impl BackendName for BackendKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Boa => "boa",
+            Self::Native => "native",
+        }
+    }
+}
+
 fn print_help() {
     println!(
         "\
 AgentJS - lightweight JavaScript execution for AI agents
 
 USAGE:
-  agentjs eval <source>
-  agentjs run <file.js>
+  agentjs eval [--backend boa|native] <source>
+  agentjs run [--backend boa|native] <file.js>
   agentjs jetstream <generated-runner.js>
-  agentjs repl
+  agentjs repl [--backend boa|native]
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend boa|native] [--limit N] [--jobs N]
                   [--native-v1|--native-v2] [--json result.json] [-v]
