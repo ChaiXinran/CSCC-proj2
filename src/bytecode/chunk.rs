@@ -268,7 +268,6 @@ impl Chunk {
                     Instruction::Throw => 1,
                     Instruction::Return => 1,
                     Instruction::ReturnUndefined => 0,
-                    Instruction::Throw => 1,
                     _ => unreachable!(),
                 };
                 if depth != expected {
