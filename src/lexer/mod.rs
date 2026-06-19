@@ -484,6 +484,19 @@ mod tests {
     }
 
     #[test]
+    fn tokenizes_v4_keywords() {
+        assert_eq!(
+            kinds("delete in instanceof"),
+            [
+                TokenKind::Keyword(Keyword::Delete),
+                TokenKind::Keyword(Keyword::In),
+                TokenKind::Keyword(Keyword::InstanceOf),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
     fn tokenizes_array_literal_syntax() {
         assert_eq!(
             kinds("[1, 2, 3]"),

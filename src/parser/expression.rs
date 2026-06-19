@@ -21,6 +21,8 @@ use crate::{
     ast::{
         ArrayElement, BinaryOperator, Expression, FunctionLiteral, Literal, LogicalOperator,
         ObjectProperty, PropertyName, UnaryOperator,
+        ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
+        LogicalOperator, ObjectProperty, PropertyName, UnaryOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -86,13 +88,16 @@ impl Parser {
             TokenKind::Operator(operator) => {
                 binary_precedence(operator).map(|precedence| (precedence, operator.clone()))
             }
+                binary_precedence(operator).map(|p| (p, operator.clone()))
+            }
+            // `in` and `instanceof` are keyword binary operators at relational precedence.
             TokenKind::Keyword(Keyword::In) => Some((4, "in".into())),
             TokenKind::Keyword(Keyword::InstanceOf) => Some((4, "instanceof".into())),
             _ => None,
         }
     }
 
-    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`).
+    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`, `delete`).
     fn parse_unary(&mut self) -> Result<Expression, ParseError> {
         if self.check_keyword(Keyword::TypeOf) {
             self.advance();
@@ -247,7 +252,9 @@ impl Parser {
         }
     }
 
-    /// Parses `[element, element, ...]`.
+    /// Parses `[element, element, ...]`, including sparse holes.
+    ///
+    /// Trailing comma rule: `[1,]` → length 1; `[1,,]` → length 2 (one hole).
     fn parse_array_literal(&mut self) -> Result<Expression, ParseError> {
         self.expect_punctuator('[')?;
         let mut elements = Vec::new();
@@ -259,16 +266,30 @@ impl Parser {
             elements.push(ArrayElement::Expression(self.parse_assignment()?));
             if !self.eat_punctuator(',') {
                 break;
+        let mut elements: Vec<ArrayElement> = Vec::new();
+        while !self.check_punctuator(']') && !self.at_eof() {
+            if self.check_punctuator(',') {
+                // Elision: a leading or consecutive comma introduces a hole.
+                elements.push(ArrayElement::Hole);
+                self.advance(); // consume `,`
+            } else {
+                elements.push(ArrayElement::Expression(self.parse_assignment()?));
+                // After an element, consume the separator comma if present.
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+                // Trailing comma before `]` — do NOT add another hole.
+                if self.check_punctuator(']') {
+                    break;
+                }
             }
         }
         self.expect_punctuator(']')?;
         Ok(Expression::Array(elements))
     }
 
-    /// Parses `{ key: value, ... }` as an object literal.
-    ///
-    /// Note: `{` at the start of a statement is a block; object literals must
-    /// appear in an expression context where `{` cannot start a block.
+    /// Parses `{ key: value, ... }` as an object literal, including V4 getter,
+    /// setter, and `__proto__` forms.
     fn parse_object_literal(&mut self) -> Result<Expression, ParseError> {
         self.expect_punctuator('{')?;
         let mut properties = Vec::new();
@@ -320,6 +341,11 @@ impl Parser {
             } else {
                 properties.push(ObjectProperty::Data { key, value });
             }
+        let mut properties: Vec<ObjectProperty> = Vec::new();
+        let mut has_proto_setter = false;
+        while !self.check_punctuator('}') && !self.at_eof() {
+            let property = self.parse_object_property(&mut has_proto_setter)?;
+            properties.push(property);
             if !self.eat_punctuator(',') {
                 break;
             }
@@ -332,6 +358,84 @@ impl Parser {
         matches!(&self.peek().kind, TokenKind::Identifier(value) if value == name)
             && !matches!(self.peek_n(1).kind, TokenKind::Punctuator(':'))
             && matches!(self.peek_n(2).kind, TokenKind::Punctuator('('))
+    /// Parses a single object property: data, getter, setter, or `__proto__`.
+    fn parse_object_property(
+        &mut self,
+        has_proto_setter: &mut bool,
+    ) -> Result<ObjectProperty, ParseError> {
+        // Detect `get` / `set` context keywords.  They are only context keywords
+        // here — they remain valid as regular identifier property names too.
+        let is_get = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
+        let is_set = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
+
+        // `get key() { body }` — accessor getter (0 params)
+        if is_get {
+            // Peek ahead: if the next token after `get` is a property name followed
+            // by `(`, this is a getter.  Otherwise fall through to a data property.
+            let saved = self.cursor;
+            self.advance(); // consume `get`
+            if !self.check_punctuator(':')
+                && !self.check_punctuator(',')
+                && !self.check_punctuator('}')
+                && !self.at_eof()
+            {
+                let key = self.parse_property_name()?;
+                if self.check_punctuator('(') {
+                    self.expect_punctuator('(')?;
+                    self.expect_punctuator(')')?;
+                    let body = self.parse_function_body()?;
+                    return Ok(ObjectProperty::Getter { key, body });
+                }
+            }
+            // Not a getter syntax — rewind and parse as data property named "get".
+            self.cursor = saved;
+        }
+
+        // `set key(param) { body }` — accessor setter (1 param)
+        if is_set {
+            let saved = self.cursor;
+            self.advance(); // consume `set`
+            if !self.check_punctuator(':')
+                && !self.check_punctuator(',')
+                && !self.check_punctuator('}')
+                && !self.at_eof()
+            {
+                let key = self.parse_property_name()?;
+                if self.check_punctuator('(') {
+                    self.expect_punctuator('(')?;
+                    let param_name = self.expect_identifier()?;
+                    self.expect_punctuator(')')?;
+                    let body = self.parse_function_body()?;
+                    return Ok(ObjectProperty::Setter {
+                        key,
+                        parameter: FunctionParam { name: param_name },
+                        body,
+                    });
+                }
+            }
+            self.cursor = saved;
+        }
+
+        // General property: parse the key first, then decide.
+        let key = self.parse_property_name()?;
+
+        // `__proto__: value` — PrototypeSetter (only the non-computed shorthand)
+        if let PropertyName::Identifier(ref name) = key
+            && name == "__proto__"
+            && self.check_punctuator(':')
+        {
+            self.advance(); // consume `:`
+            let value = self.parse_assignment()?;
+            if *has_proto_setter {
+                return Err(self.error("duplicate `__proto__` setter in object literal".into()));
+            }
+            *has_proto_setter = true;
+            return Ok(ObjectProperty::PrototypeSetter { value });
+        }
+
+        self.expect_punctuator(':')?;
+        let value = self.parse_assignment()?;
+        Ok(ObjectProperty::Data { key, value })
     }
 
     /// Parses a property key: identifier, string literal, or number literal.
@@ -816,5 +920,206 @@ mod tests {
         // (full `this` support is a V3 runtime concern)
         let expr = parse_expression("(function() { return this; })");
         assert!(matches!(expr, Expression::Function(_)));
+    }
+
+    // -----------------------------------------------------------------------
+    // V4 expression tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn delete_parses_as_unary() {
+        let expr = parse_expression("delete obj.x");
+        assert!(matches!(
+            expr,
+            Expression::Unary {
+                operator: UnaryOperator::Delete,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn delete_computed_member_parses_as_unary() {
+        let expr = parse_expression("delete obj[key]");
+        let Expression::Unary { operator, argument } = expr else {
+            panic!("expected unary delete");
+        };
+        assert_eq!(operator, UnaryOperator::Delete);
+        assert!(matches!(
+            *argument,
+            Expression::Member { computed: true, .. }
+        ));
+    }
+
+    #[test]
+    fn in_operator_parses_as_binary() {
+        let expr = parse_expression("\"x\" in obj");
+        assert!(matches!(
+            expr,
+            Expression::Binary {
+                operator: BinaryOperator::In,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn instanceof_operator_parses_as_binary() {
+        let expr = parse_expression("p instanceof Point");
+        assert!(matches!(
+            expr,
+            Expression::Binary {
+                operator: BinaryOperator::InstanceOf,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn in_and_instanceof_bind_at_relational_precedence() {
+        // `a + b instanceof C` should parse as `(a + b) instanceof C`
+        let expr = parse_expression("a + b instanceof C");
+        let Expression::Binary {
+            operator: BinaryOperator::InstanceOf,
+            left,
+            ..
+        } = expr
+        else {
+            panic!("expected instanceof at top level");
+        };
+        assert!(matches!(
+            *left,
+            Expression::Binary {
+                operator: BinaryOperator::Add,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_getter_in_object_literal() {
+        let expr = parse_expression("({ get x() { return 7; } })");
+        let Expression::Object(props) = expr else {
+            panic!("expected object literal");
+        };
+        assert_eq!(props.len(), 1);
+        assert!(matches!(
+            props[0],
+            ObjectProperty::Getter {
+                key: PropertyName::Identifier(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_setter_in_object_literal() {
+        let expr = parse_expression("({ set x(v) { this.saved = v; } })");
+        let Expression::Object(props) = expr else {
+            panic!("expected object literal");
+        };
+        assert_eq!(props.len(), 1);
+        assert!(matches!(
+            props[0],
+            ObjectProperty::Setter {
+                key: PropertyName::Identifier(_),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn setter_parameter_is_recorded() {
+        let expr = parse_expression("({ set value(v) { } })");
+        let Expression::Object(props) = expr else {
+            panic!("expected object literal");
+        };
+        let ObjectProperty::Setter { parameter, .. } = &props[0] else {
+            panic!("expected setter");
+        };
+        assert_eq!(parameter.name, "v");
+    }
+
+    #[test]
+    fn parses_proto_setter_in_object_literal() {
+        let expr = parse_expression("({ __proto__: base })");
+        let Expression::Object(props) = expr else {
+            panic!("expected object literal");
+        };
+        assert_eq!(props.len(), 1);
+        assert!(matches!(props[0], ObjectProperty::PrototypeSetter { .. }));
+    }
+
+    #[test]
+    fn rejects_duplicate_proto_setter() {
+        let tokens = Lexer::new("({ __proto__: a, __proto__: b })")
+            .tokenize()
+            .unwrap();
+        assert!(Parser::new(tokens).parse_program().is_err());
+    }
+
+    #[test]
+    fn object_literal_with_getter_and_setter() {
+        let expr = parse_expression("({ get x() { return 7; }, set x(v) { } })");
+        let Expression::Object(props) = expr else {
+            panic!("expected object literal");
+        };
+        assert_eq!(props.len(), 2);
+        assert!(matches!(props[0], ObjectProperty::Getter { .. }));
+        assert!(matches!(props[1], ObjectProperty::Setter { .. }));
+    }
+
+    #[test]
+    fn parses_sparse_array_literal() {
+        let expr = parse_expression("[1, , 3]");
+        let Expression::Array(elements) = expr else {
+            panic!("expected array");
+        };
+        assert_eq!(elements.len(), 3);
+        assert!(matches!(elements[0], ArrayElement::Expression(_)));
+        assert!(matches!(elements[1], ArrayElement::Hole));
+        assert!(matches!(elements[2], ArrayElement::Expression(_)));
+    }
+
+    #[test]
+    fn sparse_array_length_semantics() {
+        // `[1,]` → length 1 (trailing comma, no hole)
+        let expr = parse_expression("[1,]");
+        let Expression::Array(elements) = expr else {
+            panic!("expected array");
+        };
+        assert_eq!(elements.len(), 1);
+
+        // `[1,,]` → length 2 (one hole then trailing comma)
+        let expr2 = parse_expression("[1,,]");
+        let Expression::Array(elements2) = expr2 else {
+            panic!("expected array");
+        };
+        assert_eq!(elements2.len(), 2);
+        assert!(matches!(elements2[1], ArrayElement::Hole));
+    }
+
+    #[test]
+    fn parses_leading_hole_in_array() {
+        // `[, 1]` has a leading hole at index 0
+        let expr = parse_expression("[, 1]");
+        let Expression::Array(elements) = expr else {
+            panic!("expected array");
+        };
+        assert_eq!(elements.len(), 2);
+        assert!(matches!(elements[0], ArrayElement::Hole));
+        assert!(matches!(elements[1], ArrayElement::Expression(_)));
+    }
+
+    #[test]
+    fn get_and_set_are_valid_property_names() {
+        // `get` and `set` are not reserved words — they work as data property keys.
+        let expr = parse_expression("({ get: 1, set: 2 })");
+        let Expression::Object(props) = expr else {
+            panic!("expected object literal");
+        };
+        assert_eq!(props.len(), 2);
+        assert!(matches!(props[0], ObjectProperty::Data { .. }));
+        assert!(matches!(props[1], ObjectProperty::Data { .. }));
     }
 }

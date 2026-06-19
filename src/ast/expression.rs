@@ -42,6 +42,8 @@ pub enum BinaryOperator {
     InstanceOf,
     LogicalAnd,
     LogicalOr,
+    In,
+    InstanceOf,
 }
 
 /// Short-circuiting logical operators.
@@ -83,20 +85,27 @@ pub struct FunctionLiteral {
 }
 
 // ---------------------------------------------------------------------------
-// V3 object literal types
+// V3/V4 object literal types
 // ---------------------------------------------------------------------------
 
 /// One property definition in an object literal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjectProperty {
+/// One property in an object literal. V4 extends V3's plain data property with
+/// getter, setter, and `__proto__` setter forms.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectProperty {
+    /// `key: value` — a plain data property.
     Data {
         key: PropertyName,
         value: Expression,
     },
+    /// `get key() { body }` — an accessor getter (0 parameters).
     Getter {
         key: PropertyName,
         body: FunctionBody,
     },
+    /// `set key(param) { body }` — an accessor setter (exactly 1 parameter).
     Setter {
         key: PropertyName,
         parameter: FunctionParam,
@@ -105,6 +114,8 @@ pub enum ObjectProperty {
     PrototypeSetter {
         value: Expression,
     },
+    /// `__proto__: value` — sets the object's prototype. At most one per literal.
+    PrototypeSetter { value: Expression },
 }
 
 /// The key of an object property. V3 supports identifier, string, and number
@@ -138,6 +149,21 @@ impl PropertyName {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArrayElement {
     Hole,
+    Expression(Expression),
+}
+
+// ---------------------------------------------------------------------------
+// V4 array element
+// ---------------------------------------------------------------------------
+
+/// One element slot in an array literal. V4 supports sparse arrays via holes.
+///
+/// Trailing comma rule: `[1,]` has length 1; `[1,,]` has length 2 (one hole).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayElement {
+    /// An elision (empty slot between commas): `[1, , 3]`.
+    Hole,
+    /// A concrete expression that evaluates to the element value.
     Expression(Expression),
 }
 
@@ -191,6 +217,7 @@ pub enum Expression {
         arguments: Vec<Expression>,
     },
     /// `[element, ...]` array literal.
+    /// `[element, ...]` array literal, potentially sparse.
     Array(Vec<ArrayElement>),
     /// `{ key: value, ... }` object literal.
     Object(Vec<ObjectProperty>),
