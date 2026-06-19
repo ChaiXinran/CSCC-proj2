@@ -9,7 +9,7 @@ use std::{error::Error, fmt};
 pub use crate::{
     ast::{
         BinaryOperator, Expression, Literal, LogicalOperator, Program, Statement, UnaryOperator,
-        VariableKind,
+        VariableDeclarator, VariableKind,
     },
     bytecode::{
         Chunk, ChunkError, CompileError, Compiler, Constant, Instruction, StackAnalysis,

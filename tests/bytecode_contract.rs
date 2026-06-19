@@ -1,5 +1,8 @@
 use agentjs::{
-    ast::{BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableKind},
+    ast::{
+        BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableDeclarator,
+        VariableKind,
+    },
     bytecode::{Chunk, ChunkError, Compiler, Constant, Instruction, StackAnalysis, StackEffect},
     contracts::{NativeError, ProgramCompiler},
 };
@@ -200,7 +203,7 @@ fn compiler_preserves_nested_unary_evaluation_order() {
 }
 
 #[test]
-fn compiler_rejects_typeof_until_it_enters_the_v1_instruction_set() {
+fn compiler_accepts_typeof_after_the_v2_instruction_extension() {
     let program = Program {
         body: vec![expression_statement(unary(
             UnaryOperator::TypeOf,
@@ -208,10 +211,16 @@ fn compiler_rejects_typeof_until_it_enters_the_v1_instruction_set() {
         ))],
     };
 
-    let error = Compiler::new().compile_program(&program).unwrap_err();
+    let chunk = Compiler::new().compile_program(&program).unwrap();
 
-    assert!(error.message.contains("TypeOf"));
-    assert!(error.message.contains("does not support"));
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::Constant(0),
+            Instruction::TypeOf,
+            Instruction::Return,
+        ]
+    );
 }
 
 #[test]
@@ -1018,8 +1027,10 @@ fn variable_declaration(
 ) -> Statement {
     Statement::VariableDeclaration {
         kind,
-        name: name.into(),
-        initializer,
+        declarations: vec![VariableDeclarator {
+            name: name.into(),
+            initializer,
+        }],
     }
 }
 

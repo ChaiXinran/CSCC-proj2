@@ -265,6 +265,7 @@ impl Chunk {
 
             if instruction.is_terminator() {
                 let expected = match instruction {
+                    Instruction::Throw => 1,
                     Instruction::Return => 1,
                     Instruction::ReturnUndefined => 0,
                     Instruction::Throw => 1,
@@ -289,13 +290,12 @@ impl Chunk {
                 }
                 queue.push_back((target, next_depth));
             }
-            if !instruction.has_fallthrough() {
-                continue;
+            if instruction.has_fallthrough() {
+                if offset + 1 >= self.instructions.len() {
+                    return Err(ChunkError::MissingTerminator);
+                }
+                queue.push_back((offset + 1, next_depth));
             }
-            if offset + 1 >= self.instructions.len() {
-                return Err(ChunkError::MissingTerminator);
-            }
-            queue.push_back((offset + 1, next_depth));
         }
 
         Ok(StackAnalysis { max_depth })

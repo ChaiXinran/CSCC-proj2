@@ -48,6 +48,8 @@ pub enum Instruction {
     UnaryPlus,
     Negate,
     LogicalNot,
+    TypeOf,
+    TypeOfGlobal(u16),
 
     Add,
     Subtract,
@@ -67,6 +69,7 @@ pub enum Instruction {
     /// Observes, but does not remove, the top stack value.
     JumpIfTrue(usize),
     /// Unconditionally transfers control to an absolute instruction offset.
+    /// Transfers control without falling through to the next instruction.
     Jump(usize),
 
     GetProperty(u16),
@@ -78,7 +81,10 @@ pub enum Instruction {
     TypeOf,
     TypeOfGlobal(u16),
     Throw,
+    /// Constructs a value from the callee and `argument_count` arguments.
+    Construct(u16),
 
+    Throw,
     Return,
     ReturnUndefined,
 }
@@ -88,14 +94,20 @@ impl Instruction {
     #[must_use]
     pub const fn stack_effect(self) -> StackEffect {
         match self {
-            Self::Constant(_) | Self::LoadGlobal(_) => StackEffect::new(0, 1),
-            Self::Pop | Self::DeclareGlobal(_) | Self::Return => StackEffect::new(1, 0),
+            Self::Constant(_) | Self::LoadGlobal(_) | Self::TypeOfGlobal(_) => {
+                StackEffect::new(0, 1)
+            }
+            Self::Pop | Self::DeclareGlobal(_) | Self::Throw | Self::Return => {
+                StackEffect::new(1, 0)
+            }
             Self::StoreGlobal(_)
             | Self::UnaryPlus
             | Self::Negate
             | Self::LogicalNot
             | Self::GetProperty(_)
             | Self::TypeOf => StackEffect::new(1, 1),
+            | Self::TypeOf
+            | Self::GetProperty(_) => StackEffect::new(1, 1),
             Self::Add
             | Self::Subtract
             | Self::Multiply
@@ -113,6 +125,11 @@ impl Instruction {
             Self::Call(argument_count) => StackEffect::new(argument_count as u32 + 1, 1),
             Self::Construct(argument_count) => StackEffect::new(argument_count as u32 + 1, 1),
             Self::Throw => StackEffect::new(1, 0),
+            Self::Jump(_) => StackEffect::new(0, 0),
+            Self::Call(argument_count) | Self::Construct(argument_count) => {
+                StackEffect::new(argument_count as u32 + 1, 1)
+            }
+            Self::ReturnUndefined => StackEffect::new(0, 0),
         }
     }
 
@@ -127,6 +144,7 @@ impl Instruction {
             self,
             Self::Jump(_) | Self::Return | Self::ReturnUndefined | Self::Throw
         )
+        matches!(self, Self::Throw | Self::Return | Self::ReturnUndefined)
     }
 
     #[must_use]
@@ -137,5 +155,14 @@ impl Instruction {
             }
             _ => None,
         }
+    }
+
+    /// Returns whether execution may continue at the following instruction.
+    #[must_use]
+    pub const fn has_fallthrough(self) -> bool {
+        !matches!(
+            self,
+            Self::Jump(_) | Self::Throw | Self::Return | Self::ReturnUndefined
+        )
     }
 }
