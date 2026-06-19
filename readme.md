@@ -145,6 +145,8 @@ fn run_native_pipeline() -> Result<(), agentjs::NativeError> {
 
 Only an empty program is supported by the default Native pipeline at present.
 This is an intentional scaffold, not a conformance claim.
+The first end-to-end implementation target is defined in
+[Native V1 expression milestone](docs/native-v1-scope.md).
 
 ## Parallel Development
 
