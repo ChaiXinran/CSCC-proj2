@@ -82,6 +82,15 @@ pub enum Expression {
         property: Box<Expression>,
         computed: bool,
     },
+    Conditional {
+        test: Box<Expression>,
+        consequent: Box<Expression>,
+        alternate: Box<Expression>,
+    },
+    Construct {
+        callee: Box<Expression>,
+        arguments: Vec<Expression>,
+    },
     Array(Vec<Expression>),
     Object(Vec<(String, Expression)>),
 }

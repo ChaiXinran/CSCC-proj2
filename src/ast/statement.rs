@@ -37,4 +37,7 @@ pub enum Statement {
         test: Expression,
         body: Box<Statement>,
     },
+    Break,
+    Continue,
+    Throw(Expression),
 }
