@@ -8,8 +8,8 @@ use std::{error::Error, fmt};
 
 pub use crate::{
     ast::{
-        BinaryOperator, Expression, FunctionBody, FunctionLiteral, FunctionParam, Literal,
-        LogicalOperator, ObjectProperty, Program, PropertyName, Statement, UnaryOperator,
+        ArrayElement, BinaryOperator, Expression, FunctionBody, FunctionLiteral, FunctionParam,
+        Literal, LogicalOperator, ObjectProperty, Program, PropertyName, Statement, UnaryOperator,
         VariableDeclarator, VariableKind,
     },
     bytecode::{
