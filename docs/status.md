@@ -13,6 +13,8 @@
   `$262` host support, filtering, result limits, and JSON summaries.
 - Cold-isolate and warm-runtime microbenchmark command.
 - JetStream 2.0 CLI adapter and a pinned six-workload performance report.
+- Backend-neutral `Engine`/`Runtime` facade with isolated Boa and native
+  backend modules.
 
 ## Known Gaps
 
@@ -24,6 +26,8 @@
 - The ECMAScript parser and VM are currently provided by Boa. This establishes
   a correctness baseline but does not by itself satisfy the contest's
   innovation requirement.
+- `BackendKind::Native` is selectable but intentionally returns `Unsupported`
+  until the self-developed lexer, parser, bytecode compiler, and VM land.
 - A sharded Test262 run on revision `de8e621c` executed 47,516 non-staging
   tests and passed 45,310. Treating every unexecuted non-staging test as a
   failure gives a conservative full-suite lower bound of 87.31%. See

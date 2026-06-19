@@ -1,4 +1,4 @@
-use agentjs::{Engine, ExecutionOptions, Runtime, RuntimeConfig};
+use agentjs::{BackendKind, Engine, ExecutionOptions, FailureKind, Runtime, RuntimeConfig};
 
 #[test]
 fn evaluates_javascript() {
@@ -64,4 +64,14 @@ fn reuses_prepared_scripts_in_a_persistent_runtime() {
 
     assert_eq!(first.value, "42");
     assert_eq!(second.value, "42");
+}
+
+#[test]
+fn native_backend_is_selectable_but_explicitly_unimplemented() {
+    let engine = Engine::with_backend(BackendKind::Native, RuntimeConfig::default());
+    let error = engine
+        .execute("1 + 1", ExecutionOptions::default())
+        .unwrap_err();
+
+    assert_eq!(error.kind, FailureKind::Unsupported);
 }
