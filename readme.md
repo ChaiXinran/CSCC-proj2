@@ -151,6 +151,12 @@ The Native pipeline currently implements the scoped V1-V3 milestones:
 - [Native V3 functions and compound values](docs/native-v3-scope.md) and its
   [shared interface](docs/native-v3-interface.md)
 
+The next collaborative milestone is
+[Native V4 object semantics](docs/native-v4-scope.md), with contracts frozen in
+the [Native V4 shared interface](docs/native-v4-interface.md). V4 focuses on
+property descriptors, prototype chains, constructors, accessors, and sparse
+array length semantics.
+
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
 [`tests/frontend_bytecode_v3.rs`](tests/frontend_bytecode_v3.rs), and
