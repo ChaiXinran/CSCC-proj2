@@ -19,6 +19,8 @@
 
 use crate::{
     ast::{
+        ArrayElement, BinaryOperator, Expression, FunctionLiteral, Literal, LogicalOperator,
+        ObjectProperty, PropertyName, UnaryOperator,
         ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
         LogicalOperator, ObjectProperty, PropertyName, UnaryOperator,
     },
@@ -84,6 +86,8 @@ impl Parser {
     fn peek_binary_operator(&self) -> Option<(u8, String)> {
         match &self.peek().kind {
             TokenKind::Operator(operator) => {
+                binary_precedence(operator).map(|precedence| (precedence, operator.clone()))
+            }
                 binary_precedence(operator).map(|p| (p, operator.clone()))
             }
             // `in` and `instanceof` are keyword binary operators at relational precedence.
@@ -253,6 +257,15 @@ impl Parser {
     /// Trailing comma rule: `[1,]` → length 1; `[1,,]` → length 2 (one hole).
     fn parse_array_literal(&mut self) -> Result<Expression, ParseError> {
         self.expect_punctuator('[')?;
+        let mut elements = Vec::new();
+        while !self.check_punctuator(']') {
+            if self.eat_punctuator(',') {
+                elements.push(ArrayElement::Hole);
+                continue;
+            }
+            elements.push(ArrayElement::Expression(self.parse_assignment()?));
+            if !self.eat_punctuator(',') {
+                break;
         let mut elements: Vec<ArrayElement> = Vec::new();
         while !self.check_punctuator(']') && !self.at_eof() {
             if self.check_punctuator(',') {
@@ -279,6 +292,55 @@ impl Parser {
     /// setter, and `__proto__` forms.
     fn parse_object_literal(&mut self) -> Result<Expression, ParseError> {
         self.expect_punctuator('{')?;
+        let mut properties = Vec::new();
+        let mut has_prototype_setter = false;
+        while !self.check_punctuator('}') && !self.at_eof() {
+            if self.is_accessor_start("get") {
+                self.advance();
+                let key = self.parse_property_name()?;
+                let params = self.parse_param_list()?;
+                if !params.is_empty() {
+                    return Err(self.error("getter must not have parameters".into()));
+                }
+                let body = self.parse_function_body()?;
+                properties.push(ObjectProperty::Getter { key, body });
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+                continue;
+            }
+            if self.is_accessor_start("set") {
+                self.advance();
+                let key = self.parse_property_name()?;
+                let mut params = self.parse_param_list()?;
+                if params.len() != 1 {
+                    return Err(self.error("setter must have exactly one parameter".into()));
+                }
+                let parameter = params.remove(0);
+                let body = self.parse_function_body()?;
+                properties.push(ObjectProperty::Setter {
+                    key,
+                    parameter,
+                    body,
+                });
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+                continue;
+            }
+
+            let key = self.parse_property_name()?;
+            self.expect_punctuator(':')?;
+            let value = self.parse_assignment()?;
+            if matches!(&key, PropertyName::Identifier(name) if name == "__proto__") {
+                if has_prototype_setter {
+                    return Err(self.error("duplicate __proto__ setter".into()));
+                }
+                has_prototype_setter = true;
+                properties.push(ObjectProperty::PrototypeSetter { value });
+            } else {
+                properties.push(ObjectProperty::Data { key, value });
+            }
         let mut properties: Vec<ObjectProperty> = Vec::new();
         let mut has_proto_setter = false;
         while !self.check_punctuator('}') && !self.at_eof() {
@@ -292,6 +354,10 @@ impl Parser {
         Ok(Expression::Object(properties))
     }
 
+    fn is_accessor_start(&self, name: &str) -> bool {
+        matches!(&self.peek().kind, TokenKind::Identifier(value) if value == name)
+            && !matches!(self.peek_n(1).kind, TokenKind::Punctuator(':'))
+            && matches!(self.peek_n(2).kind, TokenKind::Punctuator('('))
     /// Parses a single object property: data, getter, setter, or `__proto__`.
     fn parse_object_property(
         &mut self,
@@ -428,6 +494,7 @@ fn binary_precedence(operator: &str) -> Option<u8> {
         "&&" => 2,
         "===" | "!==" => 3,
         "<" | "<=" | ">" | ">=" => 4,
+        "in" | "instanceof" => 4,
         "+" | "-" => 5,
         "*" | "/" | "%" => 6,
         _ => return None,

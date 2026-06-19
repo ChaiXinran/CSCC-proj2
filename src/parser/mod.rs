@@ -76,6 +76,10 @@ impl Parser {
         &self.tokens[self.cursor.min(self.tokens.len() - 1)]
     }
 
+    fn peek_n(&self, offset: usize) -> &Token {
+        &self.tokens[(self.cursor + offset).min(self.tokens.len() - 1)]
+    }
+
     /// Consumes and returns the current token, never moving past EOF.
     fn advance(&mut self) -> Token {
         let token = self.peek().clone();

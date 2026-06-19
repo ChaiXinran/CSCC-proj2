@@ -155,6 +155,19 @@ pub enum Instruction {
     /// `[callee, this_value, arg0, ..., argN]`.
     /// Stack: [callee, this, args...] → [result]
     CallWithThis(u16),
+
+    // V4 object-model instructions.
+    ObjectCreateEmpty,
+    ArrayCreateSparse(u32),
+    DefineDataProperty(u16),
+    DefineGetter(u16),
+    DefineSetter(u16),
+    SetObjectPrototype,
+    DefineElement(u32),
+    DeleteProperty(u16),
+    DeleteElement,
+    HasProperty,
+    InstanceOf,
 }
 
 impl Instruction {
@@ -169,7 +182,9 @@ impl Instruction {
             | Self::CreateFunction(_)
             | Self::LoadName(_)
             | Self::TypeOfName(_)
-            | Self::LoadThis => StackEffect::new(0, 1),
+            | Self::LoadThis
+            | Self::ObjectCreateEmpty
+            | Self::ArrayCreateSparse(_) => StackEffect::new(0, 1),
 
             // pop 1, push 0
             Self::Pop
@@ -199,7 +214,10 @@ impl Instruction {
             | Self::LessThanOrEqual
             | Self::GreaterThan
             | Self::GreaterThanOrEqual
-            | Self::GetElement => StackEffect::new(2, 1),
+            | Self::GetElement
+            | Self::DeleteElement
+            | Self::HasProperty
+            | Self::InstanceOf => StackEffect::new(2, 1),
 
             // observe top (no stack change)
             Self::JumpIfFalse(_) | Self::JumpIfTrue(_) => StackEffect::with_required(1, 0, 0),
@@ -231,6 +249,15 @@ impl Instruction {
 
             // ObjectCreate(n): pops 2n (n key-value pairs), pushes 1
             Self::ObjectCreate(n) => StackEffect::with_required(n as u32 * 2, n as u32 * 2, 1),
+
+            // The object remains below the consumed value.
+            Self::DefineDataProperty(_)
+            | Self::DefineGetter(_)
+            | Self::DefineSetter(_)
+            | Self::SetObjectPrototype
+            | Self::DefineElement(_) => StackEffect::with_required(2, 1, 0),
+
+            Self::DeleteProperty(_) => StackEffect::new(1, 1),
         }
     }
 
