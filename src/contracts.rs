@@ -12,13 +12,18 @@ pub use crate::{
         Chunk, ChunkError, CompileError, Compiler, Constant, Instruction, StackAnalysis,
         StackEffect,
     },
+    ast::{
+        BinaryOperator, Expression, Literal, LogicalOperator, Program, Statement, UnaryOperator,
+        VariableKind,
+    },
+    bytecode::{Chunk, CompileError, Compiler, Constant, Instruction},
     lexer::{Keyword, LexError, Span, Token, TokenKind},
     parser::{ParseError, Parser},
     runtime::{
         Binding, CollectionStats, Collector, Environment, EnvironmentId, Heap, JsObject, JsValue,
-        NativeContext, ObjectId, PropertyDescriptor,
+        NativeContext, NativeFunction, ObjectId, PropertyDescriptor,
     },
-    vm::{CallFrame, Vm, VmError},
+    vm::{CallFrame, Vm, VmError, VmErrorKind},
 };
 
 /// Unified failure type passed between native engine stages.
@@ -116,9 +121,9 @@ impl ChunkExecutor for Vm {
     fn execute_chunk(
         &mut self,
         chunk: &Chunk,
-        _context: &mut NativeContext,
+        context: &mut NativeContext,
     ) -> Result<JsValue, NativeError> {
-        Ok(self.execute(chunk)?)
+        Ok(self.execute_with_context(chunk, context)?)
     }
 }
 

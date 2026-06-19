@@ -23,6 +23,21 @@ impl<'source> Cursor<'source> {
         self.source[self.offset..].chars().next()
     }
 
+    /// Returns the character one position past [`Cursor::peek`] without moving.
+    #[must_use]
+    pub fn second(&self) -> Option<char> {
+        let mut chars = self.source[self.offset..].chars();
+        chars.next();
+        chars.next()
+    }
+
+    /// Returns the unconsumed source text. Useful for fixed-string matching such
+    /// as comment introducers and multi-character operators.
+    #[must_use]
+    pub fn rest(&self) -> &'source str {
+        &self.source[self.offset..]
+    }
+
     pub fn bump(&mut self) -> Option<char> {
         let ch = self.peek()?;
         self.offset += ch.len_utf8();

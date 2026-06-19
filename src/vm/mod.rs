@@ -4,4 +4,4 @@ mod frame;
 mod interpreter;
 
 pub use frame::CallFrame;
-pub use interpreter::{Vm, VmError};
+pub use interpreter::{Vm, VmError, VmErrorKind};

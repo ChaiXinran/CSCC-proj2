@@ -24,4 +24,10 @@ impl JsObject {
     pub fn own_property(&self, name: &str) -> Option<&PropertyDescriptor> {
         self.properties.get(name)
     }
+
+    #[must_use]
+    pub fn get_own_property_value(&self, name: &str) -> Option<super::JsValue> {
+        self.own_property(name)
+            .map(|descriptor| descriptor.value.clone())
+    }
 }
