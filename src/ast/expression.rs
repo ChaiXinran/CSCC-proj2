@@ -19,6 +19,7 @@ pub enum UnaryOperator {
     Minus,
     Not,
     TypeOf,
+    Delete,
 }
 
 /// Binary expression operators.
@@ -37,6 +38,8 @@ pub enum BinaryOperator {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    In,
+    InstanceOf,
     LogicalAnd,
     LogicalOr,
 }
@@ -83,11 +86,25 @@ pub struct FunctionLiteral {
 // V3 object literal types
 // ---------------------------------------------------------------------------
 
-/// One property in an object literal: `key: value`.
+/// One property definition in an object literal.
 #[derive(Debug, Clone, PartialEq)]
-pub struct ObjectProperty {
-    pub key: PropertyName,
-    pub value: Expression,
+pub enum ObjectProperty {
+    Data {
+        key: PropertyName,
+        value: Expression,
+    },
+    Getter {
+        key: PropertyName,
+        body: FunctionBody,
+    },
+    Setter {
+        key: PropertyName,
+        parameter: FunctionParam,
+        body: FunctionBody,
+    },
+    PrototypeSetter {
+        value: Expression,
+    },
 }
 
 /// The key of an object property. V3 supports identifier, string, and number
@@ -114,6 +131,14 @@ impl PropertyName {
             }
         }
     }
+}
+
+/// One array literal position. A hole is distinct from an explicit
+/// `undefined` value.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArrayElement {
+    Hole,
+    Expression(Expression),
 }
 
 // ---------------------------------------------------------------------------
@@ -166,7 +191,7 @@ pub enum Expression {
         arguments: Vec<Expression>,
     },
     /// `[element, ...]` array literal.
-    Array(Vec<Expression>),
+    Array(Vec<ArrayElement>),
     /// `{ key: value, ... }` object literal.
     Object(Vec<ObjectProperty>),
     /// Function expression or named function expression.

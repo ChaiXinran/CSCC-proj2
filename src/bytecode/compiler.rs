@@ -3,8 +3,8 @@
 use std::fmt;
 
 use crate::ast::{
-    BinaryOperator, Expression, FunctionBody, FunctionLiteral, Literal, LogicalOperator,
-    ObjectProperty, Program, PropertyName, Statement, UnaryOperator, VariableKind,
+    ArrayElement, BinaryOperator, Expression, FunctionBody, FunctionLiteral, Literal,
+    LogicalOperator, ObjectProperty, Program, PropertyName, Statement, UnaryOperator, VariableKind,
 };
 
 use super::{Chunk, ChunkError, Constant, EnvironmentCapturePolicy, FunctionTemplate, Instruction};
@@ -422,6 +422,9 @@ impl Compiler {
             UnaryOperator::Plus => Instruction::UnaryPlus,
             UnaryOperator::Minus => Instruction::Negate,
             UnaryOperator::Not => Instruction::LogicalNot,
+            UnaryOperator::Delete => {
+                return self.compile_delete(argument, chunk, context);
+            }
             UnaryOperator::TypeOf => {
                 if let Expression::Identifier(name) = argument {
                     let name_index = self.add_name(name, chunk)?;
@@ -499,6 +502,8 @@ impl Compiler {
             BinaryOperator::LessThanOrEqual => Instruction::LessThanOrEqual,
             BinaryOperator::GreaterThan => Instruction::GreaterThan,
             BinaryOperator::GreaterThanOrEqual => Instruction::GreaterThanOrEqual,
+            BinaryOperator::In => Instruction::HasProperty,
+            BinaryOperator::InstanceOf => Instruction::InstanceOf,
             BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => unreachable!(),
             BinaryOperator::Equal => {
                 return Err(CompileError::unsupported(
@@ -721,17 +726,41 @@ impl Compiler {
 
     fn compile_array(
         &mut self,
-        elements: &[Expression],
+        elements: &[ArrayElement],
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let count = u16::try_from(elements.len()).map_err(|_| CompileError {
-            message: "array literal element count exceeds the u16 bytecode range".into(),
-        })?;
-        for element in elements {
-            self.compile_expression(element, chunk, context)?;
+        if elements
+            .iter()
+            .all(|element| matches!(element, ArrayElement::Expression(_)))
+        {
+            let count = u16::try_from(elements.len()).map_err(|_| CompileError {
+                message: "dense array literal element count exceeds the u16 bytecode range".into(),
+            })?;
+            for element in elements {
+                let ArrayElement::Expression(expression) = element else {
+                    unreachable!();
+                };
+                self.compile_expression(expression, chunk, context)?;
+            }
+            chunk.emit(Instruction::ArrayCreate(count));
+            return Ok(());
         }
-        chunk.emit(Instruction::ArrayCreate(count));
+
+        let length = u32::try_from(elements.len()).map_err(|_| CompileError {
+            message: "sparse array literal length exceeds the u32 bytecode range".into(),
+        })?;
+        chunk.emit(Instruction::ArrayCreateSparse(length));
+        for (index, element) in elements.iter().enumerate() {
+            let ArrayElement::Expression(expression) = element else {
+                continue;
+            };
+            self.compile_expression(expression, chunk, context)?;
+            let index = u32::try_from(index).map_err(|_| CompileError {
+                message: "sparse array element index exceeds the u32 bytecode range".into(),
+            })?;
+            chunk.emit(Instruction::DefineElement(index));
+        }
         Ok(())
     }
 
@@ -741,21 +770,119 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let count = u16::try_from(properties.len()).map_err(|_| CompileError {
-            message: "object literal property count exceeds the u16 bytecode range".into(),
-        })?;
-        for property in properties {
-            let key_string = match &property.key {
-                PropertyName::Identifier(s) | PropertyName::String(s) => s.clone(),
-                PropertyName::Number(n) => n.to_string(),
-            };
-            let key_index = chunk
-                .add_constant(Constant::String(key_string))
-                .map_err(CompileError::from_chunk)?;
-            chunk.emit(Instruction::Constant(key_index));
-            self.compile_expression(&property.value, chunk, context)?;
+        if properties
+            .iter()
+            .all(|property| matches!(property, ObjectProperty::Data { .. }))
+        {
+            let count = u16::try_from(properties.len()).map_err(|_| CompileError {
+                message: "object literal property count exceeds the u16 bytecode range".into(),
+            })?;
+            for property in properties {
+                let ObjectProperty::Data { key, value } = property else {
+                    unreachable!();
+                };
+                let key_index = chunk
+                    .add_constant(Constant::String(property_key(key)))
+                    .map_err(CompileError::from_chunk)?;
+                chunk.emit(Instruction::Constant(key_index));
+                self.compile_expression(value, chunk, context)?;
+            }
+            chunk.emit(Instruction::ObjectCreate(count));
+            return Ok(());
         }
-        chunk.emit(Instruction::ObjectCreate(count));
+
+        chunk.emit(Instruction::ObjectCreateEmpty);
+        for property in properties {
+            match property {
+                ObjectProperty::Data { key, value } => {
+                    self.compile_expression(value, chunk, context)?;
+                    let key = self.add_name(&property_key(key), chunk)?;
+                    chunk.emit(Instruction::DefineDataProperty(key));
+                }
+                ObjectProperty::Getter { key, body } => {
+                    self.compile_accessor_function(std::iter::empty(), body, chunk, context)?;
+                    let key = self.add_name(&property_key(key), chunk)?;
+                    chunk.emit(Instruction::DefineGetter(key));
+                }
+                ObjectProperty::Setter {
+                    key,
+                    parameter,
+                    body,
+                } => {
+                    self.compile_accessor_function(
+                        std::iter::once(parameter.name.as_str()),
+                        body,
+                        chunk,
+                        context,
+                    )?;
+                    let key = self.add_name(&property_key(key), chunk)?;
+                    chunk.emit(Instruction::DefineSetter(key));
+                }
+                ObjectProperty::PrototypeSetter { value } => {
+                    self.compile_expression(value, chunk, context)?;
+                    chunk.emit(Instruction::SetObjectPrototype);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn compile_delete(
+        &mut self,
+        argument: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        match argument {
+            Expression::Member {
+                object,
+                property,
+                computed: false,
+            } => {
+                let Expression::Identifier(property) = property.as_ref() else {
+                    return Err(CompileError::unsupported(
+                        "non-identifier static property in delete",
+                    ));
+                };
+                self.compile_expression(object, chunk, context)?;
+                let property = self.add_name(property, chunk)?;
+                chunk.emit(Instruction::DeleteProperty(property));
+                Ok(())
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: true,
+            } => {
+                self.compile_expression(object, chunk, context)?;
+                self.compile_expression(property, chunk, context)?;
+                chunk.emit(Instruction::DeleteElement);
+                Ok(())
+            }
+            _ => Err(CompileError::unsupported(
+                "delete operand other than a member expression",
+            )),
+        }
+    }
+
+    fn compile_accessor_function<'a>(
+        &mut self,
+        params: impl Iterator<Item = &'a str>,
+        body: &FunctionBody,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let compiled = self.compile_function_body(params, body, context)?;
+        let template = FunctionTemplate {
+            name: None,
+            params: compiled.params,
+            chunk: compiled.chunk,
+            environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+        };
+        let index = chunk
+            .add_function(template)
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::CreateFunction(index));
         Ok(())
     }
 
@@ -788,6 +915,10 @@ impl Compiler {
 struct CompiledFunction {
     params: Vec<String>,
     chunk: Chunk,
+}
+
+fn property_key(key: &PropertyName) -> String {
+    key.to_key_string()
 }
 
 fn completion_expression_index(statements: &[Statement]) -> Option<usize> {

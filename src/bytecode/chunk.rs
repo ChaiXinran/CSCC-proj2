@@ -240,7 +240,11 @@ impl Chunk {
                 | Instruction::TypeOfName(index)
                 | Instruction::StoreName(index)
                 | Instruction::SetProperty(index)
-                | Instruction::GetMethod(index) => Some(index),
+                | Instruction::GetMethod(index)
+                | Instruction::DefineDataProperty(index)
+                | Instruction::DefineGetter(index)
+                | Instruction::DefineSetter(index)
+                | Instruction::DeleteProperty(index) => Some(index),
                 Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };
@@ -262,7 +266,11 @@ impl Chunk {
                 | Instruction::TypeOfName(index)
                 | Instruction::StoreName(index)
                 | Instruction::SetProperty(index)
-                | Instruction::GetMethod(index) => Some(index),
+                | Instruction::GetMethod(index)
+                | Instruction::DefineDataProperty(index)
+                | Instruction::DefineGetter(index)
+                | Instruction::DefineSetter(index)
+                | Instruction::DeleteProperty(index) => Some(index),
                 Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };

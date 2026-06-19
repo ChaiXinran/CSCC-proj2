@@ -397,6 +397,21 @@ impl Vm {
                     let result = self.call_value(callee, this_value, arguments, context)?;
                     self.stack.push(result);
                 }
+                Instruction::ObjectCreateEmpty
+                | Instruction::ArrayCreateSparse(_)
+                | Instruction::DefineDataProperty(_)
+                | Instruction::DefineGetter(_)
+                | Instruction::DefineSetter(_)
+                | Instruction::SetObjectPrototype
+                | Instruction::DefineElement(_)
+                | Instruction::DeleteProperty(_)
+                | Instruction::DeleteElement
+                | Instruction::HasProperty
+                | Instruction::InstanceOf => {
+                    return Err(VmError::runtime(format!(
+                        "V4 instruction {instruction:?} is not implemented by the VM yet"
+                    )));
+                }
             }
         }
 

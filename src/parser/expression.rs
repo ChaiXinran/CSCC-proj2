@@ -19,8 +19,8 @@
 
 use crate::{
     ast::{
-        BinaryOperator, Expression, FunctionLiteral, Literal, LogicalOperator, ObjectProperty,
-        PropertyName, UnaryOperator,
+        ArrayElement, BinaryOperator, Expression, FunctionLiteral, Literal, LogicalOperator,
+        ObjectProperty, PropertyName, UnaryOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -82,10 +82,13 @@ impl Parser {
     }
 
     fn peek_binary_operator(&self) -> Option<(u8, String)> {
-        if let TokenKind::Operator(operator) = &self.peek().kind {
-            binary_precedence(operator).map(|precedence| (precedence, operator.clone()))
-        } else {
-            None
+        match &self.peek().kind {
+            TokenKind::Operator(operator) => {
+                binary_precedence(operator).map(|precedence| (precedence, operator.clone()))
+            }
+            TokenKind::Keyword(Keyword::In) => Some((4, "in".into())),
+            TokenKind::Keyword(Keyword::InstanceOf) => Some((4, "instanceof".into())),
+            _ => None,
         }
     }
 
@@ -96,6 +99,14 @@ impl Parser {
             let argument = self.parse_unary()?;
             return Ok(Expression::Unary {
                 operator: UnaryOperator::TypeOf,
+                argument: Box::new(argument),
+            });
+        }
+        if self.check_keyword(Keyword::Delete) {
+            self.advance();
+            let argument = self.parse_unary()?;
+            return Ok(Expression::Unary {
+                operator: UnaryOperator::Delete,
                 argument: Box::new(argument),
             });
         }
@@ -240,16 +251,14 @@ impl Parser {
     fn parse_array_literal(&mut self) -> Result<Expression, ParseError> {
         self.expect_punctuator('[')?;
         let mut elements = Vec::new();
-        if !self.check_punctuator(']') {
-            loop {
-                elements.push(self.parse_assignment()?);
-                if !self.eat_punctuator(',') {
-                    break;
-                }
-                // Allow trailing comma before `]`
-                if self.check_punctuator(']') {
-                    break;
-                }
+        while !self.check_punctuator(']') {
+            if self.eat_punctuator(',') {
+                elements.push(ArrayElement::Hole);
+                continue;
+            }
+            elements.push(ArrayElement::Expression(self.parse_assignment()?));
+            if !self.eat_punctuator(',') {
+                break;
             }
         }
         self.expect_punctuator(']')?;
@@ -263,17 +272,66 @@ impl Parser {
     fn parse_object_literal(&mut self) -> Result<Expression, ParseError> {
         self.expect_punctuator('{')?;
         let mut properties = Vec::new();
+        let mut has_prototype_setter = false;
         while !self.check_punctuator('}') && !self.at_eof() {
+            if self.is_accessor_start("get") {
+                self.advance();
+                let key = self.parse_property_name()?;
+                let params = self.parse_param_list()?;
+                if !params.is_empty() {
+                    return Err(self.error("getter must not have parameters".into()));
+                }
+                let body = self.parse_function_body()?;
+                properties.push(ObjectProperty::Getter { key, body });
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+                continue;
+            }
+            if self.is_accessor_start("set") {
+                self.advance();
+                let key = self.parse_property_name()?;
+                let mut params = self.parse_param_list()?;
+                if params.len() != 1 {
+                    return Err(self.error("setter must have exactly one parameter".into()));
+                }
+                let parameter = params.remove(0);
+                let body = self.parse_function_body()?;
+                properties.push(ObjectProperty::Setter {
+                    key,
+                    parameter,
+                    body,
+                });
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+                continue;
+            }
+
             let key = self.parse_property_name()?;
             self.expect_punctuator(':')?;
             let value = self.parse_assignment()?;
-            properties.push(ObjectProperty { key, value });
+            if matches!(&key, PropertyName::Identifier(name) if name == "__proto__") {
+                if has_prototype_setter {
+                    return Err(self.error("duplicate __proto__ setter".into()));
+                }
+                has_prototype_setter = true;
+                properties.push(ObjectProperty::PrototypeSetter { value });
+            } else {
+                properties.push(ObjectProperty::Data { key, value });
+            }
             if !self.eat_punctuator(',') {
                 break;
             }
         }
         self.expect_punctuator('}')?;
         Ok(Expression::Object(properties))
+    }
+
+    fn is_accessor_start(&self, name: &str) -> bool {
+        matches!(&self.peek().kind, TokenKind::Identifier(value) if value == name)
+            && !matches!(self.peek_n(1).kind, TokenKind::Punctuator(':'))
+            && matches!(self.peek_n(2).kind, TokenKind::Punctuator('('))
     }
 
     /// Parses a property key: identifier, string literal, or number literal.
@@ -332,6 +390,7 @@ fn binary_precedence(operator: &str) -> Option<u8> {
         "&&" => 2,
         "===" | "!==" => 3,
         "<" | "<=" | ">" | ">=" => 4,
+        "in" | "instanceof" => 4,
         "+" | "-" => 5,
         "*" | "/" | "%" => 6,
         _ => return None,
@@ -376,6 +435,8 @@ fn binary_operator(operator: &str) -> BinaryOperator {
         "<=" => BinaryOperator::LessThanOrEqual,
         ">" => BinaryOperator::GreaterThan,
         ">=" => BinaryOperator::GreaterThanOrEqual,
+        "in" => BinaryOperator::In,
+        "instanceof" => BinaryOperator::InstanceOf,
         other => unreachable!("`{other}` is not a binary operator"),
     }
 }
@@ -392,8 +453,8 @@ fn is_assignment_target(expression: &Expression) -> bool {
 mod tests {
     use crate::{
         ast::{
-            BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal, LogicalOperator,
-            ObjectProperty, PropertyName, Statement, UnaryOperator,
+            ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
+            LogicalOperator, ObjectProperty, PropertyName, Statement, UnaryOperator,
         },
         lexer::Lexer,
         parser::Parser,
@@ -623,7 +684,11 @@ mod tests {
     fn parses_array_literal_with_elements() {
         assert_eq!(
             parse_expression("[1, 2, 3]"),
-            Expression::Array(vec![number(1.0), number(2.0), number(3.0)])
+            Expression::Array(vec![
+                ArrayElement::Expression(number(1.0)),
+                ArrayElement::Expression(number(2.0)),
+                ArrayElement::Expression(number(3.0)),
+            ])
         );
     }
 
@@ -638,11 +703,11 @@ mod tests {
         assert_eq!(
             expr,
             Expression::Object(vec![
-                ObjectProperty {
+                ObjectProperty::Data {
                     key: PropertyName::Identifier("a".into()),
                     value: number(1.0),
                 },
-                ObjectProperty {
+                ObjectProperty::Data {
                     key: PropertyName::Identifier("b".into()),
                     value: number(2.0),
                 },
@@ -656,8 +721,20 @@ mod tests {
         let Expression::Object(props) = expr else {
             panic!("expected object");
         };
-        assert!(matches!(props[0].key, PropertyName::String(_)));
-        assert!(matches!(props[1].key, PropertyName::Number(_)));
+        assert!(matches!(
+            props[0],
+            ObjectProperty::Data {
+                key: PropertyName::String(_),
+                ..
+            }
+        ));
+        assert!(matches!(
+            props[1],
+            ObjectProperty::Data {
+                key: PropertyName::Number(_),
+                ..
+            }
+        ));
     }
 
     #[test]
