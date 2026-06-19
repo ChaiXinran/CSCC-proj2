@@ -155,6 +155,9 @@ impl<'source> Lexer<'source> {
             "throw" => TokenKind::Keyword(Keyword::Throw),
             "new" => TokenKind::Keyword(Keyword::New),
             "typeof" => TokenKind::Keyword(Keyword::TypeOf),
+            "delete" => TokenKind::Keyword(Keyword::Delete),
+            "in" => TokenKind::Keyword(Keyword::In),
+            "instanceof" => TokenKind::Keyword(Keyword::InstanceOf),
             "true" => TokenKind::Keyword(Keyword::True),
             "false" => TokenKind::Keyword(Keyword::False),
             "null" => TokenKind::Keyword(Keyword::Null),
@@ -475,6 +478,19 @@ mod tests {
                 TokenKind::Keyword(Keyword::Return),
                 TokenKind::Punctuator('['),
                 TokenKind::Punctuator(']'),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_v4_keywords() {
+        assert_eq!(
+            kinds("delete in instanceof"),
+            [
+                TokenKind::Keyword(Keyword::Delete),
+                TokenKind::Keyword(Keyword::In),
+                TokenKind::Keyword(Keyword::InstanceOf),
                 TokenKind::Eof,
             ]
         );

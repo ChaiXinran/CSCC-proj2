@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::ast::{
     BinaryOperator, Expression, FunctionBody, FunctionLiteral, Literal, LogicalOperator,
-    ObjectProperty, Program, PropertyName, Statement, UnaryOperator, VariableKind,
+    ObjectProperty, Program, Statement, UnaryOperator, VariableKind,
 };
 
 use super::{Chunk, ChunkError, Constant, EnvironmentCapturePolicy, FunctionTemplate, Instruction};
@@ -434,6 +434,11 @@ impl Compiler {
                 }
                 Instruction::TypeOf
             }
+            UnaryOperator::Delete => {
+                return Err(CompileError::unsupported(
+                    "unary operator Delete is not yet supported by the V3 compiler",
+                ));
+            }
         };
 
         self.compile_expression(argument, chunk, context)?;
@@ -503,6 +508,11 @@ impl Compiler {
             BinaryOperator::Equal => {
                 return Err(CompileError::unsupported(
                     "binary operator Equal (abstract equality)",
+                ));
+            }
+            BinaryOperator::In | BinaryOperator::InstanceOf => {
+                return Err(CompileError::unsupported(
+                    "binary operators In/InstanceOf are not yet supported by the V3 compiler",
                 ));
             }
         };
@@ -721,7 +731,7 @@ impl Compiler {
 
     fn compile_array(
         &mut self,
-        elements: &[Expression],
+        elements: &[crate::ast::ArrayElement],
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
@@ -729,7 +739,16 @@ impl Compiler {
             message: "array literal element count exceeds the u16 bytecode range".into(),
         })?;
         for element in elements {
-            self.compile_expression(element, chunk, context)?;
+            match element {
+                crate::ast::ArrayElement::Expression(expr) => {
+                    self.compile_expression(expr, chunk, context)?;
+                }
+                crate::ast::ArrayElement::Hole => {
+                    return Err(CompileError::unsupported(
+                        "sparse array holes are not yet supported by the V3 compiler",
+                    ));
+                }
+            }
         }
         chunk.emit(Instruction::ArrayCreate(count));
         Ok(())
@@ -741,19 +760,32 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let count = u16::try_from(properties.len()).map_err(|_| CompileError {
+        // Count only Data properties for the V3 ObjectCreate instruction.
+        let data_count = properties
+            .iter()
+            .filter(|p| matches!(p, ObjectProperty::Data { .. }))
+            .count();
+        let count = u16::try_from(data_count).map_err(|_| CompileError {
             message: "object literal property count exceeds the u16 bytecode range".into(),
         })?;
         for property in properties {
-            let key_string = match &property.key {
-                PropertyName::Identifier(s) | PropertyName::String(s) => s.clone(),
-                PropertyName::Number(n) => n.to_string(),
-            };
-            let key_index = chunk
-                .add_constant(Constant::String(key_string))
-                .map_err(CompileError::from_chunk)?;
-            chunk.emit(Instruction::Constant(key_index));
-            self.compile_expression(&property.value, chunk, context)?;
+            match property {
+                ObjectProperty::Data { key, value } => {
+                    let key_string = key.to_key_string();
+                    let key_index = chunk
+                        .add_constant(Constant::String(key_string))
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Constant(key_index));
+                    self.compile_expression(value, chunk, context)?;
+                }
+                ObjectProperty::Getter { .. }
+                | ObjectProperty::Setter { .. }
+                | ObjectProperty::PrototypeSetter { .. } => {
+                    return Err(CompileError::unsupported(
+                        "getter/setter/prototype object properties are not yet supported by the V3 compiler",
+                    ));
+                }
+            }
         }
         chunk.emit(Instruction::ObjectCreate(count));
         Ok(())
