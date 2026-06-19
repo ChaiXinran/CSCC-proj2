@@ -9,7 +9,10 @@ pub use function::install_function;
 pub use object::install_object;
 
 use crate::{
-    runtime::{Heap, JsObject, JsValue, NativeContext, NativeFunction, PropertyDescriptor},
+    runtime::{
+        Heap, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue, NativeFunction,
+        PropertyDescriptor,
+    },
     vm::{VmError, VmErrorKind},
 };
 
@@ -56,6 +59,27 @@ pub fn call_native(function: NativeFunction, arguments: Vec<JsValue>) -> Result<
     }
 }
 
+pub fn construct_native(
+    function: NativeFunction,
+    arguments: Vec<JsValue>,
+) -> Result<JsValue, VmError> {
+    match function {
+        NativeFunction::Test262Error => {
+            let message = arguments
+                .first()
+                .and_then(JsValue::to_js_string)
+                .unwrap_or_else(|| "Test262Error".into());
+            Ok(JsValue::Error(NativeErrorValue::new(
+                NativeErrorKind::Test262,
+                message,
+            )))
+        }
+        _ => Err(VmError::type_error(
+            "native function is not a constructor in V2",
+        )),
+    }
+}
+
 fn assert_same_value(arguments: &[JsValue]) -> Result<JsValue, VmError> {
     let actual = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let expected = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
@@ -97,7 +121,7 @@ fn assertion_error(arguments: &[JsValue], fallback: String) -> VmError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        builtins::{call_native, install_test262_harness},
+        builtins::{call_native, construct_native, install_test262_harness},
         runtime::{JsValue, NativeContext, NativeFunction},
         vm::VmErrorKind,
     };
@@ -138,5 +162,16 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.kind, VmErrorKind::Test262);
+    }
+
+    #[test]
+    fn constructs_minimal_test262_error_value() {
+        let value = construct_native(
+            NativeFunction::Test262Error,
+            vec![JsValue::String("expected".into())],
+        )
+        .unwrap();
+
+        assert!(matches!(value, JsValue::Error(error) if error.message == "expected"));
     }
 }

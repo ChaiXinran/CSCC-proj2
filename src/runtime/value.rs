@@ -12,6 +12,30 @@ pub enum NativeFunction {
     Test262Error,
 }
 
+/// Minimal native error categories used by V2 `throw`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NativeErrorKind {
+    Error,
+    Test262,
+}
+
+/// Minimal error value carried by `JsValue::Error`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeErrorValue {
+    pub kind: NativeErrorKind,
+    pub message: String,
+}
+
+impl NativeErrorValue {
+    #[must_use]
+    pub fn new(kind: NativeErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
 /// Value representation used by the native VM and runtime.
 #[derive(Debug, Clone, PartialEq)]
 pub enum JsValue {
@@ -22,6 +46,7 @@ pub enum JsValue {
     String(String),
     Object(ObjectId),
     NativeFunction(NativeFunction),
+    Error(NativeErrorValue),
 }
 
 impl JsValue {
@@ -32,7 +57,7 @@ impl JsValue {
             Self::Boolean(value) => *value,
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
             Self::String(value) => !value.is_empty(),
-            Self::Object(_) | Self::NativeFunction(_) => true,
+            Self::Object(_) | Self::NativeFunction(_) | Self::Error(_) => true,
         }
     }
 
@@ -45,7 +70,7 @@ impl JsValue {
             Self::Boolean(false) => Some(0.0),
             Self::Number(value) => Some(*value),
             Self::String(value) => Some(string_to_number(value)),
-            Self::Object(_) | Self::NativeFunction(_) => None,
+            Self::Object(_) | Self::NativeFunction(_) | Self::Error(_) => None,
         }
     }
 
@@ -59,6 +84,19 @@ impl JsValue {
             Self::String(value) => Some(value.clone()),
             Self::Object(id) => Some(format!("[object #{}]", id.0)),
             Self::NativeFunction(_) => Some("function () { [native code] }".into()),
+            Self::Error(error) => Some(error.message.clone()),
+        }
+    }
+
+    #[must_use]
+    pub fn type_of(&self) -> &'static str {
+        match self {
+            Self::Undefined => "undefined",
+            Self::Null | Self::Object(_) | Self::Error(_) => "object",
+            Self::Boolean(_) => "boolean",
+            Self::Number(_) => "number",
+            Self::String(_) => "string",
+            Self::NativeFunction(_) => "function",
         }
     }
 
@@ -73,6 +111,7 @@ impl JsValue {
             (Self::String(left), Self::String(right)) => left == right,
             (Self::Object(left), Self::Object(right)) => left == right,
             (Self::NativeFunction(left), Self::NativeFunction(right)) => left == right,
+            (Self::Error(left), Self::Error(right)) => left == right,
             _ => false,
         }
     }
@@ -140,6 +179,15 @@ mod tests {
         assert!(!JsValue::Number(-0.0).to_boolean());
         assert!(!JsValue::Number(f64::NAN).to_boolean());
         assert!(!JsValue::String(String::new()).to_boolean());
+    }
+
+    #[test]
+    fn reports_typeof_strings_for_v2_values() {
+        assert_eq!(JsValue::Undefined.type_of(), "undefined");
+        assert_eq!(JsValue::Null.type_of(), "object");
+        assert_eq!(JsValue::Boolean(false).type_of(), "boolean");
+        assert_eq!(JsValue::Number(1.0).type_of(), "number");
+        assert_eq!(JsValue::String("x".into()).type_of(), "string");
     }
 
     #[test]

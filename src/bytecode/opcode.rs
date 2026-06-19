@@ -66,10 +66,18 @@ pub enum Instruction {
     JumpIfFalse(usize),
     /// Observes, but does not remove, the top stack value.
     JumpIfTrue(usize),
+    /// Unconditionally transfers control to an absolute instruction offset.
+    Jump(usize),
 
     GetProperty(u16),
     /// Pops the callee and `argument_count` arguments, then pushes the result.
     Call(u16),
+    /// Pops the constructor and `argument_count` arguments, then pushes the constructed value.
+    Construct(u16),
+
+    TypeOf,
+    TypeOfGlobal(u16),
+    Throw,
 
     Return,
     ReturnUndefined,
@@ -86,7 +94,8 @@ impl Instruction {
             | Self::UnaryPlus
             | Self::Negate
             | Self::LogicalNot
-            | Self::GetProperty(_) => StackEffect::new(1, 1),
+            | Self::GetProperty(_)
+            | Self::TypeOf => StackEffect::new(1, 1),
             Self::Add
             | Self::Subtract
             | Self::Multiply
@@ -99,20 +108,33 @@ impl Instruction {
             | Self::GreaterThan
             | Self::GreaterThanOrEqual => StackEffect::new(2, 1),
             Self::JumpIfFalse(_) | Self::JumpIfTrue(_) => StackEffect::with_required(1, 0, 0),
+            Self::Jump(_) | Self::ReturnUndefined => StackEffect::new(0, 0),
+            Self::TypeOfGlobal(_) => StackEffect::new(0, 1),
             Self::Call(argument_count) => StackEffect::new(argument_count as u32 + 1, 1),
-            Self::ReturnUndefined => StackEffect::new(0, 0),
+            Self::Construct(argument_count) => StackEffect::new(argument_count as u32 + 1, 1),
+            Self::Throw => StackEffect::new(1, 0),
         }
     }
 
     #[must_use]
     pub const fn is_terminator(self) -> bool {
-        matches!(self, Self::Return | Self::ReturnUndefined)
+        matches!(self, Self::Return | Self::ReturnUndefined | Self::Throw)
+    }
+
+    #[must_use]
+    pub const fn has_fallthrough(self) -> bool {
+        !matches!(
+            self,
+            Self::Jump(_) | Self::Return | Self::ReturnUndefined | Self::Throw
+        )
     }
 
     #[must_use]
     pub const fn jump_target(self) -> Option<usize> {
         match self {
-            Self::JumpIfFalse(target) | Self::JumpIfTrue(target) => Some(target),
+            Self::JumpIfFalse(target) | Self::JumpIfTrue(target) | Self::Jump(target) => {
+                Some(target)
+            }
             _ => None,
         }
     }

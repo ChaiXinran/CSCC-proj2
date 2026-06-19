@@ -5,7 +5,7 @@ use std::fmt;
 use crate::{
     builtins,
     bytecode::{Chunk, Constant, Instruction},
-    runtime::{Heap, JsValue, NativeContext, ObjectId},
+    runtime::{Heap, JsValue, NativeContext, NativeErrorKind, ObjectId},
 };
 
 /// Native VM failure category.
@@ -15,6 +15,7 @@ pub enum VmErrorKind {
     Type,
     Range,
     Test262,
+    RuntimeLimit,
     Runtime,
 }
 
@@ -65,6 +66,14 @@ impl VmError {
             message: message.into(),
         }
     }
+
+    #[must_use]
+    pub fn runtime_limit(message: impl Into<String>) -> Self {
+        Self {
+            kind: VmErrorKind::RuntimeLimit,
+            message: message.into(),
+        }
+    }
 }
 
 impl fmt::Display for VmError {
@@ -92,7 +101,14 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         self.stack.clear();
+        let result = self.run(chunk, context);
+        if result.is_err() {
+            self.stack.clear();
+        }
+        result
+    }
 
+    fn run(&mut self, chunk: &Chunk, context: &mut NativeContext) -> Result<JsValue, VmError> {
         let mut instruction_pointer = 0;
         while instruction_pointer < chunk.instructions.len() {
             let current_instruction = instruction_pointer;
@@ -217,14 +233,33 @@ impl Vm {
                 Instruction::JumpIfFalse(target) => {
                     self.validate_jump_target(target, chunk, current_instruction)?;
                     if !self.peek_value()?.to_boolean() {
-                        instruction_pointer = target;
+                        self.jump_to(
+                            target,
+                            current_instruction,
+                            context,
+                            &mut instruction_pointer,
+                        )?;
                     }
                 }
                 Instruction::JumpIfTrue(target) => {
                     self.validate_jump_target(target, chunk, current_instruction)?;
                     if self.peek_value()?.to_boolean() {
-                        instruction_pointer = target;
+                        self.jump_to(
+                            target,
+                            current_instruction,
+                            context,
+                            &mut instruction_pointer,
+                        )?;
                     }
+                }
+                Instruction::Jump(target) => {
+                    self.validate_jump_target(target, chunk, current_instruction)?;
+                    self.jump_to(
+                        target,
+                        current_instruction,
+                        context,
+                        &mut instruction_pointer,
+                    )?;
                 }
                 Instruction::GetProperty(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
@@ -242,6 +277,32 @@ impl Vm {
                     let callee = self.pop_value()?;
                     let result = call_value(callee, arguments)?;
                     self.stack.push(result);
+                }
+                Instruction::Construct(argument_count) => {
+                    let mut arguments = Vec::with_capacity(argument_count as usize);
+                    for _ in 0..argument_count {
+                        arguments.push(self.pop_value()?);
+                    }
+                    arguments.reverse();
+
+                    let callee = self.pop_value()?;
+                    let result = construct_value(callee, arguments)?;
+                    self.stack.push(result);
+                }
+                Instruction::TypeOf => {
+                    let value = self.pop_value()?;
+                    self.stack.push(JsValue::String(value.type_of().into()));
+                }
+                Instruction::TypeOfGlobal(index) => {
+                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    let type_name = context
+                        .get_global(name)
+                        .map_or("undefined", |value| value.type_of());
+                    self.stack.push(JsValue::String(type_name.into()));
+                }
+                Instruction::Throw => {
+                    let value = self.pop_value()?;
+                    return Err(throw_value(value));
                 }
                 Instruction::Return => return self.pop_value(),
                 Instruction::ReturnUndefined => return Ok(JsValue::Undefined),
@@ -310,6 +371,20 @@ impl Vm {
                 "jump target {target} is out of bounds at instruction {instruction_pointer}"
             )));
         }
+        Ok(())
+    }
+
+    fn jump_to(
+        &self,
+        target: usize,
+        current_instruction: usize,
+        context: &mut NativeContext,
+        instruction_pointer: &mut usize,
+    ) -> Result<(), VmError> {
+        if target <= current_instruction {
+            context.consume_loop_iteration()?;
+        }
+        *instruction_pointer = target;
         Ok(())
     }
 }
@@ -397,14 +472,32 @@ fn call_value(callee: JsValue, arguments: Vec<JsValue>) -> Result<JsValue, VmErr
     }
 }
 
+fn construct_value(callee: JsValue, arguments: Vec<JsValue>) -> Result<JsValue, VmError> {
+    match callee {
+        JsValue::NativeFunction(function) => builtins::construct_native(function, arguments),
+        other => Err(VmError::type_error(format!("{other} is not a constructor"))),
+    }
+}
+
+fn throw_value(value: JsValue) -> VmError {
+    match value {
+        JsValue::Error(error) if error.kind == NativeErrorKind::Test262 => {
+            VmError::test262(error.message)
+        }
+        value => VmError::runtime(format!("uncaught {value}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
         builtins,
         bytecode::{Chunk, Constant, Instruction},
         runtime::{JsValue, NativeContext},
-        vm::{Vm, VmErrorKind},
+        vm::VmErrorKind,
     };
+
+    use super::Vm;
 
     fn constant(chunk: &mut Chunk, constant: Constant) -> u16 {
         chunk.add_constant(constant).unwrap()
@@ -634,5 +727,99 @@ mod tests {
             .execute_with_context(&chunk, &mut context)
             .unwrap_err();
         assert_eq!(error.kind, VmErrorKind::Test262);
+    }
+
+    #[test]
+    fn unconditional_jump_skips_unreachable_branch() {
+        let mut chunk = Chunk::default();
+        let one = constant(&mut chunk, Constant::Number(1.0));
+        let two = constant(&mut chunk, Constant::Number(2.0));
+
+        chunk.emit(Instruction::Constant(one));
+        chunk.emit(Instruction::Jump(3));
+        chunk.emit(Instruction::Constant(two));
+        chunk.emit(Instruction::Return);
+
+        assert_eq!(Vm::default().execute(&chunk).unwrap(), JsValue::Number(1.0));
+    }
+
+    #[test]
+    fn backward_jump_consumes_loop_budget() {
+        let mut context = NativeContext::default();
+        context.reset_execution_budget(2);
+
+        let chunk = Chunk {
+            instructions: vec![Instruction::Jump(0), Instruction::ReturnUndefined],
+            constants: Vec::new(),
+        };
+
+        let error = Vm::default()
+            .execute_with_context(&chunk, &mut context)
+            .unwrap_err();
+        assert_eq!(error.kind, VmErrorKind::RuntimeLimit);
+    }
+
+    #[test]
+    fn typeof_global_missing_name_returns_undefined() {
+        let mut chunk = Chunk::default();
+        let missing = constant(&mut chunk, Constant::String("missingName".into()));
+        chunk.emit(Instruction::TypeOfGlobal(missing));
+        chunk.emit(Instruction::Return);
+
+        assert_eq!(
+            Vm::default().execute(&chunk).unwrap(),
+            JsValue::String("undefined".into())
+        );
+    }
+
+    #[test]
+    fn typeof_reports_v2_value_types() {
+        let mut chunk = Chunk::default();
+        let null = constant(&mut chunk, Constant::Null);
+        chunk.emit(Instruction::Constant(null));
+        chunk.emit(Instruction::TypeOf);
+        chunk.emit(Instruction::Return);
+
+        assert_eq!(
+            Vm::default().execute(&chunk).unwrap(),
+            JsValue::String("object".into())
+        );
+    }
+
+    #[test]
+    fn constructs_and_throws_minimal_test262_error() {
+        let mut context = NativeContext::default();
+        builtins::install_test262_harness(&mut context);
+
+        let mut chunk = Chunk::default();
+        let constructor = constant(&mut chunk, Constant::String("Test262Error".into()));
+        let message = constant(&mut chunk, Constant::String("expected".into()));
+        chunk.emit(Instruction::LoadGlobal(constructor));
+        chunk.emit(Instruction::Constant(message));
+        chunk.emit(Instruction::Construct(1));
+        chunk.emit(Instruction::Throw);
+        chunk.emit(Instruction::ReturnUndefined);
+
+        let error = Vm::default()
+            .execute_with_context(&chunk, &mut context)
+            .unwrap_err();
+        assert_eq!(error.kind, VmErrorKind::Test262);
+        assert_eq!(error.message, "expected");
+    }
+
+    #[test]
+    fn throwing_primitive_reports_runtime_error_and_clears_stack() {
+        let mut chunk = Chunk::default();
+        let leftover = constant(&mut chunk, Constant::Number(1.0));
+        let thrown = constant(&mut chunk, Constant::String("boom".into()));
+        chunk.emit(Instruction::Constant(leftover));
+        chunk.emit(Instruction::Constant(thrown));
+        chunk.emit(Instruction::Throw);
+        chunk.emit(Instruction::ReturnUndefined);
+
+        let mut vm = Vm::default();
+        let error = vm.execute(&chunk).unwrap_err();
+        assert_eq!(error.kind, VmErrorKind::Runtime);
+        assert!(vm.stack.is_empty());
     }
 }

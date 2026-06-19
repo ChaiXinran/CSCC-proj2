@@ -10,7 +10,7 @@ use crate::{
 /// This type is intentionally a compiling skeleton. Lexer, parser, bytecode,
 /// value representation, and VM work will be implemented behind this boundary.
 pub struct NativeRuntime {
-    _config: RuntimeConfig,
+    config: RuntimeConfig,
     context: NativeContext,
     pipeline: NativePipeline,
 }
@@ -24,13 +24,14 @@ impl NativeRuntime {
             builtins::install_test262_harness(&mut context);
         }
         Self {
-            _config: config,
+            config,
             context,
             pipeline: NativePipeline::default(),
         }
     }
 
     fn evaluate(&mut self, source: &str) -> Result<crate::runtime::JsValue, EvalFailure> {
+        self.context.reset_execution_budget(self.config.loop_limit);
         self.pipeline
             .evaluate(source, &mut self.context)
             .map_err(classify_native_error)
@@ -82,6 +83,7 @@ fn classify_native_error(error: NativeError) -> EvalFailure {
             VmErrorKind::Type => FailureKind::Type,
             VmErrorKind::Range => FailureKind::Range,
             VmErrorKind::Test262 => FailureKind::Test262,
+            VmErrorKind::RuntimeLimit => FailureKind::RuntimeLimit,
             VmErrorKind::Runtime => FailureKind::Other,
         },
     };

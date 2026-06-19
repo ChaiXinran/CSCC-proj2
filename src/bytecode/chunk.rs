@@ -152,7 +152,7 @@ impl Chunk {
         self.instructions.len()
     }
 
-    /// Replaces the target of an existing conditional jump.
+    /// Replaces the target of an existing jump.
     pub fn patch_jump(&mut self, offset: usize, target: usize) -> Result<(), ChunkError> {
         let instruction = self
             .instructions
@@ -160,7 +160,9 @@ impl Chunk {
             .ok_or(ChunkError::InvalidInstructionOffset { offset })?;
 
         match instruction {
-            Instruction::JumpIfFalse(current) | Instruction::JumpIfTrue(current) => {
+            Instruction::JumpIfFalse(current)
+            | Instruction::JumpIfTrue(current)
+            | Instruction::Jump(current) => {
                 *current = target;
                 Ok(())
             }
@@ -176,7 +178,8 @@ impl Chunk {
                 | Instruction::DeclareGlobal(index)
                 | Instruction::LoadGlobal(index)
                 | Instruction::StoreGlobal(index)
-                | Instruction::GetProperty(index) => Some(index),
+                | Instruction::GetProperty(index)
+                | Instruction::TypeOfGlobal(index) => Some(index),
                 _ => None,
             };
             if let Some(index) = constant_index
@@ -189,7 +192,8 @@ impl Chunk {
                 Instruction::DeclareGlobal(index)
                 | Instruction::LoadGlobal(index)
                 | Instruction::StoreGlobal(index)
-                | Instruction::GetProperty(index) => Some(index),
+                | Instruction::GetProperty(index)
+                | Instruction::TypeOfGlobal(index) => Some(index),
                 _ => None,
             };
             if let Some(index) = name_index
@@ -263,6 +267,7 @@ impl Chunk {
                 let expected = match instruction {
                     Instruction::Return => 1,
                     Instruction::ReturnUndefined => 0,
+                    Instruction::Throw => 1,
                     _ => unreachable!(),
                 };
                 if depth != expected {
@@ -283,6 +288,9 @@ impl Chunk {
                     return Err(ChunkError::InvalidJumpTarget { offset, target });
                 }
                 queue.push_back((target, next_depth));
+            }
+            if !instruction.has_fallthrough() {
+                continue;
             }
             if offset + 1 >= self.instructions.len() {
                 return Err(ChunkError::MissingTerminator);
