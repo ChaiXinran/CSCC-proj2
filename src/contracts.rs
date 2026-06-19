@@ -13,9 +13,9 @@ pub use crate::{
     parser::{ParseError, Parser},
     runtime::{
         Binding, CollectionStats, Collector, Environment, EnvironmentId, Heap, JsObject, JsValue,
-        NativeContext, ObjectId, PropertyDescriptor,
+        NativeContext, NativeFunction, ObjectId, PropertyDescriptor,
     },
-    vm::{CallFrame, Vm, VmError},
+    vm::{CallFrame, Vm, VmError, VmErrorKind},
 };
 
 /// Unified failure type passed between native engine stages.
@@ -113,9 +113,9 @@ impl ChunkExecutor for Vm {
     fn execute_chunk(
         &mut self,
         chunk: &Chunk,
-        _context: &mut NativeContext,
+        context: &mut NativeContext,
     ) -> Result<JsValue, NativeError> {
-        Ok(self.execute(chunk)?)
+        Ok(self.execute_with_context(chunk, context)?)
     }
 }
 
