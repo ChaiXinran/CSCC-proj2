@@ -48,6 +48,7 @@ The replacement path is incremental:
 2. `bytecode/` compiles the native AST into stack-based instructions.
 3. `vm/` executes bytecode independently from the parser.
 4. `runtime/` owns values, environments, objects, the heap, and GC boundary.
+   `NativeContext` is the single per-isolate state passed into VM execution.
 5. `builtins/` installs standard constructors without exposing host APIs.
 6. `contracts.rs::NativePipeline` assembles replaceable stages for isolated
    development and tests.
@@ -62,6 +63,8 @@ Lexer/parser, bytecode, and VM/runtime contributors implement `SourceParser`,
 unfinished stage with a fake implementation by constructing
 `NativePipeline::from_stages`. Changes to these traits or shared data types
 require team review; implementation details remain inside their owning folder.
+The detailed normative rules are defined in
+[the module interface specification](interface-spec.md).
 
 This is an explicit bootstrap architecture. AgentJS already owns the bounded
 script cache and isolation policy; planned native backend work includes:

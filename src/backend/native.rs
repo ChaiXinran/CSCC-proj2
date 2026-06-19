@@ -1,9 +1,8 @@
 use crate::{
     backend::{BackendExecution, RuntimeBackend},
     builtins,
-    contracts::NativePipeline,
+    contracts::{NativeContext, NativePipeline},
     engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig},
-    runtime::Heap,
 };
 
 /// Self-developed AgentJS runtime.
@@ -12,22 +11,18 @@ use crate::{
 /// value representation, and VM work will be implemented behind this boundary.
 pub struct NativeRuntime {
     _config: RuntimeConfig,
-    strict: bool,
-    output: Vec<String>,
-    _heap: Heap,
+    context: NativeContext,
     _pipeline: NativePipeline,
 }
 
 impl NativeRuntime {
     #[must_use]
     pub fn new(config: RuntimeConfig) -> Self {
-        let mut heap = Heap::default();
-        builtins::install_foundation(&mut heap);
+        let mut context = NativeContext::default();
+        builtins::install_foundation(context.heap_mut());
         Self {
             _config: config,
-            strict: false,
-            output: Vec::new(),
-            _heap: heap,
+            context,
             _pipeline: NativePipeline::default(),
         }
     }
@@ -58,14 +53,14 @@ impl RuntimeBackend for NativeRuntime {
     }
 
     fn set_strict(&mut self, strict: bool) {
-        self.strict = strict;
+        self.context.set_strict(strict);
     }
 
     fn clear_output(&mut self) {
-        self.output.clear();
+        self.context.clear_output();
     }
 
     fn take_output(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.output)
+        self.context.take_output()
     }
 }

@@ -13,7 +13,7 @@ pub use crate::{
     parser::{ParseError, Parser},
     runtime::{
         Binding, CollectionStats, Collector, Environment, EnvironmentId, Heap, JsObject, JsValue,
-        ObjectId, PropertyDescriptor,
+        NativeContext, ObjectId, PropertyDescriptor,
     },
     vm::{CallFrame, Vm, VmError},
 };
@@ -85,7 +85,11 @@ pub trait ProgramCompiler {
 
 /// Execution contract owned by the VM/runtime team.
 pub trait ChunkExecutor {
-    fn execute_chunk(&mut self, chunk: &Chunk) -> Result<JsValue, NativeError>;
+    fn execute_chunk(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, NativeError>;
 }
 
 /// Default adapter joining the native lexer and parser.
@@ -106,7 +110,11 @@ impl ProgramCompiler for Compiler {
 }
 
 impl ChunkExecutor for Vm {
-    fn execute_chunk(&mut self, chunk: &Chunk) -> Result<JsValue, NativeError> {
+    fn execute_chunk(
+        &mut self,
+        chunk: &Chunk,
+        _context: &mut NativeContext,
+    ) -> Result<JsValue, NativeError> {
         Ok(self.execute(chunk)?)
     }
 }
@@ -155,28 +163,38 @@ where
         self.compiler.compile_program(program)
     }
 
-    pub fn execute(&mut self, chunk: &Chunk) -> Result<JsValue, NativeError> {
-        self.executor.execute_chunk(chunk)
+    pub fn execute(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, NativeError> {
+        self.executor.execute_chunk(chunk, context)
     }
 
-    pub fn evaluate(&mut self, source: &str) -> Result<JsValue, NativeError> {
+    pub fn evaluate(
+        &mut self,
+        source: &str,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, NativeError> {
         let program = self.parse(source)?;
         let chunk = self.compile(&program)?;
-        self.execute(&chunk)
+        self.execute(&chunk, context)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Chunk, ChunkExecutor, Instruction, JsValue, NativeError, NativePipeline, Program,
-        ProgramCompiler, SourceParser,
+        Chunk, ChunkExecutor, Instruction, JsValue, NativeContext, NativeError, NativePipeline,
+        Program, ProgramCompiler, SourceParser,
     };
 
     #[test]
     fn default_pipeline_executes_empty_program() {
         assert_eq!(
-            NativePipeline::default().evaluate("").unwrap(),
+            NativePipeline::default()
+                .evaluate("", &mut NativeContext::default())
+                .unwrap(),
             JsValue::Undefined
         );
     }
@@ -203,12 +221,22 @@ mod tests {
         }
 
         impl ChunkExecutor for FakeExecutor {
-            fn execute_chunk(&mut self, _chunk: &Chunk) -> Result<JsValue, NativeError> {
+            fn execute_chunk(
+                &mut self,
+                _chunk: &Chunk,
+                context: &mut NativeContext,
+            ) -> Result<JsValue, NativeError> {
+                context.push_output("executed");
                 Ok(JsValue::Number(42.0))
             }
         }
 
         let mut pipeline = NativePipeline::from_stages(FakeFrontend, FakeCompiler, FakeExecutor);
-        assert_eq!(pipeline.evaluate("ignored").unwrap(), JsValue::Number(42.0));
+        let mut context = NativeContext::default();
+        assert_eq!(
+            pipeline.evaluate("ignored", &mut context).unwrap(),
+            JsValue::Number(42.0)
+        );
+        assert_eq!(context.take_output(), ["executed"]);
     }
 }

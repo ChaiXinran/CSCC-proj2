@@ -10,6 +10,8 @@ The root is the AgentJS implementation. It uses three bundled upstream trees for
 - `src/contracts.rs`: stable native-engine collaboration boundary. Import
   cross-team types and traits here; change its public contracts only with team
   review. Keep implementations in their owning `src/<module>/` directory.
+- `docs/interface-spec.md`: normative ownership, data, error, Mock, integration,
+  and compatibility rules connecting the four native-engine parts.
 - `docs/`: architecture, status, and benchmark methodology.
 - `boa/`: current Rust ECMAScript backend and implementation reference. Do not modify it for AgentJS features unless an upstream patch is intentional.
 - `quickjs/`: C implementation used as a compact engine reference. Sources are at the directory root, with examples, tests, and fuzz targets under `examples/`, `tests/`, and `fuzz/`.

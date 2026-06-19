@@ -119,21 +119,25 @@ The stable collaboration contracts are:
 ```text
 SourceParser::parse_source        source  -> Program
 ProgramCompiler::compile_program  Program -> Chunk
-ChunkExecutor::execute_chunk      Chunk   -> JsValue
-NativePipeline::evaluate          source  -> JsValue
+ChunkExecutor::execute_chunk      Chunk + NativeContext -> JsValue
+NativePipeline::evaluate          source + NativeContext -> JsValue
 ```
 
-`Token`, `Program`, `Chunk`, `Instruction`, and `JsValue` are important shared
-data contracts. Changes to these types or the three traits require team review.
+`Token`, `Program`, `Chunk`, `Instruction`, `NativeContext`, and `JsValue` are
+important shared data contracts. Changes to these types or the three traits
+require team review.
 Implementation details should remain inside their owning directory.
+The normative ownership, input/output, error, and compatibility rules are in
+[the module interface specification](docs/interface-spec.md).
 
 The complete native pipeline can be called directly during development:
 
 ```rust
-use agentjs::contracts::{JsValue, NativePipeline};
+use agentjs::contracts::{JsValue, NativeContext, NativePipeline};
 
 fn run_native_pipeline() -> Result<(), agentjs::NativeError> {
-    let value = NativePipeline::default().evaluate("")?;
+    let mut context = NativeContext::default();
+    let value = NativePipeline::default().evaluate("", &mut context)?;
     assert_eq!(value, JsValue::Undefined);
     Ok(())
 }
@@ -157,7 +161,7 @@ downstream stage is unfinished, replace it in a unit test:
 ```rust
 let mut pipeline =
     NativePipeline::from_stages(fake_parser, compiler_under_test, fake_vm);
-let value = pipeline.evaluate("ignored")?;
+let value = pipeline.evaluate("ignored", &mut native_context)?;
 ```
 
 This permits:
