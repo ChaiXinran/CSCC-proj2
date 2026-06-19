@@ -275,14 +275,9 @@ impl Vm {
                     self.stack.push(result);
                 }
                 Instruction::Construct(argument_count) => {
-                    let mut arguments = Vec::with_capacity(argument_count as usize);
-                    for _ in 0..argument_count {
-                        arguments.push(self.pop_value()?);
-                    }
-                    arguments.reverse();
-
+                    let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
-                    let result = construct_value(callee, arguments)?;
+                    let result = self.construct_value(callee, arguments, context)?;
                     self.stack.push(result);
                 }
                 Instruction::TypeOf => {
@@ -571,6 +566,29 @@ impl Vm {
         }
     }
 
+    fn construct_value(
+        &mut self,
+        constructor: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match constructor {
+            JsValue::NativeFunction(function) => builtins::construct_native(function, arguments),
+            JsValue::Function(function_id) => {
+                let prototype = context.function_prototype(function_id);
+                let instance = context.ordinary_object_with_prototype(prototype)?;
+                let result =
+                    self.call_user_function(function_id, instance.clone(), arguments, context)?;
+                if matches!(result, JsValue::Object(_)) {
+                    Ok(result)
+                } else {
+                    Ok(instance)
+                }
+            }
+            other => Err(VmError::type_error(format!("{other} is not a constructor"))),
+        }
+    }
+
     fn validate_jump_target(
         &self,
         target: usize,
@@ -650,13 +668,6 @@ fn compare_values(
         return Ok(false);
     };
     Ok(predicate(ordering))
-}
-
-fn construct_value(callee: JsValue, arguments: Vec<JsValue>) -> Result<JsValue, VmError> {
-    match callee {
-        JsValue::NativeFunction(function) => builtins::construct_native(function, arguments),
-        other => Err(VmError::type_error(format!("{other} is not a constructor"))),
-    }
 }
 
 fn throw_value(value: JsValue) -> VmError {

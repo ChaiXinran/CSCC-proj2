@@ -74,8 +74,8 @@ mod tests {
                 .unwrap()
                 .own_property("answer")
                 .unwrap()
-                .value,
-            JsValue::Number(42.0)
+                .value_cloned(),
+            Some(JsValue::Number(42.0))
         );
     }
 }

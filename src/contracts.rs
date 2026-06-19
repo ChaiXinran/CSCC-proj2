@@ -21,7 +21,8 @@ pub use crate::{
     runtime::{
         Binding, CollectionStats, Collector, Environment, EnvironmentId, FunctionId, Heap,
         JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
-        NativeFunction, ObjectId, ObjectKind, PropertyDescriptor,
+        NativeFunction, ObjectId, ObjectKind, PropertyDescriptor, PropertyDescriptorUpdate,
+        PropertyEntry, PropertyKind, PropertyMap,
     },
     vm::{CallFrame, Completion, Vm, VmError, VmErrorKind},
 };
