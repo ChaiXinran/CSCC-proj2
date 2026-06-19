@@ -8,7 +8,10 @@ use std::{error::Error, fmt};
 
 pub use crate::{
     ast::{BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableKind},
-    bytecode::{Chunk, CompileError, Compiler, Constant, Instruction},
+    bytecode::{
+        Chunk, ChunkError, CompileError, Compiler, Constant, Instruction, StackAnalysis,
+        StackEffect,
+    },
     lexer::{Keyword, LexError, Span, Token, TokenKind},
     parser::{ParseError, Parser},
     runtime::{
@@ -105,7 +108,7 @@ impl SourceParser for NativeFrontend {
 
 impl ProgramCompiler for Compiler {
     fn compile_program(&mut self, program: &Program) -> Result<Chunk, NativeError> {
-        Ok(self.compile(program)?)
+        Ok(Compiler::compile_program(self, program)?)
     }
 }
 

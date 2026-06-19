@@ -27,10 +27,16 @@ pub enum BinaryOperator {
     Multiply,
     Divide,
     Remainder,
+    /// Abstract equality (`==`), intentionally outside Native V1.
     Equal,
     StrictEqual,
+    StrictNotEqual,
     LessThan,
+    LessThanOrEqual,
     GreaterThan,
+    GreaterThanOrEqual,
+    LogicalAnd,
+    LogicalOr,
 }
 
 /// Expression subset implemented incrementally by AgentJS.

@@ -50,6 +50,13 @@ impl Vm {
                     });
                 }
                 Instruction::ReturnUndefined => return Ok(JsValue::Undefined),
+                unsupported => {
+                    return Err(VmError {
+                        message: format!(
+                            "instruction {unsupported:?} is not implemented by the VM"
+                        ),
+                    });
+                }
             }
         }
 
@@ -73,6 +80,7 @@ impl Vm {
 
 fn constant_to_value(constant: &Constant) -> JsValue {
     match constant {
+        Constant::Undefined => JsValue::Undefined,
         Constant::Null => JsValue::Null,
         Constant::Boolean(value) => JsValue::Boolean(*value),
         Constant::Number(value) => JsValue::Number(*value),
@@ -100,5 +108,17 @@ mod tests {
         chunk.emit(Instruction::Return);
 
         assert_eq!(Vm::default().execute(&chunk).unwrap(), JsValue::Number(3.0));
+    }
+
+    #[test]
+    fn reports_v1_instructions_not_implemented_by_vm_yet() {
+        let chunk = Chunk {
+            instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
+            constants: Vec::new(),
+        };
+        let error = Vm::default().execute(&chunk).unwrap_err();
+
+        assert!(error.message.contains("Pop"));
+        assert!(error.message.contains("not implemented"));
     }
 }
