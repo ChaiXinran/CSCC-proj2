@@ -144,6 +144,8 @@ impl<'source> Lexer<'source> {
         let end = self.cursor.offset();
         let text = self.cursor.slice(Span::new(start, end));
         let kind = match text {
+            "let" => TokenKind::Keyword(Keyword::Let),
+            "const" => TokenKind::Keyword(Keyword::Const),
             "var" => TokenKind::Keyword(Keyword::Var),
             "function" => TokenKind::Keyword(Keyword::Function),
             "return" => TokenKind::Keyword(Keyword::Return),
@@ -153,6 +155,12 @@ impl<'source> Lexer<'source> {
             "break" => TokenKind::Keyword(Keyword::Break),
             "continue" => TokenKind::Keyword(Keyword::Continue),
             "throw" => TokenKind::Keyword(Keyword::Throw),
+            "try" => TokenKind::Keyword(Keyword::Try),
+            "catch" => TokenKind::Keyword(Keyword::Catch),
+            "finally" => TokenKind::Keyword(Keyword::Finally),
+            "switch" => TokenKind::Keyword(Keyword::Switch),
+            "case" => TokenKind::Keyword(Keyword::Case),
+            "default" => TokenKind::Keyword(Keyword::Default),
             "new" => TokenKind::Keyword(Keyword::New),
             "typeof" => TokenKind::Keyword(Keyword::TypeOf),
             "delete" => TokenKind::Keyword(Keyword::Delete),
@@ -491,6 +499,24 @@ mod tests {
                 TokenKind::Keyword(Keyword::Delete),
                 TokenKind::Keyword(Keyword::In),
                 TokenKind::Keyword(Keyword::InstanceOf),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_v5_keywords() {
+        assert_eq!(
+            kinds("let const try catch finally switch case default"),
+            [
+                TokenKind::Keyword(Keyword::Let),
+                TokenKind::Keyword(Keyword::Const),
+                TokenKind::Keyword(Keyword::Try),
+                TokenKind::Keyword(Keyword::Catch),
+                TokenKind::Keyword(Keyword::Finally),
+                TokenKind::Keyword(Keyword::Switch),
+                TokenKind::Keyword(Keyword::Case),
+                TokenKind::Keyword(Keyword::Default),
                 TokenKind::Eof,
             ]
         );

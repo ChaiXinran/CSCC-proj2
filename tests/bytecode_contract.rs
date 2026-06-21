@@ -567,8 +567,11 @@ fn compiler_stores_identifier_assignment_and_preserves_its_value() {
 }
 
 #[test]
-fn compiler_rejects_let_and_const_until_their_scope_semantics_exist() {
-    for kind in [VariableKind::Let, VariableKind::Const] {
+fn compiler_creates_lexical_bindings_before_initialization() {
+    for (kind, expected_create) in [
+        (VariableKind::Let, Instruction::CreateMutableBinding(0)),
+        (VariableKind::Const, Instruction::CreateImmutableBinding(0)),
+    ] {
         let program = Program {
             body: vec![variable_declaration(
                 kind,
@@ -577,9 +580,14 @@ fn compiler_rejects_let_and_const_until_their_scope_semantics_exist() {
             )],
         };
 
-        let error = Compiler::new().compile_program(&program).unwrap_err();
-        assert!(error.message.contains(&format!("{kind:?}")));
-        assert!(error.message.contains("does not support"));
+        let chunk = Compiler::new().compile_program(&program).unwrap();
+        assert_eq!(chunk.instructions[0], expected_create);
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::InitializeBinding(_)))
+        );
     }
 }
 
@@ -806,6 +814,7 @@ fn chunk_reports_constant_pool_overflow_without_truncating() {
         instructions: Vec::new(),
         constants: vec![Constant::Null; usize::from(u16::MAX) + 1],
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
 
     assert_eq!(
@@ -864,6 +873,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
         instructions: vec![Instruction::Constant(0), Instruction::Return],
         constants: Vec::new(),
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
     assert_eq!(
         invalid_constant.validate(),
@@ -877,6 +887,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
         instructions: vec![Instruction::JumpIfTrue(9), Instruction::ReturnUndefined],
         constants: Vec::new(),
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
     assert_eq!(
         invalid_jump.validate(),
@@ -895,6 +906,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
         instructions: vec![Instruction::LoadGlobal(0), Instruction::Return],
         constants: vec![Constant::Number(1.0)],
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
     assert_eq!(
         invalid_name.validate(),
@@ -911,6 +923,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
         instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
         constants: Vec::new(),
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
     assert_eq!(
         underflow.validate(),
@@ -925,6 +938,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
         instructions: vec![Instruction::JumpIfFalse(1), Instruction::ReturnUndefined],
         constants: Vec::new(),
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
     assert_eq!(
         empty_condition.validate(),
@@ -943,6 +957,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
         ],
         constants: vec![Constant::Null],
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
     assert_eq!(
         extra_value.validate(),
@@ -967,6 +982,7 @@ fn chunk_stack_analysis_rejects_inconsistent_branch_merges() {
         ],
         constants: vec![Constant::Boolean(false), Constant::Number(1.0)],
         functions: Vec::new(),
+        handlers: Vec::new(),
     };
 
     assert_eq!(

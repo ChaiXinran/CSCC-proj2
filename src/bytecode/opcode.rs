@@ -41,6 +41,8 @@ pub enum Instruction {
     // -----------------------------------------------------------------------
     Constant(u16),
     Pop,
+    /// Duplicates the top stack value without consuming it.
+    Duplicate,
 
     DeclareGlobal(u16),
     LoadGlobal(u16),
@@ -168,6 +170,15 @@ pub enum Instruction {
     DeleteElement,
     HasProperty,
     InstanceOf,
+
+    // V5 structured completion and lexical environment instructions.
+    CreateLexicalEnvironment,
+    PopEnvironment,
+    CreateMutableBinding(u16),
+    CreateImmutableBinding(u16),
+    InitializeBinding(u16),
+    LoadException,
+    EndFinally,
 }
 
 impl Instruction {
@@ -184,14 +195,18 @@ impl Instruction {
             | Self::TypeOfName(_)
             | Self::LoadThis
             | Self::ObjectCreateEmpty
-            | Self::ArrayCreateSparse(_) => StackEffect::new(0, 1),
+            | Self::ArrayCreateSparse(_)
+            | Self::LoadException => StackEffect::new(0, 1),
+
+            Self::Duplicate => StackEffect::with_required(1, 0, 1),
 
             // pop 1, push 0
             Self::Pop
             | Self::DeclareGlobal(_)
             | Self::Throw
             | Self::Return
-            | Self::DeclareLocal(_) => StackEffect::new(1, 0),
+            | Self::DeclareLocal(_)
+            | Self::InitializeBinding(_) => StackEffect::new(1, 0),
 
             // pop 1, push 1 (net 0)
             Self::StoreGlobal(_)
@@ -223,9 +238,14 @@ impl Instruction {
             Self::JumpIfFalse(_) | Self::JumpIfTrue(_) => StackEffect::with_required(1, 0, 0),
 
             // no stack effect
-            Self::Jump(_) | Self::ReturnUndefined | Self::DeclareFunction { .. } => {
-                StackEffect::new(0, 0)
-            }
+            Self::Jump(_)
+            | Self::ReturnUndefined
+            | Self::DeclareFunction { .. }
+            | Self::CreateLexicalEnvironment
+            | Self::PopEnvironment
+            | Self::CreateMutableBinding(_)
+            | Self::CreateImmutableBinding(_)
+            | Self::EndFinally => StackEffect::new(0, 0),
 
             // call variants
             Self::Call(argument_count) | Self::Construct(argument_count) => {
