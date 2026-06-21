@@ -7,4 +7,6 @@ pub use expression::{
     ArrayElement, BinaryOperator, Expression, FunctionBody, FunctionLiteral, FunctionParam,
     Literal, LogicalOperator, ObjectProperty, PropertyName, UnaryOperator,
 };
-pub use statement::{Program, Statement, VariableDeclarator, VariableKind};
+pub use statement::{
+    CatchClause, Program, Statement, SwitchCase, VariableDeclarator, VariableKind,
+};

@@ -4,6 +4,24 @@ use std::{collections::VecDeque, fmt};
 
 use super::Instruction;
 
+/// Structured exception-handler category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlerKind {
+    Catch,
+    Finally,
+}
+
+/// One protected bytecode range and its handler entry point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExceptionHandler {
+    pub start: usize,
+    pub end: usize,
+    pub target: usize,
+    pub kind: HandlerKind,
+    pub stack_depth: u32,
+    pub environment_depth: u32,
+}
+
 /// Immutable values stored in a bytecode constant pool.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Constant {
@@ -40,6 +58,28 @@ pub enum ChunkError {
     InvalidFunctionIndex {
         offset: usize,
         index: u16,
+    },
+    InvalidHandlerRange {
+        index: usize,
+        start: usize,
+        end: usize,
+    },
+    InvalidHandlerTarget {
+        index: usize,
+        target: usize,
+    },
+    InvalidHandlerStackDepth {
+        index: usize,
+        depth: u32,
+        max_depth: usize,
+    },
+    EnvironmentUnderflow {
+        offset: usize,
+    },
+    InconsistentEnvironmentDepth {
+        offset: usize,
+        expected: usize,
+        actual: usize,
     },
     MissingTerminator,
     StackUnderflow {
@@ -98,6 +138,37 @@ impl fmt::Display for ChunkError {
                     "instruction at offset {offset} references missing function {index}"
                 )
             }
+            Self::InvalidHandlerRange { index, start, end } => {
+                write!(
+                    f,
+                    "handler {index} has invalid protected range {start}..{end}"
+                )
+            }
+            Self::InvalidHandlerTarget { index, target } => {
+                write!(f, "handler {index} has invalid target {target}")
+            }
+            Self::InvalidHandlerStackDepth {
+                index,
+                depth,
+                max_depth,
+            } => write!(
+                f,
+                "handler {index} restores stack depth {depth}, above chunk maximum {max_depth}"
+            ),
+            Self::EnvironmentUnderflow { offset } => {
+                write!(
+                    f,
+                    "instruction at offset {offset} pops the root environment"
+                )
+            }
+            Self::InconsistentEnvironmentDepth {
+                offset,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "control flow reaches offset {offset} with environment depths {expected} and {actual}"
+            ),
             Self::MissingTerminator => {
                 f.write_str("bytecode chunk must end with a return instruction")
             }
@@ -168,6 +239,8 @@ pub struct Chunk {
     /// Compiled function bodies referenced by `CreateFunction` /
     /// `DeclareFunction` instructions.
     pub functions: Vec<FunctionTemplate>,
+    /// Structured catch/finally entries used by the V5 VM.
+    pub handlers: Vec<ExceptionHandler>,
 }
 
 /// Stack requirements computed from all reachable bytecode paths.
@@ -244,7 +317,10 @@ impl Chunk {
                 | Instruction::DefineDataProperty(index)
                 | Instruction::DefineGetter(index)
                 | Instruction::DefineSetter(index)
-                | Instruction::DeleteProperty(index) => Some(index),
+                | Instruction::DeleteProperty(index)
+                | Instruction::CreateMutableBinding(index)
+                | Instruction::CreateImmutableBinding(index)
+                | Instruction::InitializeBinding(index) => Some(index),
                 Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };
@@ -270,7 +346,10 @@ impl Chunk {
                 | Instruction::DefineDataProperty(index)
                 | Instruction::DefineGetter(index)
                 | Instruction::DefineSetter(index)
-                | Instruction::DeleteProperty(index) => Some(index),
+                | Instruction::DeleteProperty(index)
+                | Instruction::CreateMutableBinding(index)
+                | Instruction::CreateImmutableBinding(index)
+                | Instruction::InitializeBinding(index) => Some(index),
                 Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };
@@ -311,7 +390,86 @@ impl Chunk {
             return Err(ChunkError::MissingTerminator);
         }
 
-        self.analyze_stack()?;
+        let analysis = self.analyze_stack()?;
+        for (index, handler) in self.handlers.iter().enumerate() {
+            if handler.start >= handler.end || handler.end > self.instructions.len() {
+                return Err(ChunkError::InvalidHandlerRange {
+                    index,
+                    start: handler.start,
+                    end: handler.end,
+                });
+            }
+            if handler.target >= self.instructions.len() {
+                return Err(ChunkError::InvalidHandlerTarget {
+                    index,
+                    target: handler.target,
+                });
+            }
+            if handler.stack_depth as usize > analysis.max_depth {
+                return Err(ChunkError::InvalidHandlerStackDepth {
+                    index,
+                    depth: handler.stack_depth,
+                    max_depth: analysis.max_depth,
+                });
+            }
+        }
+        self.analyze_environments()?;
+        Ok(())
+    }
+
+    /// Verifies lexical-environment balance at every reachable merge.
+    pub fn analyze_environments(&self) -> Result<(), ChunkError> {
+        if self.instructions.is_empty() {
+            return Err(ChunkError::MissingTerminator);
+        }
+
+        let mut entry_depths = vec![None; self.instructions.len()];
+        let mut queue = VecDeque::from([(0usize, 0usize)]);
+        for handler in &self.handlers {
+            if handler.target < self.instructions.len() {
+                queue.push_back((handler.target, handler.environment_depth as usize));
+            }
+        }
+
+        while let Some((offset, depth)) = queue.pop_front() {
+            match entry_depths[offset] {
+                Some(expected) if expected != depth => {
+                    return Err(ChunkError::InconsistentEnvironmentDepth {
+                        offset,
+                        expected,
+                        actual: depth,
+                    });
+                }
+                Some(_) => continue,
+                None => entry_depths[offset] = Some(depth),
+            }
+
+            let instruction = self.instructions[offset];
+            let next_depth = match instruction {
+                Instruction::CreateLexicalEnvironment => depth + 1,
+                Instruction::PopEnvironment if depth == 0 => {
+                    return Err(ChunkError::EnvironmentUnderflow { offset });
+                }
+                Instruction::PopEnvironment => depth - 1,
+                _ => depth,
+            };
+
+            if instruction.is_terminator() {
+                continue;
+            }
+            if let Some(target) = instruction.jump_target() {
+                if target >= self.instructions.len() {
+                    return Err(ChunkError::InvalidJumpTarget { offset, target });
+                }
+                queue.push_back((target, next_depth));
+            }
+            if instruction.has_fallthrough() {
+                if offset + 1 >= self.instructions.len() {
+                    return Err(ChunkError::MissingTerminator);
+                }
+                queue.push_back((offset + 1, next_depth));
+            }
+        }
         Ok(())
     }
 
@@ -327,6 +485,11 @@ impl Chunk {
 
         let mut entry_depths = vec![None; self.instructions.len()];
         let mut queue = VecDeque::from([(0usize, 0usize)]);
+        for handler in &self.handlers {
+            if handler.target < self.instructions.len() {
+                queue.push_back((handler.target, handler.stack_depth as usize));
+            }
+        }
         let mut max_depth = 0;
 
         while let Some((offset, depth)) = queue.pop_front() {

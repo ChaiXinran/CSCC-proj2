@@ -160,6 +160,15 @@ on broadening standard builtins and reducing the diagnostic Test262 failure set.
 File ownership, C0–C3 execution subgroups, branch suggestions, and merge order
 are defined in the [Native V4 team plan](docs/native-v4-team-plan.md).
 
+Native V5 has entered contract-first parallel development while the remaining
+V4 fixes continue. Its first delivery focuses on structured completion,
+`try/catch/finally`, `switch`, and lexical `let`/`const` semantics. See the
+[Native V5 scope](docs/native-v5-scope.md),
+[shared interface](docs/native-v5-interface.md), and
+[team plan](docs/native-v5-team-plan.md). Frontend, bytecode, and Test262
+preparation may proceed now; VM/runtime integration waits for the V4 repair
+baseline to merge.
+
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
 [`tests/frontend_bytecode_v3.rs`](tests/frontend_bytecode_v3.rs), and

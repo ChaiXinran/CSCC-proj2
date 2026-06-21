@@ -1,7 +1,12 @@
 //! Statement parsing helpers.
 
+use std::collections::HashSet;
+
 use crate::{
-    ast::{FunctionBody, FunctionParam, Statement, VariableDeclarator, VariableKind},
+    ast::{
+        CatchClause, FunctionBody, FunctionParam, Statement, SwitchCase, VariableDeclarator,
+        VariableKind,
+    },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
 };
@@ -15,7 +20,9 @@ impl Parser {
                 Ok(Statement::Empty)
             }
             TokenKind::Punctuator('{') => self.parse_block(),
-            TokenKind::Keyword(Keyword::Var) => self.parse_variable_declaration(),
+            TokenKind::Keyword(Keyword::Var | Keyword::Let | Keyword::Const) => {
+                self.parse_variable_declaration()
+            }
             TokenKind::Keyword(Keyword::Function) => self.parse_function_declaration(),
             TokenKind::Keyword(Keyword::Return) => self.parse_return(),
             TokenKind::Keyword(Keyword::If) => self.parse_if(),
@@ -23,19 +30,27 @@ impl Parser {
             TokenKind::Keyword(Keyword::Break) => self.parse_break(),
             TokenKind::Keyword(Keyword::Continue) => self.parse_continue(),
             TokenKind::Keyword(Keyword::Throw) => self.parse_throw(),
+            TokenKind::Keyword(Keyword::Try) => self.parse_try(),
+            TokenKind::Keyword(Keyword::Switch) => self.parse_switch(),
             _ => self.parse_expression_statement(),
         }
     }
 
     /// Parses `{ statement* }`.
     pub(super) fn parse_block(&mut self) -> Result<Statement, ParseError> {
+        Ok(Statement::Block(self.parse_block_statements()?))
+    }
+
+    /// Parses a braced statement list and returns its contents.
+    fn parse_block_statements(&mut self) -> Result<Vec<Statement>, ParseError> {
         self.expect_punctuator('{')?;
         let mut body = Vec::new();
         while !self.check_punctuator('}') && !self.at_eof() {
             body.push(self.parse_statement()?);
         }
         self.expect_punctuator('}')?;
-        Ok(Statement::Block(body))
+        self.validate_lexical_declarations(&body)?;
+        Ok(body)
     }
 
     /// Parses `function name(params) { body }`.
@@ -72,13 +87,23 @@ impl Parser {
     /// that `return` inside is accepted.
     pub(super) fn parse_function_body(&mut self) -> Result<FunctionBody, ParseError> {
         self.expect_punctuator('{')?;
+        let outer_loop_depth = self.loop_depth;
+        let outer_switch_depth = self.switch_depth;
+        self.loop_depth = 0;
+        self.switch_depth = 0;
         self.function_depth += 1;
         let mut statements = Vec::new();
-        while !self.check_punctuator('}') && !self.at_eof() {
-            statements.push(self.parse_statement()?);
-        }
+        let result = (|| {
+            while !self.check_punctuator('}') && !self.at_eof() {
+                statements.push(self.parse_statement()?);
+            }
+            self.expect_punctuator('}')
+        })();
         self.function_depth -= 1;
-        self.expect_punctuator('}')?;
+        self.loop_depth = outer_loop_depth;
+        self.switch_depth = outer_switch_depth;
+        result?;
+        self.validate_lexical_declarations(&statements)?;
         Ok(FunctionBody { statements })
     }
 
@@ -109,9 +134,14 @@ impl Parser {
         Ok(Statement::Return(Some(value)))
     }
 
-    /// Parses `var name (= expr)? (, name (= expr)?)* ;`.
+    /// Parses `var`/`let`/`const` declarations.
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
-        self.advance(); // `var`
+        let kind = match self.advance().kind {
+            TokenKind::Keyword(Keyword::Var) => VariableKind::Var,
+            TokenKind::Keyword(Keyword::Let) => VariableKind::Let,
+            TokenKind::Keyword(Keyword::Const) => VariableKind::Const,
+            _ => unreachable!("variable declaration starts with a declaration keyword"),
+        };
         let mut declarations = Vec::new();
         loop {
             let name = self.expect_identifier()?;
@@ -120,16 +150,16 @@ impl Parser {
             } else {
                 None
             };
+            if kind == VariableKind::Const && initializer.is_none() {
+                return Err(self.error("`const` declarations require an initializer".into()));
+            }
             declarations.push(VariableDeclarator { name, initializer });
             if !self.eat_punctuator(',') {
                 break;
             }
         }
         self.expect_semicolon()?;
-        Ok(Statement::VariableDeclaration {
-            kind: VariableKind::Var,
-            declarations,
-        })
+        Ok(Statement::VariableDeclaration { kind, declarations })
     }
 
     /// Parses `if (test) consequent` with an optional `else`.
@@ -169,10 +199,10 @@ impl Parser {
         })
     }
 
-    /// Parses `break;`, rejecting it outside any loop.
+    /// Parses `break;`, rejecting it outside any loop or switch.
     fn parse_break(&mut self) -> Result<Statement, ParseError> {
-        if self.loop_depth == 0 {
-            return Err(self.error("illegal `break` statement outside of a loop".into()));
+        if self.loop_depth == 0 && self.switch_depth == 0 {
+            return Err(self.error("illegal `break` statement outside of a loop or switch".into()));
         }
         self.advance(); // `break`
         self.expect_semicolon()?;
@@ -206,6 +236,126 @@ impl Parser {
         Ok(Statement::Throw(argument))
     }
 
+    /// Parses `try` with a catch clause, a finally clause, or both.
+    fn parse_try(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `try`
+        let block = self.parse_block_statements()?;
+
+        let handler = if self.eat_keyword(Keyword::Catch) {
+            let parameter = if self.eat_punctuator('(') {
+                let parameter = self.expect_identifier()?;
+                self.expect_punctuator(')')?;
+                Some(parameter)
+            } else {
+                None
+            };
+            let body = self.parse_block_statements()?;
+            if let Some(parameter) = &parameter
+                && direct_lexical_names(&body).any(|name| name == parameter)
+            {
+                return Err(self.error(format!(
+                    "catch parameter `{parameter}` conflicts with a lexical declaration"
+                )));
+            }
+            Some(CatchClause { parameter, body })
+        } else {
+            None
+        };
+
+        let finalizer = if self.eat_keyword(Keyword::Finally) {
+            Some(self.parse_block_statements()?)
+        } else {
+            None
+        };
+
+        if handler.is_none() && finalizer.is_none() {
+            return Err(self.error("`try` requires a `catch` or `finally` clause".into()));
+        }
+
+        Ok(Statement::Try {
+            block,
+            handler,
+            finalizer,
+        })
+    }
+
+    /// Parses a switch statement, preserving case order and fall-through.
+    fn parse_switch(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `switch`
+        self.expect_punctuator('(')?;
+        let discriminant = self.parse_expression()?;
+        self.expect_punctuator(')')?;
+        self.expect_punctuator('{')?;
+
+        self.switch_depth += 1;
+        let cases = self.parse_switch_cases();
+        self.switch_depth -= 1;
+        let cases = cases?;
+        self.expect_punctuator('}')?;
+
+        Ok(Statement::Switch {
+            discriminant,
+            cases,
+        })
+    }
+
+    fn parse_switch_cases(&mut self) -> Result<Vec<SwitchCase>, ParseError> {
+        let mut cases = Vec::new();
+        let mut saw_default = false;
+
+        while !self.check_punctuator('}') && !self.at_eof() {
+            let test = if self.eat_keyword(Keyword::Case) {
+                let test = self.parse_expression()?;
+                self.expect_punctuator(':')?;
+                Some(test)
+            } else if self.eat_keyword(Keyword::Default) {
+                if saw_default {
+                    return Err(self.error("a switch may contain only one `default` clause".into()));
+                }
+                saw_default = true;
+                self.expect_punctuator(':')?;
+                None
+            } else {
+                return Err(self.error("expected `case`, `default`, or `}` in switch".into()));
+            };
+
+            let mut consequent = Vec::new();
+            while !self.check_punctuator('}')
+                && !self.check_keyword(Keyword::Case)
+                && !self.check_keyword(Keyword::Default)
+                && !self.at_eof()
+            {
+                consequent.push(self.parse_statement()?);
+            }
+            cases.push(SwitchCase { test, consequent });
+        }
+
+        let mut lexical_names = HashSet::new();
+        for name in cases
+            .iter()
+            .flat_map(|case| direct_lexical_names(&case.consequent))
+        {
+            if !lexical_names.insert(name) {
+                return Err(self.error(format!("duplicate lexical declaration `{name}` in switch")));
+            }
+        }
+
+        Ok(cases)
+    }
+
+    pub(super) fn validate_lexical_declarations(
+        &self,
+        statements: &[Statement],
+    ) -> Result<(), ParseError> {
+        let mut names = HashSet::new();
+        for name in direct_lexical_names(statements) {
+            if !names.insert(name) {
+                return Err(self.error(format!("duplicate lexical declaration `{name}`")));
+            }
+        }
+        Ok(())
+    }
+
     fn parse_expression_statement(&mut self) -> Result<Statement, ParseError> {
         if self.at_eof() {
             return Err(self.error(format!(
@@ -217,6 +367,19 @@ impl Parser {
         self.expect_semicolon()?;
         Ok(Statement::Expression(expression))
     }
+}
+
+fn direct_lexical_names(statements: &[Statement]) -> impl Iterator<Item = &str> {
+    statements.iter().flat_map(|statement| match statement {
+        Statement::VariableDeclaration {
+            kind: VariableKind::Let | VariableKind::Const,
+            declarations,
+        } => declarations
+            .iter()
+            .map(|declaration| declaration.name.as_str())
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    })
 }
 
 #[cfg(test)]
@@ -456,6 +619,26 @@ mod tests {
     #[test]
     fn rejects_missing_function_body_brace() {
         assert!(!parse_error("function f()").message.is_empty());
+    }
+
+    #[test]
+    fn parses_v5_try_and_switch_statements() {
+        let statements = parse(
+            "try { throw 1; } catch (error) { error; } finally { true; } \
+             switch (value) { case 1: break; default: value; }",
+        );
+        assert!(matches!(statements[0], Statement::Try { .. }));
+        assert!(matches!(statements[1], Statement::Switch { .. }));
+    }
+
+    #[test]
+    fn rejects_try_without_handler_and_duplicate_switch_default() {
+        assert!(parse_error("try {}").message.contains("catch"));
+        assert!(
+            parse_error("switch (x) { default: ; default: ; }")
+                .message
+                .contains("default")
+        );
     }
 
     #[test]

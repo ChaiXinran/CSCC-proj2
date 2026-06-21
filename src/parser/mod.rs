@@ -42,6 +42,9 @@ pub struct Parser {
     /// Number of enclosing loops. Used to reject `break`/`continue` that appear
     /// outside any iteration statement.
     loop_depth: usize,
+    /// Number of enclosing switches. A switch permits `break`, but not
+    /// `continue`.
+    switch_depth: usize,
     /// Number of enclosing function bodies. Used to reject `return` that appears
     /// outside any function.
     function_depth: usize,
@@ -58,6 +61,7 @@ impl Parser {
             tokens,
             cursor: 0,
             loop_depth: 0,
+            switch_depth: 0,
             function_depth: 0,
         }
     }
@@ -68,6 +72,7 @@ impl Parser {
         while !self.at_eof() {
             body.push(self.parse_statement()?);
         }
+        self.validate_lexical_declarations(&body)?;
         Ok(Program { body })
     }
 

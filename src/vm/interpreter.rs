@@ -487,6 +487,20 @@ impl Vm {
                     self.stack
                         .push(JsValue::Boolean(context.instance_of(value, constructor)?));
                 }
+                Instruction::Duplicate => {
+                    self.stack.push(self.peek_value()?.clone());
+                }
+                Instruction::CreateLexicalEnvironment
+                | Instruction::PopEnvironment
+                | Instruction::CreateMutableBinding(_)
+                | Instruction::CreateImmutableBinding(_)
+                | Instruction::InitializeBinding(_)
+                | Instruction::LoadException
+                | Instruction::EndFinally => {
+                    return Err(VmError::runtime(
+                        "V5 bytecode is not yet implemented by the VM",
+                    ));
+                }
             }
         }
 
@@ -887,6 +901,7 @@ mod tests {
             instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
             constants: Vec::new(),
             functions: Vec::new(),
+            handlers: Vec::new(),
         };
         let error = Vm::default().execute(&chunk).unwrap_err();
 
@@ -1118,6 +1133,7 @@ mod tests {
             instructions: vec![Instruction::Jump(0), Instruction::ReturnUndefined],
             constants: Vec::new(),
             functions: Vec::new(),
+            handlers: Vec::new(),
         };
 
         let error = Vm::default()
