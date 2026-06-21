@@ -844,6 +844,15 @@ impl Vm {
                     .builtin(id)
                     .ok_or_else(|| VmError::runtime("invalid builtin id"))?
                     .clone();
+                // A bound function forwards to its target with the bound `this`
+                // and bound arguments prepended.
+                if let Some(bound) = &def.bound {
+                    let mut forwarded = bound.args.clone();
+                    forwarded.extend(arguments);
+                    let target = bound.target.clone();
+                    let this_value = bound.this_value.clone();
+                    return self.call_value(target, this_value, forwarded, context);
+                }
                 if context.is_function_prototype_call(id) {
                     let target = this_value;
                     let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
@@ -1309,6 +1318,14 @@ impl Vm {
                     .builtin(id)
                     .ok_or_else(|| VmError::runtime("invalid builtin id"))?
                     .clone();
+                // `new boundFn(...)` constructs the target with the bound
+                // arguments prepended (the bound `this` is ignored for `new`).
+                if let Some(bound) = &def.bound {
+                    let mut forwarded = bound.args.clone();
+                    forwarded.extend(arguments);
+                    let target = bound.target.clone();
+                    return self.construct_value(target, forwarded, context);
+                }
                 match def.construct {
                     Some(construct) => {
                         construct(self, context, &arguments, JsValue::BuiltinFunction(id))

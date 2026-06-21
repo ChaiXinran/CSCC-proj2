@@ -16,7 +16,7 @@ fn method_metadata_matches_the_v6_contract() {
             .iter()
             .map(|method| (method.name, method.length))
             .collect::<Vec<_>>(),
-        [("fromCharCode", 1), ("fromCodePoint", 1)]
+        [("fromCharCode", 1), ("fromCodePoint", 1), ("raw", 1)]
     );
     assert!(PROTOTYPE_METHODS.contains(&string::StringMethodSpec {
         name: "charAt",

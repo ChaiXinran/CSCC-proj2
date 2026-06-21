@@ -451,7 +451,6 @@ pub(crate) fn replace(value: &str, search: &str, replacement: &str) -> String {
 }
 
 #[allow(dead_code)]
-#[allow(dead_code)]
 pub(crate) fn replace_all(value: &str, search: &str, replacement: &str) -> String {
     let source = utf16_units(value);
     let needle = utf16_units(search);
