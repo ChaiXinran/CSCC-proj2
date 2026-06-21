@@ -210,6 +210,10 @@ D 组任务：
 
 分支建议：`test/v4e-test262-expansion`。
 
+当前状态：**部分完成**。V4 CI 已更新为质量检查、Linux/Windows 全量回归、
+V4 分层契约和 V1–V4 Test262 固定门；Object/Array/Function 完成后的
+Test262 扩容与报告仍待 C0–C3 合并后进行。
+
 ## 6. 共享文件写入规则
 
 | 文件 | 首要所有者 | 允许修改时机 |
