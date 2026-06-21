@@ -1,10 +1,17 @@
-use agentjs::{BackendKind, Engine, ExecutionOptions, RuntimeConfig};
+use agentjs::{BackendKind, Engine, ExecutionOptions, FailureKind, RuntimeConfig};
 
 fn eval(source: &str) -> String {
     Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("V4 source should execute: {error}"))
         .value
+}
+
+fn eval_error(source: &str) -> FailureKind {
+    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+        .execute(source, ExecutionOptions::default())
+        .expect_err("V4 source should fail")
+        .kind
 }
 
 #[test]
@@ -91,6 +98,99 @@ fn executes_function_prototype_call() {
              read.call(object);"
         ),
         "7"
+    );
+}
+
+#[test]
+fn object_define_property_obeys_descriptor_edges() {
+    assert_eq!(
+        eval(
+            "var object = {}; \
+             var called = 0; \
+             var descriptor = { get value() { called = 1; return 10; } }; \
+             Object.defineProperty(object, 'x', descriptor); \
+             called + object.x;"
+        ),
+        "11"
+    );
+
+    assert_eq!(
+        eval_error(
+            "var object = {}; Object.defineProperty(object, 'x', { value: 1, get: Object });"
+        ),
+        FailureKind::Type
+    );
+    assert_eq!(
+        eval_error(
+            "var object = {}; \
+             function first() { return 1; } \
+             function second() { return 2; } \
+             Object.defineProperty(object, 'x', { get: first, configurable: false }); \
+             Object.defineProperty(object, 'x', { get: second });"
+        ),
+        FailureKind::Type
+    );
+}
+
+#[test]
+fn object_create_uses_only_enumerable_descriptor_map_entries() {
+    assert_eq!(
+        eval(
+            "var descriptors = {}; \
+             Object.defineProperty(descriptors, 'hidden', { value: { value: 1 }, enumerable: false }); \
+             var object = Object.create(null, descriptors); \
+             !('hidden' in object);"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn array_descriptors_preserve_flags_and_length_writable() {
+    assert_eq!(
+        eval(
+            "var array = []; \
+             Object.defineProperty(array, '0', { value: 1, writable: false, enumerable: false, configurable: false }); \
+             var descriptor = Object.getOwnPropertyDescriptor(array, '0'); \
+             descriptor.value === 1 && \
+             descriptor.writable === false && \
+             descriptor.enumerable === false && \
+             descriptor.configurable === false && \
+             delete array[0] === false && \
+             array[0] === 1;"
+        ),
+        "true"
+    );
+
+    assert_eq!(
+        eval(
+            "var array = [1, 2]; \
+             Object.defineProperty(array, 'length', { writable: false }); \
+             Object.getOwnPropertyDescriptor(array, 'length').writable === false && array.length === 2;"
+        ),
+        "true"
+    );
+    assert_eq!(
+        eval_error(
+            "var array = [1, 2]; \
+             Object.defineProperty(array, 'length', { writable: false }); \
+             array.push(3);"
+        ),
+        FailureKind::Type
+    );
+}
+
+#[test]
+fn saved_function_prototype_call_stays_callable_after_prototype_overwrite() {
+    assert_eq!(
+        eval(
+            "function read() { return this.x; } \
+             var saved = Function.prototype.call; \
+             Function.prototype.call = Object; \
+             read.saved = saved; \
+             read.saved({ x: 9 });"
+        ),
+        "9"
     );
 }
 

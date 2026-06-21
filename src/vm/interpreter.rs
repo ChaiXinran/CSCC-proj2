@@ -586,30 +586,23 @@ impl Vm {
                 self.call_user_function(function, this_value, arguments, context)
             }
             JsValue::BuiltinFunction(id) => {
-                let is_function_prototype_call = context
-                    .intrinsics()
-                    .and_then(|intrinsics| {
-                        context.get_own_property_descriptor(intrinsics.function_prototype, "call")
-                    })
-                    .and_then(|descriptor| descriptor.value_cloned())
-                    == Some(JsValue::BuiltinFunction(id));
                 let def = context
                     .builtin(id)
                     .ok_or_else(|| VmError::runtime("invalid builtin id"))?
                     .clone();
-                if is_function_prototype_call {
+                if context.is_function_prototype_call(id) {
                     let target = this_value;
                     let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
                     let forwarded = arguments.into_iter().skip(1).collect();
                     return self.call_value(target, call_this, forwarded, context);
                 }
-                (def.call)(context, this_value, &arguments)
+                (def.call)(self, context, this_value, &arguments)
             }
             other => Err(VmError::type_error(format!("{other} is not callable"))),
         }
     }
 
-    fn get_property_value(
+    pub(crate) fn get_property_value(
         &mut self,
         receiver: JsValue,
         key: &str,
@@ -733,7 +726,9 @@ impl Vm {
                     .ok_or_else(|| VmError::runtime("invalid builtin id"))?
                     .clone();
                 match def.construct {
-                    Some(construct) => construct(context, &arguments, JsValue::BuiltinFunction(id)),
+                    Some(construct) => {
+                        construct(self, context, &arguments, JsValue::BuiltinFunction(id))
+                    }
                     None => Err(VmError::type_error(format!(
                         "{} is not a constructor",
                         def.name

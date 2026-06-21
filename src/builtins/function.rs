@@ -2,7 +2,7 @@
 
 use crate::{
     runtime::{JsValue, NativeContext, PropertyDescriptor},
-    vm::VmError,
+    vm::{Vm, VmError},
 };
 
 pub fn install_function(context: &mut NativeContext) {
@@ -15,6 +15,9 @@ pub fn install_function(context: &mut NativeContext) {
     let call = context
         .register_builtin("call", 1, function_prototype_call, None)
         .expect("install Function.prototype.call");
+    if let JsValue::BuiltinFunction(id) = &call {
+        context.set_function_prototype_call(*id);
+    }
     context
         .define_own_property(
             function_prototype,
@@ -25,6 +28,7 @@ pub fn install_function(context: &mut NativeContext) {
 }
 
 pub fn function_call(
+    _vm: &mut Vm,
     _context: &mut NativeContext,
     _this: JsValue,
     _arguments: &[JsValue],
@@ -35,6 +39,7 @@ pub fn function_call(
 }
 
 pub fn function_construct(
+    _vm: &mut Vm,
     _context: &mut NativeContext,
     _arguments: &[JsValue],
     _new_target: JsValue,
@@ -45,6 +50,7 @@ pub fn function_construct(
 }
 
 fn function_prototype_call(
+    _vm: &mut Vm,
     _context: &mut NativeContext,
     _this: JsValue,
     _arguments: &[JsValue],

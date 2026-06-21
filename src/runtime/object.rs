@@ -12,7 +12,7 @@ pub enum ObjectKind {
     #[default]
     Ordinary,
     Array {
-        elements: Vec<Option<JsValue>>,
+        elements: Vec<Option<PropertyDescriptor>>,
         length_writable: bool,
     },
 }
@@ -36,7 +36,10 @@ impl JsObject {
         Self {
             prototype: None,
             kind: ObjectKind::Array {
-                elements: elements.into_iter().map(Some).collect(),
+                elements: elements
+                    .into_iter()
+                    .map(|value| Some(PropertyDescriptor::data(value)))
+                    .collect(),
                 length_writable: true,
             },
             properties: PropertyMap::default(),
@@ -71,7 +74,10 @@ impl JsObject {
                 return Some(JsValue::Number(elements.len() as f64));
             }
             if let Some(index) = array_index(name) {
-                return elements.get(index).cloned().flatten();
+                return elements
+                    .get(index)
+                    .and_then(|descriptor| descriptor.as_ref())
+                    .and_then(PropertyDescriptor::value_cloned);
             }
         }
 
@@ -90,13 +96,16 @@ impl JsObject {
                 return false;
             }
             if let Some(index) = array_index(&name) {
-                if !*length_writable {
+                if index >= elements.len() && !*length_writable {
                     return false;
                 }
                 if index >= elements.len() {
                     elements.resize(index + 1, None);
                 }
-                elements[index] = Some(value);
+                if let Some(descriptor) = &mut elements[index] {
+                    return descriptor.set_value(value);
+                }
+                elements[index] = Some(PropertyDescriptor::data(value));
                 return true;
             }
         }
@@ -127,10 +136,9 @@ impl JsObject {
             && let Some(index) = array_index(name)
         {
             if let Some(slot) = elements.get_mut(index)
-                && slot.is_some()
+                && let Some(descriptor) = slot.take()
             {
-                *slot = None;
-                return Some(PropertyDescriptor::data(JsValue::Undefined));
+                return Some(descriptor);
             }
             return None;
         }
@@ -166,7 +174,59 @@ impl JsObject {
         if !*length_writable {
             return false;
         }
-        elements.resize(length, None);
+        if length >= elements.len() {
+            elements.resize(length, None);
+            return true;
+        }
+
+        for index in (length..elements.len()).rev() {
+            if elements[index]
+                .as_ref()
+                .is_some_and(|descriptor| !descriptor.configurable)
+            {
+                elements.truncate(index + 1);
+                return false;
+            }
+            elements[index] = None;
+        }
+        elements.truncate(length);
+        true
+    }
+
+    pub fn set_array_length_writable(&mut self, writable: bool) -> bool {
+        let ObjectKind::Array {
+            length_writable, ..
+        } = &mut self.kind
+        else {
+            return false;
+        };
+        *length_writable = writable;
+        true
+    }
+
+    #[must_use]
+    pub fn array_element_descriptor(&self, index: usize) -> Option<PropertyDescriptor> {
+        let ObjectKind::Array { elements, .. } = &self.kind else {
+            return None;
+        };
+        elements.get(index).cloned().flatten()
+    }
+
+    pub fn define_array_element(&mut self, index: usize, descriptor: PropertyDescriptor) -> bool {
+        let ObjectKind::Array {
+            elements,
+            length_writable,
+        } = &mut self.kind
+        else {
+            return false;
+        };
+        if index >= elements.len() && !*length_writable {
+            return false;
+        }
+        if index >= elements.len() {
+            elements.resize(index + 1, None);
+        }
+        elements[index] = Some(descriptor);
         true
     }
 
