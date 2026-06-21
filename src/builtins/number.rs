@@ -284,8 +284,23 @@ fn decimal_number_to_string(value: f64) -> String {
     } else if value == 0.0 {
         "0".into()
     } else {
-        value.to_string()
+        let magnitude = value.abs();
+        if !(1e-6..1e21).contains(&magnitude) {
+            js_scientific_number_to_string(value)
+        } else {
+            value.to_string()
+        }
     }
+}
+
+fn js_scientific_number_to_string(value: f64) -> String {
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let raw = format!("{:e}", value.abs());
+    let Some((mantissa, exponent)) = raw.split_once('e') else {
+        return format!("{sign}{raw}");
+    };
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    format!("{sign}{mantissa}e{exponent:+}")
 }
 
 fn integer_to_radix_string(value: f64, radix: u32) -> String {
