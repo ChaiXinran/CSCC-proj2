@@ -4,7 +4,135 @@ V6 is runtime-heavy, so work is divided by file ownership rather than forcing
 unrelated parser or compiler changes. Shared coercion and intrinsic contracts
 merge before builtin implementations.
 
-## 1. Branch and Merge Strategy
+## 1. Three-Person Execution Plan
+
+V6 uses two development phases. The first phase keeps all three developers
+working in separate files. The second phase connects the modules and builds the
+Test262 gate.
+
+### Developer 1 — Runtime Foundation
+
+Branch:
+
+```text
+feat/v6-coercion
+```
+
+Owned files:
+
+```text
+src/runtime/coercion.rs
+src/runtime/object.rs
+src/runtime/context.rs
+src/runtime/intrinsics.rs
+src/vm/
+tests/native_v6_runtime.rs
+```
+
+Tasks:
+
+- implement `ToPrimitive`, `ToNumber`, `ToString`, and `ToObject`;
+- implement primitive-wrapper internal slots and stable intrinsics;
+- preserve JavaScript throws raised during coercion;
+- provide the frozen API required by the other two developers.
+
+Developer 1 is the only person who modifies shared runtime and VM files during
+V6.
+
+### Developer 2 — String
+
+Branch:
+
+```text
+feat/v6-string
+```
+
+Owned files:
+
+```text
+src/builtins/string.rs
+tests/native_v6_string.rs
+```
+
+Tasks:
+
+- implement and test UTF-16 code-unit helpers;
+- implement the V6 String constructor, static methods, and prototype methods;
+- develop pure string algorithms before the runtime foundation merges;
+- connect boxing and coercion only through the C0 interfaces;
+- prepare focused String and JSON Test262 candidate lists during integration.
+
+Developer 2 must not modify VM, runtime object storage, or `builtins/mod.rs`.
+
+### Developer 3 — Numeric Builtins and Errors
+
+Branch:
+
+```text
+feat/v6-numeric
+```
+
+Owned files:
+
+```text
+src/builtins/number.rs
+src/builtins/boolean.rs
+src/builtins/math.rs
+src/builtins/error.rs
+tests/native_v6_numeric.rs
+```
+
+Tasks:
+
+- move the partial implementations out of `builtins/mod.rs`;
+- complete Number and Boolean constructor/prototype behavior;
+- implement Math edge cases, constants, descriptors, names, and arities;
+- implement the Error prototype hierarchy and `name`/`message` behavior;
+- prepare focused Number, Boolean, Math, and Error Test262 candidates.
+
+Developer 3 must use the shared coercion API instead of adding local conversion
+helpers.
+
+### Phase 2 — JSON and Integration
+
+After `feat/v6-coercion` merges:
+
+- Developer 1 implements `src/builtins/json.rs` and
+  `tests/native_v6_json.rs`.
+- Developer 2 connects String to the merged runtime and validates String/JSON
+  Test262 candidates.
+- Developer 3 connects numeric and Error modules and validates their focused
+  Test262 candidates.
+- Developer 1 performs final installer, CLI, Test262, CI, and report
+  integration after the three implementation branches pass independently.
+
+Integration-owned files:
+
+```text
+src/builtins/mod.rs
+src/test262.rs
+src/main.rs
+tests/native_test262.rs
+reports/native-v6-test262-report.md
+.github/workflows/ci.yml
+readme.md
+```
+
+Merge order:
+
+```text
+feat/v6-coercion
+  -> feat/v6-string + feat/v6-numeric
+  -> v6-json
+  -> Test262/CLI/CI integration
+```
+
+During development nobody except the final integrator edits
+`src/builtins/mod.rs`. If Developer 2 or 3 needs a missing runtime capability,
+the interface document is updated and reviewed before Developer 1 implements
+it.
+
+## 2. Branch and Merge Strategy
 
 Recommended branches:
 
@@ -30,7 +158,7 @@ V6 contracts
 Do not develop all standard objects in `src/builtins/mod.rs`; that recreates
 the merge-conflict pattern seen in V4/V5.
 
-## 2. A Group — Frontend Compatibility
+## 3. A Group — Frontend Compatibility
 
 Owned files:
 
@@ -52,7 +180,7 @@ Tasks:
 V6 requires no new AST variants or keywords. A must not special-case builtin
 names.
 
-## 3. B Group — Generic Call/Construct Contract
+## 4. B Group — Generic Call/Construct Contract
 
 Owned files:
 
@@ -72,7 +200,7 @@ Tasks:
 B should need tests and small generic fixes only. Any proposed magic builtin
 opcode requires team review.
 
-## 4. C Group — Runtime and Builtins
+## 5. C Group — Runtime and Builtins
 
 ### C0 — Coercion and Wrappers
 
@@ -130,7 +258,7 @@ tests/native_v6_json.rs
 Implement the standalone JSON parser/stringifier and direct runtime tests.
 Reviver/replacer callbacks are a second merge after core JSON passes.
 
-## 5. D Group — Integration and Test262
+## 6. D Group — Integration and Test262
 
 Owned files:
 
@@ -154,7 +282,7 @@ Tasks:
 - report parser, compiler, runtime, harness, unsupported-feature, timeout, and
   assertion failures separately.
 
-## 6. Shared-File Lock
+## 7. Shared-File Lock
 
 | File | Owner |
 | --- | --- |
@@ -170,7 +298,7 @@ Tasks:
 Object, Array, and Function modules are regression surfaces. Modify them only
 for a focused V6 coercion fix with corresponding V4 and V6 tests.
 
-## 7. Independent Validation
+## 8. Independent Validation
 
 ```text
 A: source -> AST
@@ -188,7 +316,7 @@ cargo test --all-targets
 cargo clippy --all-targets -- -D warnings
 ```
 
-## 8. Merge Gate
+## 9. Merge Gate
 
 After integration:
 
