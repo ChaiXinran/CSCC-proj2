@@ -233,11 +233,7 @@ pub(crate) fn parse_int(source: &str, radix: Option<i32>) -> f64 {
         consumed = true;
         value = value * f64::from(radix) + f64::from(digit);
     }
-    if consumed {
-        sign * value
-    } else {
-        f64::NAN
-    }
+    if consumed { sign * value } else { f64::NAN }
 }
 
 #[must_use]

@@ -29,9 +29,5 @@ pub(crate) fn boolean_value_of(value: bool) -> bool {
 
 #[must_use]
 pub(crate) fn boolean_to_string(value: bool) -> &'static str {
-    if value {
-        "true"
-    } else {
-        "false"
-    }
+    if value { "true" } else { "false" }
 }

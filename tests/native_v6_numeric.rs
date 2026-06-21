@@ -7,14 +7,14 @@ mod math;
 #[path = "../src/builtins/number.rs"]
 mod number;
 
-use boolean::{boolean_call, boolean_to_string, boolean_value_of, BOOLEAN_PROTOTYPE_METHODS};
-use error::{constructor_spec, create_error_record, error_to_string, ERROR_CONSTRUCTORS};
+use boolean::{BOOLEAN_PROTOTYPE_METHODS, boolean_call, boolean_to_string, boolean_value_of};
+use error::{ERROR_CONSTRUCTORS, constructor_spec, create_error_record, error_to_string};
 use math::{MATH_CONSTANTS, MATH_METHODS};
 use number::{
-    is_finite, is_integer, is_nan, is_safe_integer, number_call, number_to_string, number_value_of,
-    parse_float, parse_int, to_exponential, to_fixed, to_precision, NumberFormatError,
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, NUMBER_CONSTANTS, NUMBER_PROTOTYPE_METHODS,
-    NUMBER_STATIC_METHODS,
+    NUMBER_STATIC_METHODS, NumberFormatError, is_finite, is_integer, is_nan, is_safe_integer,
+    number_call, number_to_string, number_value_of, parse_float, parse_int, to_exponential,
+    to_fixed, to_precision,
 };
 
 #[test]
@@ -25,9 +25,11 @@ fn numeric_metadata_matches_the_v6_contract() {
     assert!(NUMBER_CONSTANTS.iter().any(|constant| {
         constant.name == "MIN_SAFE_INTEGER" && constant.value == MIN_SAFE_INTEGER
     }));
-    assert!(NUMBER_CONSTANTS
-        .iter()
-        .any(|constant| constant.name == "NaN" && constant.value.is_nan()));
+    assert!(
+        NUMBER_CONSTANTS
+            .iter()
+            .any(|constant| constant.name == "NaN" && constant.value.is_nan())
+    );
     assert!(NUMBER_STATIC_METHODS.contains(&number::NumberMethodSpec {
         name: "parseInt",
         length: 2,
@@ -111,12 +113,16 @@ fn boolean_helpers_define_call_value_of_and_string_forms() {
 
 #[test]
 fn math_metadata_includes_constants_names_and_arities() {
-    assert!(MATH_CONSTANTS
-        .iter()
-        .any(|constant| constant.name == "PI" && constant.value == std::f64::consts::PI));
-    assert!(MATH_CONSTANTS
-        .iter()
-        .any(|constant| constant.name == "SQRT1_2"));
+    assert!(
+        MATH_CONSTANTS
+            .iter()
+            .any(|constant| constant.name == "PI" && constant.value == std::f64::consts::PI)
+    );
+    assert!(
+        MATH_CONSTANTS
+            .iter()
+            .any(|constant| constant.name == "SQRT1_2")
+    );
     assert!(MATH_METHODS.contains(&math::MathMethodSpec {
         name: "atan2",
         length: 2,
