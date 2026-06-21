@@ -412,7 +412,7 @@ impl Vm {
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let value = self.pop_value()?;
-                    let object = object_id(self.peek_value()?, "define property")?;
+                    let object = context.require_object(self.peek_value()?, "define property")?;
                     context.define_own_property(object, name, PropertyDescriptor::data(value))?;
                 }
                 Instruction::DefineGetter(index) => {
@@ -420,7 +420,7 @@ impl Vm {
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let getter = self.pop_value()?;
-                    let object = object_id(self.peek_value()?, "define getter")?;
+                    let object = context.require_object(self.peek_value()?, "define getter")?;
                     let setter = existing_accessor_setter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -433,7 +433,7 @@ impl Vm {
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let setter = self.pop_value()?;
-                    let object = object_id(self.peek_value()?, "define setter")?;
+                    let object = context.require_object(self.peek_value()?, "define setter")?;
                     let getter = existing_accessor_getter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -443,7 +443,7 @@ impl Vm {
                 }
                 Instruction::SetObjectPrototype => {
                     let prototype = self.pop_value()?;
-                    let object = object_id(self.peek_value()?, "set prototype")?;
+                    let object = context.require_object(self.peek_value()?, "set prototype")?;
                     match prototype {
                         JsValue::Null => {
                             context.set_prototype_of(object, None)?;
@@ -463,18 +463,21 @@ impl Vm {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
-                    let object = object_id(&self.pop_value()?, "delete property")?;
+                    let value = self.pop_value()?;
+                    let object = context.require_object(&value, "delete property")?;
                     let deleted = context.delete_property(object, &name, context.strict())?;
                     self.stack.push(JsValue::Boolean(deleted));
                 }
                 Instruction::DeleteElement => {
                     let key = to_property_key(&self.pop_value()?)?;
-                    let object = object_id(&self.pop_value()?, "delete property")?;
+                    let value = self.pop_value()?;
+                    let object = context.require_object(&value, "delete property")?;
                     let deleted = context.delete_property(object, &key, context.strict())?;
                     self.stack.push(JsValue::Boolean(deleted));
                 }
                 Instruction::HasProperty => {
-                    let object = object_id(&self.pop_value()?, "test property")?;
+                    let value = self.pop_value()?;
+                    let object = context.require_object(&value, "test property")?;
                     let key = to_property_key(&self.pop_value()?)?;
                     self.stack
                         .push(JsValue::Boolean(context.has_property(object, &key)?));
@@ -580,7 +583,15 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         match callee {
-            JsValue::NativeFunction(function) => builtins::call_native(function, arguments),
+            JsValue::NativeFunction(crate::runtime::NativeFunction::FunctionPrototypeCall) => {
+                let target = this_value;
+                let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+                let forwarded = arguments.into_iter().skip(1).collect();
+                self.call_value(target, call_this, forwarded, context)
+            }
+            JsValue::NativeFunction(function) => {
+                builtins::call_native(function, context, this_value, arguments)
+            }
             JsValue::Function(function) => {
                 self.call_user_function(function, this_value, arguments, context)
             }
@@ -594,7 +605,7 @@ impl Vm {
         key: &str,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        let object = object_id(&receiver, "read property")?;
+        let object = context.require_object(&receiver, "read property")?;
         let Some((_, descriptor)) = context.find_property_descriptor(object, key)? else {
             return Ok(JsValue::Undefined);
         };
@@ -614,7 +625,7 @@ impl Vm {
         value: JsValue,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        let object = object_id(&receiver, "write property")?;
+        let object = context.require_object(&receiver, "write property")?;
         if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
             match descriptor.kind {
                 PropertyKind::Accessor {
@@ -695,9 +706,11 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         match constructor {
-            JsValue::NativeFunction(function) => builtins::construct_native(function, arguments),
+            JsValue::NativeFunction(function) => {
+                builtins::construct_native(function, context, arguments)
+            }
             JsValue::Function(function_id) => {
-                let prototype = context.function_prototype(function_id);
+                let prototype = context.constructor_prototype(&JsValue::Function(function_id))?;
                 let instance = context.ordinary_object_with_prototype(prototype)?;
                 let result =
                     self.call_user_function(function_id, instance.clone(), arguments, context)?;
@@ -737,15 +750,6 @@ impl Vm {
         }
         *instruction_pointer = target;
         Ok(())
-    }
-}
-
-fn object_id(value: &JsValue, operation: &str) -> Result<ObjectId, VmError> {
-    match value {
-        JsValue::Object(object) => Ok(*object),
-        other => Err(VmError::type_error(format!(
-            "cannot {operation} on {other}"
-        ))),
     }
 }
 

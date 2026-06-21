@@ -20,9 +20,9 @@ pub use crate::{
     parser::{ParseError, Parser},
     runtime::{
         Binding, CollectionStats, Collector, Environment, EnvironmentId, FunctionId, Heap,
-        JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
-        NativeFunction, ObjectId, ObjectKind, PropertyDescriptor, PropertyDescriptorUpdate,
-        PropertyEntry, PropertyKind, PropertyMap,
+        Intrinsics, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind,
+        NativeErrorValue, NativeFunction, ObjectId, ObjectKind, PropertyDescriptor,
+        PropertyDescriptorUpdate, PropertyEntry, PropertyKind, PropertyMap,
     },
     vm::{CallFrame, Completion, Vm, VmError, VmErrorKind},
 };

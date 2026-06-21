@@ -22,5 +22,6 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - run: cargo run -- test262 --native-v4 --jobs 1
       - run: cargo run --release -- test262 --root test262 --suite test/language/expressions/addition --limit 20 --jobs 2
 

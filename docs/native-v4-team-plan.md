@@ -179,7 +179,7 @@ D 组任务：
 - 为 C1/C2/C3 分别添加源码端到端测试；
 - 扫描 Object、Array、Function/`call` 和 `instanceof` 官方目录；
 - 逐文件排除 harness、超范围语法和假通过；
-- 扩大 `NATIVE_V4_TESTS`，保留 V1–V3 零回归；
+- 让 `--native-v4` 覆盖 V4 相关目录并如实报告 passed/failed/skipped，保留 V1–V3 零回归；
 - 更新目录基线、报告和 CI；
 - 不修改 Parser、Compiler 或 Runtime 来“让测试通过”。
 

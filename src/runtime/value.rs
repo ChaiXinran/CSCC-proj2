@@ -5,11 +5,83 @@ use std::fmt;
 use super::{FunctionId, ObjectId};
 
 /// Built-in native functions exposed through ordinary runtime values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NativeFunction {
     AssertSameValue,
     AssertNotSameValue,
     Test262Error,
+    ObjectConstructor,
+    ObjectCreate,
+    ObjectDefineProperty,
+    ObjectGetOwnPropertyDescriptor,
+    ObjectGetPrototypeOf,
+    ObjectSetPrototypeOf,
+    ObjectKeys,
+    ArrayConstructor,
+    ArrayIsArray,
+    ArrayPrototypePush,
+    ArrayPrototypePop,
+    FunctionConstructor,
+    FunctionPrototype,
+    FunctionPrototypeCall,
+}
+
+impl NativeFunction {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::AssertSameValue => "sameValue",
+            Self::AssertNotSameValue => "notSameValue",
+            Self::Test262Error => "Test262Error",
+            Self::ObjectConstructor => "Object",
+            Self::ObjectCreate => "create",
+            Self::ObjectDefineProperty => "defineProperty",
+            Self::ObjectGetOwnPropertyDescriptor => "getOwnPropertyDescriptor",
+            Self::ObjectGetPrototypeOf => "getPrototypeOf",
+            Self::ObjectSetPrototypeOf => "setPrototypeOf",
+            Self::ObjectKeys => "keys",
+            Self::ArrayConstructor => "Array",
+            Self::ArrayIsArray => "isArray",
+            Self::ArrayPrototypePush => "push",
+            Self::ArrayPrototypePop => "pop",
+            Self::FunctionConstructor => "Function",
+            Self::FunctionPrototype => "",
+            Self::FunctionPrototypeCall => "call",
+        }
+    }
+
+    #[must_use]
+    pub const fn length(self) -> u8 {
+        match self {
+            Self::AssertSameValue | Self::AssertNotSameValue => 2,
+            Self::Test262Error => 1,
+            Self::ObjectConstructor => 1,
+            Self::ObjectCreate => 1,
+            Self::ObjectDefineProperty => 3,
+            Self::ObjectGetOwnPropertyDescriptor => 2,
+            Self::ObjectGetPrototypeOf => 1,
+            Self::ObjectSetPrototypeOf => 2,
+            Self::ObjectKeys => 1,
+            Self::ArrayConstructor => 1,
+            Self::ArrayIsArray => 1,
+            Self::ArrayPrototypePush => 1,
+            Self::ArrayPrototypePop => 0,
+            Self::FunctionConstructor => 1,
+            Self::FunctionPrototype => 0,
+            Self::FunctionPrototypeCall => 1,
+        }
+    }
+
+    #[must_use]
+    pub const fn constructable(self) -> bool {
+        matches!(
+            self,
+            Self::Test262Error
+                | Self::ObjectConstructor
+                | Self::ArrayConstructor
+                | Self::FunctionConstructor
+        )
+    }
 }
 
 /// Minimal native error categories used by V2 `throw`.

@@ -75,23 +75,16 @@ pub const NATIVE_V3_TESTS: [&str; 26] = [
     "test/language/expressions/object/S11.1.5_A4.3.js",
 ];
 
-/// Official Test262 files used as the Native V4 object-model acceptance gate.
-///
-/// Every file is self-contained for the native harness and passes in all modes
-/// selected by its metadata. Tests that only fail because of unrelated missing
-/// syntax or built-ins are intentionally excluded.
-pub const NATIVE_V4_TESTS: [&str; 11] = [
-    "test/language/expressions/delete/11.4.1-3-3.js",
-    "test/language/expressions/delete/11.4.1-4.a-12.js",
-    "test/language/expressions/delete/11.4.1-4.a-14.js",
-    "test/language/expressions/delete/11.4.1-4.a-15.js",
-    "test/language/expressions/delete/S11.4.1_A3.2_T3.js",
-    "test/language/expressions/delete/S11.4.1_A3.3_T3.js",
-    "test/language/expressions/delete/S8.12.7_A2_T1.js",
-    "test/language/expressions/in/S8.12.6_A1.js",
-    "test/language/expressions/in/S8.12.6_A3.js",
-    "test/language/expressions/array/11.1.4-0.js",
-    "test/language/expressions/object/__proto__-duplicate.js",
+/// V4-area directories used by `--native-v4`.
+pub const NATIVE_V4_SCAN_SUITES: [&str; 8] = [
+    "test/language/expressions/object",
+    "test/language/expressions/array",
+    "test/language/expressions/delete",
+    "test/language/expressions/in",
+    "test/language/expressions/instanceof",
+    "test/built-ins/Object",
+    "test/built-ins/Array",
+    "test/built-ins/Function/prototype/call",
 ];
 
 #[derive(Debug, Clone)]
@@ -103,6 +96,9 @@ pub struct RunnerOptions {
     pub jobs: usize,
     pub backend: BackendKind,
     pub files: Vec<PathBuf>,
+    pub suites: Vec<PathBuf>,
+    pub progress: bool,
+    pub skip_unsupported: bool,
     pub runtime: RuntimeConfig,
 }
 
@@ -116,6 +112,9 @@ impl Default for RunnerOptions {
             jobs: thread::available_parallelism().map_or(1, usize::from),
             backend: BackendKind::Boa,
             files: Vec::new(),
+            suites: Vec::new(),
+            progress: false,
+            skip_unsupported: false,
             runtime: RuntimeConfig {
                 loop_limit: 100_000_000,
                 recursion_limit: 512,
@@ -147,10 +146,12 @@ impl RunnerOptions {
         self.files = NATIVE_V3_TESTS.iter().map(PathBuf::from).collect();
     }
 
-    /// Selects the official Test262 files that define the Native V4 gate.
+    /// Selects the full V4-area directories with progress-friendly skips.
     pub fn select_native_v4(&mut self) {
         self.backend = BackendKind::Native;
-        self.files = NATIVE_V4_TESTS.iter().map(PathBuf::from).collect();
+        self.files.clear();
+        self.suites = NATIVE_V4_SCAN_SUITES.iter().map(PathBuf::from).collect();
+        self.skip_unsupported = true;
     }
 }
 
@@ -246,10 +247,16 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
     } else {
         Harness::minimal_native()
     });
-    let mut paths = if options.files.is_empty() {
+    let mut paths = if options.files.is_empty() && options.suites.is_empty() {
         let suite = options.test262_root.join(&options.suite);
         let mut paths = Vec::new();
         collect_tests(&suite, &mut paths)?;
+        paths
+    } else if options.files.is_empty() {
+        let mut paths = Vec::new();
+        for suite in &options.suites {
+            collect_tests(&options.test262_root.join(suite), &mut paths)?;
+        }
         paths
     } else {
         options
@@ -273,6 +280,8 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
     }
 
     let total = paths.len();
+    let progress = options.progress;
+    let skip_unsupported = options.skip_unsupported;
     let queue = Arc::new(Mutex::new(VecDeque::from(paths)));
     let worker_count = options.jobs.max(1).min(total.max(1));
     let (sender, receiver) = mpsc::channel();
@@ -302,7 +311,7 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
                     break;
                 };
                 let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_case(&path, &harness, backend, config)
+                    run_case(&path, &harness, backend, config, skip_unsupported)
                 })) {
                     Ok(result) => result,
                     Err(payload) => CaseResult {
@@ -324,7 +333,12 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
         total,
         ..Summary::default()
     };
+    let mut completed = 0usize;
     for case in receiver {
+        completed += 1;
+        if progress {
+            print_progress(completed, total, &case);
+        }
         match case.status {
             Status::Passed => summary.passed += 1,
             Status::Failed => summary.failed += 1,
@@ -351,11 +365,36 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
         .unwrap_or("unknown panic payload")
 }
 
+fn print_progress(completed: usize, total: usize, case: &CaseResult) {
+    let percent = if total == 0 {
+        100.0
+    } else {
+        completed as f64 * 100.0 / total as f64
+    };
+    println!(
+        "[{completed}/{total} {percent:5.1}%] {}\t{}",
+        status_label(case.status),
+        case.path.display()
+    );
+    if case.status != Status::Passed && !case.detail.is_empty() {
+        println!("  {}", case.detail);
+    }
+}
+
+fn status_label(status: Status) -> &'static str {
+    match status {
+        Status::Passed => "PASS",
+        Status::Failed => "FAIL",
+        Status::Skipped => "SKIP",
+    }
+}
+
 fn run_case(
     path: &Path,
     harness: &Harness,
     backend: BackendKind,
     config: RuntimeConfig,
+    skip_unsupported: bool,
 ) -> CaseResult {
     let started = Instant::now();
     let result = (|| {
@@ -371,6 +410,16 @@ fn run_case(
                 "non-blocking agent tests are not enabled".into(),
             ));
         }
+        if backend == BackendKind::Native && !metadata.includes.is_empty() {
+            let detail = format!(
+                "native backend does not support harness includes: {}",
+                metadata.includes.join(", ")
+            );
+            if skip_unsupported {
+                return Ok((Status::Skipped, detail));
+            }
+            return Err(detail);
+        }
 
         let strict_modes: &[bool] = if metadata.flags.contains("raw") {
             &[false]
@@ -383,14 +432,33 @@ fn run_case(
         };
 
         for strict in strict_modes {
-            run_variant(path, &source, &metadata, harness, backend, config, *strict).map_err(
-                |detail| {
-                    format!(
+            match run_variant(VariantRun {
+                path,
+                source: &source,
+                metadata: &metadata,
+                harness,
+                backend,
+                config,
+                strict: *strict,
+                skip_unsupported,
+            }) {
+                Ok(()) => {}
+                Err(VariantFailure::Skipped(detail)) => {
+                    return Ok((
+                        Status::Skipped,
+                        format!(
+                            "{} mode: {detail}",
+                            if *strict { "strict" } else { "default" }
+                        ),
+                    ));
+                }
+                Err(VariantFailure::Failed(detail)) => {
+                    return Err(format!(
                         "{} mode: {detail}",
                         if *strict { "strict" } else { "default" }
-                    )
-                },
-            )?;
+                    ));
+                }
+            }
         }
         Ok((Status::Passed, String::new()))
     })();
@@ -407,15 +475,28 @@ fn run_case(
     }
 }
 
-fn run_variant(
-    path: &Path,
-    source: &str,
-    metadata: &Metadata,
-    harness: &Harness,
+struct VariantRun<'a> {
+    path: &'a Path,
+    source: &'a str,
+    metadata: &'a Metadata,
+    harness: &'a Harness,
     backend: BackendKind,
     config: RuntimeConfig,
     strict: bool,
-) -> Result<(), String> {
+    skip_unsupported: bool,
+}
+
+fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
+    let VariantRun {
+        path,
+        source,
+        metadata,
+        harness,
+        backend,
+        config,
+        strict,
+        skip_unsupported,
+    } = run;
     let mut runtime = Runtime::with_backend(backend, config).map_err(|error| error.to_string())?;
     runtime.clear_output();
     runtime.set_strict(false);
@@ -443,10 +524,10 @@ fn run_variant(
                 .map_err(|error| format!("harness `{include}` failed: {error}"))?;
         }
     } else if backend == BackendKind::Native && !metadata.includes.is_empty() {
-        return Err(format!(
+        return Err(VariantFailure::Failed(format!(
             "native backend does not support harness includes: {}",
             metadata.includes.join(", ")
-        ));
+        )));
     }
 
     runtime.set_strict(strict);
@@ -462,14 +543,33 @@ fn run_variant(
     match (&metadata.negative_type, outcome) {
         (None, Ok(_)) => {}
         (None, Err(error)) => {
-            return Err(format!("unexpected {error} in `{}`", path.display()));
+            if skip_unsupported && error.kind == FailureKind::Unsupported {
+                return Err(VariantFailure::Skipped(format!(
+                    "unsupported native feature in `{}`: {error}",
+                    path.display()
+                )));
+            }
+            return Err(VariantFailure::Failed(format!(
+                "unexpected {error} in `{}`",
+                path.display()
+            )));
         }
         (Some(expected), Ok(_)) => {
-            return Err(format!("expected {expected}, but execution succeeded"));
+            return Err(VariantFailure::Failed(format!(
+                "expected {expected}, but execution succeeded"
+            )));
         }
         (Some(expected), Err(error)) if failure_matches(&error, expected) => {}
         (Some(expected), Err(error)) => {
-            return Err(format!("expected {expected}, got {error}"));
+            if skip_unsupported && error.kind == FailureKind::Unsupported {
+                return Err(VariantFailure::Skipped(format!(
+                    "unsupported native feature in `{}`: {error}",
+                    path.display()
+                )));
+            }
+            return Err(VariantFailure::Failed(format!(
+                "expected {expected}, got {error}"
+            )));
         }
     }
 
@@ -480,13 +580,17 @@ fn run_variant(
             .iter()
             .find(|line| line.as_str() != "Test262:AsyncTestComplete")
         {
-            return Err(format!("async test reported: {failure}"));
+            return Err(VariantFailure::Failed(format!(
+                "async test reported: {failure}"
+            )));
         }
         if !output
             .iter()
             .any(|line| line == "Test262:AsyncTestComplete")
         {
-            return Err("async test did not signal completion".into());
+            return Err(VariantFailure::Failed(
+                "async test did not signal completion".into(),
+            ));
         }
     }
 
@@ -494,6 +598,18 @@ fn run_variant(
     // for reporting while matching the expected error type above.
     let _phase = metadata.negative_phase.as_deref();
     Ok(())
+}
+
+#[derive(Debug, Clone)]
+enum VariantFailure {
+    Failed(String),
+    Skipped(String),
+}
+
+impl From<String> for VariantFailure {
+    fn from(value: String) -> Self {
+        Self::Failed(value)
+    }
 }
 
 fn failure_matches(error: &EvalFailure, expected: &str) -> bool {

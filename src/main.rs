@@ -172,6 +172,7 @@ fn command_test262(args: &[String]) -> Result<(), String> {
                 index += 1;
                 json_path = Some(PathBuf::from(required_value(args, index, "--json")?));
             }
+            "--progress" => options.progress = true,
             "--verbose" | "-v" => verbose = true,
             unknown => return Err(format!("unknown test262 option `{unknown}`")),
         }
@@ -384,7 +385,7 @@ USAGE:
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend boa|native] [--limit N] [--jobs N]
                   [--native-v1|--native-v2|--native-v3|--native-v4]
-                  [--json result.json] [-v]
+                  [--progress] [--json result.json] [-v]
   agentjs bench [iterations]"
     );
 }
