@@ -1486,10 +1486,10 @@ fn string_raw(
         let literal =
             vm.get_property_value(JsValue::Object(raw_object), &index.to_string(), context)?;
         result.push_str(&vm.to_string_coerce(literal, context)?);
-        if index + 1 < length {
-            if let Some(substitution) = arguments.get(index + 1) {
-                result.push_str(&vm.to_string_coerce(substitution.clone(), context)?);
-            }
+        if index + 1 < length
+            && let Some(substitution) = arguments.get(index + 1)
+        {
+            result.push_str(&vm.to_string_coerce(substitution.clone(), context)?);
         }
     }
     Ok(JsValue::String(result))

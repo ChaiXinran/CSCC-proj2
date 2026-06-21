@@ -3,11 +3,12 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{
-    BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject,
-    JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-    PropertyDescriptorUpdate, PropertyKind, object::array_index,
+    BoundFunction, BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap,
+    JsFunction, JsObject, JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind,
+    PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
+    object::array_index,
 };
-use crate::vm::{CallFrame, VmError};
+use crate::vm::{CallFrame, Vm, VmError};
 
 /// Stable references to all fundamental constructors and prototypes installed during
 /// `install_foundation`. The V6 additions (string/number/boolean/error prototypes) are
@@ -132,6 +133,51 @@ impl NativeContext {
             call,
             construct,
             object: object_id,
+            bound: None,
+        });
+        Ok(JsValue::BuiltinFunction(id))
+    }
+
+    /// Registers a bound function produced by `Function.prototype.bind`. The
+    /// returned value is callable/constructable; the VM forwards invocations to
+    /// `target` with `this_value` and `args` prepended.
+    pub fn register_bound_function(
+        &mut self,
+        target: JsValue,
+        this_value: JsValue,
+        args: Vec<JsValue>,
+        length: u8,
+    ) -> Result<JsValue, VmError> {
+        let mut object = JsObject::ordinary();
+        object.prototype = self.function_prototype_object();
+        object.define_property(
+            "name",
+            PropertyDescriptor::data_with(JsValue::String("bound".into()), false, false, true),
+        );
+        object.define_property(
+            "length",
+            PropertyDescriptor::data_with(JsValue::Number(f64::from(length)), false, false, true),
+        );
+        let object_id = self
+            .heap
+            .allocate_object(object)
+            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+        let idx = self.builtin_registry.len();
+        let id =
+            BuiltinId(u16::try_from(idx).map_err(|_| VmError::runtime("builtin registry full"))?);
+        self.builtin_registry.push(BuiltinFunction {
+            name: "bound",
+            length,
+            // Never invoked directly: the VM dispatches bound functions by
+            // forwarding to the target. These are unreachable fallbacks.
+            call: bound_call_unreachable,
+            construct: Some(bound_construct_unreachable),
+            object: object_id,
+            bound: Some(BoundFunction {
+                target,
+                this_value,
+                args,
+            }),
         });
         Ok(JsValue::BuiltinFunction(id))
     }
@@ -1329,6 +1375,31 @@ fn strict_error_or_false(strict: bool, message: &str) -> Result<bool, VmError> {
     } else {
         Ok(false)
     }
+}
+
+/// Unreachable fallback used as the `call` slot of a bound function. The VM
+/// forwards bound invocations to their target, so this is never executed.
+fn bound_call_unreachable(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Err(VmError::runtime(
+        "bound function must be dispatched by the VM",
+    ))
+}
+
+/// Unreachable fallback used as the `construct` slot of a bound function.
+fn bound_construct_unreachable(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _arguments: &[JsValue],
+    _new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    Err(VmError::runtime(
+        "bound function must be dispatched by the VM",
+    ))
 }
 
 #[cfg(test)]

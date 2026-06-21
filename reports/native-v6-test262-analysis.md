@@ -157,3 +157,106 @@ cargo clippy --all-targets -- -D warnings
 cargo run --release -- test262 --native-v6-scan --jobs 4 \
   --json reports/native-v6-frontend-summary.json
 ```
+
+---
+
+# Native V6 Test262 —— `for` / `for-in` 落地后的最新分析（2026-06-21）
+
+> 数据来源：`reports/native-v6-frontend-summary.json`（本轮 `--native-v6-scan` 输出）。
+> 说明：`--native-v6-scan` 走的是 native 后端，与 Boa 无关。本机 `target/` 中的
+> `boa_engine` 是 Linux 目标的缓存（windows-msvc 链接会报 E0461），因此本轮用
+> `--no-default-features` 绕开 Boa 编译；native 扫描结果与带 Boa 编译时**完全等价**。
+
+## 当前结果
+
+在前两版前端修复（ASI、`void`、字符串转义、Unicode 标识符、进制数字、计算属性、
+方法简写、基础箭头函数、`==`/`!=`）的基础上，本版新增了 **`for` / `for-in` / `++` `--`**
+的全链路支持（lexer → parser → bytecode → vm → runtime，新增 `ForInKeys` 指令与
+`for_in_keys` 枚举），并接入了 Test262 harness includes（native 后端现在会 eval
+`propertyHelper.js` 等）。
+
+| 目录 | 通过 | 失败 | 通过率 |
+|---|---:|---:|---:|
+| Number | 251 | 89 | 73.82% |
+| Boolean | 37 | 14 | 72.55% |
+| String | 768 | 455 | 62.80% |
+| Math | 197 | 130 | 60.24% |
+| JSON | 74 | 91 | 44.85% |
+| Error | 33 | 60 | 35.48% |
+| **合计** | **1360** | **838** | **61.85%**（skipped=1） |
+
+整体演进：基线 `769 (34.97%)` → 前端四批 `951 (43.25%)` → **本版 `1360 (61.85%)`**。
+其中 `for`/`for-in` 让 `propertyHelper.js` 从「SyntaxError 解析失败」变为「能解析、能 eval」，
+是本轮跳过归零、通过率跃升的关键前提。门禁 V1–V6 仍为 100%，零回归。
+
+## 838 个失败的原因分类
+
+| 原因 | 数量 | 占失败比 |
+|---|---:|---:|
+| harness include 运行时失败（几乎全是 `propertyHelper.js`） | 318 | 37.9% |
+| 依赖未定义的全局对象 | 181 | 21.6% |
+| Builtin 语义/断言不一致（真实 bug） | 171 | 20.4% |
+| 剩余语法 parse error | 140 | 16.7% |
+| 在原始值上访问属性等 | 20 | 2.4% |
+| 方法缺失 / 不可调用 | 8 | 1.0% |
+
+### ① `propertyHelper.js` 缺 `Function.prototype.bind`（316，最大单点）
+
+`propertyHelper.js` 顶部即执行 `Function.prototype.call.bind(...)`、
+`Function.prototype.call.bind(Array.prototype.join)` 等，而 **`Function.prototype.bind`
+尚未实现**，于是 helper 加载阶段就抛 `TypeError: undefined is not callable`，
+连带 **316 个** 依赖 `verifyProperty` 的用例全部失败。这是当前**收益最高的单点**。
+
+### ② 未定义全局对象（181）
+
+| 全局 | 数量 |
+|---|---:|
+| `Symbol` | 87 |
+| `RegExp` | 29 |
+| `Proxy` | 18 |
+| `$262` | 10 |
+| `eval` | 10 |
+| `Date` | 3 |
+| 其它（测试内未声明标识符等） | ~24 |
+
+`Symbol` 是大头（`@@iterator`/`@@toPrimitive` 等 well-known symbol 在大量 builtin 测试里出现）；
+`RegExp` 解锁 String 的 `match`/`replace`/`split`。多数不属于 V6 核心，应按独立里程碑推进；
+其中 `$262`（10）属于 harness host 对象，成本低、可优先补。
+
+### ③ Builtin 语义/断言不一致（171，真实 bug）
+
+集中在两个低分目录 **Error（35.5%）** 和 **JSON（44.9%）**，Math 也有一批。这些是
+**已实现方法**的边界/规范偏差，例如：Error 原型链与 `toString`、JSON 的
+`reviver`/`replacer`/`space`/属性顺序、Math 特殊值（`±0`、`NaN`、空参）。属 C 组应优先修的真实缺口。
+
+### ④ 剩余语法 parse error（140）
+
+| 语法 | 数量 | 说明 |
+|---|---:|---|
+| 正则字面量 `/.../`（`unexpected /`） | 68 | 需 RegExp 值 + 词法层的正则识别 |
+| `unexpected =` | 26 | 复合赋值 `+=`/`-=`/`*=` 等、解构默认值 |
+| BigInt `1n`（`found identifier n`） | ~19 | 运行时无 BigInt 值类型 |
+| 计算属性等 `[`（`expected property name, got [`） | 9 | 对象字面量部分计算键形式 |
+| `function*` / `extends`（`*`、class） | ~3 | generator / class |
+
+## 建议修复顺序（更新）
+
+1. **（builtin，最高收益）实现 `Function.prototype.bind`**，并补齐它依赖的
+   `Array.prototype.join`/`push`、`Object.prototype.hasOwnProperty`/`propertyIsEnumerable`。
+   一次性可解锁约 **300** 个 propertyHelper 用例。
+2. **（builtin 语义）修 Error 与 JSON 的真实缺口**：Error 原型链/`toString`、
+   JSON `reviver`/`replacer`/`space`/属性顺序、Math 特殊值边界。
+3. **（前端，低风险）复合赋值 `+=`/`-=` 等**；BigInt 字面量作为独立里程碑（需新值类型）。
+4. **（大里程碑）RegExp**（解锁正则字面量 68 + String 正则方法）与 **Symbol**。
+5. 最后处理 `$262`（低成本，先补）、`Proxy`、`eval`、`Date`。
+
+## 本轮验证命令
+
+```sh
+cargo fmt --all -- --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets
+# 因本机 target 中 boa 为 Linux 目标缓存，native 扫描用 --no-default-features 绕开 Boa：
+cargo run --release --no-default-features -- test262 --native-v6-scan --jobs 4 \
+  --json reports/native-v6-frontend-summary.json
+```

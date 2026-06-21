@@ -30,8 +30,8 @@ impl std::error::Error for LexError {}
 /// Operators recognized by the V1 lexer, ordered so that maximal munch is a
 /// simple linear scan: longer operators precede their shorter prefixes.
 const OPERATORS: &[&str] = &[
-    "===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+", "-", "*", "/",
-    "%", "!", "=", "<", ">",
+    "===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+", "-", "*", "/", "%",
+    "!", "=", "<", ">",
 ];
 
 /// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional

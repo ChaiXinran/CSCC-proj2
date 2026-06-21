@@ -40,6 +40,16 @@ pub type NativeConstruct = fn(
     new_target: JsValue,
 ) -> Result<JsValue, VmError>;
 
+/// Bound-function state produced by `Function.prototype.bind`. When present on a
+/// [`BuiltinFunction`], the VM ignores `call`/`construct` and instead forwards
+/// to `target` with `this_value` and `args` prepended.
+#[derive(Debug, Clone)]
+pub struct BoundFunction {
+    pub target: JsValue,
+    pub this_value: JsValue,
+    pub args: Vec<JsValue>,
+}
+
 /// Registry entry for a builtin function stored in `NativeContext`.
 #[derive(Clone)]
 pub struct BuiltinFunction {
@@ -49,6 +59,8 @@ pub struct BuiltinFunction {
     pub construct: Option<NativeConstruct>,
     /// Heap object backing this function value (holds `name`, `length`, `prototype`, etc.).
     pub object: ObjectId,
+    /// Present iff this value was produced by `Function.prototype.bind`.
+    pub bound: Option<BoundFunction>,
 }
 
 impl fmt::Debug for BuiltinFunction {
@@ -57,6 +69,7 @@ impl fmt::Debug for BuiltinFunction {
             .field("name", &self.name)
             .field("length", &self.length)
             .field("object", &self.object)
+            .field("bound", &self.bound)
             .finish()
     }
 }

@@ -15,7 +15,7 @@ pub use coercion::PreferredType;
 pub use context::{Intrinsics, NativeContext, to_property_key};
 pub use environment::{Binding, Environment, EnvironmentId};
 pub use function::{
-    BuiltinFunction, BuiltinId, FunctionId, JsFunction, NativeCall, NativeConstruct,
+    BoundFunction, BuiltinFunction, BuiltinId, FunctionId, JsFunction, NativeCall, NativeConstruct,
 };
 pub use gc::{CollectionStats, Collector};
 pub use heap::Heap;

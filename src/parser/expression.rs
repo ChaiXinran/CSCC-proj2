@@ -20,8 +20,7 @@
 use crate::{
     ast::{
         ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
-        LogicalOperator, ObjectProperty, PropertyName, UnaryOperator, UpdateOperator,
-        Statement,
+        LogicalOperator, ObjectProperty, PropertyName, Statement, UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
