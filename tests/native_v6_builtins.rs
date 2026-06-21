@@ -1,0 +1,163 @@
+//! End-to-end tests for the V6 builtin surface wired through the thin adapter
+//! layer (`src/builtins/v6.rs`) into the pure C1/C2 algorithm modules.
+
+use agentjs::{
+    backend::BackendKind,
+    engine::{Engine, ExecutionOptions, RuntimeConfig},
+};
+
+fn native_eval(source: &str) -> String {
+    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+        .execute(source, ExecutionOptions::default())
+        .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))
+        .value
+}
+
+// ── String.prototype ─────────────────────────────────────────────────────────
+
+#[test]
+fn string_character_access_methods() {
+    assert_eq!(native_eval("'abc'.charAt(1)"), "b");
+    assert_eq!(native_eval("'abc'.charCodeAt(0)"), "97");
+    assert_eq!(native_eval("'abc'.at(-1)"), "c");
+}
+
+#[test]
+fn string_search_methods() {
+    assert_eq!(native_eval("'banana'.indexOf('a')"), "1");
+    assert_eq!(native_eval("'banana'.lastIndexOf('a')"), "5");
+    assert_eq!(native_eval("'banana'.includes('nan')"), "true");
+    assert_eq!(native_eval("'banana'.startsWith('ban')"), "true");
+    assert_eq!(native_eval("'banana'.endsWith('na')"), "true");
+}
+
+#[test]
+fn string_slice_family_follows_distinct_rules() {
+    assert_eq!(native_eval("'abcdef'.slice(-3)"), "def");
+    assert_eq!(native_eval("'abcdef'.substring(4, 2)"), "cd");
+    assert_eq!(native_eval("'abcdef'.substr(-3, 2)"), "de");
+}
+
+#[test]
+fn string_transform_methods() {
+    assert_eq!(native_eval("'ab'.repeat(3)"), "ababab");
+    assert_eq!(native_eval("'  x  '.trim()"), "x");
+    assert_eq!(native_eval("'Agent'.toUpperCase()"), "AGENT");
+    assert_eq!(native_eval("'Agent'.toLowerCase()"), "agent");
+    assert_eq!(native_eval("'x'.padStart(4, 'ab')"), "abax");
+    assert_eq!(native_eval("'x'.padEnd(4)"), "x   ");
+    assert_eq!(native_eval("'a'.concat('b', 'c')"), "abc");
+}
+
+#[test]
+fn string_static_constructors() {
+    assert_eq!(native_eval("String.fromCharCode(72, 105)"), "Hi");
+    assert_eq!(native_eval("String.fromCodePoint(65, 66)"), "AB");
+}
+
+#[test]
+fn string_repeat_with_negative_count_throws_catchable_range_error() {
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 'x'.repeat(-1); } catch (e) { r = 'caught'; } r;"),
+        "caught"
+    );
+}
+
+// ── Number.prototype + statics ───────────────────────────────────────────────
+
+#[test]
+fn number_to_string_supports_radix() {
+    assert_eq!(native_eval("(255).toString(16)"), "ff");
+    assert_eq!(native_eval("(255).toString()"), "255");
+}
+
+#[test]
+fn number_formatting_methods() {
+    assert_eq!(native_eval("(3.14159).toFixed(2)"), "3.14");
+    assert_eq!(native_eval("(0.5).toFixed(0)"), "0");
+}
+
+#[test]
+fn number_to_string_invalid_radix_throws_catchable_range_error() {
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { (5).toString(1); } catch (e) { r = 'caught'; } r;"),
+        "caught"
+    );
+}
+
+#[test]
+fn number_static_predicates_do_not_coerce() {
+    assert_eq!(native_eval("Number.isInteger(5)"), "true");
+    assert_eq!(native_eval("Number.isInteger(5.5)"), "false");
+    assert_eq!(
+        native_eval("Number.isSafeInteger(9007199254740991)"),
+        "true"
+    );
+    // Strings are never integers because Number.isInteger does not coerce.
+    assert_eq!(native_eval("Number.isInteger('5')"), "false");
+    assert_eq!(native_eval("Number.isFinite(Infinity)"), "false");
+}
+
+#[test]
+fn number_parsers_match_globals() {
+    assert_eq!(native_eval("Number.parseInt('0xff')"), "255");
+    assert_eq!(native_eval("Number.parseFloat('3.14abc')"), "3.14");
+    assert_eq!(native_eval("parseInt('101', 2)"), "5");
+    assert_eq!(native_eval("parseFloat('  2.5  ')"), "2.5");
+}
+
+#[test]
+fn number_wrapper_valueof_round_trips() {
+    assert_eq!(native_eval("new Number(42).valueOf()"), "42");
+    assert_eq!(native_eval("typeof new Number(42)"), "object");
+}
+
+// ── Boolean ──────────────────────────────────────────────────────────────────
+
+#[test]
+fn boolean_coercion_and_prototype() {
+    assert_eq!(native_eval("Boolean(0)"), "false");
+    assert_eq!(native_eval("Boolean('x')"), "true");
+    assert_eq!(native_eval("true.toString()"), "true");
+    assert_eq!(native_eval("new Boolean(false).valueOf()"), "false");
+}
+
+// ── Math ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn math_constants_and_core_functions() {
+    assert_eq!(native_eval("Math.abs(-5)"), "5");
+    assert_eq!(native_eval("Math.max(1, 7, 3)"), "7");
+    assert_eq!(native_eval("Math.min(1, 7, 3)"), "1");
+    assert_eq!(native_eval("Math.sqrt(16)"), "4");
+    assert_eq!(native_eval("Math.pow(2, 10)"), "1024");
+    assert_eq!(native_eval("Math.floor(3.9)"), "3");
+    assert_eq!(native_eval("Math.sign(-3)"), "-1");
+    assert_eq!(native_eval("Math.PI > 3.14 && Math.PI < 3.15"), "true");
+}
+
+#[test]
+fn math_extended_functions() {
+    assert_eq!(native_eval("Math.hypot(3, 4)"), "5");
+    assert_eq!(native_eval("Math.trunc(4.7)"), "4");
+    assert_eq!(native_eval("Math.cbrt(27)"), "3");
+    assert_eq!(native_eval("Math.imul(3, 4)"), "12");
+}
+
+// ── Error hierarchy ──────────────────────────────────────────────────────────
+
+#[test]
+fn error_instances_carry_name_and_message() {
+    assert_eq!(native_eval("new TypeError('boom').message"), "boom");
+    assert_eq!(native_eval("new TypeError('boom').name"), "TypeError");
+    assert_eq!(native_eval("new RangeError('oops').name"), "RangeError");
+}
+
+#[test]
+fn error_to_string_formats_name_and_message() {
+    assert_eq!(
+        native_eval("new TypeError('boom').toString()"),
+        "TypeError: boom"
+    );
+    assert_eq!(native_eval("new Error('').toString()"), "Error");
+}

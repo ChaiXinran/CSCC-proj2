@@ -825,8 +825,16 @@ impl Vm {
                 match (def.call)(self, context, this_value, &arguments) {
                     Ok(value) => Ok(OperationResult::Value(value)),
                     Err(error) => match self.pending_exception.take() {
+                        // A nested JavaScript callback threw; surface its value.
                         Some(value) => Ok(OperationResult::Throw(value)),
-                        None => Err(error),
+                        // ECMAScript error types raised directly by a builtin are
+                        // catchable throws; engine-internal failures are not.
+                        None => match error.kind {
+                            VmErrorKind::Reference | VmErrorKind::Type | VmErrorKind::Range => {
+                                Ok(OperationResult::Throw(vm_error_to_value(error)))
+                            }
+                            _ => Err(error),
+                        },
                     },
                 }
             }
@@ -1048,7 +1056,29 @@ impl Vm {
         key: &str,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        let object = context.require_object(&receiver, "read property")?;
+        // Primitive strings expose `length` and UTF-16 code-unit indexing
+        // without boxing; method lookups fall through to String.prototype.
+        if let JsValue::String(value) = &receiver {
+            if key == "length" {
+                return Ok(OperationResult::Value(JsValue::Number(
+                    value.encode_utf16().count() as f64,
+                )));
+            }
+            if let Ok(index) = key.parse::<usize>() {
+                return Ok(OperationResult::Value(
+                    value
+                        .encode_utf16()
+                        .nth(index)
+                        .map_or(JsValue::Undefined, |unit| {
+                            JsValue::String(String::from_utf16_lossy(&[unit]))
+                        }),
+                ));
+            }
+        }
+        // Primitive String/Number/Boolean receivers resolve property lookups on
+        // their wrapper prototype while keeping the primitive as the `this`
+        // value passed to any accessor.
+        let object = self.property_lookup_object(&receiver, context)?;
         let Some((_, descriptor)) = context.find_property_descriptor(object, key)? else {
             return Ok(OperationResult::Value(JsValue::Undefined));
         };
@@ -1060,6 +1090,28 @@ impl Vm {
             PropertyKind::Accessor {
                 get: Some(getter), ..
             } => self.call_value(getter, receiver, Vec::new(), context),
+        }
+    }
+
+    /// Resolves the object whose property table backs a receiver's reads. For
+    /// the primitive wrapper types this is the corresponding intrinsic
+    /// prototype, so `"abc".charAt` and `(5).toFixed` find their methods.
+    fn property_lookup_object(
+        &self,
+        receiver: &JsValue,
+        context: &NativeContext,
+    ) -> Result<ObjectId, VmError> {
+        match receiver {
+            JsValue::String(_) => context
+                .string_prototype()
+                .ok_or_else(|| VmError::type_error("cannot read property on string")),
+            JsValue::Number(_) => context
+                .number_prototype()
+                .ok_or_else(|| VmError::type_error("cannot read property on number")),
+            JsValue::Boolean(_) => context
+                .boolean_prototype()
+                .ok_or_else(|| VmError::type_error("cannot read property on boolean")),
+            _ => context.require_object(receiver, "read property"),
         }
     }
 
