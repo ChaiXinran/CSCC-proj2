@@ -155,8 +155,9 @@ impl Compiler {
                 Ok(())
             }
             Statement::Return(value) => self.compile_return(value.as_ref(), chunk, context),
-            Statement::FunctionDeclaration { name, params, body } => self
-                .compile_function_declaration(name, params, body, chunk, context),
+            Statement::FunctionDeclaration { name, params, body } => {
+                self.compile_function_declaration(name, params, body, chunk, context)
+            }
             Statement::Try {
                 block,
                 handler,
@@ -584,7 +585,8 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let fn_chunk = self.compile_function_body(params.iter().map(|p| p.name.as_str()), body, context)?;
+        let fn_chunk =
+            self.compile_function_body(params.iter().map(|p| p.name.as_str()), body, context)?;
         let template = FunctionTemplate {
             name: Some(name.to_string()),
             params: fn_chunk.params,
@@ -625,8 +627,19 @@ impl Compiler {
         fn_context.lexical_scopes.push(lexical_scope);
         // Hoist function declarations within the function body.
         for statement in &body.statements {
-            if let Statement::FunctionDeclaration { name, params, body: inner_body } = statement {
-                self.compile_function_declaration(name, params, inner_body, &mut fn_chunk, &mut fn_context)?;
+            if let Statement::FunctionDeclaration {
+                name,
+                params,
+                body: inner_body,
+            } = statement
+            {
+                self.compile_function_declaration(
+                    name,
+                    params,
+                    inner_body,
+                    &mut fn_chunk,
+                    &mut fn_context,
+                )?;
             }
         }
         // Compile the body statements; no "completion expression" inside function bodies.

@@ -6,7 +6,16 @@ use super::{JsValue, PropertyDescriptor, PropertyMap};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectId(pub u32);
 
-/// Minimal object storage variants used by V3.
+/// Primitive value stored in a wrapper object's internal slot (ECMAScript [[PrimitiveValue]]).
+/// Excludes objects, functions, errors, null, and undefined — only the three wrappable primitives.
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrimitiveValue {
+    Boolean(bool),
+    Number(f64),
+    String(String),
+}
+
+/// Object storage variants.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum ObjectKind {
     #[default]
@@ -15,6 +24,10 @@ pub enum ObjectKind {
         elements: Vec<Option<PropertyDescriptor>>,
         length_writable: bool,
     },
+    /// Primitive wrapper object (created by `new Number(…)`, `new String(…)`, `new Boolean(…)`).
+    /// Stores the internal [[PrimitiveValue]] slot. Wrapper objects still have normal `properties`
+    /// and a `prototype` link; only the internal slot is special.
+    PrimitiveWrapper(PrimitiveValue),
 }
 
 /// Ordinary object storage.
@@ -149,7 +162,7 @@ impl JsObject {
     pub fn array_length(&self) -> Option<usize> {
         match &self.kind {
             ObjectKind::Array { elements, .. } => Some(elements.len()),
-            ObjectKind::Ordinary => None,
+            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) => None,
         }
     }
 
@@ -159,7 +172,14 @@ impl JsObject {
             ObjectKind::Array {
                 length_writable, ..
             } => Some(*length_writable),
-            ObjectKind::Ordinary => None,
+            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) => None,
+        }
+    }
+
+    pub fn primitive_value(&self) -> Option<&PrimitiveValue> {
+        match &self.kind {
+            ObjectKind::PrimitiveWrapper(value) => Some(value),
+            _ => None,
         }
     }
 
