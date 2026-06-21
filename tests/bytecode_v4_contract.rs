@@ -226,10 +226,128 @@ fn construct_rejects_argument_counts_outside_u16() {
     assert!(error.message.contains("construct argument count"));
 }
 
+#[test]
+fn builtin_call_instructions_publish_generic_stack_contracts() {
+    assert_eq!(Instruction::Call(2).stack_effect(), StackEffect::new(3, 1));
+    assert_eq!(
+        Instruction::CallWithThis(2).stack_effect(),
+        StackEffect::with_required(4, 4, 1)
+    );
+    assert_eq!(
+        Instruction::Construct(2).stack_effect(),
+        StackEffect::new(3, 1)
+    );
+    assert_eq!(
+        Instruction::GetMethod(0).stack_effect(),
+        StackEffect::new(1, 2)
+    );
+}
+
+#[test]
+fn hand_written_builtin_call_shapes_validate_without_special_opcodes() {
+    let mut static_method = Chunk::default();
+    let object = string(&mut static_method, "Object");
+    let create = string(&mut static_method, "create");
+    let base = string(&mut static_method, "base");
+    static_method.emit(Instruction::LoadGlobal(object));
+    static_method.emit(Instruction::GetMethod(create));
+    static_method.emit(Instruction::LoadGlobal(base));
+    static_method.emit(Instruction::CallWithThis(1));
+    static_method.emit(Instruction::Return);
+    assert_eq!(static_method.validate(), Ok(()));
+    assert_eq!(static_method.analyze_stack().unwrap().max_depth, 3);
+
+    let mut function_call = Chunk::default();
+    let function = string(&mut function_call, "Function");
+    let prototype = string(&mut function_call, "prototype");
+    let call = string(&mut function_call, "call");
+    let target = string(&mut function_call, "target");
+    let receiver = string(&mut function_call, "receiver");
+    function_call.emit(Instruction::LoadGlobal(function));
+    function_call.emit(Instruction::GetProperty(prototype));
+    function_call.emit(Instruction::GetProperty(call));
+    function_call.emit(Instruction::GetMethod(call));
+    function_call.emit(Instruction::LoadGlobal(target));
+    function_call.emit(Instruction::LoadGlobal(receiver));
+    function_call.emit(Instruction::CallWithThis(2));
+    function_call.emit(Instruction::Return);
+    assert_eq!(function_call.validate(), Ok(()));
+    assert_eq!(function_call.analyze_stack().unwrap().max_depth, 4);
+}
+
 fn expression(expression: Expression) -> Program {
     Program {
         body: vec![Statement::Expression(expression)],
     }
+}
+
+#[test]
+fn compiler_uses_generic_calls_for_builtin_identifiers() {
+    let program = expression(Expression::Call {
+        callee: Box::new(identifier("Array")),
+        arguments: vec![
+            Expression::Literal(Literal::Number(1.0)),
+            Expression::Literal(Literal::Number(2.0)),
+        ],
+    });
+
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::Constant(1),
+            Instruction::Constant(2),
+            Instruction::Call(2),
+            Instruction::Return,
+        ]
+    );
+    assert_eq!(chunk.validate(), Ok(()));
+}
+
+#[test]
+fn compiler_uses_generic_construct_for_builtin_identifiers() {
+    let program = expression(Expression::Construct {
+        callee: Box::new(identifier("Array")),
+        arguments: vec![Expression::Literal(Literal::Number(3.0))],
+    });
+
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::Constant(1),
+            Instruction::Construct(1),
+            Instruction::Return,
+        ]
+    );
+    assert_eq!(chunk.validate(), Ok(()));
+}
+
+#[test]
+fn compiler_preserves_receiver_for_builtin_style_method_calls() {
+    let program = expression(Expression::Call {
+        callee: Box::new(Expression::Member {
+            object: Box::new(identifier("Object")),
+            property: Box::new(identifier("create")),
+            computed: false,
+        }),
+        arguments: vec![identifier("base")],
+    });
+
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::GetMethod(1),
+            Instruction::LoadGlobal(2),
+            Instruction::CallWithThis(1),
+            Instruction::Return,
+        ]
+    );
+    assert_eq!(chunk.validate(), Ok(()));
 }
 
 fn identifier(name: &str) -> Expression {

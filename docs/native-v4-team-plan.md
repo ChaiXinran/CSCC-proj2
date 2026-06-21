@@ -43,6 +43,17 @@ source -> AST
 
 分支建议：`feat/v4e-frontend-compat`。
 
+当前状态：**已完成**。
+
+已交付：
+
+- 关键字可作为点号后的 IdentifierName，例如 `object.delete`；
+- 关键字属性名使用稳定源码拼写，不依赖 Debug 格式；
+- 调用参数支持单个尾逗号；
+- `tests/frontend_v4.rs` 独立覆盖 Builtin 调用形状、V4 正向 Test262 文件和
+  范围内 Early Error；
+- 未修改 Compiler、VM、Runtime 或 Builtins。
+
 ## 3. B 组：字节码兼容与调用契约
 
 负责目录：
@@ -76,6 +87,20 @@ Function.prototype.call.call(...) -> 调用顺序不变
 若现有 Opcode 已满足全部契约，B 组允许只提交测试证明，不强制增加新指令。
 
 分支建议：`feat/v4e-bytecode-contract`。
+
+当前状态：**已完成**。
+
+审计结论与交付：
+
+- 现有 `Call`、`CallWithThis`、`Construct` 足以承载用户函数和 Builtin；
+- `Object.create`、`Array(...)`、`new Array(...)`、`array.push(...)` 和嵌套
+  `Function.prototype.call.call(...)` 均使用通用指令；
+- 手工 Chunk 已验证固定栈效果、最大栈深度和 `Chunk::validate()`；
+- A→B 源码集成测试已验证 receiver 与参数顺序；
+- 未增加具体 Builtin Opcode，未修改 VM、Runtime 或 Builtins。
+
+`obj[key]()` 的 receiver 保留需要新的通用计算成员调用契约，不属于本轮冻结
+交付；后续若 Test262 要求，应先更新共享接口再由 B/C 联合实现。
 
 ## 4. C 组：VM、Runtime 与 Builtins
 
@@ -233,4 +258,3 @@ cargo test --test native_test262
 - C2：Array 自有端到端样例与稀疏数组回归通过。
 - C3：Function.call、函数原型关系和 `instanceof` 通过。
 - D：V4 固定清单扩大、零失败、零跳过，报告如实记录目录基线。
-
