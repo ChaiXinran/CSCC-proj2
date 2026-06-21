@@ -7,8 +7,8 @@ use crate::{
         Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
     },
     runtime::{
-        FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, ObjectId,
-        PropertyDescriptor, PropertyKind, to_property_key,
+        FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, ObjectId, PreferredType,
+        PrimitiveValue, PropertyDescriptor, PropertyKind, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -863,6 +863,173 @@ impl Vm {
         )
     }
 
+    // ── ECMAScript abstract coercion operations ──────────────────────────────
+
+    /// ECMAScript `ToPrimitive`. Returns `value` unchanged if it is already a
+    /// primitive. For objects, invokes the `valueOf`/`toString` methods in the
+    /// order dictated by `hint`.
+    ///
+    /// JavaScript exceptions raised by the conversion methods are stored in
+    /// `pending_exception` and returned as `Err`, making them catchable by V5
+    /// `try/catch` handlers.
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn to_primitive(
+        &mut self,
+        value: JsValue,
+        hint: PreferredType,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        if !matches!(
+            value,
+            JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+        ) {
+            return Ok(value);
+        }
+
+        let (first, second) = match hint {
+            PreferredType::String => ("toString", "valueOf"),
+            PreferredType::Default | PreferredType::Number => ("valueOf", "toString"),
+        };
+
+        if let Some(prim) = self.try_coerce_method(value.clone(), first, context)? {
+            return Ok(prim);
+        }
+        if let Some(prim) = self.try_coerce_method(value.clone(), second, context)? {
+            return Ok(prim);
+        }
+        Err(VmError::type_error(
+            "Cannot convert object to primitive value",
+        ))
+    }
+
+    /// Try one conversion method (`valueOf` or `toString`). Returns:
+    /// - `Ok(Some(prim))` if the method exists, is callable, and returned a primitive.
+    /// - `Ok(None)` if the method is absent, not callable, or returned an object.
+    /// - `Err` if the method threw a JavaScript exception (pending_exception is set).
+    fn try_coerce_method(
+        &mut self,
+        value: JsValue,
+        method: &str,
+        context: &mut NativeContext,
+    ) -> Result<Option<JsValue>, VmError> {
+        let method_fn = match self.get_property_value_completion(value.clone(), method, context)? {
+            OperationResult::Value(v) => v,
+            OperationResult::Throw(thrown) => {
+                self.pending_exception = Some(thrown);
+                return Err(VmError::runtime("JavaScript callback threw"));
+            }
+        };
+        if !matches!(
+            method_fn,
+            JsValue::Function(_) | JsValue::BuiltinFunction(_)
+        ) {
+            return Ok(None);
+        }
+        let result = match self.call_value(method_fn, value, vec![], context)? {
+            OperationResult::Value(v) => v,
+            OperationResult::Throw(thrown) => {
+                self.pending_exception = Some(thrown);
+                return Err(VmError::runtime("JavaScript callback threw"));
+            }
+        };
+        // Only accept primitive results.
+        if matches!(
+            result,
+            JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+        ) {
+            return Ok(None);
+        }
+        Ok(Some(result))
+    }
+
+    /// ECMAScript `ToNumber`. For objects, applies `ToPrimitive(Number)` first.
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn to_number(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<f64, VmError> {
+        match value {
+            JsValue::Undefined => Ok(f64::NAN),
+            JsValue::Null => Ok(0.0),
+            JsValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
+            JsValue::Number(n) => Ok(n),
+            JsValue::String(ref s) => Ok(coerce_string_to_number(s)),
+            JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+                let prim = self.to_primitive(value, PreferredType::Number, context)?;
+                self.to_number(prim, context)
+            }
+            JsValue::Error(_) => Ok(f64::NAN),
+        }
+    }
+
+    /// ECMAScript `ToString`. For objects, applies `ToPrimitive(String)` first.
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn to_string_coerce(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<String, VmError> {
+        match value {
+            JsValue::Undefined => Ok("undefined".into()),
+            JsValue::Null => Ok("null".into()),
+            JsValue::Boolean(b) => Ok(b.to_string()),
+            JsValue::Number(n) => Ok(coerce_number_to_string(n)),
+            JsValue::String(s) => Ok(s),
+            JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+                let prim = self.to_primitive(value, PreferredType::String, context)?;
+                self.to_string_coerce(prim, context)
+            }
+            JsValue::Error(e) => Ok(e.message),
+        }
+    }
+
+    /// ECMAScript `ToObject`. Wraps primitives in their corresponding wrapper objects.
+    /// Fails with `TypeError` for `null` and `undefined`.
+    #[allow(clippy::wrong_self_convention, dead_code)]
+    pub(crate) fn to_object(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<ObjectId, VmError> {
+        match value {
+            JsValue::Null | JsValue::Undefined => Err(VmError::type_error(
+                "Cannot convert undefined or null to object",
+            )),
+            JsValue::Boolean(b) => {
+                let proto = context
+                    .boolean_prototype()
+                    .ok_or_else(|| VmError::runtime("Boolean prototype not installed"))?;
+                let wrapper =
+                    context.create_primitive_wrapper(PrimitiveValue::Boolean(b), proto)?;
+                context.require_object(&wrapper, "ToObject")
+            }
+            JsValue::Number(n) => {
+                let proto = context
+                    .number_prototype()
+                    .ok_or_else(|| VmError::runtime("Number prototype not installed"))?;
+                let wrapper = context.create_primitive_wrapper(PrimitiveValue::Number(n), proto)?;
+                context.require_object(&wrapper, "ToObject")
+            }
+            JsValue::String(s) => {
+                let proto = context
+                    .string_prototype()
+                    .ok_or_else(|| VmError::runtime("String prototype not installed"))?;
+                let wrapper = context.create_primitive_wrapper(PrimitiveValue::String(s), proto)?;
+                context.require_object(&wrapper, "ToObject")
+            }
+            JsValue::Object(id) => Ok(id),
+            JsValue::Function(id) => context
+                .function_object(id)
+                .ok_or_else(|| VmError::runtime("missing function object")),
+            JsValue::BuiltinFunction(id) => context
+                .builtin(id)
+                .map(|b| b.object)
+                .ok_or_else(|| VmError::runtime("invalid builtin id")),
+            JsValue::Error(_) => Err(VmError::type_error("Cannot convert Error to object")),
+        }
+    }
+
     pub(crate) fn get_property_value(
         &mut self,
         receiver: JsValue,
@@ -1208,6 +1375,39 @@ fn vm_error_to_value(error: VmError) -> JsValue {
 
 fn label_suffix(label: Option<&str>) -> String {
     label.map_or_else(String::new, |label| format!(" to {label}"))
+}
+
+/// Pure string-to-number conversion (no object coercion).
+fn coerce_string_to_number(s: &str) -> f64 {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return 0.0;
+    }
+    match trimmed {
+        "Infinity" | "+Infinity" => f64::INFINITY,
+        "-Infinity" => f64::NEG_INFINITY,
+        _ => trimmed.parse::<f64>().unwrap_or(f64::NAN),
+    }
+}
+
+/// Pure number-to-string conversion (no object coercion).
+fn coerce_number_to_string(n: f64) -> String {
+    if n.is_nan() {
+        "NaN".into()
+    } else if n == f64::INFINITY {
+        "Infinity".into()
+    } else if n == f64::NEG_INFINITY {
+        "-Infinity".into()
+    } else if n == 0.0 {
+        "0".into()
+    } else {
+        let i = n as i64;
+        if i as f64 == n {
+            i.to_string()
+        } else {
+            n.to_string()
+        }
+    }
 }
 
 #[cfg(test)]

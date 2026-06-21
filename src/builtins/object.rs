@@ -55,7 +55,11 @@ pub fn install_object(context: &mut NativeContext) {
         ("entries", 2, object_entries as crate::runtime::NativeCall),
         ("assign", 2, object_assign as crate::runtime::NativeCall),
         ("freeze", 1, object_freeze as crate::runtime::NativeCall),
-        ("isFrozen", 1, object_is_frozen as crate::runtime::NativeCall),
+        (
+            "isFrozen",
+            1,
+            object_is_frozen as crate::runtime::NativeCall,
+        ),
     ] {
         let value = context
             .register_builtin(name, length, call, None)
@@ -76,7 +80,11 @@ pub fn install_object(context: &mut NativeContext) {
             1,
             object_has_own_property as crate::runtime::NativeCall,
         ),
-        ("toString", 0, object_to_string as crate::runtime::NativeCall),
+        (
+            "toString",
+            0,
+            object_to_string as crate::runtime::NativeCall,
+        ),
         ("valueOf", 0, object_value_of as crate::runtime::NativeCall),
         (
             "isPrototypeOf",
@@ -486,7 +494,8 @@ fn object_define_properties(
             continue;
         }
         let descriptor_value = vm.get_property_value(JsValue::Object(props), &key, context)?;
-        let descriptor_object = context.require_object(&descriptor_value, "read property descriptor")?;
+        let descriptor_object =
+            context.require_object(&descriptor_value, "read property descriptor")?;
         let update = descriptor_update_from_object(vm, context, descriptor_object)?;
         if !context.validate_and_apply_property_descriptor(object, key, update)? {
             return Err(VmError::type_error("cannot define property"));
@@ -628,7 +637,9 @@ fn object_freeze(
                 configurable: Some(false),
                 ..PropertyDescriptorUpdate::default()
             };
-            context.validate_and_apply_property_descriptor(*object, key, update).ok();
+            context
+                .validate_and_apply_property_descriptor(*object, key, update)
+                .ok();
         }
     }
     Ok(target)

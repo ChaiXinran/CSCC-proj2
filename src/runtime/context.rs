@@ -4,13 +4,15 @@ use std::collections::HashMap;
 
 use super::{
     BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject,
-    JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind, PropertyDescriptor,
+    JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
     PropertyDescriptorUpdate, PropertyKind, object::array_index,
 };
 use crate::vm::{CallFrame, VmError};
 
-/// Stable references to the three fundamental constructors and prototypes
-/// installed during `install_foundation`.
+/// Stable references to all fundamental constructors and prototypes installed during
+/// `install_foundation`. The V6 additions (string/number/boolean/error prototypes) are
+/// pre-created as ordinary objects in `install_foundation` so that builtins can install
+/// methods on them without needing a second intrinsics update.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Intrinsics {
     pub object_prototype: ObjectId,
@@ -19,6 +21,11 @@ pub struct Intrinsics {
     pub object_constructor: JsValue,
     pub function_constructor: JsValue,
     pub array_constructor: JsValue,
+    // V6: primitive wrapper prototypes
+    pub string_prototype: ObjectId,
+    pub number_prototype: ObjectId,
+    pub boolean_prototype: ObjectId,
+    pub error_prototype: ObjectId,
 }
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
@@ -209,6 +216,49 @@ impl NativeContext {
         self.intrinsics
             .as_ref()
             .map(|intrinsics| intrinsics.array_prototype)
+    }
+
+    #[must_use]
+    pub fn string_prototype(&self) -> Option<ObjectId> {
+        self.intrinsics.as_ref().map(|i| i.string_prototype)
+    }
+
+    #[must_use]
+    pub fn number_prototype(&self) -> Option<ObjectId> {
+        self.intrinsics.as_ref().map(|i| i.number_prototype)
+    }
+
+    #[must_use]
+    pub fn boolean_prototype(&self) -> Option<ObjectId> {
+        self.intrinsics.as_ref().map(|i| i.boolean_prototype)
+    }
+
+    #[must_use]
+    pub fn error_prototype(&self) -> Option<ObjectId> {
+        self.intrinsics.as_ref().map(|i| i.error_prototype)
+    }
+
+    /// Create a primitive wrapper object with the given prototype.
+    /// The internal `[[PrimitiveValue]]` slot is stored as `ObjectKind::PrimitiveWrapper`.
+    pub fn create_primitive_wrapper(
+        &mut self,
+        value: PrimitiveValue,
+        prototype: ObjectId,
+    ) -> Result<JsValue, VmError> {
+        let mut obj = JsObject::ordinary();
+        obj.prototype = Some(prototype);
+        obj.kind = ObjectKind::PrimitiveWrapper(value);
+        let id = self
+            .heap
+            .allocate_object(obj)
+            .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+        Ok(JsValue::Object(id))
+    }
+
+    /// Return the internal `[[PrimitiveValue]]` slot of a wrapper object, if any.
+    #[must_use]
+    pub fn primitive_value(&self, object: ObjectId) -> Option<&PrimitiveValue> {
+        self.heap.object(object)?.primitive_value()
     }
 
     #[must_use]

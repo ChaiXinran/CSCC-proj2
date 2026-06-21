@@ -80,14 +80,22 @@ pub fn install_array(context: &mut NativeContext) {
         ("every", 1, array_every as crate::runtime::NativeCall),
         ("some", 1, array_some as crate::runtime::NativeCall),
         ("find", 1, array_find as crate::runtime::NativeCall),
-        ("findIndex", 1, array_find_index as crate::runtime::NativeCall),
+        (
+            "findIndex",
+            1,
+            array_find_index as crate::runtime::NativeCall,
+        ),
         ("flat", 0, array_flat as crate::runtime::NativeCall),
         ("flatMap", 1, array_flat_map as crate::runtime::NativeCall),
         ("sort", 1, array_sort as crate::runtime::NativeCall),
         ("keys", 0, array_keys as crate::runtime::NativeCall),
         ("values", 0, array_values as crate::runtime::NativeCall),
         ("entries", 0, array_entries as crate::runtime::NativeCall),
-        ("copyWithin", 2, array_copy_within as crate::runtime::NativeCall),
+        (
+            "copyWithin",
+            2,
+            array_copy_within as crate::runtime::NativeCall,
+        ),
         ("at", 1, array_at as crate::runtime::NativeCall),
     ] {
         let value = context
@@ -137,10 +145,7 @@ fn array_like_length(context: &NativeContext, object: ObjectId) -> usize {
         if let Some(len) = o.array_length() {
             return len;
         }
-        if let Some(val) = o
-            .own_property("length")
-            .and_then(|d| d.value_cloned())
-        {
+        if let Some(val) = o.own_property("length").and_then(|d| d.value_cloned()) {
             return val
                 .to_number()
                 .unwrap_or(0.0)
@@ -225,7 +230,9 @@ fn call_callback(
 
 fn require_callable(value: &JsValue, method: &str) -> Result<(), VmError> {
     if !is_callable(value) {
-        Err(VmError::type_error(format!("{method}: callback is not callable")))
+        Err(VmError::type_error(format!(
+            "{method}: callback is not callable"
+        )))
     } else {
         Ok(())
     }
@@ -435,10 +442,7 @@ fn array_slice(
     let object = context.require_object(&this_value, "Array.prototype.slice")?;
     let length = array_like_length(context, object);
     let start = normalize_index(
-        arguments
-            .first()
-            .and_then(|v| v.to_number())
-            .unwrap_or(0.0),
+        arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0),
         length,
     );
     let end = normalize_index(
@@ -472,10 +476,7 @@ fn array_splice(
     let length = array_like_length(context, object);
 
     let start = normalize_index(
-        arguments
-            .first()
-            .and_then(|v| v.to_number())
-            .unwrap_or(0.0),
+        arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0),
         length,
     );
     let delete_count = arguments
@@ -604,10 +605,7 @@ fn array_fill(
     let length = array_like_length(context, object);
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let start = normalize_index(
-        arguments
-            .get(1)
-            .and_then(|v| v.to_number())
-            .unwrap_or(0.0),
+        arguments.get(1).and_then(|v| v.to_number()).unwrap_or(0.0),
         length,
     );
     let end = normalize_index(
@@ -624,11 +622,7 @@ fn array_fill(
         length,
     );
     for i in start..end {
-        context.set_element(
-            this_value.clone(),
-            JsValue::Number(i as f64),
-            value.clone(),
-        )?;
+        context.set_element(this_value.clone(), JsValue::Number(i as f64), value.clone())?;
     }
     Ok(this_value)
 }
@@ -643,10 +637,7 @@ fn array_includes(
     let length = array_like_length(context, object);
     let search = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let from = normalize_index(
-        arguments
-            .get(1)
-            .and_then(|v| v.to_number())
-            .unwrap_or(0.0),
+        arguments.get(1).and_then(|v| v.to_number()).unwrap_or(0.0),
         length,
     );
     for i in from..length {
@@ -691,19 +682,11 @@ fn array_unshift(
     // Shift existing elements right
     for i in (0..length).rev() {
         let val = get_elem(vm, context, this_value.clone(), i)?;
-        context.set_element(
-            this_value.clone(),
-            JsValue::Number((i + count) as f64),
-            val,
-        )?;
+        context.set_element(this_value.clone(), JsValue::Number((i + count) as f64), val)?;
     }
     // Insert new elements at front
     for (i, item) in arguments.iter().enumerate() {
-        context.set_element(
-            this_value.clone(),
-            JsValue::Number(i as f64),
-            item.clone(),
-        )?;
+        context.set_element(this_value.clone(), JsValue::Number(i as f64), item.clone())?;
     }
     let new_length = length + count;
     context.set_array_length(object, new_length)?;
@@ -1042,7 +1025,10 @@ fn array_flat_map(
             this_arg.clone(),
             vec![val, JsValue::Number(i as f64), this_value.clone()],
         )?;
-        if let Some(id) = context.value_object(&mapped).filter(|&id| context.is_array_object(id).unwrap_or(false)) {
+        if let Some(id) = context
+            .value_object(&mapped)
+            .filter(|&id| context.is_array_object(id).unwrap_or(false))
+        {
             let inner_len = array_like_length(context, id);
             for j in 0..inner_len {
                 let inner = get_elem(vm, context, mapped.clone(), j)?;
@@ -1081,13 +1067,8 @@ fn array_sort(
     for i in 1..elements.len() {
         let mut j = i;
         while j > 0 {
-            let should_swap = compare_two(
-                vm,
-                context,
-                &elements[j - 1],
-                &elements[j],
-                &compare_fn,
-            )?;
+            let should_swap =
+                compare_two(vm, context, &elements[j - 1], &elements[j], &compare_fn)?;
             if !should_swap {
                 break;
             }
@@ -1181,17 +1162,11 @@ fn array_copy_within(
     let object = context.require_object(&this_value, "Array.prototype.copyWithin")?;
     let length = array_like_length(context, object);
     let target = normalize_index(
-        arguments
-            .first()
-            .and_then(|v| v.to_number())
-            .unwrap_or(0.0),
+        arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0),
         length,
     );
     let start = normalize_index(
-        arguments
-            .get(1)
-            .and_then(|v| v.to_number())
-            .unwrap_or(0.0),
+        arguments.get(1).and_then(|v| v.to_number()).unwrap_or(0.0),
         length,
     );
     let end = normalize_index(
@@ -1233,10 +1208,7 @@ fn array_at(
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.at")?;
     let length = array_like_length(context, object);
-    let index_raw = arguments
-        .first()
-        .and_then(|v| v.to_number())
-        .unwrap_or(0.0) as i64;
+    let index_raw = arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0) as i64;
     let index = if index_raw < 0 {
         let from_end = (-index_raw) as usize;
         if from_end > length {
