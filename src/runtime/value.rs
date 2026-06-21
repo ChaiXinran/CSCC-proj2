@@ -141,7 +141,7 @@ impl fmt::Display for JsValue {
 }
 
 fn string_to_number(value: &str) -> f64 {
-    let trimmed = value.trim();
+    let trimmed = value.trim_matches(is_ecmascript_whitespace);
     if trimmed.is_empty() {
         return 0.0;
     }
@@ -149,8 +149,57 @@ fn string_to_number(value: &str) -> f64 {
     match trimmed {
         "Infinity" | "+Infinity" => f64::INFINITY,
         "-Infinity" => f64::NEG_INFINITY,
-        _ => trimmed.parse::<f64>().unwrap_or(f64::NAN),
+        _ => parse_prefixed_integer(trimmed)
+            .unwrap_or_else(|| trimmed.parse::<f64>().unwrap_or(f64::NAN)),
     }
+}
+
+fn parse_prefixed_integer(input: &str) -> Option<f64> {
+    let (digits, radix) = input
+        .strip_prefix("0x")
+        .or_else(|| input.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            input
+                .strip_prefix("0b")
+                .or_else(|| input.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            input
+                .strip_prefix("0o")
+                .or_else(|| input.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })?;
+    if digits.is_empty() {
+        return Some(f64::NAN);
+    }
+    let mut value = 0.0;
+    for character in digits.chars() {
+        let Some(digit) = character.to_digit(radix) else {
+            return Some(f64::NAN);
+        };
+        value = value * f64::from(radix) + f64::from(digit);
+    }
+    Some(value)
+}
+
+fn is_ecmascript_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{FEFF}'
+            | '\u{000A}'
+            | '\u{000D}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}'
+    )
 }
 
 fn number_to_string(value: f64) -> String {

@@ -173,6 +173,10 @@ pub(crate) const MATH_METHODS: &[MathMethodSpec] = &[
         length: 1,
     },
     MathMethodSpec {
+        name: "sumPrecise",
+        length: 1,
+    },
+    MathMethodSpec {
         name: "sqrt",
         length: 1,
     },
@@ -239,7 +243,12 @@ pub(crate) fn round(value: f64) -> f64 {
     if !value.is_finite() || value == 0.0 {
         return value;
     }
-    let result = (value + 0.5).floor();
+    let floor = value.floor();
+    let result = if value - floor < 0.5 {
+        floor
+    } else {
+        floor + 1.0
+    };
     if result == 0.0 && value.is_sign_negative() {
         -0.0
     } else {
@@ -282,6 +291,9 @@ pub(crate) fn imul(left: f64, right: f64) -> i32 {
 
 #[must_use]
 pub(crate) fn hypot(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return 0.0;
+    }
     if values.iter().any(|value| value.is_infinite()) {
         return f64::INFINITY;
     }
@@ -289,6 +301,76 @@ pub(crate) fn hypot(values: &[f64]) -> f64 {
         return f64::NAN;
     }
     values.iter().map(|value| value * value).sum::<f64>().sqrt()
+}
+
+#[must_use]
+#[allow(dead_code)]
+pub(crate) fn sum_precise(values: &[f64]) -> f64 {
+    let mut has_positive_infinity = false;
+    let mut has_negative_infinity = false;
+    let mut saw_non_zero = false;
+    let mut all_zeroes_are_negative = true;
+    let mut partials = Vec::new();
+
+    for value in values {
+        if value.is_nan() {
+            return f64::NAN;
+        }
+        if *value == f64::INFINITY {
+            has_positive_infinity = true;
+            continue;
+        }
+        if *value == f64::NEG_INFINITY {
+            has_negative_infinity = true;
+            continue;
+        }
+        if *value == 0.0 {
+            if value.is_sign_positive() {
+                all_zeroes_are_negative = false;
+            }
+            continue;
+        }
+
+        saw_non_zero = true;
+        all_zeroes_are_negative = false;
+        add_partial(&mut partials, *value);
+    }
+
+    match (has_positive_infinity, has_negative_infinity) {
+        (true, true) => return f64::NAN,
+        (true, false) => return f64::INFINITY,
+        (false, true) => return f64::NEG_INFINITY,
+        (false, false) => {}
+    }
+
+    if !saw_non_zero {
+        return if all_zeroes_are_negative { -0.0 } else { 0.0 };
+    }
+
+    let result = partials.iter().rev().copied().sum::<f64>();
+    if result == 0.0 { 0.0 } else { result }
+}
+
+#[allow(dead_code)]
+fn add_partial(partials: &mut Vec<f64>, mut value: f64) {
+    let mut next = 0;
+    for index in 0..partials.len() {
+        let mut partial = partials[index];
+        if value.abs() < partial.abs() {
+            std::mem::swap(&mut value, &mut partial);
+        }
+        let high = value + partial;
+        let low = partial - (high - value);
+        if low != 0.0 {
+            partials[next] = low;
+            next += 1;
+        }
+        value = high;
+    }
+    partials.truncate(next);
+    if value != 0.0 {
+        partials.push(value);
+    }
 }
 
 #[must_use]

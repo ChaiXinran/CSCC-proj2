@@ -26,6 +26,10 @@ pub(crate) const STATIC_METHODS: &[StringMethodSpec] = &[
         name: "fromCodePoint",
         length: 1,
     },
+    StringMethodSpec {
+        name: "raw",
+        length: 1,
+    },
 ];
 
 pub(crate) const PROTOTYPE_METHODS: &[StringMethodSpec] = &[
@@ -50,11 +54,19 @@ pub(crate) const PROTOTYPE_METHODS: &[StringMethodSpec] = &[
         length: 1,
     },
     StringMethodSpec {
+        name: "codePointAt",
+        length: 1,
+    },
+    StringMethodSpec {
         name: "concat",
         length: 1,
     },
     StringMethodSpec {
         name: "includes",
+        length: 1,
+    },
+    StringMethodSpec {
+        name: "localeCompare",
         length: 1,
     },
     StringMethodSpec {
@@ -90,6 +102,26 @@ pub(crate) const PROTOTYPE_METHODS: &[StringMethodSpec] = &[
         length: 1,
     },
     StringMethodSpec {
+        name: "split",
+        length: 2,
+    },
+    StringMethodSpec {
+        name: "search",
+        length: 1,
+    },
+    StringMethodSpec {
+        name: "replace",
+        length: 2,
+    },
+    StringMethodSpec {
+        name: "replaceAll",
+        length: 2,
+    },
+    StringMethodSpec {
+        name: "match",
+        length: 1,
+    },
+    StringMethodSpec {
         name: "padStart",
         length: 1,
     },
@@ -115,6 +147,26 @@ pub(crate) const PROTOTYPE_METHODS: &[StringMethodSpec] = &[
     },
     StringMethodSpec {
         name: "toUpperCase",
+        length: 0,
+    },
+    StringMethodSpec {
+        name: "toLocaleLowerCase",
+        length: 0,
+    },
+    StringMethodSpec {
+        name: "toLocaleUpperCase",
+        length: 0,
+    },
+    StringMethodSpec {
+        name: "normalize",
+        length: 0,
+    },
+    StringMethodSpec {
+        name: "isWellFormed",
+        length: 0,
+    },
+    StringMethodSpec {
+        name: "toWellFormed",
         length: 0,
     },
 ];
@@ -303,6 +355,126 @@ pub(crate) fn to_lower_case(value: &str) -> String {
 
 pub(crate) fn to_upper_case(value: &str) -> String {
     value.to_uppercase()
+}
+
+#[allow(dead_code)]
+pub(crate) fn code_point_at(value: &str, index: i64) -> Option<u32> {
+    let units = utf16_units(value);
+    let index = usize::try_from(index).ok()?;
+    let first = *units.get(index)?;
+    if (0xD800..=0xDBFF).contains(&first)
+        && let Some(second) = units.get(index + 1)
+        && (0xDC00..=0xDFFF).contains(second)
+    {
+        return Some(0x10000 + ((u32::from(first) - 0xD800) << 10) + (u32::from(*second) - 0xDC00));
+    }
+    Some(u32::from(first))
+}
+
+#[allow(dead_code)]
+pub(crate) fn locale_compare(value: &str, other: &str) -> i32 {
+    match value.cmp(other) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) fn normalize(value: &str) -> String {
+    value.to_string()
+}
+
+#[allow(dead_code)]
+pub(crate) fn is_well_formed(_value: &str) -> bool {
+    true
+}
+
+#[allow(dead_code)]
+pub(crate) fn to_well_formed(value: &str) -> String {
+    value.to_string()
+}
+
+#[allow(dead_code)]
+pub(crate) fn split(value: &str, separator: Option<&str>, limit: u32) -> Vec<String> {
+    if limit == 0 {
+        return Vec::new();
+    }
+    let Some(separator) = separator else {
+        return vec![value.to_string()];
+    };
+    let limit = limit as usize;
+    if separator.is_empty() {
+        return utf16_units(value)
+            .into_iter()
+            .take(limit)
+            .map(|unit| decode_utf16(&[unit]))
+            .collect();
+    }
+
+    let source = utf16_units(value);
+    let needle = utf16_units(separator);
+    let mut result = Vec::new();
+    let mut start = 0usize;
+    while result.len() < limit {
+        let Some(index) = find_units(&source, &needle, start) else {
+            break;
+        };
+        result.push(decode_utf16(&source[start..index]));
+        start = index + needle.len();
+    }
+    if result.len() < limit {
+        result.push(decode_utf16(&source[start..]));
+    }
+    result
+}
+
+#[allow(dead_code)]
+pub(crate) fn search(value: &str, search: &str) -> i64 {
+    index_of(value, search, 0).map_or(-1, |index| index as i64)
+}
+
+#[allow(dead_code)]
+pub(crate) fn replace(value: &str, search: &str, replacement: &str) -> String {
+    let source = utf16_units(value);
+    let needle = utf16_units(search);
+    let replacement = utf16_units(replacement);
+    let index = find_units(&source, &needle, 0).unwrap_or(source.len());
+    if index == source.len() && !needle.is_empty() {
+        return value.to_string();
+    }
+    let mut result = Vec::new();
+    result.extend(&source[..index]);
+    result.extend(&replacement);
+    result.extend(&source[index + needle.len()..]);
+    decode_utf16(&result)
+}
+
+#[allow(dead_code)]
+#[allow(dead_code)]
+pub(crate) fn replace_all(value: &str, search: &str, replacement: &str) -> String {
+    let source = utf16_units(value);
+    let needle = utf16_units(search);
+    let replacement = utf16_units(replacement);
+    if needle.is_empty() {
+        let mut result = Vec::new();
+        result.extend(&replacement);
+        for unit in source {
+            result.push(unit);
+            result.extend(&replacement);
+        }
+        return decode_utf16(&result);
+    }
+
+    let mut result = Vec::new();
+    let mut start = 0usize;
+    while let Some(index) = find_units(&source, &needle, start) {
+        result.extend(&source[start..index]);
+        result.extend(&replacement);
+        start = index + needle.len();
+    }
+    result.extend(&source[start..]);
+    decode_utf16(&result)
 }
 
 /// Produces the exact ECMAScript UTF-16 sequence for `String.fromCharCode`.

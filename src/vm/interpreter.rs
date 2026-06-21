@@ -212,11 +212,13 @@ impl Vm {
                     }
                 }
                 Instruction::UnaryPlus => {
-                    let value = self.pop_number()?;
+                    let value = self.pop_value()?;
+                    let value = self.to_number(value, context)?;
                     self.stack.push(JsValue::Number(value));
                 }
                 Instruction::Negate => {
-                    let value = self.pop_number()?;
+                    let value = self.pop_value()?;
+                    let value = self.to_number(value, context)?;
                     self.stack.push(JsValue::Number(-value));
                 }
                 Instruction::LogicalNot => {
@@ -226,26 +228,35 @@ impl Vm {
                 Instruction::Add => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.stack.push(add_values(left, right)?);
+                    let value = add_values(self, context, left, right)?;
+                    self.stack.push(value);
                 }
                 Instruction::Subtract => {
-                    let right = self.pop_number()?;
-                    let left = self.pop_number()?;
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_number(right, context)?;
+                    let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left - right));
                 }
                 Instruction::Multiply => {
-                    let right = self.pop_number()?;
-                    let left = self.pop_number()?;
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_number(right, context)?;
+                    let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left * right));
                 }
                 Instruction::Divide => {
-                    let right = self.pop_number()?;
-                    let left = self.pop_number()?;
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_number(right, context)?;
+                    let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left / right));
                 }
                 Instruction::Remainder => {
-                    let right = self.pop_number()?;
-                    let left = self.pop_number()?;
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_number(right, context)?;
+                    let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left % right));
                 }
                 Instruction::Equal => {
@@ -275,34 +286,30 @@ impl Vm {
                 Instruction::LessThan => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.stack
-                        .push(JsValue::Boolean(compare_values(left, right, |ordering| {
-                            ordering.is_lt()
-                        })?));
+                    let value =
+                        compare_values(self, context, left, right, |ordering| ordering.is_lt())?;
+                    self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::LessThanOrEqual => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.stack
-                        .push(JsValue::Boolean(compare_values(left, right, |ordering| {
-                            ordering.is_le()
-                        })?));
+                    let value =
+                        compare_values(self, context, left, right, |ordering| ordering.is_le())?;
+                    self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::GreaterThan => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.stack
-                        .push(JsValue::Boolean(compare_values(left, right, |ordering| {
-                            ordering.is_gt()
-                        })?));
+                    let value =
+                        compare_values(self, context, left, right, |ordering| ordering.is_gt())?;
+                    self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::GreaterThanOrEqual => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    self.stack
-                        .push(JsValue::Boolean(compare_values(left, right, |ordering| {
-                            ordering.is_ge()
-                        })?));
+                    let value =
+                        compare_values(self, context, left, right, |ordering| ordering.is_ge())?;
+                    self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::JumpIfFalse(target) => {
                     self.validate_jump_target(target, chunk, current_instruction)?;
@@ -728,13 +735,6 @@ impl Vm {
         self.stack
             .last()
             .ok_or_else(|| VmError::runtime("operand stack underflow"))
-    }
-
-    fn pop_number(&mut self) -> Result<f64, VmError> {
-        let value = self.pop_value()?;
-        value
-            .to_number()
-            .ok_or_else(|| VmError::type_error("value cannot be converted to number in V1"))
     }
 
     fn pop_arguments(&mut self, count: u16) -> Result<Vec<JsValue>, VmError> {
@@ -1427,41 +1427,40 @@ fn constant_to_value(constant: &Constant) -> JsValue {
     }
 }
 
-fn add_values(left: JsValue, right: JsValue) -> Result<JsValue, VmError> {
+fn add_values(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    left: JsValue,
+    right: JsValue,
+) -> Result<JsValue, VmError> {
+    let left = vm.to_primitive(left, PreferredType::Default, context)?;
+    let right = vm.to_primitive(right, PreferredType::Default, context)?;
     if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
-        let left = left
-            .to_js_string()
-            .ok_or_else(|| VmError::type_error("left operand cannot be converted to string"))?;
-        let right = right
-            .to_js_string()
-            .ok_or_else(|| VmError::type_error("right operand cannot be converted to string"))?;
+        let left = vm.to_string_coerce(left, context)?;
+        let right = vm.to_string_coerce(right, context)?;
         return Ok(JsValue::String(format!("{left}{right}")));
     }
 
-    let left = left
-        .to_number()
-        .ok_or_else(|| VmError::type_error("left operand cannot be converted to number"))?;
-    let right = right
-        .to_number()
-        .ok_or_else(|| VmError::type_error("right operand cannot be converted to number"))?;
+    let left = vm.to_number(left, context)?;
+    let right = vm.to_number(right, context)?;
     Ok(JsValue::Number(left + right))
 }
 
 fn compare_values(
+    vm: &mut Vm,
+    context: &mut NativeContext,
     left: JsValue,
     right: JsValue,
     predicate: impl FnOnce(std::cmp::Ordering) -> bool,
 ) -> Result<bool, VmError> {
+    let left = vm.to_primitive(left, PreferredType::Number, context)?;
+    let right = vm.to_primitive(right, PreferredType::Number, context)?;
     if let (JsValue::String(left), JsValue::String(right)) = (&left, &right) {
         return Ok(predicate(left.cmp(right)));
     }
 
-    let left = left
-        .to_number()
-        .ok_or_else(|| VmError::type_error("left operand cannot be converted to number"))?;
-    let right = right
-        .to_number()
-        .ok_or_else(|| VmError::type_error("right operand cannot be converted to number"))?;
+    let left = vm.to_number(left, context)?;
+    let right = vm.to_number(right, context)?;
 
     let Some(ordering) = left.partial_cmp(&right) else {
         return Ok(false);
@@ -1511,15 +1510,64 @@ fn label_suffix(label: Option<&str>) -> String {
 
 /// Pure string-to-number conversion (no object coercion).
 fn coerce_string_to_number(s: &str) -> f64 {
-    let trimmed = s.trim();
+    let trimmed = s.trim_matches(is_ecmascript_whitespace);
     if trimmed.is_empty() {
         return 0.0;
     }
     match trimmed {
         "Infinity" | "+Infinity" => f64::INFINITY,
         "-Infinity" => f64::NEG_INFINITY,
-        _ => trimmed.parse::<f64>().unwrap_or(f64::NAN),
+        _ => parse_prefixed_integer(trimmed)
+            .unwrap_or_else(|| trimmed.parse::<f64>().unwrap_or(f64::NAN)),
     }
+}
+
+fn parse_prefixed_integer(input: &str) -> Option<f64> {
+    let (digits, radix) = input
+        .strip_prefix("0x")
+        .or_else(|| input.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            input
+                .strip_prefix("0b")
+                .or_else(|| input.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            input
+                .strip_prefix("0o")
+                .or_else(|| input.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })?;
+    if digits.is_empty() {
+        return Some(f64::NAN);
+    }
+    let mut value = 0.0;
+    for character in digits.chars() {
+        let Some(digit) = character.to_digit(radix) else {
+            return Some(f64::NAN);
+        };
+        value = value * f64::from(radix) + f64::from(digit);
+    }
+    Some(value)
+}
+
+fn is_ecmascript_whitespace(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0009}'
+            | '\u{000B}'
+            | '\u{000C}'
+            | '\u{0020}'
+            | '\u{00A0}'
+            | '\u{FEFF}'
+            | '\u{000A}'
+            | '\u{000D}'
+            | '\u{2028}'
+            | '\u{2029}'
+            | '\u{1680}'
+            | '\u{2000}'..='\u{200A}' | '\u{202F}' | '\u{205F}' | '\u{3000}'
+    )
 }
 
 /// Pure number-to-string conversion (no object coercion).

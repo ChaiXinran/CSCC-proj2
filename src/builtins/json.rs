@@ -293,7 +293,13 @@ fn stringify_value(
         })),
         JsValue::String(value) => Ok(Some(quote_json_string(value))),
         JsValue::Error(_) => Ok(Some("{}".into())),
-        JsValue::Object(object) => stringify_object(*object, context, stack),
+        JsValue::Object(object) => {
+            if let Some(raw_json) = context.raw_json_value(*object) {
+                Ok(Some(raw_json.to_string()))
+            } else {
+                stringify_object(*object, context, stack)
+            }
+        }
     }
 }
 
