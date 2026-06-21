@@ -30,8 +30,8 @@ impl std::error::Error for LexError {}
 /// Operators recognized by the V1 lexer, ordered so that maximal munch is a
 /// simple linear scan: longer operators precede their shorter prefixes.
 const OPERATORS: &[&str] = &[
-    "===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||", "+", "-", "*", "/", "%", "!", "=", "<",
-    ">",
+    "===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+", "-", "*", "/",
+    "%", "!", "=", "<", ">",
 ];
 
 /// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional
@@ -181,6 +181,7 @@ impl<'source> Lexer<'source> {
                 "if" => TokenKind::Keyword(Keyword::If),
                 "else" => TokenKind::Keyword(Keyword::Else),
                 "while" => TokenKind::Keyword(Keyword::While),
+                "for" => TokenKind::Keyword(Keyword::For),
                 "break" => TokenKind::Keyword(Keyword::Break),
                 "continue" => TokenKind::Keyword(Keyword::Continue),
                 "throw" => TokenKind::Keyword(Keyword::Throw),

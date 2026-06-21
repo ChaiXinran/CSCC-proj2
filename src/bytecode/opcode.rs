@@ -181,6 +181,13 @@ pub enum Instruction {
     InitializeBinding(u16),
     LoadException,
     EndFinally,
+
+    // V6 iteration instruction.
+    /// Pops an object and pushes an array of its `for-in` enumerable string
+    /// keys (own + prototype chain, de-duplicated). `null`/`undefined` yield an
+    /// empty array.
+    /// Stack: [object] → [keys_array]
+    ForInKeys,
 }
 
 impl Instruction {
@@ -217,6 +224,7 @@ impl Instruction {
             | Self::Negate
             | Self::LogicalNot
             | Self::GetProperty(_)
+            | Self::ForInKeys
             | Self::TypeOf => StackEffect::new(1, 1),
 
             // pop 2, push 1

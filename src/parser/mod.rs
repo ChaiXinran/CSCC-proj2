@@ -48,6 +48,11 @@ pub struct Parser {
     /// Number of enclosing function bodies. Used to reject `return` that appears
     /// outside any function.
     function_depth: usize,
+    /// When true, the relational `in` operator is not consumed by expression
+    /// parsing. Used while parsing a `for` header so `for (x in obj)` can be
+    /// disambiguated from `for (x in y; …)`. Reset on entry to any nested
+    /// bracketed sub-expression.
+    no_in: bool,
 }
 
 impl Parser {
@@ -63,6 +68,7 @@ impl Parser {
             loop_depth: 0,
             switch_depth: 0,
             function_depth: 0,
+            no_in: false,
         }
     }
 

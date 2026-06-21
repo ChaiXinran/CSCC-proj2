@@ -5,7 +5,7 @@ use std::{collections::HashSet, fmt};
 use crate::ast::{
     ArrayElement, BinaryOperator, CatchClause, Expression, FunctionBody, FunctionLiteral, Literal,
     LogicalOperator, ObjectProperty, Program, PropertyName, Statement, SwitchCase, UnaryOperator,
-    VariableKind,
+    UpdateOperator, VariableKind,
 };
 
 use super::{
@@ -43,7 +43,11 @@ struct CompileContext {
 
 #[derive(Debug)]
 struct LoopContext {
-    continue_target: usize,
+    /// `Some` for loops whose continue target is already emitted (e.g. `while`,
+    /// which continues to the test). `None` for `for` loops, where `continue`
+    /// must reach the not-yet-emitted update clause via `continue_jumps`.
+    continue_target: Option<usize>,
+    continue_jumps: Vec<usize>,
     environment_depth: u32,
 }
 
@@ -147,6 +151,25 @@ impl Compiler {
                 alternate,
             } => self.compile_if(test, consequent, alternate.as_deref(), chunk, context),
             Statement::While { test, body } => self.compile_while(test, body, chunk, context),
+            Statement::For {
+                init,
+                test,
+                update,
+                body,
+            } => self.compile_for(
+                init.as_deref(),
+                test.as_ref(),
+                update.as_ref(),
+                body,
+                chunk,
+                context,
+            ),
+            Statement::ForIn {
+                declaration,
+                target,
+                right,
+                body,
+            } => self.compile_for_in(*declaration, target, right, body, chunk, context),
             Statement::Break => self.compile_break(chunk, context),
             Statement::Continue => self.compile_continue(chunk, context),
             Statement::Throw(expression) => {
@@ -477,7 +500,8 @@ impl Compiler {
         chunk.emit(Instruction::Pop);
 
         context.loops.push(LoopContext {
-            continue_target: loop_start,
+            continue_target: Some(loop_start),
+            continue_jumps: Vec::new(),
             environment_depth: context.environment_depth,
         });
         context.breakables.push(BreakContext {
@@ -551,10 +575,359 @@ impl Compiler {
             .loops
             .last()
             .ok_or_else(|| CompileError::unsupported("continue statement outside of a loop"))?;
-        for _ in loop_context.environment_depth..context.environment_depth {
+        let target_depth = loop_context.environment_depth;
+        let continue_target = loop_context.continue_target;
+        for _ in target_depth..context.environment_depth {
             chunk.emit(Instruction::PopEnvironment);
         }
-        chunk.emit(Instruction::Jump(loop_context.continue_target));
+        match continue_target {
+            Some(target) => {
+                chunk.emit(Instruction::Jump(target));
+            }
+            None => {
+                let jump = chunk.emit(Instruction::Jump(usize::MAX));
+                context
+                    .loops
+                    .last_mut()
+                    .expect("loop context exists")
+                    .continue_jumps
+                    .push(jump);
+            }
+        }
+        Ok(())
+    }
+
+    /// Compiles a C-style `for (init; test; update) body`. `continue` targets
+    /// the update clause; bindings declared in `init` live in a per-loop lexical
+    /// environment (simplified single-binding scope, sufficient for the common
+    /// `var`/`let` counter pattern).
+    fn compile_for(
+        &mut self,
+        init: Option<&Statement>,
+        test: Option<&Expression>,
+        update: Option<&Expression>,
+        body: &Statement,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let declared: Vec<(String, VariableKind)> = match init {
+            Some(Statement::VariableDeclaration { kind, declarations }) => declarations
+                .iter()
+                .map(|declarator| (declarator.name.clone(), *kind))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let needs_env = !declared.is_empty();
+        if needs_env {
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+            let mut scope = HashSet::new();
+            for (name, kind) in &declared {
+                let index = self.add_name(name, chunk)?;
+                chunk.emit(match kind {
+                    VariableKind::Const => Instruction::CreateImmutableBinding(index),
+                    _ => Instruction::CreateMutableBinding(index),
+                });
+                scope.insert(name.clone());
+            }
+            context.lexical_scopes.push(scope);
+        }
+
+        // init
+        match init {
+            Some(Statement::VariableDeclaration { declarations, .. }) => {
+                for declarator in declarations {
+                    match &declarator.initializer {
+                        Some(expression) => self.compile_expression(expression, chunk, context)?,
+                        None => {
+                            let undefined = chunk
+                                .add_constant(Constant::Undefined)
+                                .map_err(CompileError::from_chunk)?;
+                            chunk.emit(Instruction::Constant(undefined));
+                        }
+                    }
+                    let index = self.add_name(&declarator.name, chunk)?;
+                    chunk.emit(Instruction::InitializeBinding(index));
+                }
+            }
+            Some(other) => self.compile_statement(other, chunk, context, false)?,
+            None => {}
+        }
+
+        let loop_start = chunk.current_offset();
+        let exit_jump = match test {
+            Some(test_expression) => {
+                self.compile_expression(test_expression, chunk, context)?;
+                let jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
+                chunk.emit(Instruction::Pop);
+                Some(jump)
+            }
+            None => None,
+        };
+
+        context.loops.push(LoopContext {
+            continue_target: None,
+            continue_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+        context.breakables.push(BreakContext {
+            break_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+
+        if let Err(error) = self.compile_statement(body, chunk, context, false) {
+            context.loops.pop();
+            context.breakables.pop();
+            return Err(error);
+        }
+
+        // continue lands on the update clause.
+        let update_target = chunk.current_offset();
+        let continue_jumps = context
+            .loops
+            .last()
+            .expect("for loop context exists")
+            .continue_jumps
+            .clone();
+        for jump in continue_jumps {
+            chunk
+                .patch_jump(jump, update_target)
+                .map_err(CompileError::from_chunk)?;
+        }
+        if let Some(update_expression) = update {
+            self.compile_expression(update_expression, chunk, context)?;
+            chunk.emit(Instruction::Pop);
+        }
+        chunk.emit(Instruction::Jump(loop_start));
+
+        let exit = chunk.current_offset();
+        if let Some(jump) = exit_jump {
+            chunk
+                .patch_jump(jump, exit)
+                .map_err(CompileError::from_chunk)?;
+            chunk.emit(Instruction::Pop);
+        }
+        let loop_end = chunk.current_offset();
+
+        context.loops.pop().expect("for loop context exists");
+        let break_context = context.breakables.pop().expect("for break context exists");
+        for jump in break_context.break_jumps {
+            chunk
+                .patch_jump(jump, loop_end)
+                .map_err(CompileError::from_chunk)?;
+        }
+
+        if needs_env {
+            context.lexical_scopes.pop();
+            chunk.emit(Instruction::PopEnvironment);
+            context.environment_depth -= 1;
+        }
+        Ok(())
+    }
+
+    /// Compiles `for (left in right) body` by materializing the enumeration
+    /// keys into an array (via `ForInKeys`) and walking it with a hidden index,
+    /// both held in a per-loop lexical environment.
+    fn compile_for_in(
+        &mut self,
+        declaration: Option<VariableKind>,
+        target: &Expression,
+        right: &Expression,
+        body: &Statement,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        // Hidden binding names contain a NUL so they cannot collide with any
+        // user identifier.
+        const KEYS: &str = "\u{0}forin_keys";
+        const INDEX: &str = "\u{0}forin_index";
+
+        // Member targets without a declaration are not yet supported; reject
+        // before emitting anything so no partial state leaks.
+        if declaration.is_none() && !matches!(target, Expression::Identifier(_)) {
+            return Err(CompileError::unsupported(
+                "for-in target must be a variable or a simple identifier",
+            ));
+        }
+
+        chunk.emit(Instruction::CreateLexicalEnvironment);
+        context.environment_depth += 1;
+        let mut scope = HashSet::new();
+
+        let keys_index = self.add_name(KEYS, chunk)?;
+        chunk.emit(Instruction::CreateMutableBinding(keys_index));
+        scope.insert(KEYS.to_string());
+        let cursor_index = self.add_name(INDEX, chunk)?;
+        chunk.emit(Instruction::CreateMutableBinding(cursor_index));
+        scope.insert(INDEX.to_string());
+
+        let loop_var = match (declaration, target) {
+            (Some(_), Expression::Identifier(name)) => {
+                let var_index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::CreateMutableBinding(var_index));
+                let undefined = chunk
+                    .add_constant(Constant::Undefined)
+                    .map_err(CompileError::from_chunk)?;
+                chunk.emit(Instruction::Constant(undefined));
+                chunk.emit(Instruction::InitializeBinding(var_index));
+                scope.insert(name.clone());
+                Some(name.clone())
+            }
+            _ => None,
+        };
+        context.lexical_scopes.push(scope);
+
+        // keys = ForInKeys(ToObject(right)); index = 0
+        self.compile_expression(right, chunk, context)?;
+        chunk.emit(Instruction::ForInKeys);
+        chunk.emit(Instruction::InitializeBinding(keys_index));
+        let zero = chunk
+            .add_constant(Constant::Number(0.0))
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Constant(zero));
+        chunk.emit(Instruction::InitializeBinding(cursor_index));
+
+        let loop_start = chunk.current_offset();
+        chunk.emit(Instruction::LoadName(cursor_index));
+        chunk.emit(Instruction::LoadName(keys_index));
+        let length_index = self.add_name("length", chunk)?;
+        chunk.emit(Instruction::GetProperty(length_index));
+        chunk.emit(Instruction::LessThan);
+        let exit_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
+        chunk.emit(Instruction::Pop);
+
+        // value = keys[index]; assign to the loop target.
+        chunk.emit(Instruction::LoadName(keys_index));
+        chunk.emit(Instruction::LoadName(cursor_index));
+        chunk.emit(Instruction::GetElement);
+        match &loop_var {
+            Some(name) => {
+                let var_index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::StoreName(var_index));
+                chunk.emit(Instruction::Pop);
+            }
+            None => {
+                let Expression::Identifier(name) = target else {
+                    unreachable!("member targets rejected above");
+                };
+                self.emit_store_identifier(name, chunk, context)?;
+                chunk.emit(Instruction::Pop);
+            }
+        }
+
+        context.loops.push(LoopContext {
+            continue_target: None,
+            continue_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+        context.breakables.push(BreakContext {
+            break_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+
+        if let Err(error) = self.compile_statement(body, chunk, context, false) {
+            context.loops.pop();
+            context.breakables.pop();
+            return Err(error);
+        }
+
+        let update_target = chunk.current_offset();
+        let continue_jumps = context
+            .loops
+            .last()
+            .expect("for-in loop context exists")
+            .continue_jumps
+            .clone();
+        for jump in continue_jumps {
+            chunk
+                .patch_jump(jump, update_target)
+                .map_err(CompileError::from_chunk)?;
+        }
+        chunk.emit(Instruction::LoadName(cursor_index));
+        let one = chunk
+            .add_constant(Constant::Number(1.0))
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Constant(one));
+        chunk.emit(Instruction::Add);
+        chunk.emit(Instruction::StoreName(cursor_index));
+        chunk.emit(Instruction::Pop);
+        chunk.emit(Instruction::Jump(loop_start));
+
+        let exit = chunk.current_offset();
+        chunk
+            .patch_jump(exit_jump, exit)
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Pop);
+        let loop_end = chunk.current_offset();
+
+        context.loops.pop().expect("for-in loop context exists");
+        let break_context = context
+            .breakables
+            .pop()
+            .expect("for-in break context exists");
+        for jump in break_context.break_jumps {
+            chunk
+                .patch_jump(jump, loop_end)
+                .map_err(CompileError::from_chunk)?;
+        }
+
+        context.lexical_scopes.pop();
+        chunk.emit(Instruction::PopEnvironment);
+        context.environment_depth -= 1;
+        Ok(())
+    }
+
+    /// Compiles `++x` / `x++` / `--x` / `x--` on an identifier operand. The
+    /// operand is read with `ToNumber` semantics so `"5"++` yields `6`.
+    fn compile_update(
+        &mut self,
+        operator: UpdateOperator,
+        prefix: bool,
+        argument: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let Expression::Identifier(name) = argument else {
+            return Err(CompileError::unsupported(
+                "`++`/`--` is only supported on identifier operands",
+            ));
+        };
+        let step = match operator {
+            UpdateOperator::Increment => Instruction::Add,
+            UpdateOperator::Decrement => Instruction::Subtract,
+        };
+        self.compile_identifier(name, chunk, context)?;
+        chunk.emit(Instruction::UnaryPlus); // ToNumber(old)
+        let one = chunk
+            .add_constant(Constant::Number(1.0))
+            .map_err(CompileError::from_chunk)?;
+        if prefix {
+            chunk.emit(Instruction::Constant(one));
+            chunk.emit(step);
+            self.emit_store_identifier(name, chunk, context)?;
+        } else {
+            chunk.emit(Instruction::Duplicate);
+            chunk.emit(Instruction::Constant(one));
+            chunk.emit(step);
+            self.emit_store_identifier(name, chunk, context)?;
+            chunk.emit(Instruction::Pop);
+        }
+        Ok(())
+    }
+
+    /// Emits the store instruction for an identifier assignment target.
+    fn emit_store_identifier(
+        &mut self,
+        name: &str,
+        chunk: &mut Chunk,
+        context: &CompileContext,
+    ) -> Result<(), CompileError> {
+        let index = self.add_name(name, chunk)?;
+        if context.inside_function() || context.is_lexical(name) {
+            chunk.emit(Instruction::StoreName(index));
+        } else {
+            chunk.emit(Instruction::StoreGlobal(index));
+        }
         Ok(())
     }
 
@@ -669,6 +1042,11 @@ impl Compiler {
             Expression::Unary { operator, argument } => {
                 self.compile_unary(*operator, argument, chunk, context)
             }
+            Expression::Update {
+                operator,
+                prefix,
+                argument,
+            } => self.compile_update(*operator, *prefix, argument, chunk, context),
             Expression::Binary {
                 operator,
                 left,
