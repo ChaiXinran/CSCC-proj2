@@ -55,6 +55,15 @@ impl RuntimeBackend for NativeRuntime {
         })
     }
 
+    fn parse_only(&mut self, source: &str, options: ExecutionOptions) -> Result<(), EvalFailure> {
+        self.context.set_strict(options.strict);
+        let program = self.pipeline.parse(source).map_err(classify_native_error)?;
+        self.pipeline
+            .compile(&program)
+            .map_err(classify_native_error)?;
+        Ok(())
+    }
+
     fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure> {
         self.evaluate(source).map(|_| ())
     }

@@ -410,7 +410,10 @@ fn run_case(
                 "non-blocking agent tests are not enabled".into(),
             ));
         }
-        if backend == BackendKind::Native && !metadata.includes.is_empty() {
+        if backend == BackendKind::Native
+            && !metadata.includes.is_empty()
+            && !is_static_negative(&metadata)
+        {
             let detail = format!(
                 "native backend does not support harness includes: {}",
                 metadata.includes.join(", ")
@@ -500,6 +503,19 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
     let mut runtime = Runtime::with_backend(backend, config).map_err(|error| error.to_string())?;
     runtime.clear_output();
     runtime.set_strict(false);
+
+    if is_static_negative(metadata) {
+        return run_static_negative_variant(
+            &mut runtime,
+            StaticNegativeRun {
+                path,
+                source,
+                metadata,
+                strict,
+                skip_unsupported,
+            },
+        );
+    }
 
     if backend == BackendKind::Boa && !metadata.flags.contains("raw") {
         runtime
@@ -594,10 +610,68 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
         }
     }
 
-    // The current script API combines parse and execution. Preserve phase data
-    // for reporting while matching the expected error type above.
-    let _phase = metadata.negative_phase.as_deref();
     Ok(())
+}
+
+struct StaticNegativeRun<'a> {
+    path: &'a Path,
+    source: &'a str,
+    metadata: &'a Metadata,
+    strict: bool,
+    skip_unsupported: bool,
+}
+
+fn run_static_negative_variant(
+    runtime: &mut Runtime,
+    run: StaticNegativeRun<'_>,
+) -> Result<(), VariantFailure> {
+    let StaticNegativeRun {
+        path,
+        source,
+        metadata,
+        strict,
+        skip_unsupported,
+    } = run;
+    let phase = metadata
+        .negative_phase
+        .as_deref()
+        .expect("static negative variant has a phase");
+    let expected = metadata.negative_type.as_deref().ok_or_else(|| {
+        VariantFailure::Failed(format!(
+            "negative {phase} phase test is missing an expected error type"
+        ))
+    })?;
+
+    runtime.set_strict(strict);
+    let outcome = runtime.parse_only(
+        source,
+        ExecutionOptions {
+            strict,
+            drain_jobs: false,
+        },
+    );
+
+    match outcome {
+        Ok(()) => Err(VariantFailure::Failed(format!(
+            "expected {expected} during {phase} phase, but parsing/compilation succeeded"
+        ))),
+        Err(error) if failure_matches(&error, expected) => Ok(()),
+        Err(error) => {
+            if skip_unsupported && error.kind == FailureKind::Unsupported {
+                return Err(VariantFailure::Skipped(format!(
+                    "unsupported native feature in `{}`: {error}",
+                    path.display()
+                )));
+            }
+            Err(VariantFailure::Failed(format!(
+                "expected {expected} during {phase} phase, got {error}"
+            )))
+        }
+    }
+}
+
+fn is_static_negative(metadata: &Metadata) -> bool {
+    matches!(metadata.negative_phase.as_deref(), Some("parse" | "early"))
 }
 
 #[derive(Debug, Clone)]
@@ -766,6 +840,7 @@ fn unquote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn parses_inline_and_nested_metadata() {
@@ -787,5 +862,110 @@ mod tests {
         assert!(metadata.flags.contains("onlyStrict"));
         assert_eq!(metadata.negative_phase.as_deref(), Some("parse"));
         assert_eq!(metadata.negative_type.as_deref(), Some("SyntaxError"));
+    }
+
+    #[test]
+    fn native_parse_negative_does_not_execute_source() {
+        let metadata = Metadata {
+            negative_phase: Some("parse".into()),
+            negative_type: Some("SyntaxError".into()),
+            ..Metadata::default()
+        };
+
+        let result = run_variant(VariantRun {
+            path: Path::new("synthetic-parse-negative.js"),
+            source: "$DONOTEVALUATE(); 1;",
+            metadata: &metadata,
+            harness: &Harness::minimal_native(),
+            backend: BackendKind::Native,
+            config: test_config(),
+            strict: false,
+            skip_unsupported: false,
+        });
+
+        let Err(VariantFailure::Failed(detail)) = result else {
+            panic!("syntactically valid negative parse test should fail statically");
+        };
+        assert!(detail.contains("expected SyntaxError during parse phase"));
+        assert!(!detail.contains("ReferenceError"));
+        assert!(!detail.contains("$DONOTEVALUATE"));
+    }
+
+    #[test]
+    fn native_parse_negative_accepts_syntax_error_without_execution() {
+        let metadata = Metadata {
+            negative_phase: Some("parse".into()),
+            negative_type: Some("SyntaxError".into()),
+            ..Metadata::default()
+        };
+
+        run_variant(VariantRun {
+            path: Path::new("synthetic-parse-negative.js"),
+            source: "$DONOTEVALUATE(); var ;",
+            metadata: &metadata,
+            harness: &Harness::minimal_native(),
+            backend: BackendKind::Native,
+            config: test_config(),
+            strict: false,
+            skip_unsupported: false,
+        })
+        .expect("parse phase SyntaxError should satisfy negative metadata");
+    }
+
+    #[test]
+    fn native_static_negative_with_includes_is_not_skipped_before_parse() {
+        let path = write_temp_test(
+            "native-static-negative-includes",
+            r#"
+            /*---
+            includes: [compareArray.js]
+            negative:
+              phase: parse
+              type: SyntaxError
+            ---*/
+
+            $DONOTEVALUATE(); 1;
+            "#,
+        );
+
+        let result = run_case(
+            &path,
+            &Harness::minimal_native(),
+            BackendKind::Native,
+            test_config(),
+            true,
+        );
+
+        let _ = fs::remove_file(&path);
+        assert_eq!(result.status, Status::Failed);
+        assert!(
+            result
+                .detail
+                .contains("expected SyntaxError during parse phase")
+        );
+        assert!(
+            !result
+                .detail
+                .contains("native backend does not support harness includes"),
+            "{}",
+            result.detail
+        );
+    }
+
+    fn test_config() -> RuntimeConfig {
+        RunnerOptions::default().runtime
+    }
+
+    fn write_temp_test(name: &str, source: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "agentjs-test262-{name}-{}-{unique}.js",
+            std::process::id()
+        ));
+        fs::write(&path, source).expect("synthetic Test262 file should be writable");
+        path
     }
 }
