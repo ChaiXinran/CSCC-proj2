@@ -75,6 +75,25 @@ pub const NATIVE_V3_TESTS: [&str; 26] = [
     "test/language/expressions/object/S11.1.5_A4.3.js",
 ];
 
+/// Official Test262 files used as the Native V4 object-model acceptance gate.
+///
+/// Every file is self-contained for the native harness and passes in all modes
+/// selected by its metadata. Tests that only fail because of unrelated missing
+/// syntax or built-ins are intentionally excluded.
+pub const NATIVE_V4_TESTS: [&str; 11] = [
+    "test/language/expressions/delete/11.4.1-3-3.js",
+    "test/language/expressions/delete/11.4.1-4.a-12.js",
+    "test/language/expressions/delete/11.4.1-4.a-14.js",
+    "test/language/expressions/delete/11.4.1-4.a-15.js",
+    "test/language/expressions/delete/S11.4.1_A3.2_T3.js",
+    "test/language/expressions/delete/S11.4.1_A3.3_T3.js",
+    "test/language/expressions/delete/S8.12.7_A2_T1.js",
+    "test/language/expressions/in/S8.12.6_A1.js",
+    "test/language/expressions/in/S8.12.6_A3.js",
+    "test/language/expressions/array/11.1.4-0.js",
+    "test/language/expressions/object/__proto__-duplicate.js",
+];
+
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
     pub test262_root: PathBuf,
@@ -126,6 +145,12 @@ impl RunnerOptions {
     pub fn select_native_v3(&mut self) {
         self.backend = BackendKind::Native;
         self.files = NATIVE_V3_TESTS.iter().map(PathBuf::from).collect();
+    }
+
+    /// Selects the official Test262 files that define the Native V4 gate.
+    pub fn select_native_v4(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files = NATIVE_V4_TESTS.iter().map(PathBuf::from).collect();
     }
 }
 

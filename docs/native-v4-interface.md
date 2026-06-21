@@ -5,6 +5,22 @@ Runtime 和 Builtin 契约。它补充
 [基础接口规格](interface-spec.md)与
 [V3 接口规格](native-v3-interface.md)；V4 新增部分发生冲突时以本文为准。
 
+## 0. 契约状态
+
+当前 AST、V4 Opcode、PropertyDescriptor、PropertyMap、稀疏数组和原型链 API
+已经落地。以下扩大开发契约仍是必需实现项：
+
+```text
+BuiltinId / BuiltinFunction 注册表
+JsFunction 的函数对象与 constructable 标记
+NativeContext::Intrinsics
+统一 call_value / construct_value
+Object / Array / Function 全局安装
+```
+
+在这些接口落地前，`src/builtins/object.rs`、`array.rs`、`function.rs` 的空安装
+函数不得视为 V4 实现。契约变更应先单独提交，再由 Builtins 和 VM 实现跟进。
+
 ## 1. 共享 AST
 
 ### 1.1 运算符
@@ -118,7 +134,7 @@ pub struct PropertyDescriptorUpdate {
 
 ```rust
 impl PropertyDescriptor {
-    pub fn data(
+    pub fn data_with(
         value: JsValue,
         writable: bool,
         enumerable: bool,
@@ -275,6 +291,29 @@ pub struct BuiltinFunction {
 现有封闭 `NativeFunction` 枚举应在 V4.0 契约提交中迁移，避免每增加一个
 builtin 都修改 VM 的核心 match。
 
+扩大开发冻结以下注册接口：
+
+```rust
+impl NativeContext {
+    pub fn register_builtin(
+        &mut self,
+        name: &'static str,
+        length: u8,
+        call: NativeCall,
+        construct: Option<NativeConstruct>,
+    ) -> Result<JsValue, VmError>;
+
+    pub fn builtin(&self, id: BuiltinId) -> Option<&BuiltinFunction>;
+}
+```
+
+规则：
+
+- Builtin 必须是可读取属性的函数对象，不能只是不可扩展的枚举标签；
+- `call` 与 `construct` 独立，不能通过函数名判断是否可构造；
+- VM 只分发 `BuiltinId`，具体 Object/Array/Function 行为留在 `builtins/`；
+- Test262 的 `assert` 与 `Test262Error` 也迁移到同一注册机制。
+
 ## 5. 构造调用
 
 VM 提供统一入口：
@@ -310,6 +349,9 @@ fn construct_value(
 3. 创建 ordinary object；
 4. 以该对象为 `this` 调用函数；
 5. 函数返回对象则采用返回值，否则采用步骤 3 的对象。
+
+用户函数和 Builtin 必须走同一个调用入口。VM 的指令循环不得为
+`Object.create`、`Array.isArray` 等具体 Builtin 添加专用分支。
 
 ## 6. V4 Opcode
 
@@ -417,6 +459,52 @@ pub struct Intrinsics {
 `NativeContext` 持有 `Intrinsics`，禁止通过全局名称反查原型对象。不同 Context
 的 Intrinsics 不得共享 ObjectId。
 
+初始化顺序冻结为：
+
+```text
+创建 Object.prototype
+→ 创建 Function.prototype
+→ 创建 Object / Function 构造器
+→ 创建 Array.prototype / Array 构造器
+→ 安装静态方法和原型方法
+→ 写入全局 Object / Array / Function
+```
+
+必须满足的关系：
+
+```javascript
+Object.prototype.constructor === Object
+Array.prototype.constructor === Array
+Function.prototype.constructor === Function
+Object.getPrototypeOf([]) === Array.prototype
+Object.getPrototypeOf(Array) === Function.prototype
+```
+
+### 8.1 Object Builtin 契约
+
+- `Object(value)`：对象原样返回；`null`/`undefined` 创建普通对象；
+- `Object.create(proto)`：只接受对象或 `null`；
+- `Object.defineProperty`：通过 `PropertyDescriptorUpdate` 应用；
+- `Object.getOwnPropertyDescriptor`：返回新的描述符对象或 `undefined`；
+- `Object.getPrototypeOf` / `setPrototypeOf`：调用统一原型 API；
+- `Object.keys`：只返回可枚举自有字符串键，顺序来自 `PropertyMap`。
+
+### 8.2 Array Builtin 契约
+
+- `Array()` 创建长度 0 数组；
+- 单个数值参数表示长度，非法值返回 RangeError；
+- 其他参数按元素创建密集数组；
+- `Array.isArray` 根据 `ObjectKind::Array` 判断；
+- `push`/`pop` 使用共享索引和 `length` 语义，不直接修改旁路容器。
+
+### 8.3 Function Builtin 契约
+
+- 普通用户函数和 Builtin 都有可观察函数对象；
+- `Function.prototype.call` 将首参数作为 `thisArg`，其余参数转发；
+- 动态源码形式 `Function("...")` 可在扩大 V4 中明确返回 Unsupported，但
+  `Function` 全局、原型关系和 `call` 必须存在；
+- `instanceof` 必须读取可观察的 `"prototype"` 属性，而不是只查询隐藏旁路表。
+
 ## 9. 错误与清理
 
 - 非对象属性操作按具体操作返回 TypeError；
@@ -465,6 +553,16 @@ Chunk::validate() 覆盖所有路径
 --native-v4 -> 固定清单零失败、零跳过
 Object/Array 目录基线增量
 报告不把 skipped 计入 passed
+```
+
+### 扩大 V4 完成门
+
+```text
+typeof Object / Array / Function -> "function"
+三个 builtins 文件不再包含空安装实现
+Object/Array/Function 自有端到端样例全部通过
+相关 Test262 目录相对基线有可解释的新增通过
+NATIVE_V4_TESTS 相对初始 11 项扩大且零失败、零跳过
 ```
 
 ## 11. 共享文件和合并规则

@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use agentjs::test262::{
-    NATIVE_V1_TESTS, NATIVE_V2_TESTS, NATIVE_V3_TESTS, RunnerOptions, Status, run,
+    NATIVE_V1_TESTS, NATIVE_V2_TESTS, NATIVE_V3_TESTS, NATIVE_V4_TESTS, RunnerOptions, Status, run,
 };
 
 fn assert_native_gate(options: RunnerOptions, expected_count: usize, milestone: &str) {
@@ -61,4 +61,16 @@ fn native_v3_passes_the_pinned_test262_files() {
     options.select_native_v3();
 
     assert_native_gate(options, NATIVE_V3_TESTS.len(), "Native V3");
+}
+
+#[test]
+fn native_v4_passes_the_pinned_test262_files() {
+    let mut options = RunnerOptions {
+        test262_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test262"),
+        jobs: 1,
+        ..RunnerOptions::default()
+    };
+    options.select_native_v4();
+
+    assert_native_gate(options, NATIVE_V4_TESTS.len(), "Native V4");
 }

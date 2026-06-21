@@ -354,9 +354,11 @@ impl Parser {
         let key = self.parse_property_name()?;
 
         // `__proto__: value` — PrototypeSetter (only the non-computed shorthand)
-        if let PropertyName::Identifier(ref name) = key
-            && name == "__proto__"
-            && self.check_punctuator(':')
+        if matches!(
+            &key,
+            PropertyName::Identifier(name) | PropertyName::String(name)
+                if name == "__proto__"
+        ) && self.check_punctuator(':')
         {
             self.advance(); // consume `:`
             let value = self.parse_assignment()?;
@@ -987,6 +989,11 @@ mod tests {
     #[test]
     fn rejects_duplicate_proto_setter() {
         let tokens = Lexer::new("({ __proto__: a, __proto__: b })")
+            .tokenize()
+            .unwrap();
+        assert!(Parser::new(tokens).parse_program().is_err());
+
+        let tokens = Lexer::new("({ __proto__: a, '__proto__': b })")
             .tokenize()
             .unwrap();
         assert!(Parser::new(tokens).parse_program().is_err());

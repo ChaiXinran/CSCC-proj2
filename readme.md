@@ -151,11 +151,13 @@ The Native pipeline currently implements the scoped V1-V3 milestones:
 - [Native V3 functions and compound values](docs/native-v3-scope.md) and its
   [shared interface](docs/native-v3-interface.md)
 
-The next collaborative milestone is
+The active collaborative milestone is the expanded
 [Native V4 object semantics](docs/native-v4-scope.md), with contracts frozen in
-the [Native V4 shared interface](docs/native-v4-interface.md). V4 focuses on
-property descriptors, prototype chains, constructors, accessors, and sparse
-array length semantics.
+the [Native V4 shared interface](docs/native-v4-interface.md). The object model,
+accessors, constructors, and sparse-array core are connected; the remaining V4
+work is the real `Object`, `Array`, and `Function` builtin and intrinsic layer.
+File ownership, C0–C3 execution subgroups, branch suggestions, and merge order
+are defined in the [Native V4 team plan](docs/native-v4-team-plan.md).
 
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
@@ -164,6 +166,10 @@ Runnable integration coverage lives in
 [`examples/v3.js`](examples/v3.js).
 
 ## Parallel Development
+
+The repeatable milestone workflow, merge order, Test262 selection rules, and
+completion checklist are documented in
+[Native version development workflow](docs/version-development-workflow.md).
 
 Suggested ownership:
 
@@ -228,6 +234,7 @@ Run the fixed Native milestone acceptance gates:
 cargo run -- test262 --native-v1 --jobs 1 --verbose
 cargo run -- test262 --native-v2 --jobs 1 --verbose
 cargo run -- test262 --native-v3 --jobs 1 --verbose
+cargo run -- test262 --native-v4 --jobs 1 --verbose
 cargo test --test native_test262
 ```
 

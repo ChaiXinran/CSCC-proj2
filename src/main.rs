@@ -167,6 +167,7 @@ fn command_test262(args: &[String]) -> Result<(), String> {
             "--native-v1" => options.select_native_v1(),
             "--native-v2" => options.select_native_v2(),
             "--native-v3" => options.select_native_v3(),
+            "--native-v4" => options.select_native_v4(),
             "--json" => {
                 index += 1;
                 json_path = Some(PathBuf::from(required_value(args, index, "--json")?));
@@ -382,7 +383,8 @@ USAGE:
   agentjs repl [--backend boa|native]
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend boa|native] [--limit N] [--jobs N]
-                  [--native-v1|--native-v2|--native-v3] [--json result.json] [-v]
+                  [--native-v1|--native-v2|--native-v3|--native-v4]
+                  [--json result.json] [-v]
   agentjs bench [iterations]"
     );
 }
