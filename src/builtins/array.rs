@@ -181,38 +181,17 @@ fn get_elem(
     vm.get_property_value(value, &index.to_string(), context)
 }
 
-fn value_to_string(value: &JsValue) -> String {
-    match value {
-        JsValue::Undefined | JsValue::Null => String::new(),
-        JsValue::Boolean(b) => b.to_string(),
-        JsValue::Number(n) => number_to_js_string(*n),
-        JsValue::String(s) => s.clone(),
-        JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
-            "function () { [native code] }".into()
-        }
-        JsValue::Object(_) | JsValue::Error(_) => "[object Object]".into(),
+fn argument_number(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    index: usize,
+    default: f64,
+) -> Result<f64, VmError> {
+    match arguments.get(index) {
+        None | Some(JsValue::Undefined) => Ok(default),
+        Some(value) => vm.to_number(value.clone(), context),
     }
-}
-
-fn number_to_js_string(n: f64) -> String {
-    if n.is_nan() {
-        return "NaN".into();
-    }
-    if n.is_infinite() {
-        return if n > 0.0 {
-            "Infinity".into()
-        } else {
-            "-Infinity".into()
-        };
-    }
-    if n == 0.0 {
-        return "0".into();
-    }
-    let i = n as i64;
-    if i as f64 == n {
-        return i.to_string();
-    }
-    format!("{n}")
 }
 
 fn call_callback(
@@ -368,13 +347,15 @@ fn array_join(
     let length = array_like_length(context, object);
     let sep = match arguments.first() {
         None | Some(JsValue::Undefined) => ",".to_string(),
-        Some(JsValue::String(s)) => s.clone(),
-        Some(other) => value_to_string(other),
+        Some(value) => vm.to_string_coerce(value.clone(), context)?,
     };
     let mut parts: Vec<String> = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, this_value.clone(), i)?;
-        parts.push(value_to_string(&val));
+        parts.push(match val {
+            JsValue::Undefined | JsValue::Null => String::new(),
+            value => vm.to_string_coerce(value, context)?,
+        });
     }
     Ok(JsValue::String(parts.join(&sep)))
 }
@@ -441,21 +422,9 @@ fn array_slice(
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.slice")?;
     let length = array_like_length(context, object);
-    let start = normalize_index(
-        arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0),
-        length,
-    );
+    let start = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
     let end = normalize_index(
-        arguments
-            .get(1)
-            .and_then(|v| {
-                if matches!(v, JsValue::Undefined) {
-                    None
-                } else {
-                    v.to_number()
-                }
-            })
-            .unwrap_or(length as f64),
+        argument_number(vm, context, arguments, 1, length as f64)?,
         length,
     );
     let mut result = Vec::new();
@@ -475,21 +444,10 @@ fn array_splice(
     let object = context.require_object(&this_value, "Array.prototype.splice")?;
     let length = array_like_length(context, object);
 
-    let start = normalize_index(
-        arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0),
-        length,
-    );
-    let delete_count = arguments
-        .get(1)
-        .and_then(|v| {
-            if matches!(v, JsValue::Undefined) {
-                None
-            } else {
-                v.to_number()
-            }
-        })
-        .map(|n| n.max(0.0).min((length - start) as f64) as usize)
-        .unwrap_or(length - start);
+    let start = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
+    let delete_count = argument_number(vm, context, arguments, 1, (length - start) as f64)?
+        .max(0.0)
+        .min((length - start) as f64) as usize;
     let insert_items: Vec<JsValue> = arguments.get(2..).unwrap_or(&[]).to_vec();
 
     // Collect removed elements
@@ -547,11 +505,7 @@ fn array_index_of(
     let object = context.require_object(&this_value, "Array.prototype.indexOf")?;
     let length = array_like_length(context, object);
     let search = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let from_index = arguments
-        .get(1)
-        .and_then(|v| v.to_number())
-        .map(|n| normalize_index(n, length))
-        .unwrap_or(0);
+    let from_index = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     for i in from_index..length {
         let val = get_elem(vm, context, this_value.clone(), i)?;
         if val.strict_equals(&search) {
@@ -573,10 +527,7 @@ fn array_last_index_of(
         return Ok(JsValue::Number(-1.0));
     }
     let search = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let from_raw = arguments
-        .get(1)
-        .and_then(|v| v.to_number())
-        .unwrap_or((length - 1) as f64);
+    let from_raw = argument_number(vm, context, arguments, 1, (length - 1) as f64)?;
     let from = if from_raw < 0.0 {
         let from_end = (-from_raw) as usize;
         if from_end > length {
@@ -596,7 +547,7 @@ fn array_last_index_of(
 }
 
 fn array_fill(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
@@ -604,21 +555,9 @@ fn array_fill(
     let object = context.require_object(&this_value, "Array.prototype.fill")?;
     let length = array_like_length(context, object);
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let start = normalize_index(
-        arguments.get(1).and_then(|v| v.to_number()).unwrap_or(0.0),
-        length,
-    );
+    let start = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     let end = normalize_index(
-        arguments
-            .get(2)
-            .and_then(|v| {
-                if matches!(v, JsValue::Undefined) {
-                    None
-                } else {
-                    v.to_number()
-                }
-            })
-            .unwrap_or(length as f64),
+        argument_number(vm, context, arguments, 2, length as f64)?,
         length,
     );
     for i in start..end {
@@ -636,10 +575,7 @@ fn array_includes(
     let object = context.require_object(&this_value, "Array.prototype.includes")?;
     let length = array_like_length(context, object);
     let search = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let from = normalize_index(
-        arguments.get(1).and_then(|v| v.to_number()).unwrap_or(0.0),
-        length,
-    );
+    let from = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     for i in from..length {
         let val = get_elem(vm, context, this_value.clone(), i)?;
         if val.same_value(&search) {
@@ -959,23 +895,10 @@ fn array_flat(
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.flat")?;
     let length = array_like_length(context, object);
-    let depth = arguments
-        .first()
-        .and_then(|v| {
-            if matches!(v, JsValue::Undefined) {
-                None
-            } else {
-                v.to_number()
-            }
-        })
-        .map(|n| {
-            if n.is_infinite() && n > 0.0 {
-                usize::MAX
-            } else {
-                n.max(0.0) as usize
-            }
-        })
-        .unwrap_or(1);
+    let depth = match argument_number(vm, context, arguments, 0, 1.0)? {
+        value if value.is_infinite() && value > 0.0 => usize::MAX,
+        value => value.max(0.0) as usize,
+    };
     let result = flat_collect(vm, context, &this_value, length, depth)?;
     context.create_array(result)
 }
@@ -1098,11 +1021,11 @@ fn compare_two(
             vec![a.clone(), b.clone()],
             context,
         )?;
-        let n = result.to_number().unwrap_or(0.0);
+        let n = vm.to_number(result, context)?;
         Ok(n > 0.0)
     } else {
-        let a_str = value_to_string(a);
-        let b_str = value_to_string(b);
+        let a_str = vm.to_string_coerce(a.clone(), context)?;
+        let b_str = vm.to_string_coerce(b.clone(), context)?;
         Ok(a_str > b_str)
     }
 }
@@ -1161,25 +1084,10 @@ fn array_copy_within(
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.copyWithin")?;
     let length = array_like_length(context, object);
-    let target = normalize_index(
-        arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0),
-        length,
-    );
-    let start = normalize_index(
-        arguments.get(1).and_then(|v| v.to_number()).unwrap_or(0.0),
-        length,
-    );
+    let target = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
+    let start = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     let end = normalize_index(
-        arguments
-            .get(2)
-            .and_then(|v| {
-                if matches!(v, JsValue::Undefined) {
-                    None
-                } else {
-                    v.to_number()
-                }
-            })
-            .unwrap_or(length as f64),
+        argument_number(vm, context, arguments, 2, length as f64)?,
         length,
     );
     let copy_len = (end - start).min(length - target);
@@ -1208,7 +1116,7 @@ fn array_at(
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.at")?;
     let length = array_like_length(context, object);
-    let index_raw = arguments.first().and_then(|v| v.to_number()).unwrap_or(0.0) as i64;
+    let index_raw = argument_number(vm, context, arguments, 0, 0.0)? as i64;
     let index = if index_raw < 0 {
         let from_end = (-index_raw) as usize;
         if from_end > length {

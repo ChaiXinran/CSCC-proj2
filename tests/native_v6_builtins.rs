@@ -109,6 +109,10 @@ fn number_parsers_match_globals() {
 #[test]
 fn number_wrapper_valueof_round_trips() {
     assert_eq!(native_eval("new Number(42).valueOf()"), "42");
+    assert_eq!(
+        native_eval("new Number({ valueOf: function () { return 5; } }).valueOf()"),
+        "5"
+    );
     assert_eq!(native_eval("typeof new Number(42)"), "object");
 }
 
@@ -160,4 +164,30 @@ fn error_to_string_formats_name_and_message() {
         "TypeError: boom"
     );
     assert_eq!(native_eval("new Error('').toString()"), "Error");
+    assert_eq!(native_eval("Error('boom').toString()"), "Error: boom");
+    assert_eq!(
+        native_eval("TypeError('boom').toString()"),
+        "TypeError: boom"
+    );
+    assert_eq!(
+        native_eval("Error({ toString: function () { return 'converted'; } }).message"),
+        "converted"
+    );
+}
+
+#[test]
+fn v4_builtins_use_v6_object_aware_coercion() {
+    assert_eq!(native_eval("Object(7).valueOf()"), "7");
+    assert_eq!(
+        native_eval("[1, 2, 3].slice({ valueOf: function () { return 1; } })[0]"),
+        "2"
+    );
+    assert_eq!(
+        native_eval("[1, 2].join({ toString: function () { return '-'; } })"),
+        "1-2"
+    );
+    assert_eq!(
+        native_eval("[3, 1, 2].sort(function (a, b) { return a - b; })[0]"),
+        "1"
+    );
 }

@@ -111,43 +111,36 @@ pub fn install_object(context: &mut NativeContext) {
 }
 
 pub fn object_call(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let prototype = context
-        .intrinsics()
-        .map(|intrinsics| intrinsics.object_prototype);
-    object_from_argument(context, arguments, prototype)
+    object_from_argument(vm, context, arguments)
 }
 
 pub fn object_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     _new_target: JsValue,
 ) -> Result<JsValue, VmError> {
-    let prototype = context
-        .intrinsics()
-        .map(|intrinsics| intrinsics.object_prototype);
-    object_from_argument(context, arguments, prototype)
+    object_from_argument(vm, context, arguments)
 }
 
 fn object_from_argument(
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
-    prototype: Option<ObjectId>,
 ) -> Result<JsValue, VmError> {
     match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
-        JsValue::Undefined | JsValue::Null => context.ordinary_object_with_prototype(prototype),
+        JsValue::Undefined | JsValue::Null => {
+            context.ordinary_object_with_prototype(context.object_prototype())
+        }
         value @ (JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)) => {
             Ok(value)
         }
-        value => Err(VmError::runtime(format!(
-            "Object({}) primitive coercion is unsupported in native V4",
-            value.type_of()
-        ))),
+        value => vm.to_object(value, context).map(JsValue::Object),
     }
 }
 

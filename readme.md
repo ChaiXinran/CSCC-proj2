@@ -169,14 +169,14 @@ semantics. See the
 gate is intentionally small and zero-skip; broader V5 directories remain a
 diagnostic scan.
 
-Native V6 is the active planning milestone for core builtins and coercion. It
-standardizes primitive wrappers and object-aware conversions, then separates
-String, Number, Boolean, Math, Error, and JSON into independently owned
-modules. See the [Native V6 scope](docs/native-v6-scope.md),
+Native V6 provides the core builtin and coercion milestone. It standardizes
+primitive wrappers and object-aware conversions, and connects String, Number,
+Boolean, Math, Error, and core JSON through independently owned modules. See
+the [Native V6 scope](docs/native-v6-scope.md),
 [shared interface](docs/native-v6-interface.md), and
-[team plan](docs/native-v6-team-plan.md). Map/Set, RegExp, Date, Promise, and
-new language syntax are deliberately deferred until the V6 core gate is
-stable.
+[team plan](docs/native-v6-team-plan.md). Its pinned Test262 gate passes 7/7;
+the six-directory diagnostic scan passes 769/2,199. Map/Set, RegExp, Date,
+Promise, advanced JSON callbacks, and new language syntax remain deferred.
 
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
@@ -260,6 +260,8 @@ cargo run -- test262 --native-v4 --jobs 1 --verbose
 cargo run -- test262 --native-v4-scan --jobs 4 --progress
 cargo run -- test262 --native-v5 --jobs 1 --verbose
 cargo run -- test262 --native-v5-scan --jobs 4 --progress
+cargo run -- test262 --native-v6 --jobs 1 --verbose
+cargo run -- test262 --native-v6-scan --jobs 4 --progress
 cargo test --test native_test262
 ```
 
@@ -279,6 +281,9 @@ built-in directories.
 
 `--native-v5` is the curated zero-failure, zero-skip gate. `--native-v5-scan`
 is the broader diagnostic scan for try, switch, let, and const directories.
+
+`--native-v6` is the curated core-builtin gate. `--native-v6-scan` scans the
+String, Number, Math, Boolean, Error, and JSON directories diagnostically.
 
 Start with the feature directory affected by a change:
 

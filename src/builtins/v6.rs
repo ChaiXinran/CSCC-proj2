@@ -8,10 +8,9 @@
 //! goes through the V6 `Vm` contract so JavaScript `valueOf`/`toString` throws
 //! stay catchable by V5 handlers.
 
-use super::{boolean, error, math, number, string};
+use super::{boolean, error, json, math, number, string};
 use crate::runtime::{
-    JsObject, JsValue, NativeCall, NativeContext, NativeErrorKind, NativeErrorValue, ObjectId,
-    PrimitiveValue, PropertyDescriptor,
+    JsObject, JsValue, NativeCall, NativeContext, ObjectId, PrimitiveValue, PropertyDescriptor,
 };
 use crate::vm::{Vm, VmError};
 
@@ -22,6 +21,7 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_boolean(context)?;
     install_string(context)?;
     install_math(context)?;
+    install_json(context)?;
     install_global_functions(context)?;
     Ok(())
 }
@@ -191,8 +191,10 @@ fn install_error(context: &mut NativeContext) -> Result<(), VmError> {
                 .ok_or_else(|| VmError::runtime("heap exhausted"))?
         };
 
+        let call = error_constructor_call(spec.name)
+            .ok_or_else(|| VmError::runtime("missing Error constructor adapter"))?;
         let constructor =
-            context.register_builtin(spec.name, spec.length, error_call, Some(error_construct))?;
+            context.register_builtin(spec.name, spec.length, call, Some(error_construct))?;
         let JsValue::BuiltinFunction(id) = &constructor else {
             unreachable!()
         };
@@ -226,24 +228,117 @@ fn install_error(context: &mut NativeContext) -> Result<(), VmError> {
     Ok(())
 }
 
-fn error_call(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
+fn error_constructor_call(name: &str) -> Option<NativeCall> {
+    Some(match name {
+        "Error" => error_call,
+        "EvalError" => eval_error_call,
+        "RangeError" => range_error_call,
+        "ReferenceError" => reference_error_call,
+        "SyntaxError" => syntax_error_call,
+        "TypeError" => type_error_call,
+        "URIError" => uri_error_call,
+        _ => return None,
+    })
+}
+
+fn install_json(context: &mut NativeContext) -> Result<(), VmError> {
+    let object = context
+        .heap_mut()
+        .allocate_object(JsObject::ordinary())
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    define_method(context, object, "parse", 2, json_parse)?;
+    define_method(context, object, "stringify", 3, json_stringify)?;
+    context.declare_global("JSON", JsValue::Object(object));
+    Ok(())
+}
+
+fn json_parse(
+    vm: &mut Vm,
+    context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let message = arguments
+    let source = arg_string(vm, context, arguments, 0)?;
+    json::parse_json(&source, context)
+}
+
+fn json_stringify(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(match json::stringify_json(arg(arguments, 0), context)? {
+        Some(value) => JsValue::String(value),
+        None => JsValue::Undefined,
+    })
+}
+
+fn call_error_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    constructor_name: &str,
+) -> Result<JsValue, VmError> {
+    let constructor = context
+        .get_global(constructor_name)
+        .ok_or_else(|| VmError::runtime("error constructor missing"))?;
+    let prototype = context
+        .constructor_prototype(&constructor)?
+        .or_else(|| context.error_prototype())
+        .ok_or_else(|| VmError::runtime("error prototype missing"))?;
+    create_error_object(vm, context, arguments, prototype)
+}
+
+macro_rules! error_call_adapter {
+    ($function:ident, $name:literal) => {
+        fn $function(
+            vm: &mut Vm,
+            context: &mut NativeContext,
+            _this: JsValue,
+            arguments: &[JsValue],
+        ) -> Result<JsValue, VmError> {
+            call_error_constructor(vm, context, arguments, $name)
+        }
+    };
+}
+
+error_call_adapter!(error_call, "Error");
+error_call_adapter!(eval_error_call, "EvalError");
+error_call_adapter!(range_error_call, "RangeError");
+error_call_adapter!(reference_error_call, "ReferenceError");
+error_call_adapter!(syntax_error_call, "SyntaxError");
+error_call_adapter!(type_error_call, "TypeError");
+error_call_adapter!(uri_error_call, "URIError");
+
+fn create_error_object(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    prototype: ObjectId,
+) -> Result<JsValue, VmError> {
+    let mut object = JsObject::ordinary();
+    object.prototype = Some(prototype);
+    let id = context
+        .heap_mut()
+        .allocate_object(object)
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    if let Some(value) = arguments
         .first()
-        .and_then(JsValue::to_js_string)
-        .unwrap_or_default();
-    Ok(JsValue::Error(NativeErrorValue::new(
-        NativeErrorKind::Error,
-        message,
-    )))
+        .filter(|value| !matches!(value, JsValue::Undefined))
+    {
+        let message = vm.to_string_coerce(value.clone(), context)?;
+        context.define_own_property(
+            id,
+            "message".into(),
+            method_descriptor(JsValue::String(message)),
+        )?;
+    }
+    Ok(JsValue::Object(id))
 }
 
 fn error_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -252,20 +347,7 @@ fn error_construct(
         .constructor_prototype(&new_target)?
         .or_else(|| context.error_prototype())
         .ok_or_else(|| VmError::runtime("error prototype missing"))?;
-    let mut object = JsObject::ordinary();
-    object.prototype = Some(prototype);
-    let id = context
-        .heap_mut()
-        .allocate_object(object)
-        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
-    if let Some(message) = arguments.first().and_then(JsValue::to_js_string) {
-        context.define_own_property(
-            id,
-            "message".into(),
-            method_descriptor(JsValue::String(message)),
-        )?;
-    }
-    Ok(JsValue::Object(id))
+    create_error_object(vm, context, arguments, prototype)
 }
 
 fn error_to_string(
@@ -395,15 +477,16 @@ fn number_call(
 }
 
 fn number_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
 ) -> Result<JsValue, VmError> {
-    let value = arguments
-        .first()
-        .and_then(JsValue::to_number)
-        .unwrap_or(0.0);
+    let value = if arguments.is_empty() {
+        0.0
+    } else {
+        vm.to_number(arg(arguments, 0), context)?
+    };
     let prototype = context
         .constructor_prototype(&new_target)?
         .or_else(|| context.number_prototype())

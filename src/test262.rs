@@ -123,6 +123,27 @@ pub const NATIVE_V5_SCAN_SUITES: [&str; 4] = [
     "test/language/statements/const",
 ];
 
+/// Zero-skip Native V6 gate covering each core builtin family.
+pub const NATIVE_V6_TESTS: [&str; 7] = [
+    "test/built-ins/String/prototype/charAt/S15.5.4.4_A2.js",
+    "test/built-ins/Number/isFinite/finite-numbers.js",
+    "test/built-ins/Math/abs/absolute-value.js",
+    "test/built-ins/Boolean/S15.6.1.1_A1_T1.js",
+    "test/built-ins/Error/the-initial-value-of-errorprototypemessage-is-the-empty-string.js",
+    "test/built-ins/JSON/parse/15.12.1.1-0-1.js",
+    "test/built-ins/JSON/stringify/value-primitive-top-level.js",
+];
+
+/// Core builtin directories scanned diagnostically by `--native-v6-scan`.
+pub const NATIVE_V6_SCAN_SUITES: [&str; 6] = [
+    "test/built-ins/String",
+    "test/built-ins/Number",
+    "test/built-ins/Math",
+    "test/built-ins/Boolean",
+    "test/built-ins/Error",
+    "test/built-ins/JSON",
+];
+
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
     pub test262_root: PathBuf,
@@ -211,6 +232,22 @@ impl RunnerOptions {
         self.backend = BackendKind::Native;
         self.files.clear();
         self.suites = NATIVE_V5_SCAN_SUITES.iter().map(PathBuf::from).collect();
+        self.skip_unsupported = true;
+    }
+
+    /// Selects the pinned zero-skip Native V6 builtin gate.
+    pub fn select_native_v6(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files = NATIVE_V6_TESTS.iter().map(PathBuf::from).collect();
+        self.suites.clear();
+        self.skip_unsupported = false;
+    }
+
+    /// Selects V6 builtin directories as a diagnostic scan.
+    pub fn select_native_v6_scan(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files.clear();
+        self.suites = NATIVE_V6_SCAN_SUITES.iter().map(PathBuf::from).collect();
         self.skip_unsupported = true;
     }
 }

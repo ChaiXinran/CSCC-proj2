@@ -4,7 +4,8 @@ use std::path::PathBuf;
 
 use agentjs::test262::{
     NATIVE_V1_TESTS, NATIVE_V2_TESTS, NATIVE_V3_TESTS, NATIVE_V4_SCAN_SUITES, NATIVE_V4_TESTS,
-    NATIVE_V5_SCAN_SUITES, NATIVE_V5_TESTS, RunnerOptions, Status, run,
+    NATIVE_V5_SCAN_SUITES, NATIVE_V5_TESTS, NATIVE_V6_SCAN_SUITES, NATIVE_V6_TESTS, RunnerOptions,
+    Status, run,
 };
 
 fn assert_native_gate(options: RunnerOptions, expected_count: usize, milestone: &str) {
@@ -105,5 +106,27 @@ fn native_v5_scan_selects_the_v5_area_suites() {
 
     assert!(options.files.is_empty());
     assert_eq!(options.suites.len(), NATIVE_V5_SCAN_SUITES.len());
+    assert!(options.skip_unsupported);
+}
+
+#[test]
+fn native_v6_passes_the_pinned_test262_files() {
+    let mut options = RunnerOptions {
+        test262_root: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test262"),
+        jobs: 1,
+        ..RunnerOptions::default()
+    };
+    options.select_native_v6();
+
+    assert_native_gate(options, NATIVE_V6_TESTS.len(), "Native V6");
+}
+
+#[test]
+fn native_v6_scan_selects_the_v6_area_suites() {
+    let mut options = RunnerOptions::default();
+    options.select_native_v6_scan();
+
+    assert!(options.files.is_empty());
+    assert_eq!(options.suites.len(), NATIVE_V6_SCAN_SUITES.len());
     assert!(options.skip_unsupported);
 }
