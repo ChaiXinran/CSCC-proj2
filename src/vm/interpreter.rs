@@ -3,7 +3,6 @@
 use std::fmt;
 
 use crate::{
-    builtins,
     bytecode::{Chunk, Constant, EnvironmentCapturePolicy, Instruction},
     runtime::{
         FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, ObjectId,
@@ -580,9 +579,15 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         match callee {
-            JsValue::NativeFunction(function) => builtins::call_native(function, arguments),
             JsValue::Function(function) => {
                 self.call_user_function(function, this_value, arguments, context)
+            }
+            JsValue::BuiltinFunction(id) => {
+                let def = context
+                    .builtin(id)
+                    .ok_or_else(|| VmError::runtime("invalid builtin id"))?
+                    .clone();
+                (def.call)(context, this_value, &arguments)
             }
             other => Err(VmError::type_error(format!("{other} is not callable"))),
         }
@@ -695,7 +700,6 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         match constructor {
-            JsValue::NativeFunction(function) => builtins::construct_native(function, arguments),
             JsValue::Function(function_id) => {
                 let prototype = context.function_prototype(function_id);
                 let instance = context.ordinary_object_with_prototype(prototype)?;
@@ -705,6 +709,19 @@ impl Vm {
                     Ok(result)
                 } else {
                     Ok(instance)
+                }
+            }
+            JsValue::BuiltinFunction(id) => {
+                let def = context
+                    .builtin(id)
+                    .ok_or_else(|| VmError::runtime("invalid builtin id"))?
+                    .clone();
+                match def.construct {
+                    Some(construct) => construct(context, &arguments, JsValue::BuiltinFunction(id)),
+                    None => Err(VmError::type_error(format!(
+                        "{} is not a constructor",
+                        def.name
+                    ))),
                 }
             }
             other => Err(VmError::type_error(format!("{other} is not a constructor"))),
