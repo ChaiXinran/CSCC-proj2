@@ -97,6 +97,8 @@ impl NativeContext {
         construct: Option<NativeConstruct>,
     ) -> Result<JsValue, crate::vm::VmError> {
         let mut object = JsObject::ordinary();
+        // Set Function.prototype as the prototype so .call/.apply/.bind are accessible
+        object.prototype = self.function_prototype_object();
         object.define_property(
             "name",
             PropertyDescriptor::data_with(JsValue::String(name.into()), false, false, true),

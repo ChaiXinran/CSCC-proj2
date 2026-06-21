@@ -800,7 +800,7 @@ impl Vm {
         Ok(JsValue::Function(id))
     }
 
-    fn call_value(
+    pub(crate) fn call_value(
         &mut self,
         callee: JsValue,
         this_value: JsValue,
