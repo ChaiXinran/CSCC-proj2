@@ -20,13 +20,12 @@ fn compiler_direct_api_accepts_a_hand_built_program() {
 
 #[test]
 fn compiler_rejects_unsupported_ast_without_parser_or_vm() {
-    // Abstract equality (==) is still intentionally unsupported; use it as the
-    // "unsupported AST" sentinel now that Array/Object/Function are in scope.
+    // Deleting a non-reference remains unsupported and provides a direct
+    // compiler error sentinel without involving the parser or VM.
     let program = Program {
-        body: vec![Statement::Expression(Expression::Binary {
-            operator: BinaryOperator::Equal,
-            left: Box::new(Expression::Literal(Literal::Number(1.0))),
-            right: Box::new(Expression::Literal(Literal::String("1".into()))),
+        body: vec![Statement::Expression(Expression::Unary {
+            operator: UnaryOperator::Delete,
+            argument: Box::new(Expression::Literal(Literal::Number(1.0))),
         })],
     };
     let error = Compiler::new()
@@ -44,10 +43,9 @@ fn shared_program_compiler_contract_delegates_to_bytecode_compiler() {
     assert!(result.is_ok());
 
     let unsupported = Program {
-        body: vec![Statement::Expression(Expression::Binary {
-            operator: BinaryOperator::Equal,
-            left: Box::new(Expression::Literal(Literal::Number(1.0))),
-            right: Box::new(Expression::Literal(Literal::Number(1.0))),
+        body: vec![Statement::Expression(Expression::Unary {
+            operator: UnaryOperator::Delete,
+            argument: Box::new(Expression::Literal(Literal::Number(1.0))),
         })],
     };
     assert!(matches!(
@@ -342,7 +340,7 @@ fn compiler_compiles_left_operand_before_right_operand() {
 }
 
 #[test]
-fn compiler_rejects_abstract_equality_outside_v1() {
+fn compiler_emits_abstract_equality() {
     let program = Program {
         body: vec![expression_statement(binary(
             BinaryOperator::Equal,
@@ -351,10 +349,16 @@ fn compiler_rejects_abstract_equality_outside_v1() {
         ))],
     };
 
-    let error = Compiler::new().compile_program(&program).unwrap_err();
-
-    assert!(error.message.contains("Equal"));
-    assert!(error.message.contains("abstract equality"));
+    let chunk = Compiler::new().compile_program(&program).unwrap();
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::Constant(0),
+            Instruction::Constant(1),
+            Instruction::Equal,
+            Instruction::Return,
+        ]
+    );
 }
 
 #[test]

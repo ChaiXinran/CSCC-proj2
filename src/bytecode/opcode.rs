@@ -61,6 +61,8 @@ pub enum Instruction {
     Divide,
     Remainder,
 
+    Equal,
+    NotEqual,
     StrictEqual,
     StrictNotEqual,
     LessThan,
@@ -231,6 +233,8 @@ impl Instruction {
             | Self::Multiply
             | Self::Divide
             | Self::Remainder
+            | Self::Equal
+            | Self::NotEqual
             | Self::StrictEqual
             | Self::StrictNotEqual
             | Self::LessThan

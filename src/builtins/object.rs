@@ -2,8 +2,8 @@
 
 use crate::{
     runtime::{
-        JsObject, JsValue, NativeContext, ObjectId, PropertyDescriptor, PropertyDescriptorUpdate,
-        PropertyKind, to_property_key,
+        JsObject, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
+        PropertyDescriptorUpdate, PropertyKind, to_property_key,
     },
     vm::{Vm, VmError},
 };
@@ -55,6 +55,11 @@ pub fn install_object(context: &mut NativeContext) {
         ("entries", 2, object_entries as crate::runtime::NativeCall),
         ("assign", 2, object_assign as crate::runtime::NativeCall),
         ("freeze", 1, object_freeze as crate::runtime::NativeCall),
+        (
+            "isExtensible",
+            1,
+            object_is_extensible as crate::runtime::NativeCall,
+        ),
         (
             "isFrozen",
             1,
@@ -396,16 +401,25 @@ fn object_to_string(
         JsValue::Number(_) => "Number",
         JsValue::String(_) => "String",
         JsValue::Function(_) | JsValue::BuiltinFunction(_) => "Function",
-        JsValue::Object(id) => {
-            if context.is_array_object(*id).unwrap_or(false) {
-                "Array"
-            } else {
-                "Object"
-            }
-        }
+        JsValue::Object(id) => object_builtin_tag(context, *id)?,
         JsValue::Error(_) => "Error",
     };
     Ok(JsValue::String(format!("[object {tag}]")))
+}
+
+fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'static str, VmError> {
+    let value = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing object"))?;
+    Ok(match &value.kind {
+        ObjectKind::Array { .. } => "Array",
+        ObjectKind::PrimitiveWrapper(PrimitiveValue::Boolean(_)) => "Boolean",
+        ObjectKind::PrimitiveWrapper(PrimitiveValue::Number(_)) => "Number",
+        ObjectKind::PrimitiveWrapper(PrimitiveValue::String(_)) => "String",
+        ObjectKind::Ordinary if context.is_error_object(object) => "Error",
+        ObjectKind::Ordinary => "Object",
+    })
 }
 
 fn object_value_of(
@@ -636,6 +650,16 @@ fn object_freeze(
         }
     }
     Ok(target)
+}
+
+fn object_is_extensible(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    Ok(JsValue::Boolean(context.value_object(&target).is_some()))
 }
 
 fn object_is_frozen(
