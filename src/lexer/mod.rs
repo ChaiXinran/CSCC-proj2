@@ -30,7 +30,8 @@ impl std::error::Error for LexError {}
 /// Operators recognized by the V1 lexer, ordered so that maximal munch is a
 /// simple linear scan: longer operators precede their shorter prefixes.
 const OPERATORS: &[&str] = &[
-    "===", "!==", "<=", ">=", "&&", "||", "+", "-", "*", "/", "%", "!", "=", "<", ">",
+    "===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||", "+", "-", "*", "/", "%", "!", "=", "<",
+    ">",
 ];
 
 /// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional
@@ -71,8 +72,8 @@ impl<'source> Lexer<'source> {
                 return Ok(tokens);
             };
 
-            let mut token = if is_identifier_start(ch) {
-                self.read_identifier_or_keyword()
+            let mut token = if is_identifier_start(ch) || self.cursor.rest().starts_with("\\u") {
+                self.read_identifier_or_keyword()?
             } else if ch.is_ascii_digit()
                 || (ch == '.' && self.cursor.second().is_some_and(|c| c.is_ascii_digit()))
             {
@@ -137,45 +138,103 @@ impl<'source> Lexer<'source> {
         }
     }
 
-    fn read_identifier_or_keyword(&mut self) -> Token {
+    fn read_identifier_or_keyword(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
-        self.cursor.bump();
-        self.cursor.skip_while(is_identifier_part);
+        let mut text = String::new();
+        let mut had_escape = false;
+
+        if self.cursor.rest().starts_with("\\u") {
+            had_escape = true;
+            let character = self.read_identifier_escape(start)?;
+            if !is_identifier_start(character) {
+                return Err(self.invalid_identifier_escape(start));
+            }
+            text.push(character);
+        } else {
+            text.push(self.cursor.bump().expect("identifier start exists"));
+        }
+
+        loop {
+            if self.cursor.rest().starts_with("\\u") {
+                had_escape = true;
+                let character = self.read_identifier_escape(start)?;
+                if !is_identifier_part(character) {
+                    return Err(self.invalid_identifier_escape(start));
+                }
+                text.push(character);
+            } else if self.cursor.peek().is_some_and(is_identifier_part) {
+                text.push(self.cursor.bump().expect("identifier part exists"));
+            } else {
+                break;
+            }
+        }
         let end = self.cursor.offset();
-        let text = self.cursor.slice(Span::new(start, end));
-        let kind = match text {
-            "let" => TokenKind::Keyword(Keyword::Let),
-            "const" => TokenKind::Keyword(Keyword::Const),
-            "var" => TokenKind::Keyword(Keyword::Var),
-            "function" => TokenKind::Keyword(Keyword::Function),
-            "return" => TokenKind::Keyword(Keyword::Return),
-            "if" => TokenKind::Keyword(Keyword::If),
-            "else" => TokenKind::Keyword(Keyword::Else),
-            "while" => TokenKind::Keyword(Keyword::While),
-            "break" => TokenKind::Keyword(Keyword::Break),
-            "continue" => TokenKind::Keyword(Keyword::Continue),
-            "throw" => TokenKind::Keyword(Keyword::Throw),
-            "try" => TokenKind::Keyword(Keyword::Try),
-            "catch" => TokenKind::Keyword(Keyword::Catch),
-            "finally" => TokenKind::Keyword(Keyword::Finally),
-            "switch" => TokenKind::Keyword(Keyword::Switch),
-            "case" => TokenKind::Keyword(Keyword::Case),
-            "default" => TokenKind::Keyword(Keyword::Default),
-            "new" => TokenKind::Keyword(Keyword::New),
-            "typeof" => TokenKind::Keyword(Keyword::TypeOf),
-            "delete" => TokenKind::Keyword(Keyword::Delete),
-            "in" => TokenKind::Keyword(Keyword::In),
-            "instanceof" => TokenKind::Keyword(Keyword::InstanceOf),
-            "true" => TokenKind::Keyword(Keyword::True),
-            "false" => TokenKind::Keyword(Keyword::False),
-            "null" => TokenKind::Keyword(Keyword::Null),
-            _ => TokenKind::Identifier(text.to_owned()),
+        let kind = if had_escape {
+            TokenKind::Identifier(text)
+        } else {
+            match text.as_str() {
+                "let" => TokenKind::Keyword(Keyword::Let),
+                "const" => TokenKind::Keyword(Keyword::Const),
+                "var" => TokenKind::Keyword(Keyword::Var),
+                "function" => TokenKind::Keyword(Keyword::Function),
+                "return" => TokenKind::Keyword(Keyword::Return),
+                "if" => TokenKind::Keyword(Keyword::If),
+                "else" => TokenKind::Keyword(Keyword::Else),
+                "while" => TokenKind::Keyword(Keyword::While),
+                "break" => TokenKind::Keyword(Keyword::Break),
+                "continue" => TokenKind::Keyword(Keyword::Continue),
+                "throw" => TokenKind::Keyword(Keyword::Throw),
+                "try" => TokenKind::Keyword(Keyword::Try),
+                "catch" => TokenKind::Keyword(Keyword::Catch),
+                "finally" => TokenKind::Keyword(Keyword::Finally),
+                "switch" => TokenKind::Keyword(Keyword::Switch),
+                "case" => TokenKind::Keyword(Keyword::Case),
+                "default" => TokenKind::Keyword(Keyword::Default),
+                "new" => TokenKind::Keyword(Keyword::New),
+                "typeof" => TokenKind::Keyword(Keyword::TypeOf),
+                "void" => TokenKind::Keyword(Keyword::Void),
+                "delete" => TokenKind::Keyword(Keyword::Delete),
+                "in" => TokenKind::Keyword(Keyword::In),
+                "instanceof" => TokenKind::Keyword(Keyword::InstanceOf),
+                "true" => TokenKind::Keyword(Keyword::True),
+                "false" => TokenKind::Keyword(Keyword::False),
+                "null" => TokenKind::Keyword(Keyword::Null),
+                _ => TokenKind::Identifier(text),
+            }
         };
-        Token::new(kind, Span::new(start, end))
+        Ok(Token::new(kind, Span::new(start, end)))
     }
 
     fn read_number(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
+        if self.cursor.peek() == Some('0') {
+            let radix = match self.cursor.second() {
+                Some('x' | 'X') => Some(16),
+                Some('b' | 'B') => Some(2),
+                Some('o' | 'O') => Some(8),
+                _ => None,
+            };
+            if let Some(radix) = radix {
+                self.cursor.bump();
+                self.cursor.bump();
+                let digits_start = self.cursor.offset();
+                self.cursor
+                    .skip_while(|character| character.is_digit(radix));
+                let end = self.cursor.offset();
+                if end == digits_start {
+                    return Err(LexError {
+                        span: Span::new(start, end),
+                        message: format!("missing base-{radix} digits in number literal"),
+                    });
+                }
+                let digits = self.cursor.slice(Span::new(digits_start, end));
+                let value = u64::from_str_radix(digits, radix).map_err(|_| LexError {
+                    span: Span::new(start, end),
+                    message: format!("invalid base-{radix} number literal"),
+                })? as f64;
+                return Ok(Token::new(TokenKind::Number(value), Span::new(start, end)));
+            }
+        }
         self.cursor.skip_while(|c| c.is_ascii_digit());
         if self.cursor.peek() == Some('.') {
             self.cursor.bump();
@@ -250,6 +309,30 @@ impl<'source> Lexer<'source> {
             'f' => value.push('\u{000C}'),
             'v' => value.push('\u{000B}'),
             '0' => value.push('\0'),
+            'x' => {
+                let code_point = self.read_hex_escape(start, 2)?;
+                value.push(char::from_u32(code_point).expect("two hex digits form a scalar value"));
+            }
+            'u' => {
+                let first = self.read_unicode_escape_value(start)?;
+                let code_point = if (0xD800..=0xDBFF).contains(&first)
+                    && self.cursor.rest().starts_with("\\u")
+                {
+                    self.cursor.bump();
+                    self.cursor.bump();
+                    let second = self.read_unicode_escape_value(start)?;
+                    if !(0xDC00..=0xDFFF).contains(&second) {
+                        return Err(self.invalid_unicode_escape(start));
+                    }
+                    0x1_0000 + ((first - 0xD800) << 10) + (second - 0xDC00)
+                } else {
+                    first
+                };
+                // AgentJS currently stores strings as UTF-8, so an isolated
+                // UTF-16 surrogate cannot be represented losslessly yet.
+                let character = char::from_u32(code_point).unwrap_or(char::REPLACEMENT_CHARACTER);
+                value.push(character);
+            }
             '\\' => value.push('\\'),
             '\'' => value.push('\''),
             '"' => value.push('"'),
@@ -264,6 +347,68 @@ impl<'source> Lexer<'source> {
             other => value.push(other),
         }
         Ok(())
+    }
+
+    fn read_hex_escape(&mut self, string_start: usize, digits: usize) -> Result<u32, LexError> {
+        let mut value = 0_u32;
+        for _ in 0..digits {
+            let digit = self
+                .cursor
+                .bump()
+                .and_then(|ch| ch.to_digit(16))
+                .ok_or_else(|| self.invalid_unicode_escape(string_start))?;
+            value = (value << 4) | digit;
+        }
+        Ok(value)
+    }
+
+    fn read_identifier_escape(&mut self, identifier_start: usize) -> Result<char, LexError> {
+        debug_assert!(self.cursor.rest().starts_with("\\u"));
+        self.cursor.bump();
+        self.cursor.bump();
+        let code_point = self.read_unicode_escape_value(identifier_start)?;
+        char::from_u32(code_point).ok_or_else(|| self.invalid_identifier_escape(identifier_start))
+    }
+
+    fn read_unicode_escape_value(&mut self, start: usize) -> Result<u32, LexError> {
+        if self.cursor.peek() != Some('{') {
+            return self.read_hex_escape(start, 4);
+        }
+        self.cursor.bump();
+        let mut value = 0_u32;
+        let mut digits = 0;
+        while let Some(character) = self.cursor.peek() {
+            if character == '}' {
+                break;
+            }
+            let digit = character
+                .to_digit(16)
+                .ok_or_else(|| self.invalid_unicode_escape(start))?;
+            value = value
+                .checked_mul(16)
+                .and_then(|current| current.checked_add(digit))
+                .ok_or_else(|| self.invalid_unicode_escape(start))?;
+            digits += 1;
+            self.cursor.bump();
+        }
+        if digits == 0 || self.cursor.bump() != Some('}') || value > 0x10_FFFF {
+            return Err(self.invalid_unicode_escape(start));
+        }
+        Ok(value)
+    }
+
+    fn invalid_identifier_escape(&self, identifier_start: usize) -> LexError {
+        LexError {
+            span: Span::new(identifier_start, self.cursor.offset()),
+            message: "invalid Unicode escape in identifier".into(),
+        }
+    }
+
+    fn invalid_unicode_escape(&self, string_start: usize) -> LexError {
+        LexError {
+            span: Span::new(string_start, self.cursor.offset()),
+            message: "invalid hexadecimal escape sequence".into(),
+        }
     }
 
     fn read_operator_or_punctuator(&mut self) -> Result<Token, LexError> {
@@ -312,14 +457,14 @@ fn is_whitespace(ch: char) -> bool {
         || ch.is_whitespace()
 }
 
-/// ASCII identifier start characters (`$` and `_` are permitted by ECMAScript).
+/// Unicode identifier start characters (`$` and `_` are permitted by ECMAScript).
 fn is_identifier_start(ch: char) -> bool {
-    ch.is_ascii_alphabetic() || ch == '_' || ch == '$'
+    ch.is_alphabetic() || ch == '_' || ch == '$'
 }
 
-/// ASCII identifier continuation characters.
+/// Unicode identifier continuation characters.
 fn is_identifier_part(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
+    ch.is_alphanumeric() || matches!(ch, '_' | '$' | '\u{200C}' | '\u{200D}')
 }
 
 #[cfg(test)]
@@ -379,7 +524,7 @@ mod tests {
     #[test]
     fn tokenizes_numbers() {
         assert_eq!(
-            kinds("0 18 3.5 .5 1e3 2.0e-2"),
+            kinds("0 18 3.5 .5 1e3 2.0e-2 0x2a 0b101 0o17"),
             [
                 TokenKind::Number(0.0),
                 TokenKind::Number(18.0),
@@ -387,6 +532,9 @@ mod tests {
                 TokenKind::Number(0.5),
                 TokenKind::Number(1000.0),
                 TokenKind::Number(0.02),
+                TokenKind::Number(42.0),
+                TokenKind::Number(5.0),
+                TokenKind::Number(15.0),
                 TokenKind::Eof,
             ]
         );
@@ -400,6 +548,46 @@ mod tests {
                 TokenKind::String("a\n\"b".into()),
                 TokenKind::String("c'd".into()),
                 TokenKind::String(String::new()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_hexadecimal_and_unicode_string_escapes() {
+        assert_eq!(
+            kinds(r#""\x41\u0042\uD83D\uDE00\u{1F642}""#),
+            [TokenKind::String("AB😀🙂".into()), TokenKind::Eof]
+        );
+    }
+
+    #[test]
+    fn tokenizes_unicode_identifiers() {
+        assert_eq!(
+            kinds("var 𠮷 = 1; 𠮷"),
+            [
+                TokenKind::Keyword(Keyword::Var),
+                TokenKind::Identifier("𠮷".into()),
+                TokenKind::Operator("=".into()),
+                TokenKind::Number(1.0),
+                TokenKind::Punctuator(';'),
+                TokenKind::Identifier("𠮷".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn tokenizes_unicode_escapes_in_identifiers() {
+        assert_eq!(
+            kinds(r"var \u0061 = 1; a"),
+            [
+                TokenKind::Keyword(Keyword::Var),
+                TokenKind::Identifier("a".into()),
+                TokenKind::Operator("=".into()),
+                TokenKind::Number(1.0),
+                TokenKind::Punctuator(';'),
+                TokenKind::Identifier("a".into()),
                 TokenKind::Eof,
             ]
         );
@@ -460,7 +648,7 @@ mod tests {
     #[test]
     fn tokenizes_v2_keywords_and_conditional_punctuators() {
         assert_eq!(
-            kinds("if else while break continue throw new typeof ? :"),
+            kinds("if else while break continue throw new typeof void ? :"),
             [
                 TokenKind::Keyword(Keyword::If),
                 TokenKind::Keyword(Keyword::Else),
@@ -470,6 +658,7 @@ mod tests {
                 TokenKind::Keyword(Keyword::Throw),
                 TokenKind::Keyword(Keyword::New),
                 TokenKind::Keyword(Keyword::TypeOf),
+                TokenKind::Keyword(Keyword::Void),
                 TokenKind::Punctuator('?'),
                 TokenKind::Punctuator(':'),
                 TokenKind::Eof,

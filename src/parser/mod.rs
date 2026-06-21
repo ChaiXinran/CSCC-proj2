@@ -172,17 +172,16 @@ impl Parser {
         }
     }
 
-    /// Consumes a statement terminator: an explicit `;`, or end of input.
-    ///
-    /// V1 does not implement automatic semicolon insertion at line terminators;
-    /// the only implicit terminator is EOF.
+    /// Consumes a statement terminator, including the common automatic
+    /// semicolon insertion boundaries at a line terminator and before `}`.
     fn expect_semicolon(&mut self) -> Result<(), ParseError> {
         match &self.peek().kind {
             TokenKind::Punctuator(';') => {
                 self.advance();
                 Ok(())
             }
-            TokenKind::Eof => Ok(()),
+            TokenKind::Eof | TokenKind::Punctuator('}') => Ok(()),
+            _ if self.peek().line_terminator_before => Ok(()),
             other => Err(self.error(format!("expected `;` but found {}", describe(other)))),
         }
     }
@@ -211,7 +210,7 @@ fn describe(kind: &TokenKind) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::{Span, Token, TokenKind};
+    use crate::lexer::{Lexer, Span, Token, TokenKind};
 
     use super::Parser;
 
@@ -219,5 +218,21 @@ mod tests {
     fn parses_empty_program() {
         let mut parser = Parser::new(vec![Token::new(TokenKind::Eof, Span::new(0, 0))]);
         assert!(parser.parse_program().unwrap().body.is_empty());
+    }
+
+    #[test]
+    fn inserts_semicolon_at_line_terminator() {
+        let tokens = Lexer::new("var first = 1\nvar second = 2")
+            .tokenize()
+            .unwrap();
+        assert_eq!(Parser::new(tokens).parse_program().unwrap().body.len(), 2);
+    }
+
+    #[test]
+    fn inserts_semicolon_before_closing_brace() {
+        let tokens = Lexer::new("function value() { return 1 }")
+            .tokenize()
+            .unwrap();
+        assert_eq!(Parser::new(tokens).parse_program().unwrap().body.len(), 1);
     }
 }

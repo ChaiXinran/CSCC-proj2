@@ -248,6 +248,18 @@ impl Vm {
                     let left = self.pop_number()?;
                     self.stack.push(JsValue::Number(left % right));
                 }
+                Instruction::Equal => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let result = self.abstract_equals(left, right, context)?;
+                    self.stack.push(JsValue::Boolean(result));
+                }
+                Instruction::NotEqual => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let result = self.abstract_equals(left, right, context)?;
+                    self.stack.push(JsValue::Boolean(!result));
+                }
                 Instruction::StrictEqual => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
@@ -871,6 +883,52 @@ impl Vm {
         )
     }
 
+    fn abstract_equals(
+        &mut self,
+        left: JsValue,
+        right: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<bool, VmError> {
+        if same_ecmascript_type(&left, &right) {
+            return Ok(left.strict_equals(&right));
+        }
+        if matches!(
+            (&left, &right),
+            (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null)
+        ) {
+            return Ok(true);
+        }
+        match (&left, &right) {
+            (JsValue::Number(left), JsValue::String(_)) => {
+                return Ok(JsValue::Number(*left)
+                    .strict_equals(&JsValue::Number(self.to_number(right, context)?)));
+            }
+            (JsValue::String(_), JsValue::Number(right)) => {
+                return Ok(JsValue::Number(self.to_number(left, context)?)
+                    .strict_equals(&JsValue::Number(*right)));
+            }
+            (JsValue::Boolean(_), _) => {
+                let left = JsValue::Number(self.to_number(left, context)?);
+                return self.abstract_equals(left, right, context);
+            }
+            (_, JsValue::Boolean(_)) => {
+                let right = JsValue::Number(self.to_number(right, context)?);
+                return self.abstract_equals(left, right, context);
+            }
+            _ => {}
+        }
+
+        if is_object_like(&left) && !is_object_like(&right) {
+            let left = self.to_primitive(left, PreferredType::Default, context)?;
+            return self.abstract_equals(left, right, context);
+        }
+        if !is_object_like(&left) && is_object_like(&right) {
+            let right = self.to_primitive(right, PreferredType::Default, context)?;
+            return self.abstract_equals(left, right, context);
+        }
+        Ok(false)
+    }
+
     // ── ECMAScript abstract coercion operations ──────────────────────────────
 
     /// ECMAScript `ToPrimitive`. Returns `value` unchanged if it is already a
@@ -1279,6 +1337,28 @@ impl Vm {
     }
 }
 
+fn same_ecmascript_type(left: &JsValue, right: &JsValue) -> bool {
+    matches!(
+        (left, right),
+        (JsValue::Undefined, JsValue::Undefined)
+            | (JsValue::Null, JsValue::Null)
+            | (JsValue::Boolean(_), JsValue::Boolean(_))
+            | (JsValue::Number(_), JsValue::Number(_))
+            | (JsValue::String(_), JsValue::String(_))
+            | (JsValue::Object(_), JsValue::Object(_))
+            | (JsValue::Function(_), JsValue::Function(_))
+            | (JsValue::BuiltinFunction(_), JsValue::BuiltinFunction(_))
+            | (JsValue::Error(_), JsValue::Error(_))
+    )
+}
+
+fn is_object_like(value: &JsValue) -> bool {
+    matches!(
+        value,
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+    )
+}
+
 fn existing_accessor_getter(
     context: &NativeContext,
     object: ObjectId,
@@ -1555,6 +1635,22 @@ mod tests {
         assert_eq!(
             Vm::default().execute(&chunk).unwrap(),
             JsValue::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn implements_basic_abstract_equality_coercion() {
+        let mut chunk = Chunk::default();
+        let number = constant(&mut chunk, Constant::Number(1.0));
+        let string = constant(&mut chunk, Constant::String("1".into()));
+        chunk.emit(Instruction::Constant(number));
+        chunk.emit(Instruction::Constant(string));
+        chunk.emit(Instruction::Equal);
+        chunk.emit(Instruction::Return);
+
+        assert_eq!(
+            Vm::default().execute(&chunk).unwrap(),
+            JsValue::Boolean(true)
         );
     }
 

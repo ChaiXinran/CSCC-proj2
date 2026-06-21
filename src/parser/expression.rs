@@ -20,7 +20,7 @@
 use crate::{
     ast::{
         ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
-        LogicalOperator, ObjectProperty, PropertyName, UnaryOperator,
+        LogicalOperator, ObjectProperty, PropertyName, Statement, UnaryOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -35,6 +35,9 @@ impl Parser {
     /// Parses `target = value`. Assignment is right associative and binds looser
     /// than the conditional operator and every binary operator.
     pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
+        if let Some(arrow) = self.try_parse_arrow_function()? {
+            return Ok(arrow);
+        }
         let left = self.parse_conditional()?;
         if self.eat_operator("=") {
             if !is_assignment_target(&left) {
@@ -48,6 +51,52 @@ impl Parser {
         } else {
             Ok(left)
         }
+    }
+
+    fn try_parse_arrow_function(&mut self) -> Result<Option<Expression>, ParseError> {
+        let saved = self.cursor;
+        let params = match self.peek().kind.clone() {
+            TokenKind::Identifier(name)
+                if matches!(
+                    self.tokens.get(self.cursor + 1),
+                    Some(crate::lexer::Token {
+                        kind: TokenKind::Operator(operator),
+                        line_terminator_before: false,
+                        ..
+                    }) if operator == "=>"
+                ) =>
+            {
+                self.advance();
+                vec![FunctionParam { name }]
+            }
+            TokenKind::Punctuator('(') => {
+                let Ok(params) = self.parse_param_list() else {
+                    self.cursor = saved;
+                    return Ok(None);
+                };
+                params
+            }
+            _ => return Ok(None),
+        };
+
+        if self.peek().line_terminator_before || !self.eat_operator("=>") {
+            self.cursor = saved;
+            return Ok(None);
+        }
+
+        let body = if self.check_punctuator('{') {
+            self.parse_function_body()?
+        } else {
+            let value = self.parse_assignment()?;
+            crate::ast::FunctionBody {
+                statements: vec![Statement::Return(Some(value))],
+            }
+        };
+        Ok(Some(Expression::Function(FunctionLiteral {
+            name: None,
+            params,
+            body,
+        })))
     }
 
     /// Parses `test ? consequent : alternate`.
@@ -93,7 +142,7 @@ impl Parser {
         }
     }
 
-    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`, `delete`).
+    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`, `void`, `delete`).
     fn parse_unary(&mut self) -> Result<Expression, ParseError> {
         if self.check_keyword(Keyword::TypeOf) {
             self.advance();
@@ -108,6 +157,14 @@ impl Parser {
             let argument = self.parse_unary()?;
             return Ok(Expression::Unary {
                 operator: UnaryOperator::Delete,
+                argument: Box::new(argument),
+            });
+        }
+        if self.check_keyword(Keyword::Void) {
+            self.advance();
+            let argument = self.parse_unary()?;
+            return Ok(Expression::Unary {
+                operator: UnaryOperator::Void,
                 argument: Box::new(argument),
             });
         }
@@ -300,6 +357,26 @@ impl Parser {
         &mut self,
         has_proto_setter: &mut bool,
     ) -> Result<ObjectProperty, ParseError> {
+        if self.eat_punctuator('[') {
+            let key = self.parse_assignment()?;
+            self.expect_punctuator(']')?;
+            if self.check_punctuator('(') {
+                let params = self.parse_param_list()?;
+                let body = self.parse_function_body()?;
+                return Ok(ObjectProperty::ComputedData {
+                    key,
+                    value: Expression::Function(FunctionLiteral {
+                        name: None,
+                        params,
+                        body,
+                    }),
+                });
+            }
+            self.expect_punctuator(':')?;
+            let value = self.parse_assignment()?;
+            return Ok(ObjectProperty::ComputedData { key, value });
+        }
+
         // Detect `get` / `set` context keywords.  They are only context keywords
         // here — they remain valid as regular identifier property names too.
         let is_get = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
@@ -372,6 +449,20 @@ impl Parser {
             return Ok(ObjectProperty::PrototypeSetter { value });
         }
 
+        if self.check_punctuator('(') {
+            let name = key.to_key_string();
+            let params = self.parse_param_list()?;
+            let body = self.parse_function_body()?;
+            return Ok(ObjectProperty::Data {
+                key,
+                value: Expression::Function(FunctionLiteral {
+                    name: Some(name),
+                    params,
+                    body,
+                }),
+            });
+        }
+
         self.expect_punctuator(':')?;
         let value = self.parse_assignment()?;
         Ok(ObjectProperty::Data { key, value })
@@ -428,7 +519,7 @@ fn binary_precedence(operator: &str) -> Option<u8> {
     Some(match operator {
         "||" => 1,
         "&&" => 2,
-        "===" | "!==" => 3,
+        "==" | "!=" | "===" | "!==" => 3,
         "<" | "<=" | ">" | ">=" => 4,
         "in" | "instanceof" => 4,
         "+" | "-" => 5,
@@ -469,6 +560,8 @@ fn binary_operator(operator: &str) -> BinaryOperator {
         "*" => BinaryOperator::Multiply,
         "/" => BinaryOperator::Divide,
         "%" => BinaryOperator::Remainder,
+        "==" => BinaryOperator::Equal,
+        "!=" => BinaryOperator::NotEqual,
         "===" => BinaryOperator::StrictEqual,
         "!==" => BinaryOperator::StrictNotEqual,
         "<" => BinaryOperator::LessThan,
@@ -689,6 +782,17 @@ mod tests {
     }
 
     #[test]
+    fn void_parses_as_unary() {
+        assert_eq!(
+            parse_expression("void 0"),
+            Expression::Unary {
+                operator: UnaryOperator::Void,
+                argument: Box::new(Expression::Literal(Literal::Number(0.0))),
+            }
+        );
+    }
+
+    #[test]
     fn new_with_arguments_builds_construct() {
         let expression = parse_expression("new Test262Error(\"boom\")");
         let Expression::Construct { callee, arguments } = expression else {
@@ -822,6 +926,27 @@ mod tests {
         };
         assert_eq!(name, Some("add".into()));
         assert_eq!(params, [param("a"), param("b")]);
+    }
+
+    #[test]
+    fn parses_arrow_function_forms() {
+        for source in [
+            "value => value",
+            "(left, right) => left + right",
+            "() => {}",
+        ] {
+            assert!(
+                matches!(parse_expression(source), Expression::Function(_)),
+                "expected arrow function for {source}"
+            );
+        }
+
+        let Expression::Function(FunctionLiteral { body, .. }) =
+            parse_expression("value => value + 1")
+        else {
+            panic!("expected arrow function");
+        };
+        assert!(matches!(body.statements[0], Statement::Return(Some(_))));
     }
 
     #[test]
@@ -997,6 +1122,34 @@ mod tests {
             .tokenize()
             .unwrap();
         assert!(Parser::new(tokens).parse_program().is_err());
+    }
+
+    #[test]
+    fn parses_object_method_shorthand() {
+        let Expression::Object(properties) = parse_expression("({ value() { return 1; } })") else {
+            panic!("expected object literal");
+        };
+        assert!(matches!(
+            &properties[0],
+            ObjectProperty::Data {
+                value: Expression::Function(FunctionLiteral { params, .. }),
+                ..
+            } if params.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parses_computed_object_property() {
+        let Expression::Object(properties) = parse_expression("({ ['x']: 1 })") else {
+            panic!("expected object literal");
+        };
+        assert!(matches!(
+            &properties[0],
+            ObjectProperty::ComputedData {
+                key: Expression::Literal(Literal::String(key)),
+                ..
+            } if key == "x"
+        ));
     }
 
     #[test]

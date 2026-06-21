@@ -19,6 +19,7 @@ pub enum UnaryOperator {
     Minus,
     Not,
     TypeOf,
+    Void,
     Delete,
 }
 
@@ -32,6 +33,8 @@ pub enum BinaryOperator {
     Remainder,
     /// Abstract equality (`==`), intentionally outside Native V1.
     Equal,
+    /// Abstract inequality (`!=`).
+    NotEqual,
     StrictEqual,
     StrictNotEqual,
     LessThan,
@@ -95,6 +98,8 @@ pub enum ObjectProperty {
         key: PropertyName,
         value: Expression,
     },
+    /// `[key]: value` — a data property whose key is evaluated at runtime.
+    ComputedData { key: Expression, value: Expression },
     /// `get key() { body }` — an accessor getter (0 parameters).
     Getter {
         key: PropertyName,

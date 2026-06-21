@@ -756,6 +756,11 @@ impl Compiler {
             UnaryOperator::Plus => Instruction::UnaryPlus,
             UnaryOperator::Minus => Instruction::Negate,
             UnaryOperator::Not => Instruction::LogicalNot,
+            UnaryOperator::Void => {
+                self.compile_expression(argument, chunk, context)?;
+                chunk.emit(Instruction::Pop);
+                return self.compile_literal(&Literal::Undefined, chunk);
+            }
             UnaryOperator::Delete => {
                 return self.compile_delete(argument, chunk, context);
             }
@@ -830,6 +835,8 @@ impl Compiler {
             BinaryOperator::Multiply => Instruction::Multiply,
             BinaryOperator::Divide => Instruction::Divide,
             BinaryOperator::Remainder => Instruction::Remainder,
+            BinaryOperator::Equal => Instruction::Equal,
+            BinaryOperator::NotEqual => Instruction::NotEqual,
             BinaryOperator::StrictEqual => Instruction::StrictEqual,
             BinaryOperator::StrictNotEqual => Instruction::StrictNotEqual,
             BinaryOperator::LessThan => Instruction::LessThan,
@@ -839,11 +846,6 @@ impl Compiler {
             BinaryOperator::In => Instruction::HasProperty,
             BinaryOperator::InstanceOf => Instruction::InstanceOf,
             BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => unreachable!(),
-            BinaryOperator::Equal => {
-                return Err(CompileError::unsupported(
-                    "binary operator Equal (abstract equality)",
-                ));
-            }
         };
 
         self.compile_expression(left, chunk, context)?;
@@ -1138,6 +1140,13 @@ impl Compiler {
                     self.compile_expression(value, chunk, context)?;
                     let key = self.add_name(&property_key(key), chunk)?;
                     chunk.emit(Instruction::DefineDataProperty(key));
+                }
+                ObjectProperty::ComputedData { key, value } => {
+                    chunk.emit(Instruction::Duplicate);
+                    self.compile_expression(key, chunk, context)?;
+                    self.compile_expression(value, chunk, context)?;
+                    chunk.emit(Instruction::SetElement);
+                    chunk.emit(Instruction::Pop);
                 }
                 ObjectProperty::Getter { key, body } => {
                     self.compile_accessor_function(std::iter::empty(), body, chunk, context)?;
