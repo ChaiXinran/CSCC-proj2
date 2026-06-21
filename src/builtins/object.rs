@@ -1,4 +1,4 @@
-//! `Object` constructor and static methods.
+//! `Object` constructor, static methods, and prototype methods.
 
 use crate::{
     runtime::{
@@ -9,11 +9,15 @@ use crate::{
 };
 
 pub fn install_object(context: &mut NativeContext) {
+    let Some(intrinsics) = context.intrinsics().cloned() else {
+        return;
+    };
     let Some(JsValue::BuiltinFunction(constructor)) = context.get_global("Object") else {
         return;
     };
     let constructor_object = context.builtin(constructor).unwrap().object;
 
+    // Static methods on Object constructor
     for (name, length, call) in [
         ("create", 2, object_create as crate::runtime::NativeCall),
         (
@@ -22,9 +26,19 @@ pub fn install_object(context: &mut NativeContext) {
             object_define_property as crate::runtime::NativeCall,
         ),
         (
+            "defineProperties",
+            2,
+            object_define_properties as crate::runtime::NativeCall,
+        ),
+        (
             "getOwnPropertyDescriptor",
             2,
             object_get_own_property_descriptor as crate::runtime::NativeCall,
+        ),
+        (
+            "getOwnPropertyNames",
+            1,
+            object_get_own_property_names as crate::runtime::NativeCall,
         ),
         (
             "getPrototypeOf",
@@ -37,6 +51,11 @@ pub fn install_object(context: &mut NativeContext) {
             object_set_prototype_of as crate::runtime::NativeCall,
         ),
         ("keys", 1, object_keys as crate::runtime::NativeCall),
+        ("values", 1, object_values as crate::runtime::NativeCall),
+        ("entries", 2, object_entries as crate::runtime::NativeCall),
+        ("assign", 2, object_assign as crate::runtime::NativeCall),
+        ("freeze", 1, object_freeze as crate::runtime::NativeCall),
+        ("isFrozen", 1, object_is_frozen as crate::runtime::NativeCall),
     ] {
         let value = context
             .register_builtin(name, length, call, None)
@@ -48,6 +67,38 @@ pub fn install_object(context: &mut NativeContext) {
                 PropertyDescriptor::data_with(value, true, false, true),
             )
             .expect("define Object static method");
+    }
+
+    // Instance methods on Object.prototype
+    for (name, length, call) in [
+        (
+            "hasOwnProperty",
+            1,
+            object_has_own_property as crate::runtime::NativeCall,
+        ),
+        ("toString", 0, object_to_string as crate::runtime::NativeCall),
+        ("valueOf", 0, object_value_of as crate::runtime::NativeCall),
+        (
+            "isPrototypeOf",
+            1,
+            object_is_prototype_of as crate::runtime::NativeCall,
+        ),
+        (
+            "propertyIsEnumerable",
+            1,
+            object_property_is_enumerable as crate::runtime::NativeCall,
+        ),
+    ] {
+        let value = context
+            .register_builtin(name, length, call, None)
+            .expect("install Object.prototype method");
+        context
+            .define_own_property(
+                intrinsics.object_prototype,
+                name.into(),
+                PropertyDescriptor::data_with(value, true, false, true),
+            )
+            .expect("define Object.prototype method");
     }
 }
 
@@ -314,4 +365,299 @@ fn descriptor_to_object(
 
 fn define_descriptor_field(object: &mut JsObject, name: &str, value: JsValue) {
     object.define_property(name, PropertyDescriptor::data_with(value, true, true, true));
+}
+
+// ── Object.prototype instance methods ────────────────────────────────────────
+
+fn object_has_own_property(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let key = to_property_key(arguments.first().unwrap_or(&JsValue::Undefined))?;
+    let object = context.require_object(&this_value, "hasOwnProperty")?;
+    Ok(JsValue::Boolean(
+        context.get_own_property(object, &key).is_some(),
+    ))
+}
+
+fn object_to_string(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let tag = match &this_value {
+        JsValue::Null => "Null",
+        JsValue::Undefined => "Undefined",
+        JsValue::Boolean(_) => "Boolean",
+        JsValue::Number(_) => "Number",
+        JsValue::String(_) => "String",
+        JsValue::Function(_) | JsValue::BuiltinFunction(_) => "Function",
+        JsValue::Object(id) => {
+            if context.is_array_object(*id).unwrap_or(false) {
+                "Array"
+            } else {
+                "Object"
+            }
+        }
+        JsValue::Error(_) => "Error",
+    };
+    Ok(JsValue::String(format!("[object {tag}]")))
+}
+
+fn object_value_of(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(this_value)
+}
+
+fn object_is_prototype_of(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let proto = match context.require_object(&this_value, "isPrototypeOf") {
+        Ok(id) => id,
+        Err(_) => return Ok(JsValue::Boolean(false)),
+    };
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let Ok(mut current) = context.require_object(&value, "isPrototypeOf target") else {
+        return Ok(JsValue::Boolean(false));
+    };
+    loop {
+        match context.get_prototype_of(current) {
+            None => return Ok(JsValue::Boolean(false)),
+            Some(p) if p == proto => return Ok(JsValue::Boolean(true)),
+            Some(p) => current = p,
+        }
+    }
+}
+
+fn object_property_is_enumerable(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let key = to_property_key(arguments.first().unwrap_or(&JsValue::Undefined))?;
+    let object = match context.require_object(&this_value, "propertyIsEnumerable") {
+        Ok(id) => id,
+        Err(_) => return Ok(JsValue::Boolean(false)),
+    };
+    Ok(JsValue::Boolean(
+        context
+            .get_own_property(object, &key)
+            .map(|d| d.enumerable)
+            .unwrap_or(false),
+    ))
+}
+
+// ── Additional Object static methods ─────────────────────────────────────────
+
+fn object_define_properties(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = context.require_object(&target, "defineProperties")?;
+    let props_value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if matches!(props_value, JsValue::Undefined | JsValue::Null) {
+        return Ok(target);
+    }
+    let props = context.require_object(&props_value, "defineProperties props")?;
+    let keys = context
+        .heap()
+        .object(props)
+        .ok_or_else(|| VmError::runtime("missing props object"))?
+        .own_property_keys();
+    for key in keys {
+        if !context
+            .get_own_property_descriptor(props, &key)
+            .is_some_and(|d| d.enumerable)
+        {
+            continue;
+        }
+        let descriptor_value = vm.get_property_value(JsValue::Object(props), &key, context)?;
+        let descriptor_object = context.require_object(&descriptor_value, "read property descriptor")?;
+        let update = descriptor_update_from_object(vm, context, descriptor_object)?;
+        if !context.validate_and_apply_property_descriptor(object, key, update)? {
+            return Err(VmError::type_error("cannot define property"));
+        }
+    }
+    Ok(target)
+}
+
+fn object_get_own_property_names(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = context.require_object(&target, "getOwnPropertyNames")?;
+    let keys: Vec<JsValue> = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing object"))?
+        .own_property_keys()
+        .into_iter()
+        .map(JsValue::String)
+        .collect();
+    context.create_array(keys)
+}
+
+fn object_values(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = context.require_object(&target, "Object.values")?;
+    let keys = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing object"))?
+        .own_property_keys();
+    let values: Vec<JsValue> = keys
+        .into_iter()
+        .filter(|key| {
+            context
+                .get_own_property_descriptor(object, key)
+                .is_some_and(|d| d.enumerable)
+        })
+        .filter_map(|key| context.get_own_property_descriptor(object, &key))
+        .filter_map(|d| d.value_cloned())
+        .collect();
+    context.create_array(values)
+}
+
+fn object_entries(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = context.require_object(&target, "Object.entries")?;
+    let keys = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing object"))?
+        .own_property_keys();
+    let mut pairs: Vec<JsValue> = Vec::new();
+    for key in keys {
+        let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
+            continue;
+        };
+        if !descriptor.enumerable {
+            continue;
+        }
+        let value = descriptor.value_cloned().unwrap_or(JsValue::Undefined);
+        let pair = context.create_array(vec![JsValue::String(key), value])?;
+        pairs.push(pair);
+    }
+    context.create_array(pairs)
+}
+
+fn object_assign(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let target_id = context.require_object(&target, "Object.assign")?;
+    for source in arguments.iter().skip(1) {
+        if matches!(source, JsValue::Undefined | JsValue::Null) {
+            continue;
+        }
+        let source_id = context.require_object(source, "Object.assign source")?;
+        let keys = context
+            .heap()
+            .object(source_id)
+            .ok_or_else(|| VmError::runtime("missing source object"))?
+            .own_property_keys();
+        for key in keys {
+            if !context
+                .get_own_property_descriptor(source_id, &key)
+                .is_some_and(|d| d.enumerable)
+            {
+                continue;
+            }
+            let value = vm.get_property_value(source.clone(), &key, context)?;
+            context
+                .define_own_property(
+                    target_id,
+                    key,
+                    PropertyDescriptor::data_with(value, true, true, true),
+                )
+                .ok();
+        }
+    }
+    Ok(target)
+}
+
+fn object_freeze(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if let JsValue::Object(object) = &target {
+        let keys = context
+            .heap()
+            .object(*object)
+            .ok_or_else(|| VmError::runtime("missing object"))?
+            .own_property_keys();
+        for key in keys {
+            if context.get_own_property_descriptor(*object, &key).is_none() {
+                continue;
+            }
+            let update = PropertyDescriptorUpdate {
+                writable: Some(false),
+                configurable: Some(false),
+                ..PropertyDescriptorUpdate::default()
+            };
+            context.validate_and_apply_property_descriptor(*object, key, update).ok();
+        }
+    }
+    Ok(target)
+}
+
+fn object_is_frozen(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let JsValue::Object(object) = target else {
+        return Ok(JsValue::Boolean(true));
+    };
+    let keys = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing object"))?
+        .own_property_keys();
+    for key in keys {
+        if context
+            .get_own_property_descriptor(object, &key)
+            .is_some_and(|d| {
+                d.configurable || matches!(d.kind, PropertyKind::Data { writable: true, .. })
+            })
+        {
+            return Ok(JsValue::Boolean(false));
+        }
+    }
+    Ok(JsValue::Boolean(true))
 }

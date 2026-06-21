@@ -61,7 +61,17 @@ impl Compiler {
         let mut context = CompileContext::default();
         let completion_expression = completion_expression_index(&program.body);
 
+        // Hoist function declarations to the top of the program scope.
+        for statement in &program.body {
+            if let Statement::FunctionDeclaration { name, params, body } = statement {
+                self.compile_function_declaration(name, params, body, &mut chunk, &mut context)?;
+            }
+        }
+
         for (index, statement) in program.body.iter().enumerate() {
+            if matches!(statement, Statement::FunctionDeclaration { .. }) {
+                continue;
+            }
             self.compile_statement(
                 statement,
                 &mut chunk,
@@ -123,13 +133,7 @@ impl Compiler {
             }
             Statement::Return(value) => self.compile_return(value.as_ref(), chunk, context),
             Statement::FunctionDeclaration { name, params, body } => self
-                .compile_function_declaration(
-                    name,
-                    params.iter().map(|p| p.name.as_str()),
-                    body,
-                    chunk,
-                    context,
-                ),
+                .compile_function_declaration(name, params, body, chunk, context),
         }
     }
 
@@ -139,8 +143,16 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        // Hoist function declarations to the top of the current scope.
         for statement in statements {
-            self.compile_statement(statement, chunk, context, false)?;
+            if let Statement::FunctionDeclaration { name, params, body } = statement {
+                self.compile_function_declaration(name, params, body, chunk, context)?;
+            }
+        }
+        for statement in statements {
+            if !matches!(statement, Statement::FunctionDeclaration { .. }) {
+                self.compile_statement(statement, chunk, context, false)?;
+            }
         }
         Ok(())
     }
@@ -269,15 +281,15 @@ impl Compiler {
     }
 
     /// Compiles a function declaration: emits `DeclareFunction { name, function }`.
-    fn compile_function_declaration<'a>(
+    fn compile_function_declaration(
         &mut self,
         name: &str,
-        params: impl Iterator<Item = &'a str>,
+        params: &[crate::ast::FunctionParam],
         body: &FunctionBody,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let fn_chunk = self.compile_function_body(params, body, context)?;
+        let fn_chunk = self.compile_function_body(params.iter().map(|p| p.name.as_str()), body, context)?;
         let template = FunctionTemplate {
             name: Some(name.to_string()),
             params: fn_chunk.params,
@@ -311,9 +323,17 @@ impl Compiler {
             loops: Vec::new(),
             function_depth: outer_context.function_depth + 1,
         };
+        // Hoist function declarations within the function body.
+        for statement in &body.statements {
+            if let Statement::FunctionDeclaration { name, params, body: inner_body } = statement {
+                self.compile_function_declaration(name, params, inner_body, &mut fn_chunk, &mut fn_context)?;
+            }
+        }
         // Compile the body statements; no "completion expression" inside function bodies.
         for statement in &body.statements {
-            self.compile_statement(statement, &mut fn_chunk, &mut fn_context, false)?;
+            if !matches!(statement, Statement::FunctionDeclaration { .. }) {
+                self.compile_statement(statement, &mut fn_chunk, &mut fn_context, false)?;
+            }
         }
         // Implicit undefined return at the end of the function
         fn_chunk.emit(Instruction::ReturnUndefined);
