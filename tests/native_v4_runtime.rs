@@ -154,6 +154,52 @@ fn sparse_arrays_track_holes_length_and_range_errors() {
 }
 
 #[test]
+fn array_length_shrink_recovers_when_non_configurable_element_blocks_delete() {
+    let mut context = NativeContext::default();
+    let array = context
+        .create_array(vec![
+            JsValue::Number(1.0),
+            JsValue::Number(2.0),
+            JsValue::Number(3.0),
+        ])
+        .unwrap();
+    let JsValue::Object(id) = array.clone() else {
+        panic!("expected array");
+    };
+
+    assert!(
+        context
+            .validate_and_apply_property_descriptor(
+                id,
+                "2".into(),
+                PropertyDescriptorUpdate {
+                    configurable: Some(false),
+                    ..PropertyDescriptorUpdate::default()
+                },
+            )
+            .unwrap()
+    );
+    assert!(
+        !context
+            .validate_and_apply_property_descriptor(
+                id,
+                "length".into(),
+                PropertyDescriptorUpdate {
+                    value: Some(JsValue::Number(1.0)),
+                    ..PropertyDescriptorUpdate::default()
+                },
+            )
+            .unwrap()
+    );
+
+    assert_eq!(
+        context.get_property(array.clone(), "length").unwrap(),
+        JsValue::Number(3.0)
+    );
+    assert!(context.has_property(id, "2").unwrap());
+}
+
+#[test]
 fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
     let mut function_chunk = Chunk::default();
     let this_name = string(&mut function_chunk, "x");

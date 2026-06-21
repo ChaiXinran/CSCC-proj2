@@ -9,7 +9,7 @@ use crate::{
         Intrinsics, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
         PropertyDescriptor,
     },
-    vm::{VmError, VmErrorKind},
+    vm::{Vm, VmError, VmErrorKind},
 };
 
 /// Installs the foundational constructors, prototypes, and V4 methods.
@@ -149,6 +149,7 @@ pub fn install_test262_harness(context: &mut NativeContext) {
 }
 
 fn assert_same_value(
+    _vm: &mut Vm,
     _context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -166,6 +167,7 @@ fn assert_same_value(
 }
 
 fn assert_not_same_value(
+    _vm: &mut Vm,
     _context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -183,6 +185,7 @@ fn assert_not_same_value(
 }
 
 fn test262_error_call(
+    _vm: &mut Vm,
     _context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -196,6 +199,7 @@ fn test262_error_call(
 }
 
 fn test262_error_construct(
+    _vm: &mut Vm,
     _context: &mut NativeContext,
     arguments: &[JsValue],
     _new_target: JsValue,

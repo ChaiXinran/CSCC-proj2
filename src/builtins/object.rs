@@ -5,7 +5,7 @@ use crate::{
         JsObject, JsValue, NativeContext, ObjectId, PropertyDescriptor, PropertyDescriptorUpdate,
         PropertyKind, to_property_key,
     },
-    vm::VmError,
+    vm::{Vm, VmError},
 };
 
 pub fn install_object(context: &mut NativeContext) {
@@ -52,6 +52,7 @@ pub fn install_object(context: &mut NativeContext) {
 }
 
 pub fn object_call(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -63,6 +64,7 @@ pub fn object_call(
 }
 
 pub fn object_construct(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     _new_target: JsValue,
@@ -91,6 +93,7 @@ fn object_from_argument(
 }
 
 fn object_create(
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -114,10 +117,17 @@ fn object_create(
             .ok_or_else(|| VmError::runtime("missing descriptor map"))?
             .own_property_keys();
         for key in keys {
-            let descriptor_value = context.get(JsValue::Object(properties), &key)?;
+            if !context
+                .get_own_property_descriptor(properties, &key)
+                .is_some_and(|descriptor| descriptor.enumerable)
+            {
+                continue;
+            }
+            let descriptor_value =
+                vm.get_property_value(JsValue::Object(properties), &key, context)?;
             let descriptor_object =
                 context.require_object(&descriptor_value, "read property descriptor")?;
-            let update = descriptor_update_from_object(context, descriptor_object)?;
+            let update = descriptor_update_from_object(vm, context, descriptor_object)?;
             if !context.validate_and_apply_property_descriptor(object, key, update)? {
                 return Err(VmError::type_error("cannot define property"));
             }
@@ -127,6 +137,7 @@ fn object_create(
 }
 
 fn object_define_property(
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -136,7 +147,7 @@ fn object_define_property(
     let key = to_property_key(arguments.get(1).unwrap_or(&JsValue::Undefined))?;
     let descriptor_value = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
     let descriptor_object = context.require_object(&descriptor_value, "read descriptor")?;
-    let update = descriptor_update_from_object(context, descriptor_object)?;
+    let update = descriptor_update_from_object(vm, context, descriptor_object)?;
     if context.validate_and_apply_property_descriptor(object, key, update)? {
         Ok(target)
     } else {
@@ -145,6 +156,7 @@ fn object_define_property(
 }
 
 fn object_get_own_property_descriptor(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -159,6 +171,7 @@ fn object_get_own_property_descriptor(
 }
 
 fn object_get_prototype_of(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -171,6 +184,7 @@ fn object_get_prototype_of(
 }
 
 fn object_set_prototype_of(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -186,6 +200,7 @@ fn object_set_prototype_of(
 }
 
 fn object_keys(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -209,35 +224,43 @@ fn object_keys(
 }
 
 fn descriptor_update_from_object(
-    context: &NativeContext,
+    vm: &mut Vm,
+    context: &mut NativeContext,
     descriptor_object: ObjectId,
 ) -> Result<PropertyDescriptorUpdate, VmError> {
     let mut update = PropertyDescriptorUpdate::default();
-    if let Some(value) = own_data_value(context, descriptor_object, "value") {
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "value")? {
         update.value = Some(value);
     }
-    if let Some(value) = own_data_value(context, descriptor_object, "writable") {
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "writable")? {
         update.writable = Some(value.to_boolean());
     }
-    if let Some(value) = own_data_value(context, descriptor_object, "enumerable") {
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "enumerable")? {
         update.enumerable = Some(value.to_boolean());
     }
-    if let Some(value) = own_data_value(context, descriptor_object, "configurable") {
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "configurable")? {
         update.configurable = Some(value.to_boolean());
     }
-    if let Some(value) = own_data_value(context, descriptor_object, "get") {
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "get")? {
         update.get = Some(optional_callable(value, "getter")?);
     }
-    if let Some(value) = own_data_value(context, descriptor_object, "set") {
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "set")? {
         update.set = Some(optional_callable(value, "setter")?);
     }
     Ok(update)
 }
 
-fn own_data_value(context: &NativeContext, object: ObjectId, key: &str) -> Option<JsValue> {
-    context
-        .get_own_property_descriptor(object, key)
-        .and_then(|descriptor| descriptor.value_cloned())
+fn descriptor_field(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    key: &str,
+) -> Result<Option<JsValue>, VmError> {
+    if !context.has_property(object, key)? {
+        return Ok(None);
+    }
+    vm.get_property_value(JsValue::Object(object), key, context)
+        .map(Some)
 }
 
 fn optional_callable(value: JsValue, label: &str) -> Result<Option<JsValue>, VmError> {

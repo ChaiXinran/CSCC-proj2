@@ -37,6 +37,7 @@ pub struct NativeContext {
     object_values: HashMap<ObjectId, JsValue>,
     builtin_registry: Vec<BuiltinFunction>,
     intrinsics: Option<Intrinsics>,
+    function_prototype_call: Option<BuiltinId>,
     strict: bool,
     output: Vec<String>,
     loop_budget_remaining: u64,
@@ -62,6 +63,7 @@ impl Default for NativeContext {
             object_values: HashMap::new(),
             builtin_registry: Vec::new(),
             intrinsics: None,
+            function_prototype_call: None,
             strict: false,
             output: Vec::new(),
             loop_budget_remaining: u64::MAX,
@@ -124,6 +126,15 @@ impl NativeContext {
     #[must_use]
     pub fn builtin(&self, id: BuiltinId) -> Option<&BuiltinFunction> {
         self.builtin_registry.get(id.0 as usize)
+    }
+
+    pub fn set_function_prototype_call(&mut self, id: BuiltinId) {
+        self.function_prototype_call = Some(id);
+    }
+
+    #[must_use]
+    pub fn is_function_prototype_call(&self, id: BuiltinId) -> bool {
+        self.function_prototype_call == Some(id)
     }
 
     #[must_use]
@@ -457,28 +468,13 @@ impl NativeContext {
         key: String,
         descriptor: PropertyDescriptor,
     ) -> Result<bool, VmError> {
-        if key == "length" && self.is_array_object(object)? {
-            if let Some(value) = descriptor.value_cloned() {
-                let length = self.array_length_from_value(value)?;
-                return self.set_array_length(object, length);
+        if self.is_array_object(object)? {
+            if key == "length" {
+                return self.define_array_length_property(object, descriptor);
             }
-            return Ok(false);
-        }
-        if self.is_array_object(object)?
-            && let Some(_) = array_index(&key)
-        {
-            let index = array_index(&key).unwrap();
-            if index >= MAX_ARRAY_LENGTH {
-                return Err(VmError::range("invalid array length"));
+            if let Some(index) = array_index(&key) {
+                return self.define_array_index_property(object, index, descriptor);
             }
-            let Some(value) = descriptor.value_cloned() else {
-                return Ok(false);
-            };
-            let object = self
-                .heap
-                .object_mut(object)
-                .ok_or_else(|| VmError::runtime("missing object"))?;
-            return Ok(object.set_own_property_value(key, value));
         }
 
         let object = self
@@ -495,12 +491,12 @@ impl NativeContext {
         key: String,
         update: PropertyDescriptorUpdate,
     ) -> Result<bool, VmError> {
-        if key == "length" && self.is_array_object(object)? {
-            if let Some(value) = update.value {
-                let length = self.array_length_from_value(value)?;
-                return self.set_array_length(object, length);
-            }
-            return Ok(true);
+        if descriptor_update_has_data(&update) && descriptor_update_has_accessor(&update) {
+            return Err(VmError::type_error("invalid mixed property descriptor"));
+        }
+
+        if self.is_array_object(object)? && key == "length" {
+            return self.validate_and_apply_array_length_descriptor(object, update);
         }
 
         let current = self.get_own_property_descriptor(object, &key);
@@ -518,56 +514,95 @@ impl NativeContext {
             {
                 return Ok(false);
             }
+
+            match &current.kind {
+                PropertyKind::Data { value, writable } => {
+                    if descriptor_update_has_accessor(&update) {
+                        return Ok(false);
+                    }
+                    if !*writable {
+                        if update.writable == Some(true) {
+                            return Ok(false);
+                        }
+                        if let Some(new_value) = &update.value
+                            && !value.same_value(new_value)
+                        {
+                            return Ok(false);
+                        }
+                    }
+                }
+                PropertyKind::Accessor { get, set } => {
+                    if descriptor_update_has_data(&update) {
+                        return Ok(false);
+                    }
+                    if let Some(new_get) = &update.get
+                        && !same_optional_value(get.as_ref(), new_get.as_ref())
+                    {
+                        return Ok(false);
+                    }
+                    if let Some(new_set) = &update.set
+                        && !same_optional_value(set.as_ref(), new_set.as_ref())
+                    {
+                        return Ok(false);
+                    }
+                }
+            }
         }
 
+        let PropertyDescriptorUpdate {
+            value: update_value,
+            writable: update_writable,
+            get: update_get,
+            set: update_set,
+            enumerable,
+            configurable,
+        } = update;
         let mut descriptor = current;
         match &mut descriptor.kind {
-            PropertyKind::Data { value, writable } => {
-                if let Some(new_value) = update.value {
-                    if !*writable && !value.same_value(&new_value) {
-                        return Ok(false);
-                    }
-                    *value = new_value;
-                }
-                if let Some(new_writable) = update.writable {
-                    if !descriptor.configurable && !*writable && new_writable {
-                        return Ok(false);
-                    }
-                    *writable = new_writable;
-                }
-                if update.get.is_some() || update.set.is_some() {
+            PropertyKind::Data {
+                value: current_value,
+                writable: current_writable,
+            } => {
+                if update_get.is_some() || update_set.is_some() {
                     if !descriptor.configurable {
                         return Ok(false);
                     }
                     descriptor.kind = PropertyKind::Accessor {
-                        get: update.get.flatten(),
-                        set: update.set.flatten(),
-                    };
-                }
-            }
-            PropertyKind::Accessor { get, set } => {
-                if update.value.is_some() || update.writable.is_some() {
-                    if !descriptor.configurable {
-                        return Ok(false);
-                    }
-                    descriptor.kind = PropertyKind::Data {
-                        value: update.value.unwrap_or(JsValue::Undefined),
-                        writable: update.writable.unwrap_or(false),
+                        get: update_get.flatten(),
+                        set: update_set.flatten(),
                     };
                 } else {
-                    if let Some(new_get) = update.get {
-                        *get = new_get;
+                    if let Some(new_value) = update_value {
+                        *current_value = new_value;
                     }
-                    if let Some(new_set) = update.set {
-                        *set = new_set;
+                    if let Some(new_writable) = update_writable {
+                        *current_writable = new_writable;
+                    }
+                }
+            }
+            PropertyKind::Accessor {
+                get: current_get,
+                set: current_set,
+            } => {
+                if update_value.is_some() || update_writable.is_some() {
+                    descriptor.kind = PropertyKind::Data {
+                        value: update_value.unwrap_or(JsValue::Undefined),
+                        writable: update_writable.unwrap_or(false),
+                    };
+                } else {
+                    if let Some(new_get) = update_get {
+                        *current_get = new_get;
+                    }
+                    if let Some(new_set) = update_set {
+                        *current_set = new_set;
                     }
                 }
             }
         }
-        if let Some(enumerable) = update.enumerable {
+        if let Some(enumerable) = enumerable {
             descriptor.enumerable = enumerable;
         }
-        if let Some(configurable) = update.configurable {
+        if let Some(configurable) = configurable {
             descriptor.configurable = configurable;
         }
         self.define_own_property(object, key, descriptor)
@@ -597,9 +632,9 @@ impl NativeContext {
         }
         if let Some(index) = array_index(key)
             && matches!(object.kind, ObjectKind::Array { .. })
-            && let Some(value) = object.get_own_property_value(&index.to_string())
+            && let Some(descriptor) = object.array_element_descriptor(index)
         {
-            return Some(PropertyDescriptor::data(value));
+            return Some(descriptor);
         }
         object.own_property(key).cloned()
     }
@@ -893,6 +928,86 @@ impl NativeContext {
         ))
     }
 
+    fn define_array_index_property(
+        &mut self,
+        object: ObjectId,
+        index: usize,
+        descriptor: PropertyDescriptor,
+    ) -> Result<bool, VmError> {
+        if index >= MAX_ARRAY_LENGTH {
+            return Err(VmError::range("invalid array length"));
+        }
+        let object = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        Ok(object.define_array_element(index, descriptor))
+    }
+
+    fn define_array_length_property(
+        &mut self,
+        object: ObjectId,
+        descriptor: PropertyDescriptor,
+    ) -> Result<bool, VmError> {
+        if descriptor.configurable || descriptor.enumerable {
+            return Ok(false);
+        }
+        let PropertyKind::Data { value, writable } = descriptor.kind else {
+            return Ok(false);
+        };
+        let length = self.array_length_from_value(value)?;
+        if !self.set_array_length(object, length)? {
+            return Ok(false);
+        }
+        self.set_array_length_writable(object, writable)
+    }
+
+    fn validate_and_apply_array_length_descriptor(
+        &mut self,
+        object: ObjectId,
+        update: PropertyDescriptorUpdate,
+    ) -> Result<bool, VmError> {
+        if descriptor_update_has_accessor(&update) {
+            return Ok(false);
+        }
+        if update.configurable == Some(true) || update.enumerable == Some(true) {
+            return Ok(false);
+        }
+
+        let current = self
+            .get_own_property_descriptor(object, "length")
+            .ok_or_else(|| VmError::runtime("missing array length descriptor"))?;
+        let current_length = current
+            .value_cloned()
+            .and_then(|value| value.to_number())
+            .unwrap_or(0.0) as usize;
+        let current_writable = current.writable();
+
+        if !current_writable {
+            if update.writable == Some(true) {
+                return Ok(false);
+            }
+            if let Some(value) = update.value {
+                let length = self.array_length_from_value(value)?;
+                if length != current_length {
+                    return Ok(false);
+                }
+            }
+            return Ok(true);
+        }
+
+        if let Some(value) = update.value {
+            let length = self.array_length_from_value(value)?;
+            if !self.set_array_length(object, length)? {
+                return Ok(false);
+            }
+        }
+        if update.writable == Some(false) {
+            return self.set_array_length_writable(object, false);
+        }
+        Ok(true)
+    }
+
     pub fn set_array_length(&mut self, object: ObjectId, length: usize) -> Result<bool, VmError> {
         if length > MAX_ARRAY_LENGTH {
             return Err(VmError::range("invalid array length"));
@@ -902,6 +1017,18 @@ impl NativeContext {
             .object_mut(object)
             .ok_or_else(|| VmError::runtime("missing object"))?;
         Ok(object.set_array_length(length))
+    }
+
+    fn set_array_length_writable(
+        &mut self,
+        object: ObjectId,
+        writable: bool,
+    ) -> Result<bool, VmError> {
+        let object = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        Ok(object.set_array_length_writable(writable))
     }
 
     pub fn array_length_from_value(&self, value: JsValue) -> Result<usize, VmError> {
@@ -986,6 +1113,22 @@ pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
         | JsValue::Error(_) => Err(VmError::type_error(
             "object property keys are not supported in native V4",
         )),
+    }
+}
+
+fn descriptor_update_has_data(update: &PropertyDescriptorUpdate) -> bool {
+    update.value.is_some() || update.writable.is_some()
+}
+
+fn descriptor_update_has_accessor(update: &PropertyDescriptorUpdate) -> bool {
+    update.get.is_some() || update.set.is_some()
+}
+
+fn same_optional_value(left: Option<&JsValue>, right: Option<&JsValue>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.same_value(right),
+        (None, None) => true,
+        _ => false,
     }
 }
 

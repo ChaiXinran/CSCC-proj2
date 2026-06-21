@@ -2,7 +2,7 @@
 
 use crate::{
     runtime::{JsValue, NativeContext, ObjectId, PropertyDescriptor},
-    vm::VmError,
+    vm::{Vm, VmError},
 };
 
 pub fn install_array(context: &mut NativeContext) {
@@ -43,6 +43,7 @@ pub fn install_array(context: &mut NativeContext) {
 }
 
 pub fn array_call(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -51,6 +52,7 @@ pub fn array_call(
 }
 
 pub fn array_construct(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     _new_target: JsValue,
@@ -68,6 +70,7 @@ fn create_array(context: &mut NativeContext, arguments: &[JsValue]) -> Result<Js
 }
 
 fn array_is_array(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -82,6 +85,7 @@ fn array_is_array(
 }
 
 fn array_push(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
@@ -105,6 +109,7 @@ fn array_push(
 }
 
 fn array_pop(
+    _vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
@@ -122,8 +127,12 @@ fn array_pop(
     let new_length = length - 1;
     let key = new_length.to_string();
     let value = context.get_property(this_value, &key)?;
-    context.delete_property(object, &key, false)?;
-    context.set_array_length(object, new_length)?;
+    if !context.delete_property(object, &key, false)? {
+        return Err(VmError::type_error("cannot delete array element"));
+    }
+    if !context.set_array_length(object, new_length)? {
+        return Err(VmError::type_error("cannot update array length"));
+    }
     Ok(value)
 }
 

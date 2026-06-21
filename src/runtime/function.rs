@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::bytecode::Chunk;
-use crate::vm::VmError;
+use crate::vm::{Vm, VmError};
 
 use super::{EnvironmentId, JsValue, NativeContext, ObjectId};
 
@@ -26,6 +26,7 @@ pub struct BuiltinId(pub u16);
 
 /// Signature for a native function invoked as a regular call.
 pub type NativeCall = fn(
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
@@ -33,6 +34,7 @@ pub type NativeCall = fn(
 
 /// Signature for a native function invoked as a constructor (`new`).
 pub type NativeConstruct = fn(
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
