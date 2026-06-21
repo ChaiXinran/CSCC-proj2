@@ -158,6 +158,15 @@ impl RuntimeBackend for BoaRuntime {
         })
     }
 
+    fn parse_only(&mut self, source: &str, options: ExecutionOptions) -> Result<(), EvalFailure> {
+        clear_captured_output();
+        self.strict = options.strict;
+        self.context.strict(options.strict);
+        Script::parse(Source::from_bytes(source), None, &mut self.context)
+            .map(|_| ())
+            .map_err(|error| classify_error(error, &mut self.context))
+    }
+
     fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure> {
         self.evaluate_script(source).map(|_| ())
     }

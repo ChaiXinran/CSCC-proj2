@@ -143,6 +143,14 @@ impl Runtime {
         self.backend.eval_fragment(source)
     }
 
+    pub(crate) fn parse_only(
+        &mut self,
+        source: &str,
+        options: ExecutionOptions,
+    ) -> Result<(), EvalFailure> {
+        self.backend.parse_only(source, options)
+    }
+
     pub(crate) fn run_jobs(&mut self) -> Result<(), EvalFailure> {
         self.backend.run_jobs()
     }

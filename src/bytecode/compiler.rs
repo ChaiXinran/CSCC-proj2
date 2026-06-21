@@ -1,13 +1,17 @@
 //! AST-to-bytecode compiler.
 
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    ArrayElement, BinaryOperator, Expression, FunctionBody, FunctionLiteral, Literal,
-    LogicalOperator, ObjectProperty, Program, PropertyName, Statement, UnaryOperator, VariableKind,
+    ArrayElement, BinaryOperator, CatchClause, Expression, FunctionBody, FunctionLiteral, Literal,
+    LogicalOperator, ObjectProperty, Program, PropertyName, Statement, SwitchCase, UnaryOperator,
+    VariableKind,
 };
 
-use super::{Chunk, ChunkError, Constant, EnvironmentCapturePolicy, FunctionTemplate, Instruction};
+use super::{
+    Chunk, ChunkError, Constant, EnvironmentCapturePolicy, ExceptionHandler, FunctionTemplate,
+    HandlerKind, Instruction,
+};
 
 /// Compilation failure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -30,6 +34,9 @@ pub struct Compiler;
 #[derive(Debug, Default)]
 struct CompileContext {
     loops: Vec<LoopContext>,
+    breakables: Vec<BreakContext>,
+    lexical_scopes: Vec<HashSet<String>>,
+    environment_depth: u32,
     /// Number of enclosing function bodies; 0 = top-level script.
     function_depth: usize,
 }
@@ -37,12 +44,25 @@ struct CompileContext {
 #[derive(Debug)]
 struct LoopContext {
     continue_target: usize,
+    environment_depth: u32,
+}
+
+#[derive(Debug)]
+struct BreakContext {
     break_jumps: Vec<usize>,
+    environment_depth: u32,
 }
 
 impl CompileContext {
     fn inside_function(&self) -> bool {
         self.function_depth > 0
+    }
+
+    fn is_lexical(&self, name: &str) -> bool {
+        self.lexical_scopes
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
     }
 }
 
@@ -60,6 +80,8 @@ impl Compiler {
         let mut chunk = Chunk::default();
         let mut context = CompileContext::default();
         let completion_expression = completion_expression_index(&program.body);
+        let lexical_scope = self.predeclare_lexical_bindings(&program.body, &mut chunk)?;
+        context.lexical_scopes.push(lexical_scope);
 
         // Hoist function declarations to the top of the program scope.
         for statement in &program.body {
@@ -79,6 +101,7 @@ impl Compiler {
                 Some(index) == completion_expression,
             )?;
         }
+        context.lexical_scopes.pop();
 
         chunk.emit(if completion_expression.is_some() {
             Instruction::Return
@@ -105,7 +128,7 @@ impl Compiler {
                 }
                 Ok(())
             }
-            Statement::Block(statements) => self.compile_statement_list(statements, chunk, context),
+            Statement::Block(statements) => self.compile_block(statements, chunk, context),
             Statement::VariableDeclaration { kind, declarations } => {
                 for declarator in declarations {
                     self.compile_variable_declaration(
@@ -134,7 +157,45 @@ impl Compiler {
             Statement::Return(value) => self.compile_return(value.as_ref(), chunk, context),
             Statement::FunctionDeclaration { name, params, body } => self
                 .compile_function_declaration(name, params, body, chunk, context),
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => self.compile_try(
+                block,
+                handler.as_ref(),
+                finalizer.as_deref(),
+                chunk,
+                context,
+            ),
+            Statement::Switch {
+                discriminant,
+                cases,
+            } => self.compile_switch(discriminant, cases, chunk, context),
         }
+    }
+
+    fn compile_block(
+        &mut self,
+        statements: &[Statement],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let names = lexical_names(statements);
+        if names.is_empty() {
+            return self.compile_statement_list(statements, chunk, context);
+        }
+
+        chunk.emit(Instruction::CreateLexicalEnvironment);
+        context.environment_depth += 1;
+        let scope = self.predeclare_names(&names, statements, chunk)?;
+        context.lexical_scopes.push(scope);
+        let result = self.compile_statement_list(statements, chunk, context);
+        context.lexical_scopes.pop();
+        result?;
+        chunk.emit(Instruction::PopEnvironment);
+        context.environment_depth -= 1;
+        Ok(())
     }
 
     fn compile_statement_list(
@@ -154,6 +215,221 @@ impl Compiler {
                 self.compile_statement(statement, chunk, context, false)?;
             }
         }
+        Ok(())
+    }
+
+    fn predeclare_lexical_bindings(
+        &mut self,
+        statements: &[Statement],
+        chunk: &mut Chunk,
+    ) -> Result<HashSet<String>, CompileError> {
+        let names = lexical_names(statements);
+        self.predeclare_names(&names, statements, chunk)
+    }
+
+    fn predeclare_names(
+        &mut self,
+        names: &[String],
+        statements: &[Statement],
+        chunk: &mut Chunk,
+    ) -> Result<HashSet<String>, CompileError> {
+        let mut scope = HashSet::new();
+        for name in names {
+            let kind = lexical_kind(statements, name)
+                .expect("lexical name must originate from a declaration");
+            let index = self.add_name(name, chunk)?;
+            chunk.emit(match kind {
+                VariableKind::Let => Instruction::CreateMutableBinding(index),
+                VariableKind::Const => Instruction::CreateImmutableBinding(index),
+                VariableKind::Var => unreachable!(),
+            });
+            scope.insert(name.clone());
+        }
+        Ok(scope)
+    }
+
+    fn compile_try(
+        &mut self,
+        block: &[Statement],
+        handler: Option<&CatchClause>,
+        finalizer: Option<&[Statement]>,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let protected_start = chunk.current_offset();
+        let handler_environment_depth = context.environment_depth;
+        self.compile_block(block, chunk, context)?;
+        let protected_end = chunk.current_offset();
+        let normal_exit = chunk.emit(Instruction::Jump(usize::MAX));
+
+        let mut catch_exit = None;
+        if let Some(handler) = handler {
+            let catch_target = chunk.current_offset();
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+
+            let names = lexical_names(&handler.body);
+            let mut scope = self.predeclare_names(&names, &handler.body, chunk)?;
+            if let Some(parameter) = &handler.parameter {
+                let parameter_index = self.add_name(parameter, chunk)?;
+                chunk.emit(Instruction::CreateMutableBinding(parameter_index));
+                scope.insert(parameter.clone());
+                chunk.emit(Instruction::LoadException);
+                chunk.emit(Instruction::InitializeBinding(parameter_index));
+            } else {
+                chunk.emit(Instruction::LoadException);
+                chunk.emit(Instruction::Pop);
+            }
+
+            context.lexical_scopes.push(scope);
+            let result = self.compile_statement_list(&handler.body, chunk, context);
+            context.lexical_scopes.pop();
+            result?;
+            chunk.emit(Instruction::PopEnvironment);
+            context.environment_depth -= 1;
+            catch_exit = Some(chunk.emit(Instruction::Jump(usize::MAX)));
+
+            if protected_start < protected_end {
+                chunk.handlers.push(ExceptionHandler {
+                    start: protected_start,
+                    end: protected_end,
+                    target: catch_target,
+                    kind: HandlerKind::Catch,
+                    stack_depth: 0,
+                    environment_depth: handler_environment_depth,
+                });
+            }
+        }
+
+        if let Some(finalizer) = finalizer {
+            let finally_target = chunk.current_offset();
+            chunk
+                .patch_jump(normal_exit, finally_target)
+                .map_err(CompileError::from_chunk)?;
+            if let Some(catch_exit) = catch_exit {
+                chunk
+                    .patch_jump(catch_exit, finally_target)
+                    .map_err(CompileError::from_chunk)?;
+            }
+
+            self.compile_block(finalizer, chunk, context)?;
+            chunk.emit(Instruction::EndFinally);
+
+            if protected_start < finally_target {
+                chunk.handlers.push(ExceptionHandler {
+                    start: protected_start,
+                    end: finally_target,
+                    target: finally_target,
+                    kind: HandlerKind::Finally,
+                    stack_depth: 0,
+                    environment_depth: handler_environment_depth,
+                });
+            }
+        } else {
+            let end = chunk.current_offset();
+            chunk
+                .patch_jump(normal_exit, end)
+                .map_err(CompileError::from_chunk)?;
+            if let Some(catch_exit) = catch_exit {
+                chunk
+                    .patch_jump(catch_exit, end)
+                    .map_err(CompileError::from_chunk)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn compile_switch(
+        &mut self,
+        discriminant: &Expression,
+        cases: &[SwitchCase],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        self.compile_expression(discriminant, chunk, context)?;
+
+        let lexical_statements: Vec<Statement> = cases
+            .iter()
+            .flat_map(|case| case.consequent.iter().cloned())
+            .collect();
+        let lexical_names = lexical_names(&lexical_statements);
+        let has_lexical_scope = !lexical_names.is_empty();
+        if has_lexical_scope {
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+        }
+        let scope = self.predeclare_names(&lexical_names, &lexical_statements, chunk)?;
+        context.lexical_scopes.push(scope);
+
+        let mut match_jumps = Vec::new();
+        for (index, case) in cases.iter().enumerate() {
+            let Some(test) = &case.test else {
+                continue;
+            };
+            chunk.emit(Instruction::Duplicate);
+            self.compile_expression(test, chunk, context)?;
+            chunk.emit(Instruction::StrictEqual);
+            let jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX));
+            chunk.emit(Instruction::Pop);
+            match_jumps.push((index, jump));
+        }
+
+        let default_index = cases.iter().position(|case| case.test.is_none());
+        chunk.emit(Instruction::Pop);
+        let default_dispatch = chunk.emit(Instruction::Jump(usize::MAX));
+
+        let mut case_stubs = Vec::new();
+        for (case_index, match_jump) in match_jumps {
+            let stub = chunk.current_offset();
+            chunk
+                .patch_jump(match_jump, stub)
+                .map_err(CompileError::from_chunk)?;
+            chunk.emit(Instruction::Pop);
+            chunk.emit(Instruction::Pop);
+            let body_jump = chunk.emit(Instruction::Jump(usize::MAX));
+            case_stubs.push((case_index, body_jump));
+        }
+
+        context.breakables.push(BreakContext {
+            break_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+        let mut body_starts = Vec::with_capacity(cases.len());
+        for case in cases {
+            body_starts.push(chunk.current_offset());
+            self.compile_statement_list(&case.consequent, chunk, context)?;
+        }
+
+        let cleanup = chunk.current_offset();
+        if has_lexical_scope {
+            chunk.emit(Instruction::PopEnvironment);
+            context.environment_depth -= 1;
+        }
+        let end = chunk.current_offset();
+
+        for (case_index, body_jump) in case_stubs {
+            chunk
+                .patch_jump(body_jump, body_starts[case_index])
+                .map_err(CompileError::from_chunk)?;
+        }
+        let default_target = default_index.map_or(cleanup, |index| body_starts[index]);
+        chunk
+            .patch_jump(default_dispatch, default_target)
+            .map_err(CompileError::from_chunk)?;
+
+        let break_context = context
+            .breakables
+            .pop()
+            .expect("switch break context must exist");
+        for jump in break_context.break_jumps {
+            chunk
+                .patch_jump(jump, cleanup)
+                .map_err(CompileError::from_chunk)?;
+        }
+        context.lexical_scopes.pop();
+
+        debug_assert!(cleanup <= end);
         Ok(())
     }
 
@@ -201,10 +477,15 @@ impl Compiler {
 
         context.loops.push(LoopContext {
             continue_target: loop_start,
+            environment_depth: context.environment_depth,
+        });
+        context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
         });
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
             context.loops.pop();
+            context.breakables.pop();
             return Err(error);
         }
         chunk.emit(Instruction::Jump(loop_start));
@@ -216,11 +497,15 @@ impl Compiler {
         chunk.emit(Instruction::Pop);
         let loop_end = chunk.current_offset();
 
-        let loop_context = context
+        context
             .loops
             .pop()
             .expect("the current while loop context must exist");
-        for jump in loop_context.break_jumps {
+        let break_context = context
+            .breakables
+            .pop()
+            .expect("the current while break context must exist");
+        for jump in break_context.break_jumps {
             chunk
                 .patch_jump(jump, loop_end)
                 .map_err(CompileError::from_chunk)?;
@@ -233,16 +518,24 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        if context.loops.is_empty() {
+        if context.breakables.is_empty() {
             return Err(CompileError::unsupported(
-                "break statement outside of a loop",
+                "break statement outside of a loop or switch",
             ));
+        }
+        let target_environment_depth = context
+            .breakables
+            .last()
+            .expect("checked that a breakable context exists")
+            .environment_depth;
+        for _ in target_environment_depth..context.environment_depth {
+            chunk.emit(Instruction::PopEnvironment);
         }
         let jump = chunk.emit(Instruction::Jump(usize::MAX));
         context
-            .loops
+            .breakables
             .last_mut()
-            .expect("checked that a loop context exists")
+            .expect("checked that a breakable context exists")
             .break_jumps
             .push(jump);
         Ok(())
@@ -253,12 +546,14 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let target = context
+        let loop_context = context
             .loops
             .last()
-            .ok_or_else(|| CompileError::unsupported("continue statement outside of a loop"))?
-            .continue_target;
-        chunk.emit(Instruction::Jump(target));
+            .ok_or_else(|| CompileError::unsupported("continue statement outside of a loop"))?;
+        for _ in loop_context.environment_depth..context.environment_depth {
+            chunk.emit(Instruction::PopEnvironment);
+        }
+        chunk.emit(Instruction::Jump(loop_context.continue_target));
         Ok(())
     }
 
@@ -321,8 +616,13 @@ impl Compiler {
         let mut fn_chunk = Chunk::default();
         let mut fn_context = CompileContext {
             loops: Vec::new(),
+            breakables: Vec::new(),
+            lexical_scopes: Vec::new(),
+            environment_depth: 0,
             function_depth: outer_context.function_depth + 1,
         };
+        let lexical_scope = self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
+        fn_context.lexical_scopes.push(lexical_scope);
         // Hoist function declarations within the function body.
         for statement in &body.statements {
             if let Statement::FunctionDeclaration { name, params, body: inner_body } = statement {
@@ -335,6 +635,7 @@ impl Compiler {
                 self.compile_statement(statement, &mut fn_chunk, &mut fn_context, false)?;
             }
         }
+        fn_context.lexical_scopes.pop();
         // Implicit undefined return at the end of the function
         fn_chunk.emit(Instruction::ReturnUndefined);
         fn_chunk.validate().map_err(CompileError::from_chunk)?;
@@ -423,7 +724,7 @@ impl Compiler {
             return Ok(());
         }
         let name_index = self.add_name(name, chunk)?;
-        if context.inside_function() {
+        if context.inside_function() || context.is_lexical(name) {
             chunk.emit(Instruction::LoadName(name_index));
         } else {
             chunk.emit(Instruction::LoadGlobal(name_index));
@@ -448,7 +749,7 @@ impl Compiler {
             UnaryOperator::TypeOf => {
                 if let Expression::Identifier(name) = argument {
                     let name_index = self.add_name(name, chunk)?;
-                    if context.inside_function() {
+                    if context.inside_function() || context.is_lexical(name) {
                         chunk.emit(Instruction::TypeOfName(name_index));
                     } else {
                         chunk.emit(Instruction::TypeOfGlobal(name_index));
@@ -569,10 +870,10 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        if kind != VariableKind::Var {
-            return Err(CompileError::unsupported(format!(
-                "variable declaration kind {kind:?}"
-            )));
+        if kind == VariableKind::Const && initializer.is_none() {
+            return Err(CompileError::unsupported(
+                "const declaration without an initializer",
+            ));
         }
 
         match initializer {
@@ -586,10 +887,16 @@ impl Compiler {
         }
 
         let name_index = self.add_name(name, chunk)?;
-        if context.inside_function() {
-            chunk.emit(Instruction::DeclareLocal(name_index));
-        } else {
-            chunk.emit(Instruction::DeclareGlobal(name_index));
+        match kind {
+            VariableKind::Var if context.inside_function() => {
+                chunk.emit(Instruction::DeclareLocal(name_index));
+            }
+            VariableKind::Var => {
+                chunk.emit(Instruction::DeclareGlobal(name_index));
+            }
+            VariableKind::Let | VariableKind::Const => {
+                chunk.emit(Instruction::InitializeBinding(name_index));
+            }
         }
         Ok(())
     }
@@ -605,7 +912,7 @@ impl Compiler {
             Expression::Identifier(name) => {
                 self.compile_expression(value, chunk, context)?;
                 let name_index = self.add_name(name, chunk)?;
-                if context.inside_function() {
+                if context.inside_function() || context.is_lexical(name) {
                     chunk.emit(Instruction::StoreName(name_index));
                 } else {
                     chunk.emit(Instruction::StoreGlobal(name_index));
@@ -939,6 +1246,36 @@ struct CompiledFunction {
 
 fn property_key(key: &PropertyName) -> String {
     key.to_key_string()
+}
+
+fn lexical_names(statements: &[Statement]) -> Vec<String> {
+    statements
+        .iter()
+        .flat_map(|statement| match statement {
+            Statement::VariableDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                declarations,
+            } => declarations
+                .iter()
+                .map(|declaration| declaration.name.clone())
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn lexical_kind(statements: &[Statement], name: &str) -> Option<VariableKind> {
+    statements.iter().find_map(|statement| match statement {
+        Statement::VariableDeclaration { kind, declarations }
+            if matches!(kind, VariableKind::Let | VariableKind::Const)
+                && declarations
+                    .iter()
+                    .any(|declaration| declaration.name == name) =>
+        {
+            Some(*kind)
+        }
+        _ => None,
+    })
 }
 
 fn completion_expression_index(statements: &[Statement]) -> Option<usize> {

@@ -85,6 +85,16 @@ Throw
 
 ## V5：异常与现代语法
 
+具体范围、共享接口和并行开发规则已经冻结在：
+
+- `docs/native-v5-scope.md`
+- `docs/native-v5-interface.md`
+- `docs/native-v5-team-plan.md`
+
+第一批优先完成 Completion、`try/catch/finally`、`switch`、`let/const` 与
+TDZ。箭头函数、解构、展开/剩余参数和 class 作为后续 V5 扩展，避免与
+尚在修复的 V4 Runtime/Builtins 同时修改高冲突文件。
+
 实现：
 
 - `try/catch/finally`
@@ -223,4 +233,5 @@ cargo test --test native_test262
 - 完整 Module Loader
 - 高级 GC 优化
 
-下一步应先建立 `docs/competition-roadmap.md` 和 `docs/native-v2-scope.md`，然后从 `Block + if/else + Jump + Throw` 开始第二版本。
+当前下一步是先合并 V5 共享契约，再由 A、B、D 组分别开展前端、字节码和
+Test262 准备；C 组等待 V4 修复基线合并后实现 Completion、异常处理和词法环境。

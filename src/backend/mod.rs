@@ -37,6 +37,8 @@ pub(crate) trait RuntimeBackend {
         options: ExecutionOptions,
     ) -> Result<BackendExecution, EvalFailure>;
 
+    fn parse_only(&mut self, source: &str, options: ExecutionOptions) -> Result<(), EvalFailure>;
+
     fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure>;
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure>;

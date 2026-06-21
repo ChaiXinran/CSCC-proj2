@@ -3,12 +3,14 @@
 use std::fmt;
 
 use crate::{
-    bytecode::{Chunk, Constant, EnvironmentCapturePolicy, Instruction},
+    bytecode::{
+        Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
+    },
     runtime::{
         FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, ObjectId,
         PropertyDescriptor, PropertyKind, to_property_key,
     },
-    vm::CallFrame,
+    vm::{CallFrame, Completion},
 };
 
 /// Native VM failure category.
@@ -91,6 +93,20 @@ impl std::error::Error for VmError {}
 #[derive(Debug, Default)]
 pub struct Vm {
     stack: Vec<JsValue>,
+    pending_exception: Option<JsValue>,
+    finally_stack: Vec<Completion>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum OperationResult {
+    Value(JsValue),
+    Throw(JsValue),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RunBaseline {
+    stack_depth: usize,
+    environment_depth: usize,
 }
 
 impl Vm {
@@ -104,19 +120,55 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         self.stack.clear();
-        let result = self.run(chunk, context);
+        self.pending_exception = None;
+        self.finally_stack.clear();
+        let result = self.run_completion(chunk, context);
         if result.is_err() {
             self.stack.clear();
+            self.pending_exception = None;
+            self.finally_stack.clear();
         }
-        result
+        match result? {
+            Completion::Normal(value) | Completion::Return(value) => Ok(value),
+            Completion::Throw(value) => {
+                self.stack.clear();
+                self.pending_exception = None;
+                self.finally_stack.clear();
+                Err(throw_value(value))
+            }
+            Completion::Break(label) => {
+                self.stack.clear();
+                Err(VmError::runtime(format!(
+                    "unhandled break completion{}",
+                    label_suffix(label.as_deref())
+                )))
+            }
+            Completion::Continue(label) => {
+                self.stack.clear();
+                Err(VmError::runtime(format!(
+                    "unhandled continue completion{}",
+                    label_suffix(label.as_deref())
+                )))
+            }
+        }
     }
 
-    fn run(&mut self, chunk: &Chunk, context: &mut NativeContext) -> Result<JsValue, VmError> {
+    fn run_completion(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+    ) -> Result<Completion, VmError> {
         let mut instruction_pointer = 0;
+        let baseline = RunBaseline {
+            stack_depth: self.stack.len(),
+            environment_depth: context.environment_depth(),
+        };
         while instruction_pointer < chunk.instructions.len() {
             let current_instruction = instruction_pointer;
             let instruction = chunk.instructions[current_instruction];
             instruction_pointer += 1;
+            let mut abrupt = None;
+            let mut discard_saved_finally = false;
 
             match instruction {
                 Instruction::Constant(index) => {
@@ -135,22 +187,29 @@ impl Vm {
                 }
                 Instruction::LoadGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
-                    let value = context.get_global(name).ok_or_else(|| {
-                        VmError::reference(format!(
-                            "{name} is not defined at instruction {current_instruction}"
-                        ))
-                    })?;
-                    self.stack.push(value);
+                    match context.get_global(name) {
+                        Some(value) => self.stack.push(value),
+                        None => {
+                            let error = VmError::reference(format!(
+                                "{name} is not defined at instruction {current_instruction}"
+                            ));
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::StoreGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let value = self.pop_value()?;
                     if !context.set_global(name, value.clone()) {
-                        return Err(VmError::reference(format!(
+                        let error = VmError::reference(format!(
                             "{name} is not defined at instruction {current_instruction}"
-                        )));
+                        ));
+                        abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                        discard_saved_finally = true;
+                    } else {
+                        self.stack.push(value);
                     }
-                    self.stack.push(value);
                 }
                 Instruction::UnaryPlus => {
                     let value = self.pop_number()?;
@@ -267,20 +326,35 @@ impl Vm {
                 Instruction::GetProperty(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let object = self.pop_value()?;
-                    let value = self.get_property_value(object, name, context)?;
-                    self.stack.push(value);
+                    match self.get_property_value_completion(object, name, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Call(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
-                    let result = self.call_value(callee, JsValue::Undefined, arguments, context)?;
-                    self.stack.push(result);
+                    match self.call_value(callee, JsValue::Undefined, arguments, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Construct(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
-                    let result = self.construct_value(callee, arguments, context)?;
-                    self.stack.push(result);
+                    match self.construct_value(callee, arguments, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::TypeOf => {
                     let value = self.pop_value()?;
@@ -295,10 +369,17 @@ impl Vm {
                 }
                 Instruction::Throw => {
                     let value = self.pop_value()?;
-                    return Err(throw_value(value));
+                    abrupt = Some(Completion::Throw(value));
+                    discard_saved_finally = true;
                 }
-                Instruction::Return => return self.pop_value(),
-                Instruction::ReturnUndefined => return Ok(JsValue::Undefined),
+                Instruction::Return => {
+                    abrupt = Some(Completion::Return(self.pop_value()?));
+                    discard_saved_finally = true;
+                }
+                Instruction::ReturnUndefined => {
+                    abrupt = Some(Completion::Return(JsValue::Undefined));
+                    discard_saved_finally = true;
+                }
                 Instruction::CreateFunction(function) => {
                     let value = self.create_function(chunk, function, context)?;
                     self.stack.push(value);
@@ -319,30 +400,46 @@ impl Vm {
                 }
                 Instruction::LoadName(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
-                    let value = context
-                        .resolve_binding(name)
-                        .map(|(_, value)| value)
-                        .ok_or_else(|| {
-                            VmError::reference(format!(
+                    match context.resolve_binding_value(name) {
+                        Ok(Some((_, value))) => self.stack.push(value),
+                        Ok(None) => {
+                            let error = VmError::reference(format!(
                                 "{name} is not defined at instruction {current_instruction}"
-                            ))
-                        })?;
-                    self.stack.push(value);
+                            ));
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::TypeOfName(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
-                    let type_name = context
-                        .resolve_binding(name)
-                        .map_or("undefined", |(_, value)| value.type_of());
-                    self.stack.push(JsValue::String(type_name.into()));
+                    match context.resolve_binding_value(name) {
+                        Ok(value) => {
+                            let type_name = value.map_or("undefined", |(_, value)| value.type_of());
+                            self.stack.push(JsValue::String(type_name.into()));
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::StoreName(index) => {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let value = self.pop_value()?;
-                    context.set_binding(&name, value.clone())?;
-                    self.stack.push(value);
+                    match context.set_binding(&name, value.clone()) {
+                        Ok(()) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::LoadThis => {
                     self.stack.push(context.current_this());
@@ -365,15 +462,27 @@ impl Vm {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
                     let key = to_property_key(&key)?;
-                    let value = self.get_property_value(object, &key, context)?;
-                    self.stack.push(value);
+                    match self.get_property_value_completion(object, &key, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::GetMethod(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let object = self.pop_value()?;
-                    let method = self.get_property_value(object.clone(), name, context)?;
-                    self.stack.push(method);
-                    self.stack.push(object);
+                    match self.get_property_value_completion(object.clone(), name, context)? {
+                        OperationResult::Value(method) => {
+                            self.stack.push(method);
+                            self.stack.push(object);
+                        }
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::SetProperty(index) => {
                     let name = self
@@ -381,23 +490,38 @@ impl Vm {
                         .to_string();
                     let value = self.pop_value()?;
                     let object = self.pop_value()?;
-                    let result = self.set_property_value(object, &name, value, context)?;
-                    self.stack.push(result);
+                    match self.set_property_value(object, &name, value, context)? {
+                        OperationResult::Value(result) => self.stack.push(result),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::SetElement => {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
                     let key = to_property_key(&key)?;
-                    let result = self.set_property_value(object, &key, value, context)?;
-                    self.stack.push(result);
+                    match self.set_property_value(object, &key, value, context)? {
+                        OperationResult::Value(result) => self.stack.push(result),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::CallWithThis(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
                     let this_value = self.pop_value()?;
                     let callee = self.pop_value()?;
-                    let result = self.call_value(callee, this_value, arguments, context)?;
-                    self.stack.push(result);
+                    match self.call_value(callee, this_value, arguments, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::ObjectCreateEmpty => {
                     self.stack.push(context.create_object([])?);
@@ -487,6 +611,66 @@ impl Vm {
                     self.stack
                         .push(JsValue::Boolean(context.instance_of(value, constructor)?));
                 }
+                Instruction::Duplicate => {
+                    self.stack.push(self.peek_value()?.clone());
+                }
+                Instruction::CreateLexicalEnvironment => {
+                    context.push_environment(Some(context.current_environment()))?;
+                }
+                Instruction::PopEnvironment => {
+                    context.pop_environment()?;
+                }
+                Instruction::CreateMutableBinding(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    context.create_mutable_binding(context.current_environment(), name, false)?;
+                }
+                Instruction::CreateImmutableBinding(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    context.create_immutable_binding(context.current_environment(), name)?;
+                }
+                Instruction::InitializeBinding(index) => {
+                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    let value = self.pop_value()?;
+                    let environment =
+                        context.resolve_binding_environment(name)?.ok_or_else(|| {
+                            VmError::reference(format!(
+                                "{name} is not defined at instruction {current_instruction}"
+                            ))
+                        })?;
+                    context.initialize_binding(environment, name, value)?;
+                }
+                Instruction::LoadException => {
+                    let value = self.pending_exception.take().ok_or_else(|| {
+                        VmError::runtime("LoadException executed without a pending exception")
+                    })?;
+                    self.stack.push(value);
+                }
+                Instruction::EndFinally => {
+                    if let Some(saved) = self.finally_stack.pop() {
+                        abrupt = Some(saved);
+                    }
+                }
+            }
+
+            if let Some(completion) = abrupt {
+                if discard_saved_finally {
+                    self.finally_stack.pop();
+                }
+                if self.enter_handler(
+                    chunk,
+                    current_instruction,
+                    completion.clone(),
+                    baseline,
+                    context,
+                    &mut instruction_pointer,
+                )? {
+                    continue;
+                }
+                return Ok(completion);
             }
         }
 
@@ -550,6 +734,48 @@ impl Vm {
         Ok(arguments)
     }
 
+    fn enter_handler(
+        &mut self,
+        chunk: &Chunk,
+        instruction_offset: usize,
+        completion: Completion,
+        baseline: RunBaseline,
+        context: &mut NativeContext,
+        instruction_pointer: &mut usize,
+    ) -> Result<bool, VmError> {
+        let Some(handler) = find_handler(chunk, instruction_offset, &completion) else {
+            return Ok(false);
+        };
+
+        let stack_depth = baseline.stack_depth + handler.stack_depth as usize;
+        if stack_depth > self.stack.len() {
+            return Err(VmError::runtime(format!(
+                "handler restores stack depth {stack_depth} above current depth {}",
+                self.stack.len()
+            )));
+        }
+        self.stack.truncate(stack_depth);
+        context.restore_environment_depth(
+            baseline.environment_depth + handler.environment_depth as usize,
+        )?;
+
+        match handler.kind {
+            HandlerKind::Catch => {
+                let Completion::Throw(value) = completion else {
+                    return Err(VmError::runtime(
+                        "catch handler received a non-throw completion",
+                    ));
+                };
+                self.pending_exception = Some(value);
+            }
+            HandlerKind::Finally => {
+                self.finally_stack.push(completion);
+            }
+        }
+        *instruction_pointer = handler.target;
+        Ok(true)
+    }
+
     fn create_function(
         &mut self,
         chunk: &Chunk,
@@ -580,7 +806,7 @@ impl Vm {
         this_value: JsValue,
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
-    ) -> Result<JsValue, VmError> {
+    ) -> Result<OperationResult, VmError> {
         match callee {
             JsValue::Function(function) => {
                 self.call_user_function(function, this_value, arguments, context)
@@ -596,7 +822,7 @@ impl Vm {
                     let forwarded = arguments.into_iter().skip(1).collect();
                     return self.call_value(target, call_this, forwarded, context);
                 }
-                (def.call)(self, context, this_value, &arguments)
+                (def.call)(self, context, this_value, &arguments).map(OperationResult::Value)
             }
             other => Err(VmError::type_error(format!("{other} is not callable"))),
         }
@@ -608,13 +834,27 @@ impl Vm {
         key: &str,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
+        match self.get_property_value_completion(receiver, key, context)? {
+            OperationResult::Value(value) => Ok(value),
+            OperationResult::Throw(value) => Err(throw_value(value)),
+        }
+    }
+
+    fn get_property_value_completion(
+        &mut self,
+        receiver: JsValue,
+        key: &str,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
         let object = context.require_object(&receiver, "read property")?;
         let Some((_, descriptor)) = context.find_property_descriptor(object, key)? else {
-            return Ok(JsValue::Undefined);
+            return Ok(OperationResult::Value(JsValue::Undefined));
         };
         match descriptor.kind {
-            PropertyKind::Data { value, .. } => Ok(value),
-            PropertyKind::Accessor { get: None, .. } => Ok(JsValue::Undefined),
+            PropertyKind::Data { value, .. } => Ok(OperationResult::Value(value)),
+            PropertyKind::Accessor { get: None, .. } => {
+                Ok(OperationResult::Value(JsValue::Undefined))
+            }
             PropertyKind::Accessor {
                 get: Some(getter), ..
             } => self.call_value(getter, receiver, Vec::new(), context),
@@ -627,23 +867,25 @@ impl Vm {
         key: &str,
         value: JsValue,
         context: &mut NativeContext,
-    ) -> Result<JsValue, VmError> {
+    ) -> Result<OperationResult, VmError> {
         let object = context.require_object(&receiver, "write property")?;
         if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
             match descriptor.kind {
                 PropertyKind::Accessor {
                     set: Some(setter), ..
-                } => {
-                    self.call_value(setter, receiver, vec![value.clone()], context)?;
-                    return Ok(value);
-                }
+                } => match self.call_value(setter, receiver, vec![value.clone()], context)? {
+                    OperationResult::Value(_) => return Ok(OperationResult::Value(value)),
+                    OperationResult::Throw(thrown) => return Ok(OperationResult::Throw(thrown)),
+                },
                 PropertyKind::Accessor { set: None, .. } => {
                     return Err(VmError::type_error("property setter is undefined"));
                 }
                 PropertyKind::Data { .. } => {}
             }
         }
-        context.set_property(receiver, key, value)
+        context
+            .set_property(receiver, key, value)
+            .map(OperationResult::Value)
     }
 
     fn call_user_function(
@@ -652,19 +894,20 @@ impl Vm {
         this_value: JsValue,
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
-    ) -> Result<JsValue, VmError> {
+    ) -> Result<OperationResult, VmError> {
         let function = context
             .function(function_id)
             .cloned()
             .ok_or_else(|| VmError::runtime("missing function value"))?;
         let stack_base = self.stack.len();
+        let caller_environment_depth = context.environment_depth();
         let environment = context.push_environment(function.environment)?;
 
         for (index, parameter) in function.params.iter().enumerate() {
             let value = arguments.get(index).cloned().unwrap_or(JsValue::Undefined);
             if let Err(error) = context.declare_binding(environment, parameter.clone(), value, true)
             {
-                let _ = context.pop_environment();
+                let _ = context.restore_environment_depth(caller_environment_depth);
                 return Err(error);
             }
         }
@@ -677,27 +920,40 @@ impl Vm {
                 true,
             )
         {
-            let _ = context.pop_environment();
+            let _ = context.restore_environment_depth(caller_environment_depth);
             return Err(error);
         }
 
         let frame = CallFrame::new(Some(function_id), 0, environment, this_value, stack_base);
         if let Err(error) = context.push_call_frame(frame) {
-            let _ = context.pop_environment();
+            let _ = context.restore_environment_depth(caller_environment_depth);
             return Err(error);
         }
 
-        let result = self.run(&function.chunk, context);
+        let result = self.run_completion(&function.chunk, context);
         self.stack.truncate(stack_base);
         let frame_result = context.pop_call_frame();
-        let environment_result = context.pop_environment();
+        let environment_result = context.restore_environment_depth(caller_environment_depth);
 
         match result {
             Err(error) => Err(error),
-            Ok(value) => {
+            Ok(completion) => {
                 frame_result?;
                 environment_result?;
-                Ok(value)
+                match completion {
+                    Completion::Normal(value) | Completion::Return(value) => {
+                        Ok(OperationResult::Value(value))
+                    }
+                    Completion::Throw(value) => Ok(OperationResult::Throw(value)),
+                    Completion::Break(label) => Err(VmError::runtime(format!(
+                        "unhandled break completion{}",
+                        label_suffix(label.as_deref())
+                    ))),
+                    Completion::Continue(label) => Err(VmError::runtime(format!(
+                        "unhandled continue completion{}",
+                        label_suffix(label.as_deref())
+                    ))),
+                }
             }
         }
     }
@@ -707,17 +963,17 @@ impl Vm {
         constructor: JsValue,
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
-    ) -> Result<JsValue, VmError> {
+    ) -> Result<OperationResult, VmError> {
         match constructor {
             JsValue::Function(function_id) => {
                 let prototype = context.constructor_prototype(&JsValue::Function(function_id))?;
                 let instance = context.ordinary_object_with_prototype(prototype)?;
-                let result =
-                    self.call_user_function(function_id, instance.clone(), arguments, context)?;
-                if matches!(result, JsValue::Object(_)) {
-                    Ok(result)
-                } else {
-                    Ok(instance)
+                match self.call_user_function(function_id, instance.clone(), arguments, context)? {
+                    OperationResult::Value(result) if matches!(result, JsValue::Object(_)) => {
+                        Ok(OperationResult::Value(result))
+                    }
+                    OperationResult::Value(_) => Ok(OperationResult::Value(instance)),
+                    OperationResult::Throw(value) => Ok(OperationResult::Throw(value)),
                 }
             }
             JsValue::BuiltinFunction(id) => {
@@ -728,6 +984,7 @@ impl Vm {
                 match def.construct {
                     Some(construct) => {
                         construct(self, context, &arguments, JsValue::BuiltinFunction(id))
+                            .map(OperationResult::Value)
                     }
                     None => Err(VmError::type_error(format!(
                         "{} is not a constructor",
@@ -792,6 +1049,40 @@ fn existing_accessor_setter(
     }
 }
 
+fn find_handler(
+    chunk: &Chunk,
+    instruction_offset: usize,
+    completion: &Completion,
+) -> Option<ExceptionHandler> {
+    let accepts = |kind| match completion {
+        Completion::Throw(_) => matches!(kind, HandlerKind::Catch | HandlerKind::Finally),
+        Completion::Return(_)
+        | Completion::Break(_)
+        | Completion::Continue(_)
+        | Completion::Normal(_) => kind == HandlerKind::Finally,
+    };
+
+    chunk
+        .handlers
+        .iter()
+        .copied()
+        .filter(|handler| {
+            accepts(handler.kind)
+                && handler.start <= instruction_offset
+                && instruction_offset < handler.end
+        })
+        .min_by_key(|handler| {
+            let range = handler.end - handler.start;
+            let same_range_priority = match (completion, handler.kind) {
+                (Completion::Throw(_), HandlerKind::Catch) => 0,
+                (Completion::Throw(_), HandlerKind::Finally) => 1,
+                (_, HandlerKind::Finally) => 0,
+                (_, HandlerKind::Catch) => 1,
+            };
+            (range, same_range_priority, handler.start)
+        })
+}
+
 fn constant_to_value(constant: &Constant) -> JsValue {
     match constant {
         Constant::Undefined => JsValue::Undefined,
@@ -849,8 +1140,39 @@ fn throw_value(value: JsValue) -> VmError {
         JsValue::Error(error) if error.kind == NativeErrorKind::Test262 => {
             VmError::test262(error.message)
         }
+        JsValue::Error(error) if error.kind == NativeErrorKind::Reference => {
+            VmError::reference(error.message)
+        }
+        JsValue::Error(error) if error.kind == NativeErrorKind::Type => {
+            VmError::type_error(error.message)
+        }
+        JsValue::Error(error) if error.kind == NativeErrorKind::Range => {
+            VmError::range(error.message)
+        }
+        JsValue::Error(error) if error.kind == NativeErrorKind::RuntimeLimit => {
+            VmError::runtime_limit(error.message)
+        }
         value => VmError::runtime(format!("uncaught {value}")),
     }
+}
+
+fn vm_error_to_value(error: VmError) -> JsValue {
+    let kind = match error.kind {
+        VmErrorKind::Reference => NativeErrorKind::Reference,
+        VmErrorKind::Type => NativeErrorKind::Type,
+        VmErrorKind::Range => NativeErrorKind::Range,
+        VmErrorKind::Test262 => NativeErrorKind::Test262,
+        VmErrorKind::RuntimeLimit => NativeErrorKind::RuntimeLimit,
+        VmErrorKind::Runtime => NativeErrorKind::Error,
+    };
+    JsValue::Error(crate::runtime::NativeErrorValue::new(
+        kind,
+        error.to_string(),
+    ))
+}
+
+fn label_suffix(label: Option<&str>) -> String {
+    label.map_or_else(String::new, |label| format!(" to {label}"))
 }
 
 #[cfg(test)]
@@ -887,6 +1209,7 @@ mod tests {
             instructions: vec![Instruction::Pop, Instruction::ReturnUndefined],
             constants: Vec::new(),
             functions: Vec::new(),
+            handlers: Vec::new(),
         };
         let error = Vm::default().execute(&chunk).unwrap_err();
 
@@ -1118,6 +1441,7 @@ mod tests {
             instructions: vec![Instruction::Jump(0), Instruction::ReturnUndefined],
             constants: Vec::new(),
             functions: Vec::new(),
+            handlers: Vec::new(),
         };
 
         let error = Vm::default()

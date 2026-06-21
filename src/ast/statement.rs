@@ -24,6 +24,20 @@ pub struct VariableDeclarator {
     pub initializer: Option<Expression>,
 }
 
+/// One `catch` clause. V5 Core supports an optional identifier binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CatchClause {
+    pub parameter: Option<String>,
+    pub body: Vec<Statement>,
+}
+
+/// One clause in a `switch` statement. `None` denotes `default`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SwitchCase {
+    pub test: Option<Expression>,
+    pub consequent: Vec<Statement>,
+}
+
 /// Statement subset implemented incrementally by AgentJS.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
@@ -55,4 +69,13 @@ pub enum Statement {
     Break,
     Continue,
     Throw(Expression),
+    Try {
+        block: Vec<Statement>,
+        handler: Option<CatchClause>,
+        finalizer: Option<Vec<Statement>>,
+    },
+    Switch {
+        discriminant: Expression,
+        cases: Vec<SwitchCase>,
+    },
 }
