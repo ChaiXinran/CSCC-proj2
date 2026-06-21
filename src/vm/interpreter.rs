@@ -800,7 +800,7 @@ impl Vm {
         Ok(JsValue::Function(id))
     }
 
-    pub(crate) fn call_value(
+    fn call_value(
         &mut self,
         callee: JsValue,
         this_value: JsValue,
@@ -822,10 +822,45 @@ impl Vm {
                     let forwarded = arguments.into_iter().skip(1).collect();
                     return self.call_value(target, call_this, forwarded, context);
                 }
-                (def.call)(self, context, this_value, &arguments).map(OperationResult::Value)
+                match (def.call)(self, context, this_value, &arguments) {
+                    Ok(value) => Ok(OperationResult::Value(value)),
+                    Err(error) => match self.pending_exception.take() {
+                        Some(value) => Ok(OperationResult::Throw(value)),
+                        None => Err(error),
+                    },
+                }
             }
             other => Err(VmError::type_error(format!("{other} is not callable"))),
         }
+    }
+
+    pub(crate) fn call_value_from_builtin(
+        &mut self,
+        callee: JsValue,
+        this_value: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match self.call_value(callee, this_value, arguments, context)? {
+            OperationResult::Value(value) => Ok(value),
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("JavaScript callback threw"))
+            }
+        }
+    }
+
+    pub(crate) fn call_value_threw(
+        &mut self,
+        callee: JsValue,
+        this_value: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> bool {
+        !matches!(
+            self.call_value(callee, this_value, arguments, context),
+            Ok(OperationResult::Value(_))
+        )
     }
 
     pub(crate) fn get_property_value(

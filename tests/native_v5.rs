@@ -118,3 +118,18 @@ fn initialized_const_rejects_assignment() {
 
     assert_eq!(error.kind, FailureKind::Type);
 }
+
+#[test]
+fn array_callback_throw_reaches_the_surrounding_catch() {
+    assert_eq!(
+        native_eval(
+            r#"
+            var caught = 0;
+            function fail(value) { throw value; }
+            try { [1].map(fail); } catch (error) { caught = error; }
+            caught;
+            "#
+        ),
+        "1"
+    );
+}

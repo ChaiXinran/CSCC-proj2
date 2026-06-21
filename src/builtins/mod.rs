@@ -204,10 +204,12 @@ fn assert_throws(
     if !matches!(func, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
         return Err(VmError::type_error("assert.throws: second argument must be callable"));
     }
-    let result = vm.call_value(func, JsValue::Undefined, vec![], context);
-    match result {
-        Err(_) => Ok(JsValue::Undefined),
-        Ok(_) => Err(VmError::test262("assert.throws: no exception was thrown".to_string())),
+    if vm.call_value_threw(func, JsValue::Undefined, vec![], context) {
+        Ok(JsValue::Undefined)
+    } else {
+        Err(VmError::test262(
+            "assert.throws: no exception was thrown".to_string(),
+        ))
     }
 }
 

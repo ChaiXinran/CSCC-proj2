@@ -169,6 +169,15 @@ semantics. See the
 gate is intentionally small and zero-skip; broader V5 directories remain a
 diagnostic scan.
 
+Native V6 is the active planning milestone for core builtins and coercion. It
+standardizes primitive wrappers and object-aware conversions, then separates
+String, Number, Boolean, Math, Error, and JSON into independently owned
+modules. See the [Native V6 scope](docs/native-v6-scope.md),
+[shared interface](docs/native-v6-interface.md), and
+[team plan](docs/native-v6-team-plan.md). Map/Set, RegExp, Date, Promise, and
+new language syntax are deliberately deferred until the V6 core gate is
+stable.
+
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
 [`tests/frontend_bytecode_v3.rs`](tests/frontend_bytecode_v3.rs), and

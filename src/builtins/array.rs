@@ -220,7 +220,7 @@ fn call_callback(
     if !is_callable(&callback) {
         return Err(VmError::type_error("callback is not a function"));
     }
-    vm.call_value(callback, this_arg, args, context)
+    vm.call_value_from_builtin(callback, this_arg, args, context)
 }
 
 fn require_callable(value: &JsValue, method: &str) -> Result<(), VmError> {
@@ -813,7 +813,7 @@ fn array_reduce(
 
     for i in start..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, this_value.clone(), i)?;
-        acc = vm.call_value(
+        acc = vm.call_value_from_builtin(
             callback.clone(),
             JsValue::Undefined,
             vec![acc, val, JsValue::Number(i as f64), this_value.clone()],
@@ -850,7 +850,7 @@ fn array_reduce_right(
 
     for i in (0..end).rev() {
         let val = get_elem(vm, context, this_value.clone(), i)?;
-        acc = vm.call_value(
+        acc = vm.call_value_from_builtin(
             callback.clone(),
             JsValue::Undefined,
             vec![acc, val, JsValue::Number(i as f64), this_value.clone()],
@@ -1111,7 +1111,7 @@ fn compare_two(
     compare_fn: &Option<JsValue>,
 ) -> Result<bool, VmError> {
     if let Some(func) = compare_fn {
-        let result = vm.call_value(
+        let result = vm.call_value_from_builtin(
             func.clone(),
             JsValue::Undefined,
             vec![a.clone(), b.clone()],

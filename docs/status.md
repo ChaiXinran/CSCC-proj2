@@ -23,12 +23,15 @@
   by the runner rather than implementing a general YAML parser.
 - Runtime limits do not yet include a hard heap-byte budget or wall-clock
   preemption.
-- The ECMAScript parser and VM are currently provided by Boa. This establishes
-  a correctness baseline but does not by itself satisfy the contest's
-  innovation requirement.
-- `BackendKind::Native` executes the V1 expression pipeline end to end.
-- The fixed Native V1 gate passes six official Test262 expression files in
-  default and strict mode using the minimal host-provided assertion harness.
+- Boa remains the compatibility baseline, but `BackendKind::Native` now
+  executes the self-developed V1-V5 lexer, parser, bytecode, VM, runtime, and
+  builtin path without falling back to Boa.
+- The fixed Native V1-V5 gates pass 62 official Test262 files with no failures
+  or skips. These curated gates are regression checks, not a full conformance
+  percentage.
+- The completed V5 diagnostic scan passes 191 of 593 selected try, switch,
+  let, and const tests; unsupported and failed cases remain separately
+  reported.
 - A sharded Test262 run on revision `de8e621c` executed 47,516 non-staging
   tests and passed 45,310. Treating every unexecuted non-staging test as a
   failure gives a conservative full-suite lower bound of 87.31%. See
