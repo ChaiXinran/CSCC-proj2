@@ -1,8 +1,11 @@
-//! User-defined JavaScript function values.
+//! User-defined and builtin JavaScript function values.
+
+use std::fmt;
 
 use crate::bytecode::Chunk;
+use crate::vm::VmError;
 
-use super::EnvironmentId;
+use super::{EnvironmentId, JsValue, NativeContext, ObjectId};
 
 /// Stable handle into the runtime function arena.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -15,4 +18,43 @@ pub struct JsFunction {
     pub params: Vec<String>,
     pub chunk: Chunk,
     pub environment: Option<EnvironmentId>,
+}
+
+/// Stable handle into the builtin function registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct BuiltinId(pub u16);
+
+/// Signature for a native function invoked as a regular call.
+pub type NativeCall = fn(
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError>;
+
+/// Signature for a native function invoked as a constructor (`new`).
+pub type NativeConstruct = fn(
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError>;
+
+/// Registry entry for a builtin function stored in `NativeContext`.
+#[derive(Clone)]
+pub struct BuiltinFunction {
+    pub name: &'static str,
+    pub length: u8,
+    pub call: NativeCall,
+    pub construct: Option<NativeConstruct>,
+    /// Heap object backing this function value (holds `name`, `length`, `prototype`, etc.).
+    pub object: ObjectId,
+}
+
+impl fmt::Debug for BuiltinFunction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BuiltinFunction")
+            .field("name", &self.name)
+            .field("length", &self.length)
+            .field("object", &self.object)
+            .finish()
+    }
 }

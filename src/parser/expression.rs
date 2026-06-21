@@ -139,7 +139,7 @@ impl Parser {
         };
         loop {
             if self.eat_punctuator('.') {
-                let property = self.expect_identifier()?;
+                let property = self.expect_identifier_name()?;
                 expression = Expression::Member {
                     object: Box::new(expression),
                     property: Box::new(Expression::Identifier(property)),
@@ -172,7 +172,7 @@ impl Parser {
         self.advance(); // `new`
         let mut callee = self.parse_primary()?;
         while self.eat_punctuator('.') {
-            let property = self.expect_identifier()?;
+            let property = self.expect_identifier_name()?;
             callee = Expression::Member {
                 object: Box::new(callee),
                 property: Box::new(Expression::Identifier(property)),
@@ -198,6 +198,9 @@ impl Parser {
             loop {
                 arguments.push(self.parse_assignment()?);
                 if !self.eat_punctuator(',') {
+                    break;
+                }
+                if self.check_punctuator(')') {
                     break;
                 }
             }
@@ -391,12 +394,9 @@ impl Parser {
                 Ok(PropertyName::Number(n))
             }
             // Keywords are also valid as property names (e.g. `{ if: 1 }`)
-            TokenKind::Keyword(_) => {
-                if let TokenKind::Keyword(kw) = self.advance().kind {
-                    Ok(PropertyName::Identifier(format!("{kw:?}").to_lowercase()))
-                } else {
-                    unreachable!()
-                }
+            TokenKind::Keyword(keyword) => {
+                self.advance();
+                Ok(PropertyName::Identifier(keyword.as_str().into()))
             }
             other => Err(self.error(format!("expected property name, got {}", describe(&other)))),
         }
@@ -997,6 +997,88 @@ mod tests {
             .tokenize()
             .unwrap();
         assert!(Parser::new(tokens).parse_program().is_err());
+    }
+
+    #[test]
+    fn keyword_identifier_names_are_valid_after_dot() {
+        let expr = parse_expression("object.delete");
+        assert_eq!(
+            expr,
+            Expression::Member {
+                object: Box::new(Expression::Identifier("object".into())),
+                property: Box::new(Expression::Identifier("delete".into())),
+                computed: false,
+            }
+        );
+
+        let expr = parse_expression("object.default");
+        assert!(matches!(
+            expr,
+            Expression::Member {
+                property,
+                computed: false,
+                ..
+            } if *property == Expression::Identifier("default".into())
+        ));
+    }
+
+    #[test]
+    fn builtin_call_shapes_parse_without_special_syntax() {
+        for source in [
+            "Object.create(base)",
+            "Object.defineProperty(object, 'x', { value: 1, writable: true })",
+            "Array.isArray(array)",
+            "array.push(1)",
+            "Function.prototype.call.call(fn, receiver, 1)",
+            "new Array(3)",
+        ] {
+            let expression = parse_expression(source);
+            assert!(
+                matches!(
+                    expression,
+                    Expression::Call { .. } | Expression::Construct { .. }
+                ),
+                "expected call or construct for {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn call_arguments_allow_one_trailing_comma() {
+        let expression = parse_expression("Object.keys(object,)");
+        let Expression::Call { arguments, .. } = expression else {
+            panic!("expected call expression");
+        };
+        assert_eq!(arguments.len(), 1);
+    }
+
+    #[test]
+    fn keyword_property_names_keep_source_spelling() {
+        let expression = parse_expression("({ instanceof: 1, typeof: 2, delete: 3 })");
+        let Expression::Object(properties) = expression else {
+            panic!("expected object literal");
+        };
+        assert!(matches!(
+            &properties[0],
+            ObjectProperty::Data {
+                key: PropertyName::Identifier(name),
+                ..
+            } if name == "instanceof"
+        ));
+        assert!(matches!(
+            &properties[1],
+            ObjectProperty::Data {
+                key: PropertyName::Identifier(name),
+                ..
+            } if name == "typeof"
+        ));
+        assert!(matches!(
+            &properties[2],
+            ObjectProperty::Data {
+                key: PropertyName::Identifier(name),
+                ..
+            } if name == "delete"
+        ));
     }
 
     #[test]

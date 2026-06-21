@@ -6,7 +6,22 @@ use super::{
     Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject, JsValue, NativeFunction,
     ObjectId, ObjectKind, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
     object::array_index,
+    BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject,
+    JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind, PropertyDescriptor,
+    PropertyDescriptorUpdate, PropertyKind, object::array_index,
 };
+
+/// Stable references to the three fundamental constructors and prototypes
+/// installed during `install_foundation`.
+#[derive(Debug, Clone)]
+pub struct Intrinsics {
+    pub object_prototype: ObjectId,
+    pub function_prototype: ObjectId,
+    pub array_prototype: ObjectId,
+    pub object_constructor: JsValue,
+    pub function_constructor: JsValue,
+    pub array_constructor: JsValue,
+}
 use crate::vm::{CallFrame, VmError};
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
@@ -35,6 +50,7 @@ pub struct NativeContext {
     function_objects: HashMap<FunctionId, ObjectId>,
     native_function_objects: HashMap<NativeFunction, ObjectId>,
     object_values: HashMap<ObjectId, JsValue>,
+    builtin_registry: Vec<BuiltinFunction>,
     intrinsics: Option<Intrinsics>,
     strict: bool,
     output: Vec<String>,
@@ -60,6 +76,7 @@ impl Default for NativeContext {
             function_objects: HashMap::new(),
             native_function_objects: HashMap::new(),
             object_values: HashMap::new(),
+            builtin_registry: Vec::new(),
             intrinsics: None,
             strict: false,
             output: Vec::new(),
@@ -82,6 +99,56 @@ impl NativeContext {
 
     pub fn heap_mut(&mut self) -> &mut Heap {
         &mut self.heap
+    }
+
+    /// Register a builtin function and return `JsValue::BuiltinFunction(id)`.
+    /// Creates a backing heap object with `name` and `length` properties.
+    pub fn register_builtin(
+        &mut self,
+        name: &'static str,
+        length: u8,
+        call: NativeCall,
+        construct: Option<NativeConstruct>,
+    ) -> Result<JsValue, crate::vm::VmError> {
+        let mut object = JsObject::ordinary();
+        object.define_property(
+            "name",
+            PropertyDescriptor::data_with(JsValue::String(name.into()), false, false, true),
+        );
+        object.define_property(
+            "length",
+            PropertyDescriptor::data_with(JsValue::Number(f64::from(length)), false, false, true),
+        );
+        let object_id = self
+            .heap
+            .allocate_object(object)
+            .ok_or_else(|| crate::vm::VmError::runtime("object arena exhausted"))?;
+        let idx = self.builtin_registry.len();
+        let id = BuiltinId(
+            u16::try_from(idx).map_err(|_| crate::vm::VmError::runtime("builtin registry full"))?,
+        );
+        self.builtin_registry.push(BuiltinFunction {
+            name,
+            length,
+            call,
+            construct,
+            object: object_id,
+        });
+        Ok(JsValue::BuiltinFunction(id))
+    }
+
+    #[must_use]
+    pub fn builtin(&self, id: BuiltinId) -> Option<&BuiltinFunction> {
+        self.builtin_registry.get(id.0 as usize)
+    }
+
+    #[must_use]
+    pub fn intrinsics(&self) -> Option<&Intrinsics> {
+        self.intrinsics.as_ref()
+    }
+
+    pub fn set_intrinsics(&mut self, intrinsics: Intrinsics) {
+        self.intrinsics = Some(intrinsics);
     }
 
     #[must_use]
@@ -679,6 +746,34 @@ impl NativeContext {
             .and_then(|(_, descriptor)| descriptor.value_cloned())
             .and_then(|value| self.value_object(&value))
             .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?;
+        let prototype = match &constructor {
+            JsValue::Function(function) => self
+                .function_prototype(*function)
+                .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?,
+            JsValue::BuiltinFunction(id) => {
+                let backing = self
+                    .builtin(*id)
+                    .ok_or_else(|| VmError::runtime("invalid builtin id"))?
+                    .object;
+                let obj = self
+                    .heap
+                    .object(backing)
+                    .ok_or_else(|| VmError::runtime("builtin backing object not found"))?;
+                match obj.get_own_property_value("prototype") {
+                    Some(JsValue::Object(proto_id)) => proto_id,
+                    _ => {
+                        return Err(VmError::type_error(
+                            "constructor.prototype is not an object",
+                        ));
+                    }
+                }
+            }
+            _ => {
+                return Err(VmError::type_error(
+                    "right-hand side of instanceof is not a constructor",
+                ));
+            }
+        };
 
         let mut current = self.get_prototype_of(object);
         let mut depth = 0usize;
@@ -941,7 +1036,7 @@ pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
         JsValue::Undefined => Ok("undefined".into()),
         JsValue::Object(_)
         | JsValue::Function(_)
-        | JsValue::NativeFunction(_)
+        | JsValue::BuiltinFunction(_)
         | JsValue::Error(_) => Err(VmError::type_error(
             "object property keys are not supported in native V4",
         )),

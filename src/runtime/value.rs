@@ -83,6 +83,7 @@ impl NativeFunction {
         )
     }
 }
+use super::{BuiltinId, FunctionId, ObjectId};
 
 /// Minimal native error categories used by V2 `throw`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,7 +119,8 @@ pub enum JsValue {
     String(String),
     Object(ObjectId),
     Function(FunctionId),
-    NativeFunction(NativeFunction),
+    /// A builtin function registered in `NativeContext::register_builtin`.
+    BuiltinFunction(BuiltinId),
     Error(NativeErrorValue),
 }
 
@@ -130,7 +132,7 @@ impl JsValue {
             Self::Boolean(value) => *value,
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
             Self::String(value) => !value.is_empty(),
-            Self::Object(_) | Self::Function(_) | Self::NativeFunction(_) | Self::Error(_) => true,
+            Self::Object(_) | Self::Function(_) | Self::BuiltinFunction(_) | Self::Error(_) => true,
         }
     }
 
@@ -143,7 +145,7 @@ impl JsValue {
             Self::Boolean(false) => Some(0.0),
             Self::Number(value) => Some(*value),
             Self::String(value) => Some(string_to_number(value)),
-            Self::Object(_) | Self::Function(_) | Self::NativeFunction(_) | Self::Error(_) => None,
+            Self::Object(_) | Self::Function(_) | Self::BuiltinFunction(_) | Self::Error(_) => None,
         }
     }
 
@@ -156,8 +158,9 @@ impl JsValue {
             Self::Number(value) => Some(number_to_string(*value)),
             Self::String(value) => Some(value.clone()),
             Self::Object(id) => Some(format!("[object #{}]", id.0)),
-            Self::Function(_) => Some("function () { [native code] }".into()),
-            Self::NativeFunction(_) => Some("function () { [native code] }".into()),
+            Self::Function(_) | Self::BuiltinFunction(_) => {
+                Some("function () { [native code] }".into())
+            }
             Self::Error(error) => Some(error.message.clone()),
         }
     }
@@ -170,7 +173,7 @@ impl JsValue {
             Self::Boolean(_) => "boolean",
             Self::Number(_) => "number",
             Self::String(_) => "string",
-            Self::Function(_) | Self::NativeFunction(_) => "function",
+            Self::Function(_) | Self::BuiltinFunction(_) => "function",
         }
     }
 
@@ -185,7 +188,7 @@ impl JsValue {
             (Self::String(left), Self::String(right)) => left == right,
             (Self::Object(left), Self::Object(right)) => left == right,
             (Self::Function(left), Self::Function(right)) => left == right,
-            (Self::NativeFunction(left), Self::NativeFunction(right)) => left == right,
+            (Self::BuiltinFunction(left), Self::BuiltinFunction(right)) => left == right,
             (Self::Error(left), Self::Error(right)) => left == right,
             _ => false,
         }

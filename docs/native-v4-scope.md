@@ -49,6 +49,8 @@ V4 分三批开发：
 | `Function` 构造器与 `call` | **未完成** | `src/builtins/function.rs` 仍为空安装函数 |
 | Builtin 注册表与 Intrinsics | **未完成** | 当前只有封闭 `NativeFunction`，Context 无 Intrinsics |
 | V4 Test262 固定门 | 初始完成 | 当前 11 项只是回归门，不代表 Object/Array 目录完成 |
+| 扩大 V4 前端兼容 | **已完成** | Builtin 调用形状、IdentifierName、尾逗号和 Early Error 已独立验收 |
+| 扩大 V4 字节码契约 | **已完成** | 通用 Call/CallWithThis/Construct 可承载计划内 Builtin 调用 |
 
 因此，当前版本不得标记为“V4 完成”。扩大开发以完成 V4.3 和标准内建层为
 核心，不重复已经通过端到端测试的 V4.1/V4.2 代码。

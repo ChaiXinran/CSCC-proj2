@@ -39,6 +39,35 @@ pub enum Keyword {
     Null,
 }
 
+impl Keyword {
+    /// Returns the exact ECMAScript source spelling of this keyword.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Let => "let",
+            Self::Const => "const",
+            Self::Var => "var",
+            Self::Function => "function",
+            Self::Return => "return",
+            Self::If => "if",
+            Self::Else => "else",
+            Self::While => "while",
+            Self::For => "for",
+            Self::Break => "break",
+            Self::Continue => "continue",
+            Self::Throw => "throw",
+            Self::New => "new",
+            Self::TypeOf => "typeof",
+            Self::Delete => "delete",
+            Self::In => "in",
+            Self::InstanceOf => "instanceof",
+            Self::True => "true",
+            Self::False => "false",
+            Self::Null => "null",
+        }
+    }
+}
+
 /// Lexical token payload.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
