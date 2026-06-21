@@ -470,6 +470,22 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::ForInKeys => {
+                    let value = self.pop_value()?;
+                    let keys: Vec<String> = match &value {
+                        JsValue::Null | JsValue::Undefined => Vec::new(),
+                        JsValue::String(text) => (0..text.encode_utf16().count())
+                            .map(|index| index.to_string())
+                            .collect(),
+                        _ => match context.value_object(&value) {
+                            Some(object) => context.for_in_keys(object),
+                            None => Vec::new(),
+                        },
+                    };
+                    let elements = keys.into_iter().map(JsValue::String).collect();
+                    let array = context.create_array(elements)?;
+                    self.stack.push(array);
+                }
                 Instruction::GetMethod(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let object = self.pop_value()?;

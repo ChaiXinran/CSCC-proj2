@@ -261,6 +261,28 @@ impl NativeContext {
         self.heap.object(object)?.primitive_value()
     }
 
+    /// Collects the `for-in` enumeration keys for `object`: own enumerable
+    /// string keys followed by inherited ones, de-duplicated, walking the
+    /// prototype chain.
+    #[must_use]
+    pub fn for_in_keys(&self, object: ObjectId) -> Vec<String> {
+        let mut seen = std::collections::HashSet::new();
+        let mut result = Vec::new();
+        let mut current = Some(object);
+        while let Some(id) = current {
+            let Some(obj) = self.heap.object(id) else {
+                break;
+            };
+            for key in obj.enumerable_own_keys() {
+                if seen.insert(key.clone()) {
+                    result.push(key);
+                }
+            }
+            current = obj.prototype;
+        }
+        result
+    }
+
     #[must_use]
     pub const fn global_environment(&self) -> EnvironmentId {
         self.global_environment

@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use crate::{
     ast::{
-        CatchClause, FunctionBody, FunctionParam, Statement, SwitchCase, VariableDeclarator,
-        VariableKind,
+        CatchClause, Expression, FunctionBody, FunctionParam, Statement, SwitchCase,
+        VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -27,6 +27,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Return) => self.parse_return(),
             TokenKind::Keyword(Keyword::If) => self.parse_if(),
             TokenKind::Keyword(Keyword::While) => self.parse_while(),
+            TokenKind::Keyword(Keyword::For) => self.parse_for(),
             TokenKind::Keyword(Keyword::Break) => self.parse_break(),
             TokenKind::Keyword(Keyword::Continue) => self.parse_continue(),
             TokenKind::Keyword(Keyword::Throw) => self.parse_throw(),
@@ -197,6 +198,144 @@ impl Parser {
             test,
             body: Box::new(body?),
         })
+    }
+
+    /// Parses both `for (init; test; update) body` and `for (left in right)
+    /// body`. The relational `in` operator is suppressed while reading the
+    /// header so the two forms can be told apart.
+    fn parse_for(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `for`
+        self.expect_punctuator('(')?;
+
+        // Empty init: `for (; test; update)`.
+        if self.eat_punctuator(';') {
+            return self.parse_for_classic_rest(None);
+        }
+
+        // Declaration head: `var`/`let`/`const`.
+        if let TokenKind::Keyword(keyword @ (Keyword::Var | Keyword::Let | Keyword::Const)) =
+            self.peek().kind
+        {
+            let kind = match keyword {
+                Keyword::Var => VariableKind::Var,
+                Keyword::Let => VariableKind::Let,
+                Keyword::Const => VariableKind::Const,
+                _ => unreachable!(),
+            };
+            self.advance(); // declaration keyword
+            let name = self.expect_identifier()?;
+
+            if self.check_keyword(Keyword::In) {
+                self.advance(); // `in`
+                let right = self.parse_expression()?;
+                self.expect_punctuator(')')?;
+                let body = self.parse_loop_body()?;
+                return Ok(Statement::ForIn {
+                    declaration: Some(kind),
+                    target: Expression::Identifier(name),
+                    right,
+                    body,
+                });
+            }
+
+            let init = self.parse_for_declaration_tail(kind, name)?;
+            return self.parse_for_classic_rest(Some(Box::new(init)));
+        }
+
+        // Expression head: either a for-in target or a C-style init expression.
+        // `in` is suppressed at the top level so `x in obj` stops at `in`.
+        self.no_in = true;
+        let expression = self.parse_expression();
+        self.no_in = false;
+        let expression = expression?;
+
+        if self.check_keyword(Keyword::In) {
+            if !matches!(
+                expression,
+                Expression::Identifier(_) | Expression::Member { .. }
+            ) {
+                return Err(self.error("invalid left-hand side in for-in loop".into()));
+            }
+            self.advance(); // `in`
+            let right = self.parse_expression()?;
+            self.expect_punctuator(')')?;
+            let body = self.parse_loop_body()?;
+            return Ok(Statement::ForIn {
+                declaration: None,
+                target: expression,
+                right,
+                body,
+            });
+        }
+
+        self.expect_punctuator(';')?;
+        self.parse_for_classic_rest(Some(Box::new(Statement::Expression(expression))))
+    }
+
+    /// Parses the remaining declarators of a `for` C-style declaration init,
+    /// consuming the trailing `;`. `kind`/`first_name` are the already-consumed
+    /// declaration keyword and first binding name.
+    fn parse_for_declaration_tail(
+        &mut self,
+        kind: VariableKind,
+        first_name: String,
+    ) -> Result<Statement, ParseError> {
+        let mut declarations = Vec::new();
+        let mut name = first_name;
+        loop {
+            let initializer = if self.eat_operator("=") {
+                Some(self.parse_assignment()?)
+            } else {
+                None
+            };
+            if kind == VariableKind::Const && initializer.is_none() {
+                return Err(self.error("`const` declarations require an initializer".into()));
+            }
+            declarations.push(VariableDeclarator { name, initializer });
+            if !self.eat_punctuator(',') {
+                break;
+            }
+            name = self.expect_identifier()?;
+        }
+        self.expect_semicolon()?;
+        Ok(Statement::VariableDeclaration { kind, declarations })
+    }
+
+    /// Parses `test; update) body` after a C-style `for` header's init clause
+    /// and its terminating `;` have been consumed.
+    fn parse_for_classic_rest(
+        &mut self,
+        init: Option<Box<Statement>>,
+    ) -> Result<Statement, ParseError> {
+        let test = if self.check_punctuator(';') {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+        self.expect_punctuator(';')?;
+
+        let update = if self.check_punctuator(')') {
+            None
+        } else {
+            Some(self.parse_expression()?)
+        };
+        self.expect_punctuator(')')?;
+
+        let body = self.parse_loop_body()?;
+        Ok(Statement::For {
+            init,
+            test,
+            update,
+            body,
+        })
+    }
+
+    /// Parses a loop body, tracking loop depth so `break`/`continue` are valid.
+    fn parse_loop_body(&mut self) -> Result<Box<Statement>, ParseError> {
+        self.loop_depth += 1;
+        let body = self.parse_statement();
+        self.loop_depth -= 1;
+        Ok(Box::new(body?))
     }
 
     /// Parses `break;`, rejecting it outside any loop or switch.

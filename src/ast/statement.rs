@@ -78,4 +78,21 @@ pub enum Statement {
         discriminant: Expression,
         cases: Vec<SwitchCase>,
     },
+    /// C-style `for (init; test; update) body`. Each clause is optional.
+    /// `init` is a variable declaration or an expression statement.
+    For {
+        init: Option<Box<Statement>>,
+        test: Option<Expression>,
+        update: Option<Expression>,
+        body: Box<Statement>,
+    },
+    /// `for (left in right) body`. `declaration` is `Some` for
+    /// `for (var/let/const x in obj)`, `None` when `target` is an existing
+    /// assignment target (`for (x in obj)`).
+    ForIn {
+        declaration: Option<VariableKind>,
+        target: Expression,
+        right: Expression,
+        body: Box<Statement>,
+    },
 }

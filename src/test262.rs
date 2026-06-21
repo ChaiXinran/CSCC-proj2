@@ -326,7 +326,10 @@ struct Harness {
     includes: Arc<HashMap<String, Arc<str>>>,
 }
 
+#[cfg(test)]
 impl Harness {
+    /// An empty harness used by the parse-negative unit tests, which never
+    /// reference harness includes.
     fn minimal_native() -> Self {
         Self {
             assert: Arc::from(""),
@@ -339,11 +342,10 @@ impl Harness {
 
 pub fn run(options: RunnerOptions) -> Result<Summary, String> {
     let started = Instant::now();
-    let harness = Arc::new(if options.backend == BackendKind::Boa {
-        load_harness(&options.test262_root)?
-    } else {
-        Harness::minimal_native()
-    });
+    // Both backends load the full harness directory so that `includes`
+    // (propertyHelper.js, nativeErrors.js, …) are available. The native runtime
+    // provides assert/sta as host functions and simply does not eval those two.
+    let harness = Arc::new(load_harness(&options.test262_root)?);
     let mut paths = if options.files.is_empty() && options.suites.is_empty() {
         let suite = options.test262_root.join(&options.suite);
         let mut paths = Vec::new();
@@ -507,20 +509,6 @@ fn run_case(
                 "non-blocking agent tests are not enabled".into(),
             ));
         }
-        if backend == BackendKind::Native
-            && !metadata.includes.is_empty()
-            && !is_static_negative(&metadata)
-        {
-            let detail = format!(
-                "native backend does not support harness includes: {}",
-                metadata.includes.join(", ")
-            );
-            if skip_unsupported {
-                return Ok((Status::Skipped, detail));
-            }
-            return Err(detail);
-        }
-
         let strict_modes: &[bool] = if metadata.flags.contains("raw") {
             &[false]
         } else if metadata.flags.contains("onlyStrict") {
@@ -636,11 +624,27 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                 .eval_fragment(code)
                 .map_err(|error| format!("harness `{include}` failed: {error}"))?;
         }
-    } else if backend == BackendKind::Native && !metadata.includes.is_empty() {
-        return Err(VariantFailure::Failed(format!(
-            "native backend does not support harness includes: {}",
-            metadata.includes.join(", ")
-        )));
+    } else if backend == BackendKind::Native {
+        // The native runtime installs assert/sta as host functions, so only the
+        // declared `includes` (propertyHelper.js, nativeErrors.js, …) need to be
+        // evaluated here. A harness helper that trips over a still-unsupported
+        // native feature is reported as Skipped (matching the test-body path);
+        // anything else is a genuine failure.
+        for include in &metadata.includes {
+            let code = harness.includes.get(include).ok_or_else(|| {
+                VariantFailure::Failed(format!("missing harness include `{include}`"))
+            })?;
+            if let Err(error) = runtime.eval_fragment(code) {
+                if skip_unsupported && error.kind == FailureKind::Unsupported {
+                    return Err(VariantFailure::Skipped(format!(
+                        "unsupported native feature in harness `{include}`: {error}"
+                    )));
+                }
+                return Err(VariantFailure::Failed(format!(
+                    "harness `{include}` failed: {error}"
+                )));
+            }
+        }
     }
 
     runtime.set_strict(strict);

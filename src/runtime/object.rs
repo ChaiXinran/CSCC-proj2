@@ -265,6 +265,24 @@ impl JsObject {
         keys.extend(self.properties.keys());
         keys
     }
+
+    /// Own enumerable string keys, used by `for-in`. Array index slots are
+    /// enumerable; ordinary properties honor their `enumerable` attribute.
+    #[must_use]
+    pub fn enumerable_own_keys(&self) -> Vec<String> {
+        let mut keys = Vec::new();
+        if let ObjectKind::Array { elements, .. } = &self.kind {
+            keys.extend(
+                elements
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, value)| value.is_some())
+                    .map(|(index, _)| index.to_string()),
+            );
+        }
+        keys.extend(self.properties.enumerable_keys());
+        keys
+    }
 }
 
 pub(crate) fn array_index(name: &str) -> Option<usize> {

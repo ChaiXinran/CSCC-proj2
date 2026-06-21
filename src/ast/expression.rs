@@ -22,6 +22,13 @@ pub enum UnaryOperator {
     Delete,
 }
 
+/// `++`/`--` update operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateOperator {
+    Increment,
+    Decrement,
+}
+
 /// Binary expression operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
@@ -162,6 +169,12 @@ pub enum Expression {
     Identifier(String),
     Unary {
         operator: UnaryOperator,
+        argument: Box<Expression>,
+    },
+    /// `++x` / `x++` / `--x` / `x--`. `prefix` distinguishes the result value.
+    Update {
+        operator: UpdateOperator,
+        prefix: bool,
         argument: Box<Expression>,
     },
     Binary {

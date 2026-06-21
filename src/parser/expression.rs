@@ -20,7 +20,7 @@
 use crate::{
     ast::{
         ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
-        LogicalOperator, ObjectProperty, PropertyName, UnaryOperator,
+        LogicalOperator, ObjectProperty, PropertyName, UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -30,6 +30,19 @@ impl Parser {
     /// Parses a full expression, including assignment.
     pub(super) fn parse_expression(&mut self) -> Result<Expression, ParseError> {
         self.parse_assignment()
+    }
+
+    /// Runs `parse` with the relational `in` operator re-enabled, restoring the
+    /// previous `no_in` state afterwards. Used at bracketed sub-expression
+    /// boundaries inside a `for` header (where `in` is otherwise suppressed).
+    fn allowing_in<T>(
+        &mut self,
+        parse: impl FnOnce(&mut Self) -> Result<T, ParseError>,
+    ) -> Result<T, ParseError> {
+        let saved = std::mem::replace(&mut self.no_in, false);
+        let result = parse(self);
+        self.no_in = saved;
+        result
     }
 
     /// Parses `target = value`. Assignment is right associative and binds looser
@@ -87,14 +100,31 @@ impl Parser {
                 binary_precedence(operator).map(|p| (p, operator.clone()))
             }
             // `in` and `instanceof` are keyword binary operators at relational precedence.
-            TokenKind::Keyword(Keyword::In) => Some((4, "in".into())),
+            // `in` is suppressed inside a `for` header (`no_in`) so the header can be
+            // disambiguated as a for-in statement.
+            TokenKind::Keyword(Keyword::In) if !self.no_in => Some((4, "in".into())),
             TokenKind::Keyword(Keyword::InstanceOf) => Some((4, "instanceof".into())),
             _ => None,
         }
     }
 
-    /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`, `delete`).
+    /// Parses prefix unary operators (`++`, `--`, `+`, `-`, `!`, `typeof`,
+    /// `delete`).
     fn parse_unary(&mut self) -> Result<Expression, ParseError> {
+        if let TokenKind::Operator(operator) = &self.peek().kind
+            && let Some(operator) = update_operator(operator)
+        {
+            self.advance();
+            let argument = self.parse_unary()?;
+            if !is_assignment_target(&argument) {
+                return Err(self.error("invalid operand for `++`/`--`".into()));
+            }
+            return Ok(Expression::Update {
+                operator,
+                prefix: true,
+                argument: Box::new(argument),
+            });
+        }
         if self.check_keyword(Keyword::TypeOf) {
             self.advance();
             let argument = self.parse_unary()?;
@@ -127,7 +157,28 @@ impl Parser {
                 });
             }
         }
-        self.parse_call_member()
+        self.parse_postfix()
+    }
+
+    /// Parses a call/member expression optionally followed by a postfix
+    /// `++`/`--`. A line terminator before the operator suppresses it (ASI).
+    fn parse_postfix(&mut self) -> Result<Expression, ParseError> {
+        let expression = self.parse_call_member()?;
+        if let TokenKind::Operator(operator) = &self.peek().kind
+            && !self.peek().line_terminator_before
+            && let Some(operator) = update_operator(operator)
+        {
+            if !is_assignment_target(&expression) {
+                return Err(self.error("invalid operand for `++`/`--`".into()));
+            }
+            self.advance();
+            return Ok(Expression::Update {
+                operator,
+                prefix: false,
+                argument: Box::new(expression),
+            });
+        }
+        Ok(expression)
     }
 
     /// Parses the highest-precedence postfix forms: member access and calls.
@@ -147,7 +198,7 @@ impl Parser {
                 };
             } else if self.eat_punctuator('[') {
                 // Computed member access: object[expression]
-                let key = self.parse_assignment()?;
+                let key = self.allowing_in(|parser| parser.parse_assignment())?;
                 self.expect_punctuator(']')?;
                 expression = Expression::Member {
                     object: Box::new(expression),
@@ -196,7 +247,7 @@ impl Parser {
         let mut arguments = Vec::new();
         if !self.check_punctuator(')') {
             loop {
-                arguments.push(self.parse_assignment()?);
+                arguments.push(self.allowing_in(|parser| parser.parse_assignment())?);
                 if !self.eat_punctuator(',') {
                     break;
                 }
@@ -240,7 +291,7 @@ impl Parser {
             }
             TokenKind::Punctuator('(') => {
                 self.advance();
-                let inner = self.parse_expression()?;
+                let inner = self.allowing_in(|parser| parser.parse_expression())?;
                 self.expect_punctuator(')')?;
                 Ok(inner)
             }
@@ -487,6 +538,15 @@ fn is_assignment_target(expression: &Expression) -> bool {
         expression,
         Expression::Identifier(_) | Expression::Member { .. }
     )
+}
+
+/// Maps the `++` / `--` operator lexemes onto [`UpdateOperator`].
+fn update_operator(operator: &str) -> Option<UpdateOperator> {
+    match operator {
+        "++" => Some(UpdateOperator::Increment),
+        "--" => Some(UpdateOperator::Decrement),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
