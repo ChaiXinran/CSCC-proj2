@@ -154,8 +154,9 @@ The Native pipeline currently implements the scoped V1-V3 milestones:
 The active collaborative milestone is the expanded
 [Native V4 object semantics](docs/native-v4-scope.md), with contracts frozen in
 the [Native V4 shared interface](docs/native-v4-interface.md). The object model,
-accessors, constructors, and sparse-array core are connected; the remaining V4
-work is the real `Object`, `Array`, and `Function` builtin and intrinsic layer.
+accessors, constructors, sparse-array core, and the minimal `Object`, `Array`,
+and `Function` builtin/intrinsic layer are connected. Remaining V4 work focuses
+on broadening standard builtins and reducing the diagnostic Test262 failure set.
 File ownership, C0–C3 execution subgroups, branch suggestions, and merge order
 are defined in the [Native V4 team plan](docs/native-v4-team-plan.md).
 
@@ -228,22 +229,27 @@ differs.
 
 ## Test262
 
-Run the fixed Native milestone acceptance gates:
+Run the fixed Native V1-V3 milestone acceptance gates and the full Native V4
+area scan:
 
 ```sh
 cargo run -- test262 --native-v1 --jobs 1 --verbose
 cargo run -- test262 --native-v2 --jobs 1 --verbose
 cargo run -- test262 --native-v3 --jobs 1 --verbose
-cargo run -- test262 --native-v4 --jobs 1 --verbose
+cargo run -- test262 --native-v4 --jobs 4 --progress
 cargo test --test native_test262
 ```
 
 These commands run the pinned files listed in the V1-V3 milestone documents
-through the self-developed lexer, parser, compiler, VM, runtime, and minimal
-host-provided Test262 harness. Every file is checked in default and strict
-mode; Boa is not used. Current Native V3 results and broader directory
-baselines are recorded in the
-[Native V3 Test262 report](reports/native-v3-test262-report.md).
+and the V4 Object/Array/Function/expression directories through the
+self-developed lexer, parser, compiler, VM, runtime, and minimal host-provided
+Test262 harness. Every file is checked in default and strict mode; Boa is not
+used. Current Native V4 results are recorded in the
+[Native V4 Test262 report](reports/native-v4-test262-report.md).
+
+`--native-v4` reports per-file pass/fail/skip details when `--progress` is
+supplied and keeps skipped files out of the passed count. It is intentionally
+not a curated zero-failure list.
 
 Start with the feature directory affected by a change:
 

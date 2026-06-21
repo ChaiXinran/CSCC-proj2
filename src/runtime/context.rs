@@ -3,6 +3,9 @@
 use std::collections::HashMap;
 
 use super::{
+    Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject, JsValue, NativeFunction,
+    ObjectId, ObjectKind, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
+    object::array_index,
     BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject,
     JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind, PropertyDescriptor,
     PropertyDescriptorUpdate, PropertyKind, object::array_index,
@@ -22,6 +25,18 @@ pub struct Intrinsics {
 use crate::vm::{CallFrame, VmError};
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
+pub const MAX_ARRAY_LENGTH: usize = 1_000_000;
+
+/// Realm-local references to the standard objects created by V4 builtins.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Intrinsics {
+    pub object_prototype: ObjectId,
+    pub function_prototype: ObjectId,
+    pub array_prototype: ObjectId,
+    pub object_constructor: JsValue,
+    pub function_constructor: JsValue,
+    pub array_constructor: JsValue,
+}
 
 /// Per-isolate language state passed to the bytecode executor.
 #[derive(Debug)]
@@ -32,6 +47,9 @@ pub struct NativeContext {
     environment_stack: Vec<EnvironmentId>,
     call_frames: Vec<CallFrame>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
+    function_objects: HashMap<FunctionId, ObjectId>,
+    native_function_objects: HashMap<NativeFunction, ObjectId>,
+    object_values: HashMap<ObjectId, JsValue>,
     builtin_registry: Vec<BuiltinFunction>,
     intrinsics: Option<Intrinsics>,
     strict: bool,
@@ -55,6 +73,9 @@ impl Default for NativeContext {
             environment_stack: Vec::new(),
             call_frames: Vec::new(),
             function_prototypes: HashMap::new(),
+            function_objects: HashMap::new(),
+            native_function_objects: HashMap::new(),
+            object_values: HashMap::new(),
             builtin_registry: Vec::new(),
             intrinsics: None,
             strict: false,
@@ -128,6 +149,81 @@ impl NativeContext {
 
     pub fn set_intrinsics(&mut self, intrinsics: Intrinsics) {
         self.intrinsics = Some(intrinsics);
+    }
+
+    #[must_use]
+    pub fn intrinsics(&self) -> Option<&Intrinsics> {
+        self.intrinsics.as_ref()
+    }
+
+    pub fn set_intrinsics(&mut self, intrinsics: Intrinsics) {
+        self.intrinsics = Some(intrinsics);
+    }
+
+    pub fn register_native_function_object(&mut self, function: NativeFunction, object: ObjectId) {
+        self.native_function_objects.insert(function, object);
+        self.object_values
+            .insert(object, JsValue::NativeFunction(function));
+    }
+
+    pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
+        self.function_objects.insert(function, object);
+        self.object_values
+            .insert(object, JsValue::Function(function));
+    }
+
+    #[must_use]
+    pub fn native_function_object(&self, function: NativeFunction) -> Option<ObjectId> {
+        self.native_function_objects.get(&function).copied()
+    }
+
+    #[must_use]
+    pub fn function_object(&self, function: FunctionId) -> Option<ObjectId> {
+        self.function_objects.get(&function).copied()
+    }
+
+    #[must_use]
+    pub fn value_object(&self, value: &JsValue) -> Option<ObjectId> {
+        match value {
+            JsValue::Object(object) => Some(*object),
+            JsValue::Function(function) => self.function_object(*function),
+            JsValue::NativeFunction(function) => self.native_function_object(*function),
+            _ => None,
+        }
+    }
+
+    pub fn require_object(&self, value: &JsValue, operation: &str) -> Result<ObjectId, VmError> {
+        self.value_object(value)
+            .ok_or_else(|| VmError::type_error(format!("cannot {operation} on {value}")))
+    }
+
+    #[must_use]
+    pub fn object_value(&self, object: ObjectId) -> JsValue {
+        self.object_values
+            .get(&object)
+            .cloned()
+            .unwrap_or(JsValue::Object(object))
+    }
+
+    #[must_use]
+    pub fn object_prototype(&self) -> Option<ObjectId> {
+        self.intrinsics
+            .as_ref()
+            .map(|intrinsics| intrinsics.object_prototype)
+    }
+
+    #[must_use]
+    pub fn function_prototype_object(&self) -> Option<ObjectId> {
+        self.intrinsics
+            .as_ref()
+            .map(|intrinsics| intrinsics.function_prototype)
+    }
+
+    #[must_use]
+    pub fn array_prototype(&self) -> Option<ObjectId> {
+        self.intrinsics
+            .as_ref()
+            .map(|intrinsics| intrinsics.array_prototype)
     }
 
     #[must_use]
@@ -247,11 +343,21 @@ impl NativeContext {
     }
 
     pub fn allocate_function(&mut self, function: JsFunction) -> Result<FunctionId, VmError> {
+        let mut function_object = JsObject::ordinary();
+        function_object.prototype = self.function_prototype_object();
+        let function_object_id = self
+            .heap
+            .allocate_object(function_object)
+            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+
         let id = self
             .heap
             .allocate_function(function)
             .ok_or_else(|| VmError::runtime("function arena exhausted"))?;
+        self.register_function_object(id, function_object_id);
+
         let mut prototype = JsObject::ordinary();
+        prototype.prototype = self.object_prototype();
         prototype.define_property(
             "constructor",
             PropertyDescriptor::data_with(JsValue::Function(id), true, false, true),
@@ -261,6 +367,15 @@ impl NativeContext {
             .allocate_object(prototype)
             .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
         self.function_prototypes.insert(id, prototype_id);
+
+        let function_object = self
+            .heap
+            .object_mut(function_object_id)
+            .ok_or_else(|| VmError::runtime("missing function object"))?;
+        function_object.define_property(
+            "prototype",
+            PropertyDescriptor::data_with(JsValue::Object(prototype_id), true, false, false),
+        );
         Ok(id)
     }
 
@@ -301,6 +416,7 @@ impl NativeContext {
         properties: impl IntoIterator<Item = (String, JsValue)>,
     ) -> Result<JsValue, VmError> {
         let mut object = JsObject::ordinary();
+        object.prototype = self.object_prototype();
         for (name, value) in properties {
             object.define_property(name, PropertyDescriptor::data(value));
         }
@@ -312,23 +428,33 @@ impl NativeContext {
     }
 
     pub fn create_array(&mut self, elements: Vec<JsValue>) -> Result<JsValue, VmError> {
+        if elements.len() > MAX_ARRAY_LENGTH {
+            return Err(VmError::range("invalid array length"));
+        }
+        let mut array = JsObject::array(elements);
+        array.prototype = self.array_prototype();
         let id = self
             .heap
-            .allocate_object(JsObject::array(elements))
+            .allocate_object(array)
             .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
     pub fn create_sparse_array(&mut self, length: usize) -> Result<JsValue, VmError> {
+        if length > MAX_ARRAY_LENGTH {
+            return Err(VmError::range("invalid array length"));
+        }
+        let mut array = JsObject::sparse_array(length);
+        array.prototype = self.array_prototype();
         let id = self
             .heap
-            .allocate_object(JsObject::sparse_array(length))
+            .allocate_object(array)
             .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
     pub fn get(&mut self, receiver: JsValue, key: &str) -> Result<JsValue, VmError> {
-        let object = object_id(receiver.clone(), "read property", key)?;
+        let object = self.require_object(&receiver, "read property")?;
         let Some((_, descriptor)) = self.find_property_descriptor(object, key)? else {
             return Ok(JsValue::Undefined);
         };
@@ -349,7 +475,7 @@ impl NativeContext {
         value: JsValue,
         strict: bool,
     ) -> Result<bool, VmError> {
-        let object = object_id(receiver, "write property", key)?;
+        let object = self.require_object(&receiver, "write property")?;
         self.set_object_property(object, key, value, strict)
     }
 
@@ -359,16 +485,20 @@ impl NativeContext {
         key: String,
         descriptor: PropertyDescriptor,
     ) -> Result<bool, VmError> {
-        if key == "length" && self.is_array(object)? {
+        if key == "length" && self.is_array_object(object)? {
             if let Some(value) = descriptor.value_cloned() {
                 let length = self.array_length_from_value(value)?;
                 return self.set_array_length(object, length);
             }
             return Ok(false);
         }
-        if self.is_array(object)?
+        if self.is_array_object(object)?
             && let Some(_) = array_index(&key)
         {
+            let index = array_index(&key).unwrap();
+            if index >= MAX_ARRAY_LENGTH {
+                return Err(VmError::range("invalid array length"));
+            }
             let Some(value) = descriptor.value_cloned() else {
                 return Ok(false);
             };
@@ -393,7 +523,7 @@ impl NativeContext {
         key: String,
         update: PropertyDescriptorUpdate,
     ) -> Result<bool, VmError> {
-        if key == "length" && self.is_array(object)? {
+        if key == "length" && self.is_array_object(object)? {
             if let Some(value) = update.value {
                 let length = self.array_length_from_value(value)?;
                 return self.set_array_length(object, length);
@@ -508,7 +638,7 @@ impl NativeContext {
         key: &str,
         strict: bool,
     ) -> Result<bool, VmError> {
-        if key == "length" && self.is_array(object)? {
+        if key == "length" && self.is_array_object(object)? {
             return strict_error_or_false(strict, "cannot delete array length");
         }
 
@@ -600,9 +730,22 @@ impl NativeContext {
     }
 
     pub fn instance_of(&self, value: JsValue, constructor: JsValue) -> Result<bool, VmError> {
-        let JsValue::Object(object) = value else {
+        let Some(object) = self.value_object(&value) else {
             return Ok(false);
         };
+        let constructor_object = self.value_object(&constructor).ok_or_else(|| {
+            VmError::type_error("right-hand side of instanceof is not a constructor")
+        })?;
+        if !self.is_constructable_value(&constructor) {
+            return Err(VmError::type_error(
+                "right-hand side of instanceof is not a constructor",
+            ));
+        }
+        let prototype = self
+            .find_property_descriptor(constructor_object, "prototype")?
+            .and_then(|(_, descriptor)| descriptor.value_cloned())
+            .and_then(|value| self.value_object(&value))
+            .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?;
         let prototype = match &constructor {
             JsValue::Function(function) => self
                 .function_prototype(*function)
@@ -647,6 +790,29 @@ impl NativeContext {
         Ok(false)
     }
 
+    #[must_use]
+    pub fn is_constructable_value(&self, value: &JsValue) -> bool {
+        match value {
+            JsValue::Function(_) => true,
+            JsValue::NativeFunction(function) => function.constructable(),
+            _ => false,
+        }
+    }
+
+    pub fn constructor_prototype(
+        &self,
+        constructor: &JsValue,
+    ) -> Result<Option<ObjectId>, VmError> {
+        let Some(constructor_object) = self.value_object(constructor) else {
+            return Err(VmError::type_error("value is not a constructor"));
+        };
+        let prototype = self
+            .find_property_descriptor(constructor_object, "prototype")?
+            .and_then(|(_, descriptor)| descriptor.value_cloned())
+            .and_then(|value| self.value_object(&value));
+        Ok(prototype.or_else(|| self.object_prototype()))
+    }
+
     pub fn get_property(&mut self, object: JsValue, name: &str) -> Result<JsValue, VmError> {
         self.get(object, name)
     }
@@ -687,7 +853,7 @@ impl NativeContext {
         value: JsValue,
         strict: bool,
     ) -> Result<bool, VmError> {
-        if key == "length" && self.is_array(object)? {
+        if key == "length" && self.is_array_object(object)? {
             let length = self.array_length_from_value(value)?;
             return self.set_array_length(object, length);
         }
@@ -711,6 +877,13 @@ impl NativeContext {
                     "accessor setter invocation requires the VM call path",
                 )),
             };
+        }
+
+        if let Some(index) = array_index(key)
+            && self.is_array_object(object)?
+            && index >= MAX_ARRAY_LENGTH
+        {
+            return Err(VmError::range("invalid array length"));
         }
 
         if let Some(prototype) = self.get_prototype_of(object)
@@ -764,7 +937,7 @@ impl NativeContext {
         Ok(None)
     }
 
-    fn is_array(&self, object: ObjectId) -> Result<bool, VmError> {
+    pub fn is_array_object(&self, object: ObjectId) -> Result<bool, VmError> {
         Ok(matches!(
             self.heap
                 .object(object)
@@ -774,7 +947,10 @@ impl NativeContext {
         ))
     }
 
-    fn set_array_length(&mut self, object: ObjectId, length: usize) -> Result<bool, VmError> {
+    pub fn set_array_length(&mut self, object: ObjectId, length: usize) -> Result<bool, VmError> {
+        if length > MAX_ARRAY_LENGTH {
+            return Err(VmError::range("invalid array length"));
+        }
         let object = self
             .heap
             .object_mut(object)
@@ -782,7 +958,7 @@ impl NativeContext {
         Ok(object.set_array_length(length))
     }
 
-    fn array_length_from_value(&self, value: JsValue) -> Result<usize, VmError> {
+    pub fn array_length_from_value(&self, value: JsValue) -> Result<usize, VmError> {
         let Some(length) = value.to_number() else {
             return Err(VmError::range("invalid array length"));
         };
@@ -790,7 +966,11 @@ impl NativeContext {
         {
             return Err(VmError::range("invalid array length"));
         }
-        Ok(length as usize)
+        let length = length as usize;
+        if length > MAX_ARRAY_LENGTH {
+            return Err(VmError::range("invalid array length"));
+        }
+        Ok(length)
     }
 
     pub fn reset_execution_budget(&mut self, loop_limit: u64) {
@@ -858,18 +1038,9 @@ pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
         | JsValue::Function(_)
         | JsValue::BuiltinFunction(_)
         | JsValue::Error(_) => Err(VmError::type_error(
-            "object property keys are not supported in native V3",
+            "object property keys are not supported in native V4",
         )),
     }
-}
-
-fn object_id(value: JsValue, operation: &str, key: &str) -> Result<ObjectId, VmError> {
-    let JsValue::Object(id) = value else {
-        return Err(VmError::type_error(format!(
-            "cannot {operation} {key} on non-object value"
-        )));
-    };
-    Ok(id)
 }
 
 fn descriptor_from_update(update: PropertyDescriptorUpdate) -> PropertyDescriptor {
