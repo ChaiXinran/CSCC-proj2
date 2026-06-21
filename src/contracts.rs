@@ -19,10 +19,10 @@ pub use crate::{
     lexer::{Keyword, LexError, Span, Token, TokenKind},
     parser::{ParseError, Parser},
     runtime::{
-        Binding, CollectionStats, Collector, Environment, EnvironmentId, FunctionId, Heap,
-        JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
-        NativeFunction, ObjectId, ObjectKind, PropertyDescriptor, PropertyDescriptorUpdate,
-        PropertyEntry, PropertyKind, PropertyMap,
+        Binding, BuiltinFunction, BuiltinId, CollectionStats, Collector, Environment,
+        EnvironmentId, FunctionId, Heap, Intrinsics, JsFunction, JsObject, JsValue, NativeCall,
+        NativeConstruct, NativeContext, NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind,
+        PropertyDescriptor, PropertyDescriptorUpdate, PropertyEntry, PropertyKind, PropertyMap,
     },
     vm::{CallFrame, Completion, Vm, VmError, VmErrorKind},
 };

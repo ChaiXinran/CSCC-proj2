@@ -26,6 +26,10 @@ The contest release gate is the *native* engine reaching >60% Test262 conformanc
 - `lexer/`, `ast/`, `parser/` — native front end. `bytecode/` — compiler/chunk/opcodes. `vm/` — interpreter/frames. `runtime/` — values, objects, environments, heap, GC. `builtins/` — Object/Function/Array etc., no host APIs exposed.
 - `test262.rs` — parallel Test262 discovery/execution with strict+non-strict variants, harness includes, negative/async handling, `$262`, per-case panic isolation, JSON summaries.
 
+Current V4 development scope and acceptance criteria: [docs/native-v4-scope.md](docs/native-v4-scope.md). Cross-group shared AST/opcode/descriptor contracts for V4: [docs/native-v4-interface.md](docs/native-v4-interface.md) — treat as read-only; changes require review before any implementation PR merges.
+
+Planning notes and test strategy rationale live in `thoughts/` (not authoritative, but useful context).
+
 Host surface is deliberately tiny: `print` + a frozen `console` facade. No filesystem/process/network. Runtime limits bound loops, recursion, VM stack, and backtrace size. A bounded per-isolate LRU reuses parsed/compiled scripts without sharing mutable globals across isolates.
 
 The default `conformance` Cargo feature pulls in larger Intl/Temporal/experimental Boa components; disabling default features yields the smaller agent binary with the same isolation API.
@@ -67,6 +71,31 @@ Benchmarks: `cargo run --release -- bench 1000` (compares cold isolates, warm un
 Put normal / boundary / error-path unit tests beside each module; broader behavior tests under `tests/`. Because stages are decoupled through `contracts.rs`, you can test one stage with fakes for the others via `NativePipeline::from_stages(...)` — parser tests without a compiler/VM, VM tests with hand-built `Chunk`s, etc. Boa differential tests compare values/output/error categories, but the ECMAScript spec and Test262 are authoritative when behavior differs.
 
 **Never count skipped Test262 cases as passes.** Behavior-affecting PRs should report newly passed / newly failed / skipped / regressed counts. Existing Test262 (45,310/47,516) and benchmark numbers are **Boa-backed baselines** — native results must be reported separately. Current status and gaps: [docs/status.md](docs/status.md).
+
+## Team structure (V4)
+
+Four groups own different stages. When adding or changing code, stay within the owning group's boundary:
+
+- **A — Frontend** (`lexer/`, `ast/`, `parser/`): tokens, AST nodes, parser — no compiler or runtime imports.
+- **B — Compiler** (`bytecode/`): opcode definitions, chunk emission — depends on AST, not on VM internals.
+- **C — VM/Runtime/Builtins** (`vm/`, `runtime/`, `builtins/`): interpreter, object model, property descriptors, built-in functions.
+- **D — Integration** (`test262.rs`, `tests/`): `NATIVE_V4_TESTS`, `--native-v4` flag, Test262 scanning and reporting.
+
+Shared contracts (AST node shapes, `Instruction` enum, `PropertyDescriptor`, `JsValue`, builtin signatures) are defined in `docs/native-v4-interface.md` and `src/contracts.rs`. Contract changes must be merged before any dependent implementation PRs.
+
+### Native engine test gates
+
+Run all versioned gates before merging anything that touches native stages:
+
+```sh
+cargo run --release -- test262 --native-v1 --jobs 1
+cargo run --release -- test262 --native-v2 --jobs 1
+cargo run --release -- test262 --native-v3 --jobs 1
+# Once V4 is complete:
+cargo run --release -- test262 --native-v4 --jobs 1 --verbose
+```
+
+V1–V3 gates must stay at zero regressions and zero new skips.
 
 ## Commits
 
