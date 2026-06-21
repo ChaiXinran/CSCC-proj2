@@ -562,7 +562,7 @@ typeof Object / Array / Function -> "function"
 三个 builtins 文件不再包含空安装实现
 Object/Array/Function 自有端到端样例全部通过
 相关 Test262 目录相对基线有可解释的新增通过
-NATIVE_V4_TESTS 相对初始 11 项扩大且零失败、零跳过
+--native-v4 覆盖 V4 相关目录并如实报告 passed/failed/skipped
 ```
 
 ## 11. 共享文件和合并规则

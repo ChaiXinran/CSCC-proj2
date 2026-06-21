@@ -1,13 +1,27 @@
-//! `Function` constructor and prototype bootstrap.
+//! `Function` constructor and prototype methods.
 
 use crate::{
-    runtime::{JsValue, NativeContext},
+    runtime::{JsValue, NativeContext, PropertyDescriptor},
     vm::VmError,
 };
 
-pub fn install_function(_context: &mut NativeContext) {
-    // Prototypes and constructor-function wiring are handled in install_globals.
-    // Instance-method population (bind, call, apply) is deferred to a later milestone.
+pub fn install_function(context: &mut NativeContext) {
+    let Some(function_prototype) = context
+        .intrinsics()
+        .map(|intrinsics| intrinsics.function_prototype)
+    else {
+        return;
+    };
+    let call = context
+        .register_builtin("call", 1, function_prototype_call, None)
+        .expect("install Function.prototype.call");
+    context
+        .define_own_property(
+            function_prototype,
+            "call".into(),
+            PropertyDescriptor::data_with(call, true, false, true),
+        )
+        .expect("define Function.prototype.call");
 }
 
 pub fn function_call(
@@ -16,7 +30,7 @@ pub fn function_call(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     Err(VmError::runtime(
-        "Function() constructor is not yet supported in the native engine",
+        "dynamic Function source compilation is unsupported in native V4",
     ))
 }
 
@@ -26,6 +40,16 @@ pub fn function_construct(
     _new_target: JsValue,
 ) -> Result<JsValue, VmError> {
     Err(VmError::runtime(
-        "new Function() is not yet supported in the native engine",
+        "dynamic Function source compilation is unsupported in native V4",
+    ))
+}
+
+fn function_prototype_call(
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Err(VmError::runtime(
+        "Function.prototype.call requires the VM call path",
     ))
 }

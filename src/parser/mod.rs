@@ -148,6 +148,25 @@ impl Parser {
         }
     }
 
+    /// Consumes an IdentifierName, which also permits keywords after `.` and
+    /// in property-name positions.
+    fn expect_identifier_name(&mut self) -> Result<String, ParseError> {
+        match self.peek().kind.clone() {
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Keyword(keyword) => {
+                self.advance();
+                Ok(keyword.as_str().into())
+            }
+            _ => Err(self.error(format!(
+                "expected identifier name but found {}",
+                describe(&self.peek().kind)
+            ))),
+        }
+    }
+
     /// Consumes a statement terminator: an explicit `;`, or end of input.
     ///
     /// V1 does not implement automatic semicolon insertion at line terminators;

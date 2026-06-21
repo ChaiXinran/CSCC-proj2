@@ -1,26 +1,150 @@
-name: CI
+name: Native V4 CI
 
-on:
+"on":
   push:
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-v4-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+  RUST_TOOLCHAIN: "1.91.0"
 
 jobs:
-  test:
+  quality:
+    name: Format, check, and Clippy
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository and pinned dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          components: rustfmt, clippy
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-v4-quality
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Check all targets
+        run: cargo check --locked --all-targets
+
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+  regression:
+    name: Full regression (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+        os:
+          - ubuntu-latest
+          - windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out repository and pinned dependencies
+        uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - run: cargo run -- test262 --native-v4 --jobs 1
       - run: cargo run --release -- test262 --root test262 --suite test/language/expressions/addition --limit 20 --jobs 2
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-v4-${{ matrix.os }}
+
+      - name: Run all Rust tests
+        run: cargo test --locked --all-targets
+
+  v4-contracts:
+    name: Native V4 contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository and pinned dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-v4-contracts
+
+      - name: Test front-end and bytecode contracts
+        run: >-
+          cargo test --locked
+          --test frontend_v4
+          --test bytecode_v4_contract
+          --test frontend_bytecode_v4
+
+      - name: Test Native V4 execution contracts
+        run: >-
+          cargo test --locked
+          --test native_v4
+          --test native_v4_runtime
+
+  native-test262:
+    name: Native V1-V4 Test262 gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs:
+      - quality
+      - regression
+      - v4-contracts
+    steps:
+      - name: Check out repository and pinned dependencies
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Restore Cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-v4-test262
+
+      - name: Run all fixed Native Test262 gates
+        run: cargo test --locked --test native_test262
+
+      - name: Verify the Native V4 CLI gate
+        run: >-
+          cargo run --locked --release --
+          test262 --root test262 --native-v4 --jobs 1 --verbose

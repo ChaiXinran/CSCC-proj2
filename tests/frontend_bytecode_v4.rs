@@ -97,3 +97,62 @@ fn rejects_invalid_accessors_and_duplicate_prototype_setters() {
         );
     }
 }
+
+#[test]
+fn compiles_expanded_v4_builtin_calls_with_generic_instructions() {
+    let object_create = compile("Object.create(base);");
+    assert_eq!(
+        object_create.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::GetMethod(1),
+            Instruction::LoadGlobal(2),
+            Instruction::CallWithThis(1),
+            Instruction::Return,
+        ]
+    );
+
+    let array_call = compile("Array(1, 2);");
+    assert!(array_call.instructions.contains(&Instruction::Call(2)));
+    assert!(
+        !array_call
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::CallWithThis(_)))
+    );
+
+    let array_construct = compile("new Array(3);");
+    assert!(
+        array_construct
+            .instructions
+            .contains(&Instruction::Construct(1))
+    );
+
+    let array_push = compile("array.push(1);");
+    assert!(
+        array_push
+            .instructions
+            .contains(&Instruction::CallWithThis(1))
+    );
+}
+
+#[test]
+fn compiles_nested_function_call_with_the_correct_receiver() {
+    let chunk = compile("Function.prototype.call.call(fn, receiver, 1);");
+
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::GetProperty(1),
+            Instruction::GetProperty(2),
+            Instruction::GetMethod(3),
+            Instruction::LoadGlobal(4),
+            Instruction::LoadGlobal(5),
+            Instruction::Constant(6),
+            Instruction::CallWithThis(3),
+            Instruction::Return,
+        ]
+    );
+    assert_eq!(chunk.analyze_stack().unwrap().max_depth, 5);
+}
