@@ -1,6 +1,6 @@
 //! Persistent state shared by native execution and integration.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::{
     BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject,
@@ -42,6 +42,8 @@ pub struct NativeContext {
     function_prototypes: HashMap<FunctionId, ObjectId>,
     function_objects: HashMap<FunctionId, ObjectId>,
     object_values: HashMap<ObjectId, JsValue>,
+    error_objects: HashSet<ObjectId>,
+    raw_json_objects: HashMap<ObjectId, String>,
     builtin_registry: Vec<BuiltinFunction>,
     intrinsics: Option<Intrinsics>,
     function_prototype_call: Option<BuiltinId>,
@@ -68,6 +70,8 @@ impl Default for NativeContext {
             function_prototypes: HashMap::new(),
             function_objects: HashMap::new(),
             object_values: HashMap::new(),
+            error_objects: HashSet::new(),
+            raw_json_objects: HashMap::new(),
             builtin_registry: Vec::new(),
             intrinsics: None,
             function_prototype_call: None,
@@ -179,6 +183,26 @@ impl NativeContext {
     pub fn require_object(&self, value: &JsValue, operation: &str) -> Result<ObjectId, VmError> {
         self.value_object(value)
             .ok_or_else(|| VmError::type_error(format!("cannot {operation} on {value}")))
+    }
+
+    pub fn mark_error_object(&mut self, object: ObjectId) {
+        self.error_objects.insert(object);
+    }
+
+    #[must_use]
+    pub fn is_error_object(&self, object: ObjectId) -> bool {
+        self.error_objects.contains(&object)
+    }
+
+    pub fn mark_raw_json_object(&mut self, object: ObjectId, raw_json: String) {
+        self.raw_json_objects.insert(object, raw_json);
+    }
+
+    #[must_use]
+    pub fn raw_json_value(&self, object: ObjectId) -> Option<&str> {
+        self.raw_json_objects
+            .get(&object)
+            .map(std::string::String::as_str)
     }
 
     #[must_use]

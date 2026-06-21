@@ -108,6 +108,23 @@ fn to_uint16(value: f64) -> u16 {
     value.trunc().rem_euclid(65_536.0) as u16
 }
 
+fn to_uint32(value: f64) -> u32 {
+    if !value.is_finite() || value == 0.0 {
+        return 0;
+    }
+    value.trunc().rem_euclid(4_294_967_296.0) as u32
+}
+
+fn to_length(value: f64) -> usize {
+    if value.is_nan() || value <= 0.0 {
+        0
+    } else if value >= 1_000_000.0 {
+        1_000_000
+    } else {
+        value.trunc() as usize
+    }
+}
+
 fn map_string_error(error: string::StringBuiltinError) -> VmError {
     // All current C1 string failures map to RangeError per ECMAScript.
     VmError::range(error.to_string())
@@ -138,6 +155,22 @@ fn this_string(vm: &mut Vm, context: &mut NativeContext, this: JsValue) -> Resul
                 return Ok(value.clone());
             }
             vm.to_string_coerce(other, context)
+        }
+    }
+}
+
+fn this_string_value(context: &NativeContext, this: JsValue) -> Result<String, VmError> {
+    match this {
+        JsValue::String(value) => Ok(value),
+        other => {
+            if let Some(object) = context.value_object(&other)
+                && let Some(PrimitiveValue::String(value)) = context.primitive_value(object)
+            {
+                return Ok(value.clone());
+            }
+            Err(VmError::type_error(
+                "String.prototype method called on a non-String",
+            ))
         }
     }
 }
@@ -223,6 +256,20 @@ fn install_error(context: &mut NativeContext) -> Result<(), VmError> {
         context.declare_global(spec.name, constructor);
     }
 
+    let error_constructor = context
+        .get_global("Error")
+        .ok_or_else(|| VmError::runtime("Error constructor missing"))?;
+    let error_constructor_object = context
+        .value_object(&error_constructor)
+        .ok_or_else(|| VmError::runtime("Error constructor object missing"))?;
+    define_method(
+        context,
+        error_constructor_object,
+        "isError",
+        1,
+        error_is_error,
+    )?;
+
     // Error.prototype.toString is shared by the whole hierarchy.
     define_method(context, error_proto, "toString", 0, error_to_string)?;
     Ok(())
@@ -248,6 +295,8 @@ fn install_json(context: &mut NativeContext) -> Result<(), VmError> {
         .ok_or_else(|| VmError::runtime("heap exhausted"))?;
     define_method(context, object, "parse", 2, json_parse)?;
     define_method(context, object, "stringify", 3, json_stringify)?;
+    define_method(context, object, "rawJSON", 1, json_raw_json)?;
+    define_method(context, object, "isRawJSON", 1, json_is_raw_json)?;
     context.declare_global("JSON", JsValue::Object(object));
     Ok(())
 }
@@ -272,6 +321,59 @@ fn json_stringify(
         Some(value) => JsValue::String(value),
         None => JsValue::Undefined,
     })
+}
+
+fn json_raw_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let raw_json = arg_string(vm, context, arguments, 0)?;
+    if raw_json.is_empty()
+        || raw_json
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+        || raw_json
+            .as_bytes()
+            .last()
+            .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
+    {
+        return Err(VmError::type_error("JSON.rawJSON: invalid JSON text"));
+    }
+    let parsed = json::parse_json(&raw_json, context)?;
+    if matches!(parsed, JsValue::Object(_)) {
+        return Err(VmError::type_error(
+            "JSON.rawJSON: top-level object or array is not allowed",
+        ));
+    }
+
+    let mut object = JsObject::ordinary();
+    object.prototype = None;
+    object.define_property(
+        "rawJSON",
+        PropertyDescriptor::data_with(JsValue::String(raw_json.clone()), true, true, true),
+    );
+    let id = context
+        .heap_mut()
+        .allocate_object(object)
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    context.mark_raw_json_object(id, raw_json);
+    Ok(JsValue::Object(id))
+}
+
+fn json_is_raw_json(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let result = arguments
+        .first()
+        .and_then(|value| context.value_object(value))
+        .is_some_and(|object| context.raw_json_value(object).is_some());
+    Ok(JsValue::Boolean(result))
 }
 
 fn call_error_constructor(
@@ -323,6 +425,7 @@ fn create_error_object(
         .heap_mut()
         .allocate_object(object)
         .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    context.mark_error_object(id);
     if let Some(value) = arguments
         .first()
         .filter(|value| !matches!(value, JsValue::Undefined))
@@ -348,6 +451,19 @@ fn error_construct(
         .or_else(|| context.error_prototype())
         .ok_or_else(|| VmError::runtime("error prototype missing"))?;
     create_error_object(vm, context, arguments, prototype)
+}
+
+fn error_is_error(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let result = arguments
+        .first()
+        .and_then(|value| context.value_object(value))
+        .is_some_and(|object| context.is_error_object(object));
+    Ok(JsValue::Boolean(result))
 }
 
 fn error_to_string(
@@ -447,6 +563,7 @@ fn number_prototype_call(name: &str) -> Option<NativeCall> {
         "toFixed" => number_to_fixed,
         "toExponential" => number_to_exponential,
         "toPrecision" => number_to_precision,
+        "toLocaleString" => number_to_locale_string,
         _ => return None,
     })
 }
@@ -553,6 +670,11 @@ fn number_to_exponential(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_number(context, &this)?;
+    if !value.is_finite() {
+        return number::to_exponential(value, None)
+            .map(JsValue::String)
+            .map_err(map_number_format_error);
+    }
     let fraction_digits = match arguments.first() {
         None | Some(JsValue::Undefined) => None,
         Some(_) => {
@@ -586,6 +708,17 @@ fn number_to_precision(
         }
     };
     number::to_precision(value, precision)
+        .map(JsValue::String)
+        .map_err(map_number_format_error)
+}
+fn number_to_locale_string(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_number(context, &this)?;
+    number::number_to_string(value, None)
         .map(JsValue::String)
         .map_err(map_number_format_error)
 }
@@ -763,8 +896,10 @@ fn string_prototype_call(name: &str) -> Option<NativeCall> {
         "charAt" => string_char_at,
         "charCodeAt" => string_char_code_at,
         "at" => string_at,
+        "codePointAt" => string_code_point_at,
         "concat" => string_concat,
         "includes" => string_includes,
+        "localeCompare" => string_locale_compare,
         "indexOf" => string_index_of,
         "lastIndexOf" => string_last_index_of,
         "slice" => string_slice,
@@ -773,6 +908,11 @@ fn string_prototype_call(name: &str) -> Option<NativeCall> {
         "startsWith" => string_starts_with,
         "endsWith" => string_ends_with,
         "repeat" => string_repeat,
+        "split" => string_split,
+        "search" => string_search,
+        "replace" => string_replace,
+        "replaceAll" => string_replace_all,
+        "match" => string_match,
         "padStart" => string_pad_start,
         "padEnd" => string_pad_end,
         "trim" => string_trim,
@@ -780,18 +920,22 @@ fn string_prototype_call(name: &str) -> Option<NativeCall> {
         "trimEnd" => string_trim_end,
         "toLowerCase" => string_to_lower_case,
         "toUpperCase" => string_to_upper_case,
+        "toLocaleLowerCase" => string_to_locale_lower_case,
+        "toLocaleUpperCase" => string_to_locale_upper_case,
+        "normalize" => string_normalize,
+        "isWellFormed" => string_is_well_formed,
+        "toWellFormed" => string_to_well_formed,
         _ => return None,
     })
 }
-
 fn string_static_call(name: &str) -> Option<NativeCall> {
     Some(match name {
         "fromCharCode" => string_from_char_code,
         "fromCodePoint" => string_from_code_point,
+        "raw" => string_raw,
         _ => return None,
     })
 }
-
 fn string_call(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -807,7 +951,7 @@ fn string_call(
 }
 
 fn string_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -815,7 +959,7 @@ fn string_construct(
     let value = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
         JsValue::String(value) => value,
         JsValue::Undefined => String::new(),
-        other => other.to_js_string().unwrap_or_default(),
+        other => vm.to_string_coerce(other, context)?,
     };
     let prototype = context
         .constructor_prototype(&new_target)?
@@ -825,16 +969,13 @@ fn string_construct(
 }
 
 fn string_value_of(
-    vm: &mut Vm,
+    _vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    // For an unwrapped String primitive or wrapper this returns the value; for
-    // anything else `this_string` performs ToString (RequireObjectCoercible).
-    Ok(JsValue::String(this_string(vm, context, this)?))
+    Ok(JsValue::String(this_string_value(context, this)?))
 }
-
 fn string_char_at(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -870,6 +1011,19 @@ fn string_at(
     let index = arg_index(vm, context, arguments, 0)?;
     Ok(match string::at(&value, index) {
         Some(unit) => JsValue::String(unit),
+        None => JsValue::Undefined,
+    })
+}
+fn string_code_point_at(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let index = arg_index(vm, context, arguments, 0)?;
+    Ok(match string::code_point_at(&value, index) {
+        Some(point) => JsValue::Number(f64::from(point)),
         None => JsValue::Undefined,
     })
 }
@@ -1021,6 +1175,100 @@ fn string_repeat(
         .map_err(map_string_error)
 }
 
+fn string_split(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let separator = match arguments.first() {
+        None | Some(JsValue::Undefined) => None,
+        Some(_) => Some(arg_string(vm, context, arguments, 0)?),
+    };
+    let limit = match arguments.get(1) {
+        None | Some(JsValue::Undefined) => u32::MAX,
+        Some(_) => to_uint32(arg_number(vm, context, arguments, 1)?),
+    };
+    let parts = string::split(&value, separator.as_deref(), limit)
+        .into_iter()
+        .map(JsValue::String)
+        .collect();
+    context.create_array(parts)
+}
+
+fn string_search(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let search = arg_string(vm, context, arguments, 0)?;
+    Ok(JsValue::Number(string::search(&value, &search) as f64))
+}
+
+fn string_replace(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let search = arg_string(vm, context, arguments, 0)?;
+    let replacement = arg_string(vm, context, arguments, 1)?;
+    Ok(JsValue::String(string::replace(
+        &value,
+        &search,
+        &replacement,
+    )))
+}
+
+fn string_replace_all(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let search = arg_string(vm, context, arguments, 0)?;
+    let replacement = arg_string(vm, context, arguments, 1)?;
+    Ok(JsValue::String(string::replace_all(
+        &value,
+        &search,
+        &replacement,
+    )))
+}
+
+fn string_match(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let search = arg_string(vm, context, arguments, 0)?;
+    let Some(index) = string::index_of(&value, &search, 0) else {
+        return Ok(JsValue::Null);
+    };
+    let result = context.create_array(vec![JsValue::String(search.clone())])?;
+    if let JsValue::Object(object) = result {
+        context.define_own_property(
+            object,
+            "index".into(),
+            PropertyDescriptor::data_with(JsValue::Number(index as f64), true, true, true),
+        )?;
+        context.define_own_property(
+            object,
+            "input".into(),
+            PropertyDescriptor::data_with(JsValue::String(value), true, true, true),
+        )?;
+        Ok(JsValue::Object(object))
+    } else {
+        Ok(result)
+    }
+}
+
 fn string_pad_start(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -1115,6 +1363,76 @@ fn string_to_upper_case(
     Ok(JsValue::String(string::to_upper_case(&value)))
 }
 
+fn string_locale_compare(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let other = arg_string(vm, context, arguments, 0)?;
+    Ok(JsValue::Number(f64::from(string::locale_compare(
+        &value, &other,
+    ))))
+}
+
+fn string_to_locale_lower_case(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    Ok(JsValue::String(string::to_lower_case(&value)))
+}
+
+fn string_to_locale_upper_case(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    Ok(JsValue::String(string::to_upper_case(&value)))
+}
+
+fn string_normalize(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let form = match arguments.first() {
+        None | Some(JsValue::Undefined) => "NFC".to_string(),
+        Some(_) => arg_string(vm, context, arguments, 0)?,
+    };
+    if !matches!(form.as_str(), "NFC" | "NFD" | "NFKC" | "NFKD") {
+        return Err(VmError::range("invalid normalization form"));
+    }
+    Ok(JsValue::String(string::normalize(&value)))
+}
+
+fn string_is_well_formed(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    Ok(JsValue::Boolean(string::is_well_formed(&value)))
+}
+
+fn string_to_well_formed(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    Ok(JsValue::String(string::to_well_formed(&value)))
+}
+
 fn string_from_char_code(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -1147,12 +1465,44 @@ fn string_from_code_point(
     Ok(JsValue::String(string::decode_utf16(&units)))
 }
 
+fn string_raw(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let template = arg(arguments, 0);
+    let template_object = vm.to_object(template, context)?;
+    let raw = vm.get_property_value(JsValue::Object(template_object), "raw", context)?;
+    let raw_object = vm.to_object(raw, context)?;
+    let length_value = vm.get_property_value(JsValue::Object(raw_object), "length", context)?;
+    let length = to_length(vm.to_number(length_value, context)?);
+    if length == 0 {
+        return Ok(JsValue::String(String::new()));
+    }
+
+    let mut result = String::new();
+    for index in 0..length {
+        let literal =
+            vm.get_property_value(JsValue::Object(raw_object), &index.to_string(), context)?;
+        result.push_str(&vm.to_string_coerce(literal, context)?);
+        if index + 1 < length {
+            if let Some(substitution) = arguments.get(index + 1) {
+                result.push_str(&vm.to_string_coerce(substitution.clone(), context)?);
+            }
+        }
+    }
+    Ok(JsValue::String(result))
+}
+
 // ── Math ─────────────────────────────────────────────────────────────────────
 
 fn install_math(context: &mut NativeContext) -> Result<(), VmError> {
+    let mut math = JsObject::ordinary();
+    math.prototype = context.object_prototype();
     let math_object = context
         .heap_mut()
-        .allocate_object(JsObject::ordinary())
+        .allocate_object(math)
         .ok_or_else(|| VmError::runtime("heap exhausted"))?;
 
     for constant in math::MATH_CONSTANTS {
@@ -1244,6 +1594,7 @@ fn math_method_call(name: &str) -> Option<NativeCall> {
         "sign" => math_sign,
         "sin" => math_sin,
         "sinh" => math_sinh,
+        "sumPrecise" => math_sum_precise,
         "sqrt" => math_sqrt,
         "tan" => math_tan,
         "tanh" => math_tanh,
@@ -1388,6 +1739,28 @@ fn math_hypot(
         values.push(arg_number(vm, context, arguments, index)?);
     }
     Ok(JsValue::Number(math::hypot(&values)))
+}
+
+fn math_sum_precise(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let source = arg(arguments, 0);
+    let object = context.require_object(&source, "Math.sumPrecise")?;
+    let length = context
+        .get_own_property_descriptor(object, "length")
+        .and_then(|descriptor| descriptor.value_cloned())
+        .and_then(|value| value.to_number())
+        .unwrap_or(0.0)
+        .max(0.0) as usize;
+    let mut values = Vec::with_capacity(length);
+    for index in 0..length {
+        let value = vm.get_property_value(source.clone(), &index.to_string(), context)?;
+        values.push(vm.to_number(value, context)?);
+    }
+    Ok(JsValue::Number(math::sum_precise(&values)))
 }
 
 fn math_random(

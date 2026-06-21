@@ -106,6 +106,10 @@ pub(crate) const NUMBER_PROTOTYPE_METHODS: &[NumberMethodSpec] = &[
         length: 1,
     },
     NumberMethodSpec {
+        name: "toLocaleString",
+        length: 0,
+    },
+    NumberMethodSpec {
         name: "valueOf",
         length: 0,
     },
