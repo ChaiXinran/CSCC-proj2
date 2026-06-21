@@ -1491,23 +1491,33 @@ fn is_ecmascript_whitespace(character: char) -> bool {
 }
 
 /// Pure number-to-string conversion (no object coercion).
-fn coerce_number_to_string(n: f64) -> String {
-    if n.is_nan() {
+fn coerce_number_to_string(value: f64) -> String {
+    if value.is_nan() {
         "NaN".into()
-    } else if n == f64::INFINITY {
+    } else if value == f64::INFINITY {
         "Infinity".into()
-    } else if n == f64::NEG_INFINITY {
+    } else if value == f64::NEG_INFINITY {
         "-Infinity".into()
-    } else if n == 0.0 {
+    } else if value == 0.0 {
         "0".into()
     } else {
-        let i = n as i64;
-        if i as f64 == n {
-            i.to_string()
+        let magnitude = value.abs();
+        if !(1e-6..1e21).contains(&magnitude) {
+            js_scientific_number_to_string(value)
         } else {
-            n.to_string()
+            value.to_string()
         }
     }
+}
+
+fn js_scientific_number_to_string(value: f64) -> String {
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let raw = format!("{:e}", value.abs());
+    let Some((mantissa, exponent)) = raw.split_once('e') else {
+        return format!("{sign}{raw}");
+    };
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    format!("{sign}{mantissa}e{exponent:+}")
 }
 
 #[cfg(test)]
