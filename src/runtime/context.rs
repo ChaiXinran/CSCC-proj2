@@ -3,31 +3,14 @@
 use std::collections::HashMap;
 
 use super::{
-    Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject, JsValue, NativeFunction,
-    ObjectId, ObjectKind, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
-    object::array_index,
     BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap, JsFunction, JsObject,
     JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind, PropertyDescriptor,
     PropertyDescriptorUpdate, PropertyKind, object::array_index,
 };
+use crate::vm::{CallFrame, VmError};
 
 /// Stable references to the three fundamental constructors and prototypes
 /// installed during `install_foundation`.
-#[derive(Debug, Clone)]
-pub struct Intrinsics {
-    pub object_prototype: ObjectId,
-    pub function_prototype: ObjectId,
-    pub array_prototype: ObjectId,
-    pub object_constructor: JsValue,
-    pub function_constructor: JsValue,
-    pub array_constructor: JsValue,
-}
-use crate::vm::{CallFrame, VmError};
-
-const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
-pub const MAX_ARRAY_LENGTH: usize = 1_000_000;
-
-/// Realm-local references to the standard objects created by V4 builtins.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Intrinsics {
     pub object_prototype: ObjectId,
@@ -37,6 +20,9 @@ pub struct Intrinsics {
     pub function_constructor: JsValue,
     pub array_constructor: JsValue,
 }
+
+const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
+pub const MAX_ARRAY_LENGTH: usize = 1_000_000;
 
 /// Per-isolate language state passed to the bytecode executor.
 #[derive(Debug)]
@@ -48,7 +34,6 @@ pub struct NativeContext {
     call_frames: Vec<CallFrame>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
     function_objects: HashMap<FunctionId, ObjectId>,
-    native_function_objects: HashMap<NativeFunction, ObjectId>,
     object_values: HashMap<ObjectId, JsValue>,
     builtin_registry: Vec<BuiltinFunction>,
     intrinsics: Option<Intrinsics>,
@@ -74,7 +59,6 @@ impl Default for NativeContext {
             call_frames: Vec::new(),
             function_prototypes: HashMap::new(),
             function_objects: HashMap::new(),
-            native_function_objects: HashMap::new(),
             object_values: HashMap::new(),
             builtin_registry: Vec::new(),
             intrinsics: None,
@@ -151,30 +135,10 @@ impl NativeContext {
         self.intrinsics = Some(intrinsics);
     }
 
-    #[must_use]
-    pub fn intrinsics(&self) -> Option<&Intrinsics> {
-        self.intrinsics.as_ref()
-    }
-
-    pub fn set_intrinsics(&mut self, intrinsics: Intrinsics) {
-        self.intrinsics = Some(intrinsics);
-    }
-
-    pub fn register_native_function_object(&mut self, function: NativeFunction, object: ObjectId) {
-        self.native_function_objects.insert(function, object);
-        self.object_values
-            .insert(object, JsValue::NativeFunction(function));
-    }
-
     pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
         self.function_objects.insert(function, object);
         self.object_values
             .insert(object, JsValue::Function(function));
-    }
-
-    #[must_use]
-    pub fn native_function_object(&self, function: NativeFunction) -> Option<ObjectId> {
-        self.native_function_objects.get(&function).copied()
     }
 
     #[must_use]
@@ -187,7 +151,7 @@ impl NativeContext {
         match value {
             JsValue::Object(object) => Some(*object),
             JsValue::Function(function) => self.function_object(*function),
-            JsValue::NativeFunction(function) => self.native_function_object(*function),
+            JsValue::BuiltinFunction(id) => self.builtin(*id).map(|builtin| builtin.object),
             _ => None,
         }
     }
@@ -199,6 +163,14 @@ impl NativeContext {
 
     #[must_use]
     pub fn object_value(&self, object: ObjectId) -> JsValue {
+        if let Some((index, _)) = self
+            .builtin_registry
+            .iter()
+            .enumerate()
+            .find(|(_, builtin)| builtin.object == object)
+        {
+            return JsValue::BuiltinFunction(BuiltinId(index as u16));
+        }
         self.object_values
             .get(&object)
             .cloned()
@@ -746,34 +718,6 @@ impl NativeContext {
             .and_then(|(_, descriptor)| descriptor.value_cloned())
             .and_then(|value| self.value_object(&value))
             .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?;
-        let prototype = match &constructor {
-            JsValue::Function(function) => self
-                .function_prototype(*function)
-                .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?,
-            JsValue::BuiltinFunction(id) => {
-                let backing = self
-                    .builtin(*id)
-                    .ok_or_else(|| VmError::runtime("invalid builtin id"))?
-                    .object;
-                let obj = self
-                    .heap
-                    .object(backing)
-                    .ok_or_else(|| VmError::runtime("builtin backing object not found"))?;
-                match obj.get_own_property_value("prototype") {
-                    Some(JsValue::Object(proto_id)) => proto_id,
-                    _ => {
-                        return Err(VmError::type_error(
-                            "constructor.prototype is not an object",
-                        ));
-                    }
-                }
-            }
-            _ => {
-                return Err(VmError::type_error(
-                    "right-hand side of instanceof is not a constructor",
-                ));
-            }
-        };
 
         let mut current = self.get_prototype_of(object);
         let mut depth = 0usize;
@@ -794,7 +738,9 @@ impl NativeContext {
     pub fn is_constructable_value(&self, value: &JsValue) -> bool {
         match value {
             JsValue::Function(_) => true,
-            JsValue::NativeFunction(function) => function.constructable(),
+            JsValue::BuiltinFunction(id) => self
+                .builtin(*id)
+                .is_some_and(|builtin| builtin.construct.is_some()),
             _ => false,
         }
     }

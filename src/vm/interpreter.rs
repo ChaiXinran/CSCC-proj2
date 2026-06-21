@@ -582,23 +582,27 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         match callee {
-            JsValue::NativeFunction(crate::runtime::NativeFunction::FunctionPrototypeCall) => {
-                let target = this_value;
-                let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-                let forwarded = arguments.into_iter().skip(1).collect();
-                self.call_value(target, call_this, forwarded, context)
-            }
-            JsValue::NativeFunction(function) => {
-                builtins::call_native(function, context, this_value, arguments)
-            }
             JsValue::Function(function) => {
                 self.call_user_function(function, this_value, arguments, context)
             }
             JsValue::BuiltinFunction(id) => {
+                let is_function_prototype_call = context
+                    .intrinsics()
+                    .and_then(|intrinsics| {
+                        context.get_own_property_descriptor(intrinsics.function_prototype, "call")
+                    })
+                    .and_then(|descriptor| descriptor.value_cloned())
+                    == Some(JsValue::BuiltinFunction(id));
                 let def = context
                     .builtin(id)
                     .ok_or_else(|| VmError::runtime("invalid builtin id"))?
                     .clone();
+                if is_function_prototype_call {
+                    let target = this_value;
+                    let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+                    let forwarded = arguments.into_iter().skip(1).collect();
+                    return self.call_value(target, call_this, forwarded, context);
+                }
                 (def.call)(context, this_value, &arguments)
             }
             other => Err(VmError::type_error(format!("{other} is not callable"))),
@@ -712,9 +716,6 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         match constructor {
-            JsValue::NativeFunction(function) => {
-                builtins::construct_native(function, context, arguments)
-            }
             JsValue::Function(function_id) => {
                 let prototype = context.constructor_prototype(&JsValue::Function(function_id))?;
                 let instance = context.ordinary_object_with_prototype(prototype)?;
