@@ -160,19 +160,21 @@ on broadening standard builtins and reducing the diagnostic Test262 failure set.
 File ownership, C0–C3 execution subgroups, branch suggestions, and merge order
 are defined in the [Native V4 team plan](docs/native-v4-team-plan.md).
 
-Native V5 has entered contract-first parallel development while the remaining
-V4 fixes continue. Its first delivery focuses on structured completion,
-`try/catch/finally`, `switch`, and lexical `let`/`const` semantics. See the
+Native V5 now has an initial Native VM/runtime integration for structured
+completion, `try/catch/finally`, `switch`, and lexical `let`/`const`
+semantics. See the
 [Native V5 scope](docs/native-v5-scope.md),
 [shared interface](docs/native-v5-interface.md), and
-[team plan](docs/native-v5-team-plan.md). Frontend, bytecode, and Test262
-preparation may proceed now; VM/runtime integration waits for the V4 repair
-baseline to merge.
+[team plan](docs/native-v5-team-plan.md). The pinned `--native-v5` Test262
+gate is intentionally small and zero-skip; broader V5 directories remain a
+diagnostic scan.
 
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
 [`tests/frontend_bytecode_v3.rs`](tests/frontend_bytecode_v3.rs), and
-[`tests/native_v3.rs`](tests/native_v3.rs). A compact V3 sample is available at
+[`tests/native_v3.rs`](tests/native_v3.rs), with V5 end-to-end coverage in
+[`tests/native_v5.rs`](tests/native_v5.rs) and VM/runtime coverage in
+[`tests/native_v5_runtime.rs`](tests/native_v5_runtime.rs). A compact V3 sample is available at
 [`examples/v3.js`](examples/v3.js).
 
 ## Parallel Development
@@ -238,27 +240,36 @@ differs.
 
 ## Test262
 
-Run the fixed Native V1-V3 milestone acceptance gates and the full Native V4
-area scan:
+Run the fixed Native V1-V4 milestone acceptance gates and the V4/V5 diagnostic
+area scans:
 
 ```sh
 cargo run -- test262 --native-v1 --jobs 1 --verbose
 cargo run -- test262 --native-v2 --jobs 1 --verbose
 cargo run -- test262 --native-v3 --jobs 1 --verbose
-cargo run -- test262 --native-v4 --jobs 4 --progress
+cargo run -- test262 --native-v4 --jobs 1 --verbose
+cargo run -- test262 --native-v4-scan --jobs 4 --progress
+cargo run -- test262 --native-v5 --jobs 1 --verbose
+cargo run -- test262 --native-v5-scan --jobs 4 --progress
 cargo test --test native_test262
 ```
 
-These commands run the pinned files listed in the V1-V3 milestone documents
-and the V4 Object/Array/Function/expression directories through the
+These commands run the pinned files listed in the milestone documents and the
+V4/V5 diagnostic directories through the
 self-developed lexer, parser, compiler, VM, runtime, and minimal host-provided
 Test262 harness. Every file is checked in default and strict mode; Boa is not
 used. Current Native V4 results are recorded in the
-[Native V4 Test262 report](reports/native-v4-test262-report.md).
+[Native V4 Test262 report](reports/native-v4-test262-report.md). Native V5
+results are recorded in the
+[Native V5 Test262 report](reports/native-v5-test262-report.md).
 
-`--native-v4` reports per-file pass/fail/skip details when `--progress` is
-supplied and keeps skipped files out of the passed count. It is intentionally
-not a curated zero-failure list.
+`--native-v4` is the curated zero-failure, zero-skip gate for the pinned V4
+object-model files. `--native-v4-scan` is the broader diagnostic scan for
+object, array, delete, in, instanceof, and minimal Object/Array/Function
+built-in directories.
+
+`--native-v5` is the curated zero-failure, zero-skip gate. `--native-v5-scan`
+is the broader diagnostic scan for try, switch, let, and const directories.
 
 Start with the feature directory affected by a change:
 

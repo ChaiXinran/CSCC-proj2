@@ -243,6 +243,25 @@ impl NativeContext {
         Ok(())
     }
 
+    #[must_use]
+    pub fn environment_depth(&self) -> usize {
+        self.environment_stack.len()
+    }
+
+    pub fn restore_environment_depth(&mut self, depth: usize) -> Result<(), VmError> {
+        if depth > self.environment_stack.len() {
+            return Err(VmError::runtime(format!(
+                "cannot restore environment depth {} from {}",
+                depth,
+                self.environment_stack.len()
+            )));
+        }
+        while self.environment_stack.len() > depth {
+            self.pop_environment()?;
+        }
+        Ok(())
+    }
+
     pub fn declare_global(&mut self, name: impl Into<String>, value: JsValue) -> bool {
         let environment = self
             .heap
@@ -254,16 +273,14 @@ impl NativeContext {
     #[must_use]
     pub fn get_global(&self, name: &str) -> Option<JsValue> {
         let environment = self.heap.environment(self.global_environment)?;
-        environment
-            .binding(name)
-            .map(|binding| binding.value.clone())
+        environment.get_binding_value(name).ok()
     }
 
     pub fn set_global(&mut self, name: &str, value: JsValue) -> bool {
         let Some(environment) = self.heap.environment_mut(self.global_environment) else {
             return false;
         };
-        environment.set_mutable_binding(name, value)
+        environment.set_mutable_binding(name, value).is_ok()
     }
 
     pub fn declare_binding(
@@ -281,25 +298,88 @@ impl NativeContext {
         if environment.create_binding(name.clone(), value.clone(), mutable) {
             return Ok(());
         }
-        if environment.set_mutable_binding(&name, value) {
-            return Ok(());
-        }
-        Err(VmError::type_error(format!(
-            "cannot update immutable binding {name}"
-        )))
+        environment.set_mutable_binding(&name, value)
+    }
+
+    pub fn create_mutable_binding(
+        &mut self,
+        environment: EnvironmentId,
+        name: String,
+        initialized: bool,
+    ) -> Result<(), VmError> {
+        self.heap
+            .environment_mut(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .create_mutable_binding(name, initialized)
+    }
+
+    pub fn create_immutable_binding(
+        &mut self,
+        environment: EnvironmentId,
+        name: String,
+    ) -> Result<(), VmError> {
+        self.heap
+            .environment_mut(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .create_immutable_binding(name)
+    }
+
+    pub fn initialize_binding(
+        &mut self,
+        environment: EnvironmentId,
+        name: &str,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        self.heap
+            .environment_mut(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .initialize_binding(name, value)
     }
 
     #[must_use]
     pub fn resolve_binding(&self, name: &str) -> Option<(EnvironmentId, JsValue)> {
+        self.resolve_binding_value(name).ok().flatten()
+    }
+
+    pub fn resolve_binding_value(
+        &self,
+        name: &str,
+    ) -> Result<Option<(EnvironmentId, JsValue)>, VmError> {
         let mut current = Some(self.current_environment);
         while let Some(id) = current {
-            let environment = self.heap.environment(id)?;
+            let environment = self
+                .heap
+                .environment(id)
+                .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
             if let Some(binding) = environment.binding(name) {
-                return Some((id, binding.value.clone()));
+                if !binding.initialized {
+                    return Err(VmError::reference(format!(
+                        "cannot access {name} before initialization"
+                    )));
+                }
+                return Ok(Some((id, binding.value.clone())));
             }
             current = environment.outer;
         }
-        None
+        Ok(None)
+    }
+
+    pub fn resolve_binding_environment(
+        &self,
+        name: &str,
+    ) -> Result<Option<EnvironmentId>, VmError> {
+        let mut current = Some(self.current_environment);
+        while let Some(id) = current {
+            let environment = self
+                .heap
+                .environment(id)
+                .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
+            if environment.has_binding(name) {
+                return Ok(Some(id));
+            }
+            current = environment.outer;
+        }
+        Ok(None)
     }
 
     pub fn set_binding(&mut self, name: &str, value: JsValue) -> Result<(), VmError> {
@@ -311,12 +391,7 @@ impl NativeContext {
                     .environment_mut(id)
                     .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
                 if environment.has_binding(name) {
-                    if environment.set_mutable_binding(name, value) {
-                        return Ok(());
-                    }
-                    return Err(VmError::type_error(format!(
-                        "cannot update immutable binding {name}"
-                    )));
+                    return environment.set_mutable_binding(name, value);
                 }
                 environment.outer
             };

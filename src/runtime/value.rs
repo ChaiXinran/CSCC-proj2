@@ -8,6 +8,10 @@ use super::{BuiltinId, FunctionId, ObjectId};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeErrorKind {
     Error,
+    Reference,
+    Type,
+    Range,
+    RuntimeLimit,
     Test262,
 }
 

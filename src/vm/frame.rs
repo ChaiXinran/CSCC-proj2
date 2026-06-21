@@ -31,12 +31,12 @@ impl CallFrame {
     }
 }
 
-/// Shared V3 completion model for non-local statement results.
+/// Shared V5 completion model for non-local statement results.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Completion {
     Normal(JsValue),
     Return(JsValue),
     Throw(JsValue),
-    Break,
-    Continue,
+    Break(Option<String>),
+    Continue(Option<String>),
 }
