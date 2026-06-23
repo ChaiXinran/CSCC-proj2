@@ -1,7 +1,7 @@
 use agentjs::{
     ast::{
-        BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator, VariableDeclarator,
-        VariableKind,
+        AssignmentOperator, BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator,
+        VariableDeclarator, VariableKind,
     },
     bytecode::{Chunk, ChunkError, Compiler, Constant, Instruction, StackAnalysis, StackEffect},
     contracts::{NativeError, ProgramCompiler},
@@ -571,6 +571,82 @@ fn compiler_stores_identifier_assignment_and_preserves_its_value() {
 }
 
 #[test]
+fn compiler_lowers_compound_assignment_targets() {
+    let identifier_program = Program {
+        body: vec![expression_statement(Expression::CompoundAssignment {
+            operator: AssignmentOperator::Add,
+            target: Box::new(identifier("answer")),
+            value: Box::new(literal(Literal::Number(2.0))),
+        })],
+    };
+    let chunk = Compiler::new()
+        .compile_program(&identifier_program)
+        .unwrap();
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::Constant(1),
+            Instruction::Add,
+            Instruction::StoreGlobal(2),
+            Instruction::Return,
+        ]
+    );
+
+    let static_member_program = Program {
+        body: vec![expression_statement(Expression::CompoundAssignment {
+            operator: AssignmentOperator::Multiply,
+            target: Box::new(member(identifier("object"), identifier("x"), false)),
+            value: Box::new(literal(Literal::Number(3.0))),
+        })],
+    };
+    let chunk = Compiler::new()
+        .compile_program(&static_member_program)
+        .unwrap();
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::Duplicate,
+            Instruction::GetProperty(1),
+            Instruction::Constant(2),
+            Instruction::Multiply,
+            Instruction::SetProperty(1),
+            Instruction::Return,
+        ]
+    );
+
+    let computed_member_program = Program {
+        body: vec![expression_statement(Expression::CompoundAssignment {
+            operator: AssignmentOperator::Subtract,
+            target: Box::new(member(
+                identifier("object"),
+                literal(Literal::String("x".into())),
+                true,
+            )),
+            value: Box::new(literal(Literal::Number(4.0))),
+        })],
+    };
+    let chunk = Compiler::new()
+        .compile_program(&computed_member_program)
+        .unwrap();
+    assert_eq!(
+        chunk.instructions,
+        [
+            Instruction::LoadGlobal(0),
+            Instruction::Constant(1),
+            Instruction::DuplicatePair,
+            Instruction::GetElement,
+            Instruction::Constant(2),
+            Instruction::Subtract,
+            Instruction::SetElement,
+            Instruction::Return,
+        ]
+    );
+    assert_eq!(chunk.validate(), Ok(()));
+}
+
+#[test]
 fn compiler_creates_lexical_bindings_before_initialization() {
     for (kind, expected_create) in [
         (VariableKind::Let, Instruction::CreateMutableBinding(0)),
@@ -799,6 +875,10 @@ fn v1_instructions_publish_their_stack_effects() {
         StackEffect::new(0, 1)
     );
     assert_eq!(Instruction::Add.stack_effect(), StackEffect::new(2, 1));
+    assert_eq!(
+        Instruction::DuplicatePair.stack_effect(),
+        StackEffect::with_required(2, 0, 2)
+    );
     assert_eq!(
         Instruction::StoreGlobal(0).stack_effect(),
         StackEffect::new(1, 1)

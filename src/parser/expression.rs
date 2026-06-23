@@ -19,8 +19,9 @@
 
 use crate::{
     ast::{
-        ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
-        LogicalOperator, ObjectProperty, PropertyName, Statement, UnaryOperator, UpdateOperator,
+        ArrayElement, AssignmentOperator, BinaryOperator, Expression, FunctionLiteral,
+        FunctionParam, Literal, LogicalOperator, ObjectProperty, PropertyName, Statement,
+        UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -58,6 +59,19 @@ impl Parser {
             }
             let value = self.parse_assignment()?;
             Ok(Expression::Assignment {
+                target: Box::new(left),
+                value: Box::new(value),
+            })
+        } else if let TokenKind::Operator(operator_text) = self.peek().kind.clone()
+            && let Some(operator) = compound_assignment_operator(&operator_text)
+        {
+            if !is_assignment_target(&left) {
+                return Err(self.error("invalid assignment target".into()));
+            }
+            self.advance();
+            let value = self.parse_assignment()?;
+            Ok(Expression::CompoundAssignment {
+                operator,
                 target: Box::new(left),
                 value: Box::new(value),
             })
@@ -634,6 +648,18 @@ fn is_assignment_target(expression: &Expression) -> bool {
     )
 }
 
+/// Maps compound assignment lexemes onto [`AssignmentOperator`].
+fn compound_assignment_operator(operator: &str) -> Option<AssignmentOperator> {
+    match operator {
+        "+=" => Some(AssignmentOperator::Add),
+        "-=" => Some(AssignmentOperator::Subtract),
+        "*=" => Some(AssignmentOperator::Multiply),
+        "/=" => Some(AssignmentOperator::Divide),
+        "%=" => Some(AssignmentOperator::Remainder),
+        _ => None,
+    }
+}
+
 /// Maps the `++` / `--` operator lexemes onto [`UpdateOperator`].
 fn update_operator(operator: &str) -> Option<UpdateOperator> {
     match operator {
@@ -647,8 +673,9 @@ fn update_operator(operator: &str) -> Option<UpdateOperator> {
 mod tests {
     use crate::{
         ast::{
-            ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
-            LogicalOperator, ObjectProperty, PropertyName, Statement, UnaryOperator,
+            ArrayElement, AssignmentOperator, BinaryOperator, Expression, FunctionLiteral,
+            FunctionParam, Literal, LogicalOperator, ObjectProperty, PropertyName, Statement,
+            UnaryOperator,
         },
         lexer::Lexer,
         parser::Parser,
@@ -772,6 +799,22 @@ mod tests {
         };
         assert_eq!(*target, Expression::Identifier("a".into()));
         assert!(matches!(*value, Expression::Assignment { .. }));
+    }
+
+    #[test]
+    fn parses_compound_assignment() {
+        let expression = parse_expression("total += value");
+        let Expression::CompoundAssignment {
+            operator,
+            target,
+            value,
+        } = expression
+        else {
+            panic!("expected compound assignment");
+        };
+        assert_eq!(operator, AssignmentOperator::Add);
+        assert_eq!(*target, Expression::Identifier("total".into()));
+        assert_eq!(*value, Expression::Identifier("value".into()));
     }
 
     #[test]
