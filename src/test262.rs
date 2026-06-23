@@ -439,15 +439,18 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
     let mut completed = 0usize;
     for case in receiver {
         completed += 1;
-        if progress {
-            print_progress(completed, total, &case);
-        }
         match case.status {
             Status::Passed => summary.passed += 1,
             Status::Failed => summary.failed += 1,
             Status::Skipped => summary.skipped += 1,
         }
+        if progress {
+            print_progress(completed, total, &summary, &case);
+        }
         summary.cases.push(case);
+    }
+    if progress {
+        eprintln!(); // end the \r progress line
     }
     for worker in workers {
         worker
@@ -468,20 +471,28 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
         .unwrap_or("unknown panic payload")
 }
 
-fn print_progress(completed: usize, total: usize, case: &CaseResult) {
+fn print_progress(completed: usize, total: usize, summary: &Summary, case: &CaseResult) {
+    use std::io::Write;
     let percent = if total == 0 {
         100.0
     } else {
         completed as f64 * 100.0 / total as f64
     };
-    println!(
-        "[{completed}/{total} {percent:5.1}%] {}\t{}",
-        status_label(case.status),
-        case.path.display()
-    );
-    if case.status != Status::Passed && !case.detail.is_empty() {
-        println!("  {}", case.detail);
+    // Print failures/skips on their own line so they are not overwritten.
+    if case.status != Status::Passed {
+        let label = status_label(case.status);
+        if case.detail.is_empty() {
+            eprintln!("\n{label}\t{}", case.path.display());
+        } else {
+            eprintln!("\n{label}\t{}\n  {}", case.path.display(), case.detail);
+        }
     }
+    // Overwrite the current terminal line with a compact live counter.
+    eprint!(
+        "\r[{completed}/{total} {percent:5.1}%] pass={} fail={} skip={}   ",
+        summary.passed, summary.failed, summary.skipped,
+    );
+    let _ = std::io::stderr().flush();
 }
 
 fn status_label(status: Status) -> &'static str {
