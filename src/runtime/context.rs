@@ -6,8 +6,7 @@ use super::{
     BoundFunction, BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap,
     JsFunction, JsObject, JsValue, NativeCall, NativeConstruct, NativeErrorKind, ObjectId,
     ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
-    SymbolId, SymbolRegistry, WellKnownSymbols,
-    object::array_index,
+    SymbolId, SymbolRegistry, WellKnownSymbols, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 
@@ -191,6 +190,16 @@ impl NativeContext {
         self.builtin_registry.get(id.0 as usize)
     }
 
+    /// Find a registered builtin by name and return it as a `JsValue::BuiltinFunction`.
+    #[must_use]
+    pub fn find_builtin_by_name(&self, name: &str) -> Option<JsValue> {
+        self.builtin_registry
+            .iter()
+            .enumerate()
+            .find(|(_, bf)| bf.name == name)
+            .map(|(i, _)| JsValue::BuiltinFunction(BuiltinId(i as u16)))
+    }
+
     pub fn set_function_prototype_call(&mut self, id: BuiltinId) {
         self.function_prototype_call = Some(id);
     }
@@ -275,7 +284,10 @@ impl NativeContext {
         object: ObjectId,
         symbol: SymbolId,
     ) -> Option<PropertyDescriptor> {
-        self.heap.object(object)?.own_symbol_property(symbol).cloned()
+        self.heap
+            .object(object)?
+            .own_symbol_property(symbol)
+            .cloned()
     }
 
     pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
@@ -747,6 +759,21 @@ impl NativeContext {
     }
 
     pub fn get(&mut self, receiver: JsValue, key: &str) -> Result<JsValue, VmError> {
+        // JsValue::Error is not a heap object; synthesize the standard own properties
+        // so that `thrown.constructor`, `thrown.name`, and `thrown.message` work
+        // inside `assert.throws` and similar harness helpers.
+        if let JsValue::Error(ref error) = receiver {
+            return match key {
+                "message" => Ok(JsValue::String(error.message.clone())),
+                "name" => Ok(JsValue::String(error_kind_name(&error.kind).into())),
+                "constructor" => Ok(self
+                    .find_builtin_by_name(error_kind_name(&error.kind))
+                    .unwrap_or(JsValue::Undefined)),
+                "stack" | "cause" => Ok(JsValue::Undefined),
+                _ => Ok(JsValue::Undefined),
+            };
+        }
+
         let object = self.require_object(&receiver, "read property")?;
         let Some((_, descriptor)) = self.find_property_descriptor(object, key)? else {
             return Ok(JsValue::Undefined);
@@ -1131,11 +1158,11 @@ impl NativeContext {
         value: JsValue,
     ) -> Result<JsValue, VmError> {
         let name = name.into();
-        if self.set(object, &name, value.clone(), false)? {
-            Ok(value)
-        } else {
-            Err(VmError::type_error(format!("cannot write property {name}")))
-        }
+        let strict = self.strict;
+        // `set` returns Ok(false) for non-writable in sloppy mode (silent ignore per spec),
+        // and Err(TypeError) for non-writable in strict mode — both are correct here.
+        self.set(object, &name, value.clone(), strict)?;
+        Ok(value)
     }
 
     pub fn get_element(&mut self, object: JsValue, key: JsValue) -> Result<JsValue, VmError> {
@@ -1151,6 +1178,33 @@ impl NativeContext {
     ) -> Result<JsValue, VmError> {
         let key = to_property_key(&key)?;
         self.set_property(object, key, value)
+    }
+
+    /// Like `set_property` but always uses strict-mode semantics (throws TypeError for
+    /// non-writable targets). Used by intrinsic functions whose spec steps say `Set(O, P, V, true)`.
+    pub fn set_property_strict(
+        &mut self,
+        object: JsValue,
+        name: impl Into<String>,
+        value: JsValue,
+    ) -> Result<JsValue, VmError> {
+        let name = name.into();
+        if self.set(object, &name, value.clone(), true)? {
+            Ok(value)
+        } else {
+            Err(VmError::type_error(format!("cannot write property {name}")))
+        }
+    }
+
+    /// Like `set_element` but always uses strict-mode semantics.
+    pub fn set_element_strict(
+        &mut self,
+        object: JsValue,
+        key: JsValue,
+        value: JsValue,
+    ) -> Result<JsValue, VmError> {
+        let key = to_property_key(&key)?;
+        self.set_property_strict(object, key, value)
     }
 
     fn set_object_property(
@@ -1433,9 +1487,7 @@ pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
         JsValue::Boolean(value) => Ok(value.to_string()),
         JsValue::Null => Ok("null".into()),
         JsValue::Undefined => Ok("undefined".into()),
-        JsValue::Symbol(_) => Err(VmError::type_error(
-            "Cannot convert a Symbol to a string",
-        )),
+        JsValue::Symbol(_) => Err(VmError::type_error("Cannot convert a Symbol to a string")),
         JsValue::Object(_)
         | JsValue::Function(_)
         | JsValue::BuiltinFunction(_)
@@ -1510,6 +1562,17 @@ fn bound_construct_unreachable(
     Err(VmError::runtime(
         "bound function must be dispatched by the VM",
     ))
+}
+
+/// Maps a `NativeErrorKind` to the JS constructor name seen in `error.name` / `error.constructor.name`.
+fn error_kind_name(kind: &NativeErrorKind) -> &'static str {
+    match kind {
+        NativeErrorKind::Type => "TypeError",
+        NativeErrorKind::Reference => "ReferenceError",
+        NativeErrorKind::Syntax => "SyntaxError",
+        NativeErrorKind::Range | NativeErrorKind::RuntimeLimit => "RangeError",
+        NativeErrorKind::Error | NativeErrorKind::Test262 => "Error",
+    }
 }
 
 /// Returns true if a native error with `kind` is an ECMAScript instance of the named constructor.

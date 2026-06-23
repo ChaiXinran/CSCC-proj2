@@ -299,7 +299,8 @@ fn array_push(
     let object = context.require_object(&this_value, "Array.prototype.push")?;
     let mut length = array_like_length(context, object);
     for value in arguments {
-        context.set_element(
+        // Spec step 4a: ? Set(O, ToString(len), E, true) — always strict
+        context.set_element_strict(
             this_value.clone(),
             JsValue::Number(length as f64),
             value.clone(),

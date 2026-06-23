@@ -492,7 +492,8 @@ impl Vm {
                     if let JsValue::Symbol(sym_id) = &key {
                         let sym_id = *sym_id;
                         let result = if let Some(obj_id) = context.value_object(&object) {
-                            context.get_symbol_property_value(obj_id, sym_id)
+                            context
+                                .get_symbol_property_value(obj_id, sym_id)
                                 .unwrap_or(JsValue::Undefined)
                         } else {
                             JsValue::Undefined
@@ -576,7 +577,10 @@ impl Vm {
                             obj_id,
                             sym_id,
                             crate::runtime::PropertyDescriptor::data_with(
-                                value.clone(), true, true, true,
+                                value.clone(),
+                                true,
+                                true,
+                                true,
                             ),
                         )?;
                         self.stack.push(value);
@@ -1131,9 +1135,9 @@ impl Vm {
             JsValue::Number(n) => Ok(n),
             JsValue::String(ref s) => Ok(coerce_string_to_number(s)),
             // Symbols cannot be converted to numbers — ECMAScript raises a TypeError.
-            JsValue::Symbol(_) => {
-                Err(VmError::type_error("Cannot convert a Symbol value to a number"))
-            }
+            JsValue::Symbol(_) => Err(VmError::type_error(
+                "Cannot convert a Symbol value to a number",
+            )),
             JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
                 let prim = self.to_primitive(value, PreferredType::Number, context)?;
                 self.to_number(prim, context)
@@ -1156,9 +1160,9 @@ impl Vm {
             JsValue::Number(n) => Ok(coerce_number_to_string(n)),
             JsValue::String(s) => Ok(s),
             // Symbols cannot be implicitly converted to strings — TypeError.
-            JsValue::Symbol(_) => {
-                Err(VmError::type_error("Cannot convert a Symbol value to a string"))
-            }
+            JsValue::Symbol(_) => Err(VmError::type_error(
+                "Cannot convert a Symbol value to a string",
+            )),
             JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
                 let prim = self.to_primitive(value, PreferredType::String, context)?;
                 self.to_string_coerce(prim, context)
@@ -1179,9 +1183,9 @@ impl Vm {
             JsValue::Null | JsValue::Undefined => Err(VmError::type_error(
                 "Cannot convert undefined or null to object",
             )),
-            JsValue::Symbol(_) => {
-                Err(VmError::type_error("Cannot convert a Symbol value to object"))
-            }
+            JsValue::Symbol(_) => Err(VmError::type_error(
+                "Cannot convert a Symbol value to object",
+            )),
             JsValue::Boolean(b) => {
                 let proto = context
                     .boolean_prototype()
@@ -1341,14 +1345,30 @@ impl Vm {
                     OperationResult::Throw(thrown) => return Ok(OperationResult::Throw(thrown)),
                 },
                 PropertyKind::Accessor { set: None, .. } => {
-                    return Err(VmError::type_error("property setter is undefined"));
+                    // TypeError from a write to a getter-only property is a JS throw,
+                    // not a Rust-level error, so it can be caught by JS try/catch.
+                    return Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error("property setter is undefined"),
+                    )));
                 }
                 PropertyKind::Data { .. } => {}
             }
         }
-        context
-            .set_property(receiver, key, value)
-            .map(OperationResult::Value)
+        // TypeError/RangeError from a non-writable write must become a JS throw so
+        // that code like `isWritable` / `assert.throws` can catch it.  Only
+        // runtime-internal errors (heap exhausted, etc.) propagate as Rust errors.
+        match context.set_property(receiver, key, value) {
+            Ok(result) => Ok(OperationResult::Value(result)),
+            Err(error)
+                if matches!(
+                    error.kind,
+                    VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
+                ) =>
+            {
+                Ok(OperationResult::Throw(vm_error_to_value(error)))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn call_user_function(
