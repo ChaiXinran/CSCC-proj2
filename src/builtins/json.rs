@@ -150,7 +150,7 @@ fn build_property_list(
                 Some(PrimitiveValue::String(_) | PrimitiveValue::Number(_)) => {
                     Some(vm.to_string_coerce(value, context)?)
                 }
-                _ => None,
+                Some(PrimitiveValue::Boolean(_) | PrimitiveValue::Symbol(_)) | None => None,
             },
             _ => None,
         };
@@ -170,7 +170,7 @@ fn build_gap(space: JsValue, vm: &mut Vm, context: &mut NativeContext) -> Result
             Some(PrimitiveValue::String(_)) => {
                 JsValue::String(vm.to_string_coerce(space, context)?)
             }
-            _ => space,
+            Some(PrimitiveValue::Boolean(_) | PrimitiveValue::Symbol(_)) | None => space,
         }
     } else {
         space
@@ -236,6 +236,7 @@ impl StringifyState<'_> {
                         self.vm
                             .to_string_coerce(JsValue::Object(object), self.context)?,
                     ),
+                    PrimitiveValue::Symbol(_) => JsValue::Object(object),
                 };
             } else {
                 value = JsValue::Object(object);
@@ -682,6 +683,7 @@ fn stringify_object(
                 }
             }
             crate::runtime::PrimitiveValue::String(value) => quote_json_string(value),
+            crate::runtime::PrimitiveValue::Symbol(_) => "{}".into(),
         },
         ObjectKind::Ordinary | ObjectKind::RegExp { .. } => {
             let mut parts = Vec::new();

@@ -92,11 +92,14 @@ impl Parser {
         self.expect_punctuator('{')?;
         let outer_loop_depth = self.loop_depth;
         let outer_switch_depth = self.switch_depth;
+        let outer_strict = self.is_strict;
         self.loop_depth = 0;
         self.switch_depth = 0;
         self.function_depth += 1;
         let mut statements = Vec::new();
         let result = (|| {
+            // Scan for a "use strict" directive prologue before parsing statements.
+            self.consume_directive_prologue()?;
             while !self.check_punctuator('}') && !self.at_eof() {
                 statements.push(self.parse_statement()?);
             }
@@ -105,9 +108,63 @@ impl Parser {
         self.function_depth -= 1;
         self.loop_depth = outer_loop_depth;
         self.switch_depth = outer_switch_depth;
+        self.is_strict = outer_strict;
         result?;
         self.validate_lexical_declarations(&statements)?;
         Ok(FunctionBody { statements })
+    }
+
+    /// Scans for ECMAScript directive prologues (`"use strict";`) at the start
+    /// of a script or function body. Sets `self.is_strict` if found.
+    /// The cursor must be positioned just after the opening `{` (or at the
+    /// start of a script). Only `ExpressionStatement(StringLiteral)` nodes
+    /// optionally followed by a semicolon are directive candidates.
+    pub(super) fn consume_directive_prologue(&mut self) -> Result<(), ParseError> {
+        loop {
+            // A directive is a String literal token followed by an optional `;`.
+            let tok = self.peek().clone();
+            let TokenKind::String(ref value) = tok.kind else {
+                break;
+            };
+            // Peek ahead: the token AFTER the string must be a `;`, `}`, a
+            // line terminator boundary, or EOF — otherwise this isn't a
+            // directive.
+            let next_is_directive_end = {
+                let after = self.tokens.get(self.cursor + 1);
+                match after {
+                    None => true,
+                    Some(t) => {
+                        matches!(
+                            t.kind,
+                            TokenKind::Punctuator(';')
+                                | TokenKind::Punctuator('}')
+                                | TokenKind::Eof
+                        ) || t.line_terminator_before
+                    }
+                }
+            };
+            if !next_is_directive_end {
+                break;
+            }
+            let is_use_strict = value == "use strict";
+            // Strict-mode early error: once strict mode is active, any string
+            // literal — even one still inside the directive prologue — must not
+            // contain a legacy escape sequence.
+            if self.is_strict && tok.has_legacy_escape {
+                return Err(ParseError {
+                    span: tok.span,
+                    message:
+                        "octal escape sequences are not allowed in strict mode string literals"
+                            .into(),
+                });
+            }
+            self.advance(); // consume string token
+            self.eat_punctuator(';');
+            if is_use_strict {
+                self.is_strict = true;
+            }
+        }
+        Ok(())
     }
 
     /// Parses `return;` or `return expression;`.

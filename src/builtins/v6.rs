@@ -2911,11 +2911,17 @@ fn vm_to_string(
 
 /// Extract the underlying SymbolId from a Symbol primitive or Symbol wrapper.
 fn extract_symbol(
-    _context: &NativeContext,
+    context: &NativeContext,
     this: JsValue,
 ) -> Result<crate::runtime::SymbolId, crate::vm::VmError> {
     match this {
         JsValue::Symbol(id) => Ok(id),
+        JsValue::Object(object) => match context.primitive_value(object) {
+            Some(PrimitiveValue::Symbol(id)) => Ok(*id),
+            _ => Err(VmError::type_error(
+                "Symbol.prototype method called on non-symbol",
+            )),
+        },
         _ => Err(VmError::type_error(
             "Symbol.prototype method called on non-symbol",
         )),

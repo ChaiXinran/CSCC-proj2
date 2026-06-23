@@ -13,6 +13,7 @@ pub enum PrimitiveValue {
     Boolean(bool),
     Number(f64),
     String(String),
+    Symbol(SymbolId),
 }
 
 /// Dense storage is capped at this many slots to prevent OOM from large-length arrays.

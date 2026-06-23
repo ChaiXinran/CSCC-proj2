@@ -1383,9 +1383,23 @@ impl Vm {
             JsValue::Null | JsValue::Undefined => Err(VmError::type_error(
                 "Cannot convert undefined or null to object",
             )),
-            JsValue::Symbol(_) => Err(VmError::type_error(
-                "Cannot convert a Symbol value to object",
-            )),
+            JsValue::Symbol(symbol) => {
+                let proto = context
+                    .get_global("Symbol")
+                    .and_then(|ctor| context.value_object(&ctor))
+                    .and_then(|ctor_obj| {
+                        context
+                            .find_property_descriptor(ctor_obj, "prototype")
+                            .ok()
+                            .flatten()
+                            .and_then(|(_, descriptor)| descriptor.value_cloned())
+                            .and_then(|value| context.value_object(&value))
+                    })
+                    .ok_or_else(|| VmError::runtime("Symbol prototype not installed"))?;
+                let wrapper =
+                    context.create_primitive_wrapper(PrimitiveValue::Symbol(symbol), proto)?;
+                context.require_object(&wrapper, "ToObject")
+            }
             JsValue::Boolean(b) => {
                 let proto = context
                     .boolean_prototype()

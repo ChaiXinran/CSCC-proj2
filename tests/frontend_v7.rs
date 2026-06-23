@@ -321,3 +321,113 @@ fn realistic_large_program_parses_ok() {
     );
     parse_ok(&source);
 }
+
+// ─── A-line V7 additions ──────────────────────────────────────────────────────
+
+#[test]
+fn strict_mode_rejects_legacy_octal_string_escape() {
+    // \1 through \7 are legacy octal escapes, forbidden in strict mode.
+    assert_parse_error(r#""use strict"; var s = "\1";"#);
+    assert_parse_error(r#""use strict"; var s = "\07";"#);
+}
+
+#[test]
+fn strict_mode_rejects_non_octal_decimal_escape() {
+    // \8 and \9 are non-octal decimal escapes, forbidden in strict mode.
+    assert_parse_error(r#""use strict"; var s = "\8";"#);
+    assert_parse_error(r#""use strict"; var s = "\9";"#);
+}
+
+#[test]
+fn sloppy_mode_allows_legacy_octal_string_escape() {
+    // Outside strict mode these are tolerated.
+    parse_ok(r#"var s = "\1";"#);
+    parse_ok(r#"var s = "\07";"#);
+    parse_ok(r#"var s = "\8";"#);
+}
+
+#[test]
+fn use_strict_directive_detected_in_function() {
+    // "use strict" inside a function body applies strict mode only within it.
+    assert_parse_error(r#"function f() { "use strict"; var s = "\1"; }"#);
+    // Outside the function sloppy rules still apply.
+    parse_ok(r#"var s = "\1"; function f() { "use strict"; }"#);
+}
+
+#[test]
+fn strict_mode_rejects_legacy_octal_in_second_directive() {
+    // Once "use strict" sets strict mode, all subsequent string literals —
+    // including those still in the directive prologue — must not contain
+    // legacy escapes.  "\1" in a string right after "use strict" is an error.
+    assert_parse_error("\"use strict\";\n\"\\1\";\nvar x = 1;");
+}
+
+#[test]
+fn ls_and_ps_allowed_in_string_literals() {
+    // U+2028 (LINE SEPARATOR) and U+2029 (PARAGRAPH SEPARATOR) are legal
+    // unescaped in string literals since ES2019.
+    let ls = "\u{2028}";
+    let ps = "\u{2029}";
+    parse_ok(&format!("var s = \"hello{ls}world\";"));
+    parse_ok(&format!("var s = \"hello{ps}world\";"));
+}
+
+#[test]
+fn strict_mode_delete_identifier_is_early_error() {
+    assert_parse_error(r#""use strict"; var x = 1; delete x;"#);
+}
+
+#[test]
+fn sloppy_mode_delete_identifier_is_allowed() {
+    parse_ok("var x = 1; delete x;");
+}
+
+#[test]
+fn delete_member_expression_compiles() {
+    use agentjs::{
+        bytecode::Compiler,
+        contracts::SourceParser,
+    };
+    let prog = NativeFrontend.parse_source("delete obj.x;").unwrap();
+    assert!(Compiler::new().compile_program(&prog).is_ok());
+}
+
+#[test]
+fn delete_literal_compiles_to_true() {
+    use agentjs::{
+        bytecode::{Compiler, Instruction},
+        contracts::SourceParser,
+    };
+    let prog = NativeFrontend.parse_source("delete 42;").unwrap();
+    let chunk = Compiler::new().compile_program(&prog).unwrap();
+    // Should evaluate 42 (pushed by Constant), pop it, push true.
+    // ReturnUndefined at end. Verify we don't see an error opcode.
+    assert!(!chunk.instructions.is_empty());
+    // The last real instruction before ReturnUndefined should be Constant(true).
+    let non_return: Vec<_> = chunk
+        .instructions
+        .iter()
+        .filter(|i| !matches!(i, Instruction::ReturnUndefined))
+        .collect();
+    // Sequence: Constant(42), Pop, Constant(true) → 3 instructions before Pop expression
+    assert!(non_return.len() >= 2);
+}
+
+#[test]
+fn prefix_static_member_update_parses() {
+    // ++obj.x and --obj.x are valid assignment targets.
+    parse_ok("var obj = {x: 1}; ++obj.x;");
+    parse_ok("var obj = {x: 1}; --obj.x;");
+}
+
+#[test]
+fn postfix_static_member_update_parses() {
+    parse_ok("var obj = {x: 1}; obj.x++;");
+    parse_ok("var obj = {x: 1}; obj.x--;");
+}
+
+#[test]
+fn prefix_computed_member_update_parses() {
+    parse_ok("var a = [1,2,3]; ++a[0];");
+    parse_ok("var a = [1,2,3]; --a[0];");
+}

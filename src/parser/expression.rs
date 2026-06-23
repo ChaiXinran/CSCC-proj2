@@ -206,6 +206,12 @@ impl Parser {
             self.enter_depth()?;
             let argument = self.parse_unary()?;
             self.leave_depth();
+            // Strict-mode early error: `delete` of an unqualified identifier.
+            if self.is_strict && matches!(argument, Expression::Identifier(_)) {
+                return Err(
+                    self.error("cannot delete an unqualified identifier in strict mode".into())
+                );
+            }
             return Ok(Expression::Unary {
                 operator: UnaryOperator::Delete,
                 argument: Box::new(argument),
@@ -352,6 +358,16 @@ impl Parser {
                 Ok(Expression::Literal(Literal::Number(value)))
             }
             TokenKind::String(value) | TokenKind::TemplateLiteral(value) => {
+                // Strict-mode early error: legacy octal/non-octal decimal
+                // escapes are forbidden inside strict-mode string literals.
+                if self.is_strict && token.has_legacy_escape {
+                    return Err(ParseError {
+                        span: token.span,
+                        message:
+                            "octal escape sequences are not allowed in strict mode string literals"
+                                .into(),
+                    });
+                }
                 self.advance();
                 Ok(Expression::Literal(Literal::String(value)))
             }
