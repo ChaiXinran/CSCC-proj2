@@ -1,8 +1,8 @@
 {
   "total": 2199,
-  "passed": 1489,
-  "failed": 709,
+  "passed": 1499,
+  "failed": 699,
   "skipped": 1,
-  "conformance_percent": 67.7126,
-  "elapsed_ms": 470
+  "conformance_percent": 68.1673,
+  "elapsed_ms": 468
 }
