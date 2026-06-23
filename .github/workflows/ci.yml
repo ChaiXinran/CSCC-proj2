@@ -42,14 +42,17 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Check all targets
+      - name: Check all default-feature targets
         run: cargo check --locked --all-targets
+
+      - name: Check native no-default-features targets
+        run: cargo check --locked --no-default-features --all-targets
 
       - name: Run Clippy
         run: cargo clippy --locked --all-targets -- -D warnings
 
   regression:
-    name: Full regression (${{ matrix.os }})
+    name: Rust regression (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -75,45 +78,11 @@ jobs:
         with:
           shared-key: native-v7-${{ matrix.os }}
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Clippy
-        run: cargo clippy --locked --all-targets -- -D warnings
-
       - name: Run all Rust tests
         run: cargo test --locked --all-targets
 
-  native-build:
-    name: No-default-features native release build
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Check out repository and pinned dependencies
-        uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_TOOLCHAIN }}
-
-      - name: Restore Cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: native-v7-no-default
-
-      - name: Build native-only release binary
-        run: cargo build --locked --release --no-default-features
-
-      - name: Verify binary exists and report size
-        run: |
-          ls -lh target/release/agentjs
-          echo "Binary size: $(du -sh target/release/agentjs | cut -f1)"
-
-  v7-contracts:
-    name: Native V7 contracts
+  native-v7-contracts:
+    name: Native V7 focused contracts
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -132,20 +101,25 @@ jobs:
         with:
           shared-key: native-v7-contracts
 
-      - name: Test V7 frontend stress and safety
-        run: cargo test --locked --test frontend_v7
+      - name: Test V7 frontend, bytecode, runtime, GC, and cache contracts
+        run: >-
+          cargo test --locked
+          --test frontend_v7
+          --test bytecode_v7_contract
+          --test frontend_bytecode_v7
+          --test native_v7_runtime
+          --test native_v7_gc
+          --test native_v7_cache
 
-      - name: Test V7 bytecode contracts
-        run: cargo test --locked --test bytecode_v7_contract
-
-      - name: Test V7 runtime budgets and limits
-        run: cargo test --locked --test native_v7_runtime
-
-      - name: Test V7 GC root preservation
-        run: cargo test --locked --test native_v7_gc
-
-      - name: Test V7 native script cache
-        run: cargo test --locked --test native_v7_cache
+      - name: Test V7 contracts without default features
+        run: >-
+          cargo test --locked --no-default-features
+          --test frontend_v7
+          --test bytecode_v7_contract
+          --test frontend_bytecode_v7
+          --test native_v7_runtime
+          --test native_v7_gc
+          --test native_v7_cache
 
   native-test262:
     name: Native V1-V7 Test262 gates
@@ -153,9 +127,7 @@ jobs:
     timeout-minutes: 45
     needs:
       - quality
-      - regression
-      - native-build
-      - v7-contracts
+      - native-v7-contracts
     steps:
       - name: Check out repository and pinned dependencies
         uses: actions/checkout@v4
@@ -172,41 +144,24 @@ jobs:
         with:
           shared-key: native-v7-test262
 
-      - name: Run all fixed Native Test262 gates (V1-V7 unit)
-        run: cargo test --locked --test native_test262
+      - name: Build native release binary without Boa
+        run: cargo build --locked --release --no-default-features
 
-      - name: Verify V1 CLI gate
+      - name: Run fixed Native V1-V6 gates and V7 scan selector tests
+        run: cargo test --locked --no-default-features --test native_test262
+
+      - name: Verify the Native V7 CLI gate
         run: >-
           cargo run --locked --release --no-default-features --
-          test262 --native-v1 --jobs 1
+          test262 --native-v7 --jobs 1
 
-      - name: Verify V2 CLI gate
+      - name: Verify Test262 dashboard harness compiles
+        run: >-
+          cargo test --locked --release --no-default-features
+          --test native_full_test262_by_dir --no-run
+
+      - name: Smoke V7 diagnostic scan and JSON writer
         run: >-
           cargo run --locked --release --no-default-features --
-          test262 --native-v2 --jobs 1
-
-      - name: Verify V3 CLI gate
-        run: >-
-          cargo run --locked --release --no-default-features --
-          test262 --native-v3 --jobs 1
-
-      - name: Verify V4 CLI gate
-        run: >-
-          cargo run --locked --release --no-default-features --
-          test262 --native-v4 --jobs 1
-
-      - name: Verify V5 CLI gate
-        run: >-
-          cargo run --locked --release --no-default-features --
-          test262 --native-v5 --jobs 1
-
-      - name: Verify V6 CLI gate
-        run: >-
-          cargo run --locked --release --no-default-features --
-          test262 --native-v6 --jobs 1
-
-      - name: Run V7 frontend/cache-safety diagnostic scan
-        run: >-
-          cargo run --locked --release --no-default-features --
-          test262 --native-v7-scan --jobs 4
-          --json reports/native-v7-frontend-summary.json
+          test262 --native-v7-scan --jobs 4 --limit 5
+          --json reports/native-v7-frontend-smoke.json

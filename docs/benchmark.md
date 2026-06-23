@@ -79,7 +79,7 @@ baselines. At minimum, capture:
 - warm native uncached latency;
 - warm native cached latency with `script_cache_capacity > 0`;
 - peak resident memory when available on the platform;
-- top-level Test262 dashboard totals and crashed-suite counts;
+- top-level Test262 dashboard totals plus crashed- and timed-out-suite counts;
 - `test/built-ins` and `test/language` child-dashboard summaries;
 - same-machine reference results for Boa, QuickJS, and the JetStream Node/V8
   adapter where the workload is supported.
@@ -88,6 +88,8 @@ Recommended reporting commands:
 
 ```powershell
 cargo run --release --no-default-features -- bench 1000
+
+$env:AGENTJS_TEST262_SUITE_TIMEOUT_SECS = "300"
 cargo test --release --no-default-features --test native_full_test262_by_dir native_test262_dashboard_top_level -- --ignored --nocapture
 
 $env:AGENTJS_TEST262_SUITE = "test/built-ins"

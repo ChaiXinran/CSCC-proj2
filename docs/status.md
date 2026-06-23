@@ -27,9 +27,14 @@
     `checked_utf16_allocation`) applied to all builtins that size from JS values.
   - Crash-safe Test262 dashboard (`native_full_test262_by_dir.rs`) with
     per-suite `SuiteStatus` (`Completed`, `Crashed`) and incremental JSON output.
+    Set `AGENTJS_TEST262_SUITE_TIMEOUT_SECS` to adjust the per-child-suite timeout.
+  - `--native-v7` pinned integration gate runs the native backend over the
+    zero-failure, zero-skip V1-V6 Test262 files to catch regressions after V7
+    stability, GC, cache, and reporting work.
   - `--native-v7-scan` diagnostic gate over selected language/builtin directories.
-  - CI updated to V7: V1-V6 regression gates, `--no-default-features` release
-    build, and V7 frontend/cache-safety scan (`--native-v7-scan`).
+  - CI updated to V7: no-default-features quality checks, V7 contract test matrix
+    (with and without default features), `--native-v7` CLI gate, dashboard
+    compilation check, and V7 diagnostic-scan JSON smoke.
 
 ## Known Gaps
 
@@ -49,9 +54,14 @@
   tests and passed 45,310 (87.31% lower bound). See `reports/test262-report.md`.
 - The V7 frontend/cache-safety scan (`--native-v7-scan`) currently passes 1,771
   of 3,034 tests (58.37%). See `reports/native-v7-frontend-summary.json`.
+- V7 bytecode groundwork exposes recursive `ChunkCacheMetadata`, rejects
+  invalid chunks before interpretation, and covers high stack depth, handler
+  restore invariants, nested-function validation, and source-to-cache-metadata
+  lowering.
+- V7 runtime/GC/cache focused tests cover wall-clock and allocation limits,
+  stack-budget rejection, non-moving GC preservation/collection behavior, and
+  native script-cache hit/miss and capacity-zero behavior.
 - Peak resident memory is not yet measured automatically on any platform.
-- A V7 pinned gate (`--native-v7`) requires zero-failure, zero-skip candidates
-  that have not yet been identified in the scan results.
 
 ## Native Microbenchmark (V7 release build, `--no-default-features`)
 
@@ -89,5 +99,8 @@ V7 engineering milestone is complete. The remaining gap before contest readiness
 is item 2: a full-suite, crash-safe, wall-clock-bounded Test262 run that
 produces a truthful JSON report with crashed-suite counts.
 
-CI is defined in `.github/workflows/ci.yml`. A local focused run is available
-through `scripts/test262-sample.ps1`.
+CI is defined in `.github/workflows/ci.yml`. It includes default-feature
+quality checks, no-default-features native checks, V7 focused contracts, the
+fixed Native V1-V6 Test262 gates plus V7 scan selector tests, dashboard
+compilation, and a small V7 diagnostic-scan JSON smoke. A local focused run is
+available through `scripts/test262-sample.ps1`.
