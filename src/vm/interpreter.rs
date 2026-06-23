@@ -979,6 +979,47 @@ impl Vm {
         }
     }
 
+    pub(crate) fn construct_value_from_builtin(
+        &mut self,
+        constructor: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match self.construct_value(constructor, arguments, context)? {
+            OperationResult::Value(value) => Ok(value),
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("JavaScript constructor threw"))
+            }
+        }
+    }
+
+    pub(crate) fn set_property_value_from_builtin(
+        &mut self,
+        receiver: JsValue,
+        key: &str,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<bool, VmError> {
+        let object = context.require_object(&receiver, "write property")?;
+        if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
+            match descriptor.kind {
+                PropertyKind::Accessor {
+                    set: Some(setter), ..
+                } => match self.call_value(setter, receiver, vec![value], context)? {
+                    OperationResult::Value(_) => return Ok(true),
+                    OperationResult::Throw(thrown) => {
+                        self.pending_exception = Some(thrown);
+                        return Err(VmError::runtime("JavaScript setter threw"));
+                    }
+                },
+                PropertyKind::Accessor { set: None, .. } => return Ok(false),
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        context.set(receiver, key, value, false)
+    }
+
     fn abstract_equals(
         &mut self,
         left: JsValue,

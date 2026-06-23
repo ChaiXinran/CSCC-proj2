@@ -220,8 +220,8 @@ fn describe(kind: &TokenKind) -> String {
     match kind {
         TokenKind::Eof => "end of input".into(),
         TokenKind::Identifier(name) => format!("identifier `{name}`"),
-        TokenKind::Number(_) => "number".into(),
-        TokenKind::String(_) => "string".into(),
+        TokenKind::Number(_) | TokenKind::BigInt(_) => "number".into(),
+        TokenKind::String(_) | TokenKind::TemplateLiteral(_) => "string".into(),
         TokenKind::Keyword(keyword) => format!("keyword `{keyword:?}`"),
         TokenKind::Punctuator(ch) => format!("`{ch}`"),
         TokenKind::Operator(op) => format!("`{op}`"),

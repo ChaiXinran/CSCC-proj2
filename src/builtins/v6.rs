@@ -11,7 +11,7 @@
 use super::{boolean, error, json, math, number, regexp, string};
 use crate::runtime::{
     JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
-    PropertyDescriptor,
+    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, to_property_key,
 };
 use crate::vm::{Vm, VmError};
 
@@ -26,6 +26,7 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_global_functions(context)?;
     install_regexp(context)?;
     install_symbol(context)?;
+    install_reflect(context)?;
     Ok(())
 }
 
@@ -2273,6 +2274,420 @@ fn regexp_to_string(
 
 // ── Symbol ──────────────────────────────────────────────────────────────────
 
+// Reflect
+
+fn install_reflect(context: &mut NativeContext) -> Result<(), VmError> {
+    let reflect = context.ordinary_object_with_prototype(context.object_prototype())?;
+    let JsValue::Object(object) = reflect.clone() else {
+        unreachable!()
+    };
+
+    for (name, length, call) in [
+        ("apply", 3, reflect_apply as NativeCall),
+        ("construct", 2, reflect_construct as NativeCall),
+        ("defineProperty", 3, reflect_define_property as NativeCall),
+        ("deleteProperty", 2, reflect_delete_property as NativeCall),
+        ("get", 2, reflect_get as NativeCall),
+        (
+            "getOwnPropertyDescriptor",
+            2,
+            reflect_get_own_property_descriptor as NativeCall,
+        ),
+        ("getPrototypeOf", 1, reflect_get_prototype_of as NativeCall),
+        ("has", 2, reflect_has as NativeCall),
+        ("isExtensible", 1, reflect_is_extensible as NativeCall),
+        ("ownKeys", 1, reflect_own_keys as NativeCall),
+        (
+            "preventExtensions",
+            1,
+            reflect_prevent_extensions as NativeCall,
+        ),
+        ("set", 3, reflect_set as NativeCall),
+        ("setPrototypeOf", 2, reflect_set_prototype_of as NativeCall),
+    ] {
+        define_method(context, object, name, length, call)?;
+    }
+
+    let to_string_tag = context.well_known_symbols().to_string_tag;
+    context.define_symbol_own_property(
+        object,
+        to_string_tag,
+        constant_descriptor(JsValue::String("Reflect".into())),
+    )?;
+    context.declare_global("Reflect", reflect);
+    Ok(())
+}
+
+fn reflect_apply(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    if !is_callable_value(&target) {
+        return Err(VmError::type_error("Reflect.apply target is not callable"));
+    }
+    let this_arg = arg(arguments, 1);
+    let args = array_like_to_vec(vm, context, arg(arguments, 2))?;
+    vm.call_value_from_builtin(target, this_arg, args, context)
+}
+
+fn reflect_construct(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    if !context.is_constructable_value(&target) {
+        return Err(VmError::type_error(
+            "Reflect.construct target is not a constructor",
+        ));
+    }
+    let new_target = arguments.get(2).cloned().unwrap_or_else(|| target.clone());
+    if !context.is_constructable_value(&new_target) {
+        return Err(VmError::type_error(
+            "Reflect.construct newTarget is not a constructor",
+        ));
+    }
+    let args = array_like_to_vec(vm, context, arg(arguments, 1))?;
+    vm.construct_value_from_builtin(target, args, context)
+}
+
+fn reflect_define_property(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.defineProperty")?;
+    let key_arg = arg(arguments, 1);
+    let descriptor_value = arg(arguments, 2);
+    let descriptor_object =
+        context.require_object(&descriptor_value, "read property descriptor")?;
+    let update = reflect_descriptor_update_from_object(vm, context, descriptor_object)?;
+
+    let defined = if let JsValue::Symbol(symbol) = key_arg {
+        let descriptor = reflect_descriptor_from_update(update);
+        context.define_symbol_own_property(object, symbol, descriptor)?
+    } else {
+        let key = to_property_key(&key_arg)?;
+        context.validate_and_apply_property_descriptor(object, key, update)?
+    };
+    Ok(JsValue::Boolean(defined))
+}
+
+fn reflect_delete_property(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.deleteProperty")?;
+    let key_arg = arg(arguments, 1);
+    if matches!(key_arg, JsValue::Symbol(_)) {
+        return Ok(JsValue::Boolean(true));
+    }
+    let key = to_property_key(&key_arg)?;
+    Ok(JsValue::Boolean(
+        context.delete_property(object, &key, false)?,
+    ))
+}
+
+fn reflect_get(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.get")?;
+    let key_arg = arg(arguments, 1);
+    if let JsValue::Symbol(symbol) = key_arg {
+        return Ok(context
+            .get_symbol_property_value(object, symbol)
+            .unwrap_or(JsValue::Undefined));
+    }
+    let key = to_property_key(&key_arg)?;
+    vm.get_property_value(target, &key, context)
+}
+
+fn reflect_get_own_property_descriptor(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.getOwnPropertyDescriptor")?;
+    let key_arg = arg(arguments, 1);
+    if matches!(key_arg, JsValue::Symbol(_)) {
+        return Ok(JsValue::Undefined);
+    }
+    let key = to_property_key(&key_arg)?;
+    let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
+        return Ok(JsValue::Undefined);
+    };
+    reflect_descriptor_to_object(context, descriptor)
+}
+
+fn reflect_get_prototype_of(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.getPrototypeOf")?;
+    Ok(context
+        .get_prototype_of(object)
+        .map_or(JsValue::Null, |prototype| context.object_value(prototype)))
+}
+
+fn reflect_has(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.has")?;
+    let key_arg = arg(arguments, 1);
+    if let JsValue::Symbol(symbol) = key_arg {
+        let found = context
+            .heap()
+            .object(object)
+            .is_some_and(|value| value.own_symbol_property(symbol).is_some());
+        return Ok(JsValue::Boolean(found));
+    }
+    let key = to_property_key(&key_arg)?;
+    Ok(JsValue::Boolean(context.has_property(object, &key)?))
+}
+
+fn reflect_is_extensible(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    context.require_object(&target, "Reflect.isExtensible")?;
+    Ok(JsValue::Boolean(true))
+}
+
+fn reflect_own_keys(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.ownKeys")?;
+    let heap_object = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing object"))?;
+    let mut keys: Vec<JsValue> = heap_object
+        .own_property_keys()
+        .into_iter()
+        .map(JsValue::String)
+        .collect();
+    keys.extend(
+        heap_object
+            .symbol_properties
+            .iter()
+            .map(|(symbol, _)| JsValue::Symbol(*symbol)),
+    );
+    context.create_array(keys)
+}
+
+fn reflect_prevent_extensions(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    context.require_object(&target, "Reflect.preventExtensions")?;
+    Ok(JsValue::Boolean(true))
+}
+
+fn reflect_set(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.set")?;
+    let key_arg = arg(arguments, 1);
+    let value = arg(arguments, 2);
+    if let JsValue::Symbol(symbol) = key_arg {
+        context.define_symbol_own_property(
+            object,
+            symbol,
+            PropertyDescriptor::data_with(value, true, true, true),
+        )?;
+        return Ok(JsValue::Boolean(true));
+    }
+    let key = to_property_key(&key_arg)?;
+    let set = vm.set_property_value_from_builtin(target, &key, value, context)?;
+    Ok(JsValue::Boolean(set))
+}
+
+fn reflect_set_prototype_of(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arg(arguments, 0);
+    let object = context.require_object(&target, "Reflect.setPrototypeOf")?;
+    let prototype = match arg(arguments, 1) {
+        JsValue::Null => None,
+        value => Some(context.require_object(&value, "Reflect.setPrototypeOf")?),
+    };
+    Ok(JsValue::Boolean(
+        context.set_prototype_of(object, prototype)?,
+    ))
+}
+
+fn array_like_to_vec(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<Vec<JsValue>, VmError> {
+    let object = context.require_object(&value, "read argument list")?;
+    let object_value = context.object_value(object);
+    let length_value = vm.get_property_value(object_value.clone(), "length", context)?;
+    let length_number = vm.to_number(length_value, context)?;
+    let length = if !length_number.is_finite() || length_number <= 0.0 {
+        0
+    } else {
+        length_number.floor() as usize
+    };
+    if length > 1_000_000 {
+        return Err(VmError::range("argument list is too large"));
+    }
+    let mut values = Vec::with_capacity(length);
+    for index in 0..length {
+        values.push(vm.get_property_value(object_value.clone(), &index.to_string(), context)?);
+    }
+    Ok(values)
+}
+
+fn is_callable_value(value: &JsValue) -> bool {
+    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
+}
+
+fn reflect_descriptor_update_from_object(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    descriptor_object: ObjectId,
+) -> Result<PropertyDescriptorUpdate, VmError> {
+    let mut update = PropertyDescriptorUpdate::default();
+    if let Some(value) = reflect_descriptor_field(vm, context, descriptor_object, "value")? {
+        update.value = Some(value);
+    }
+    if let Some(value) = reflect_descriptor_field(vm, context, descriptor_object, "writable")? {
+        update.writable = Some(value.to_boolean());
+    }
+    if let Some(value) = reflect_descriptor_field(vm, context, descriptor_object, "enumerable")? {
+        update.enumerable = Some(value.to_boolean());
+    }
+    if let Some(value) = reflect_descriptor_field(vm, context, descriptor_object, "configurable")? {
+        update.configurable = Some(value.to_boolean());
+    }
+    if let Some(value) = reflect_descriptor_field(vm, context, descriptor_object, "get")? {
+        update.get = Some(reflect_optional_callable(value, "getter")?);
+    }
+    if let Some(value) = reflect_descriptor_field(vm, context, descriptor_object, "set")? {
+        update.set = Some(reflect_optional_callable(value, "setter")?);
+    }
+    Ok(update)
+}
+
+fn reflect_descriptor_field(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    key: &str,
+) -> Result<Option<JsValue>, VmError> {
+    if !context.has_property(object, key)? {
+        return Ok(None);
+    }
+    vm.get_property_value(JsValue::Object(object), key, context)
+        .map(Some)
+}
+
+fn reflect_optional_callable(value: JsValue, label: &str) -> Result<Option<JsValue>, VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok(None);
+    }
+    if is_callable_value(&value) {
+        return Ok(Some(value));
+    }
+    Err(VmError::type_error(format!(
+        "descriptor {label} is not callable"
+    )))
+}
+
+fn reflect_descriptor_from_update(update: PropertyDescriptorUpdate) -> PropertyDescriptor {
+    if update.get.is_some() || update.set.is_some() {
+        return PropertyDescriptor::accessor(
+            update.get.flatten(),
+            update.set.flatten(),
+            update.enumerable.unwrap_or(false),
+            update.configurable.unwrap_or(false),
+        );
+    }
+    PropertyDescriptor::data_with(
+        update.value.unwrap_or(JsValue::Undefined),
+        update.writable.unwrap_or(false),
+        update.enumerable.unwrap_or(false),
+        update.configurable.unwrap_or(false),
+    )
+}
+
+fn reflect_descriptor_to_object(
+    context: &mut NativeContext,
+    descriptor: PropertyDescriptor,
+) -> Result<JsValue, VmError> {
+    let mut object = JsObject::ordinary();
+    object.prototype = context.object_prototype();
+    match descriptor.kind {
+        PropertyKind::Data { value, writable } => {
+            reflect_define_descriptor_field(&mut object, "value", value);
+            reflect_define_descriptor_field(&mut object, "writable", JsValue::Boolean(writable));
+        }
+        PropertyKind::Accessor { get, set } => {
+            reflect_define_descriptor_field(&mut object, "get", get.unwrap_or(JsValue::Undefined));
+            reflect_define_descriptor_field(&mut object, "set", set.unwrap_or(JsValue::Undefined));
+        }
+    }
+    reflect_define_descriptor_field(
+        &mut object,
+        "enumerable",
+        JsValue::Boolean(descriptor.enumerable),
+    );
+    reflect_define_descriptor_field(
+        &mut object,
+        "configurable",
+        JsValue::Boolean(descriptor.configurable),
+    );
+    let id = context
+        .heap_mut()
+        .allocate_object(object)
+        .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+    Ok(JsValue::Object(id))
+}
+
+fn reflect_define_descriptor_field(object: &mut JsObject, name: &str, value: JsValue) {
+    object.define_property(name, PropertyDescriptor::data_with(value, true, true, true));
+}
 fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
     // Symbol is NOT a constructor — new Symbol() throws TypeError.
     let symbol_fn = context.register_builtin("Symbol", 0, symbol_call, None)?;
