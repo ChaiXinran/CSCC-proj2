@@ -595,7 +595,7 @@ impl Parser<'_> {
     }
 
     fn error(&self, message: &str) -> VmError {
-        VmError::type_error(format!("JSON.parse: {message} at byte {}", self.offset))
+        VmError::syntax_error(format!("JSON.parse: {message} at byte {}", self.offset))
     }
 }
 

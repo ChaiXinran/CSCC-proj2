@@ -92,6 +92,7 @@ fn classify_native_error(error: NativeError) -> EvalFailure {
         NativeError::Execute(error) => match error.kind {
             VmErrorKind::Reference => FailureKind::Reference,
             VmErrorKind::Type => FailureKind::Type,
+            VmErrorKind::Syntax => FailureKind::Syntax,
             VmErrorKind::Range => FailureKind::Range,
             VmErrorKind::Test262 => FailureKind::Test262,
             VmErrorKind::RuntimeLimit => FailureKind::RuntimeLimit,

@@ -46,8 +46,8 @@ impl Parser {
         result
     }
 
-    /// Parses `target = value`. Assignment is right associative and binds looser
-    /// than the conditional operator and every binary operator.
+    /// Parses `target = value` and compound assignments `+= -= *= /= %=`.
+    /// Assignment is right associative and binds looser than every binary operator.
     pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
         if let Some(arrow) = self.try_parse_arrow_function()? {
             return Ok(arrow);
@@ -794,7 +794,7 @@ mod tests {
     #[test]
     fn assignment_is_right_associative() {
         let expression = parse_expression("a = b = 1");
-        let Expression::Assignment { target, value } = expression else {
+        let Expression::Assignment { target, value, .. } = expression else {
             panic!("expected assignment");
         };
         assert_eq!(*target, Expression::Identifier("a".into()));
@@ -1057,7 +1057,7 @@ mod tests {
     fn parses_member_assignment() {
         // obj.x = 5 should parse as an assignment with a Member target
         let expr = parse_expression("obj.x = 5");
-        let Expression::Assignment { target, value } = expr else {
+        let Expression::Assignment { target, value, .. } = expr else {
             panic!("expected assignment");
         };
         assert!(matches!(

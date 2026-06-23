@@ -1146,6 +1146,7 @@ fn identifier(name: &str) -> Expression {
 
 fn assignment(target: Expression, value: Expression) -> Expression {
     Expression::Assignment {
+        operator: agentjs::ast::AssignmentOperator::Assign,
         target: Box::new(target),
         value: Box::new(value),
     }

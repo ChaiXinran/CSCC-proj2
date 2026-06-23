@@ -10,6 +10,7 @@ pub enum NativeErrorKind {
     Error,
     Reference,
     Type,
+    Syntax,
     Range,
     RuntimeLimit,
     Test262,
