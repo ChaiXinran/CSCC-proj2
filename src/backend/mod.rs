@@ -4,22 +4,33 @@
 //! backend is the replacement target for AgentJS's self-developed parser,
 //! bytecode compiler, virtual machine, and runtime.
 
+#[cfg(feature = "boa-backend")]
 mod boa;
 mod native;
 
 use crate::engine::{EvalFailure, ExecutionOptions, RuntimeConfig};
 
+#[cfg(feature = "boa-backend")]
 pub use boa::BoaRuntime;
 pub use native::NativeRuntime;
 
 /// Selects the JavaScript implementation used by [`crate::Runtime`].
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     /// Compatibility backend built on Boa.
-    #[default]
+    #[cfg(feature = "boa-backend")]
     Boa,
     /// AgentJS's self-developed backend.
     Native,
+}
+
+impl Default for BackendKind {
+    fn default() -> Self {
+        #[cfg(feature = "boa-backend")]
+        return BackendKind::Boa;
+        #[cfg(not(feature = "boa-backend"))]
+        BackendKind::Native
+    }
 }
 
 /// Backend-neutral result produced by one evaluation.
@@ -55,6 +66,7 @@ pub(crate) fn create_runtime(
     config: RuntimeConfig,
 ) -> Result<Box<dyn RuntimeBackend>, EvalFailure> {
     match kind {
+        #[cfg(feature = "boa-backend")]
         BackendKind::Boa => Ok(Box::new(BoaRuntime::new(config)?)),
         BackendKind::Native => Ok(Box::new(NativeRuntime::new(config))),
     }

@@ -167,7 +167,7 @@ impl Default for RunnerOptions {
             filter: None,
             limit: None,
             jobs: thread::available_parallelism().map_or(1, usize::from),
-            backend: BackendKind::Boa,
+            backend: BackendKind::default(),
             files: Vec::new(),
             suites: Vec::new(),
             progress: false,
@@ -602,6 +602,7 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
         );
     }
 
+    #[cfg(feature = "boa-backend")]
     if backend == BackendKind::Boa && !metadata.flags.contains("raw") {
         runtime
             .eval_fragment(&harness.assert)
@@ -624,7 +625,9 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                 .eval_fragment(code)
                 .map_err(|error| format!("harness `{include}` failed: {error}"))?;
         }
-    } else if backend == BackendKind::Native {
+    }
+
+    if backend == BackendKind::Native {
         // Eval the official assert.js to provide the full assert suite:
         // assert.compareArray, assert.throws (with constructor check), assert._isSameValue,
         // isNegativeZero, compareArray, etc.  Test262Error stays as a Rust host function

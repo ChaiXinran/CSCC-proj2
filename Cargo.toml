@@ -7,20 +7,22 @@ description = "A lightweight JavaScript execution runtime for AI agents"
 license = "MIT"
 
 [features]
-default = ["conformance"]
+default = ["boa-backend"]
+boa-backend = ["dep:boa_engine", "dep:boa_runtime"]
 conformance = [
+    "boa-backend",
     "boa_engine/experimental",
     "boa_engine/intl_bundled",
     "boa_engine/temporal",
 ]
 
 [dependencies]
-boa_engine = { path = "boa/core/engine", default-features = false, features = [
+boa_engine = { path = "boa/core/engine", optional = true, default-features = false, features = [
     "annex-b",
     "float16",
     "xsum",
 ] }
-boa_runtime = { path = "boa/core/runtime", default-features = false, features = [
+boa_runtime = { path = "boa/core/runtime", optional = true, default-features = false, features = [
     "annex-b",
     "test262",
 ] }

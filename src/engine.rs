@@ -113,7 +113,7 @@ pub struct Runtime {
 impl Runtime {
     /// Creates a runtime using the current compatibility backend.
     pub fn new(config: RuntimeConfig) -> Result<Self, EvalFailure> {
-        Self::with_backend(BackendKind::Boa, config)
+        Self::with_backend(BackendKind::default(), config)
     }
 
     /// Creates a runtime using an explicitly selected backend.
@@ -181,7 +181,10 @@ impl Engine {
     pub const fn new(config: RuntimeConfig) -> Self {
         Self {
             config,
+            #[cfg(feature = "boa-backend")]
             backend: BackendKind::Boa,
+            #[cfg(not(feature = "boa-backend"))]
+            backend: BackendKind::Native,
         }
     }
 

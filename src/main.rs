@@ -300,7 +300,7 @@ fn parse_backend_prefixed_args<'a>(
     args: &'a [String],
     usage: &str,
 ) -> Result<(BackendKind, &'a [String]), String> {
-    let mut backend = BackendKind::Boa;
+    let mut backend = BackendKind::default();
     let mut index = 0;
 
     while index < args.len() {
@@ -329,7 +329,7 @@ fn parse_backend_prefixed_args<'a>(
 }
 
 fn parse_backend_only_args(args: &[String], usage: &str) -> Result<BackendKind, String> {
-    let mut backend = BackendKind::Boa;
+    let mut backend = BackendKind::default();
     let mut index = 0;
 
     while index < args.len() {
@@ -356,6 +356,7 @@ fn parse_backend_only_args(args: &[String], usage: &str) -> Result<BackendKind, 
 
 fn parse_backend(value: &str) -> Result<BackendKind, String> {
     match value {
+        #[cfg(feature = "boa-backend")]
         "boa" => Ok(BackendKind::Boa),
         "native" => Ok(BackendKind::Native),
         _ => Err(format!(
@@ -371,6 +372,7 @@ trait BackendName {
 impl BackendName for BackendKind {
     fn name(self) -> &'static str {
         match self {
+            #[cfg(feature = "boa-backend")]
             Self::Boa => "boa",
             Self::Native => "native",
         }
