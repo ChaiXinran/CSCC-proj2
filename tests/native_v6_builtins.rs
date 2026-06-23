@@ -205,3 +205,68 @@ fn v4_builtins_use_v6_object_aware_coercion() {
         "1"
     );
 }
+
+#[test]
+fn reflect_object_exposes_common_static_methods() {
+    assert_eq!(native_eval("typeof Reflect"), "object");
+    assert_eq!(
+        native_eval("Object.prototype.toString.call(Reflect)"),
+        "[object Reflect]"
+    );
+    assert_eq!(
+        native_eval("var o = { a: 1 }; Reflect.set(o, 'b', 2); Reflect.get(o, 'a') + o.b;"),
+        "3"
+    );
+    assert_eq!(native_eval("Reflect.has({ a: 1 }, 'a')"), "true");
+    assert_eq!(
+        native_eval(
+            "var o = {}; Object.defineProperty(o, 'x', { value: 1, writable: false }); Reflect.set(o, 'x', 2);"
+        ),
+        "false"
+    );
+    assert_eq!(
+        native_eval("var o = { a: 1 }; Reflect.deleteProperty(o, 'a'); Reflect.has(o, 'a');"),
+        "false"
+    );
+}
+
+#[test]
+fn reflect_define_property_and_own_keys_work() {
+    assert_eq!(
+        native_eval(
+            "var o = {}; Reflect.defineProperty(o, 'x', { value: 7, enumerable: true }); o.x;"
+        ),
+        "7"
+    );
+    assert_eq!(
+        native_eval(
+            "var o = { a: 1 }; Object.defineProperty(o, 'b', { value: 2 }); Reflect.ownKeys(o).length;"
+        ),
+        "2"
+    );
+    assert_eq!(
+        native_eval(
+            "var proto = {}; var o = {}; Reflect.setPrototypeOf(o, proto); Reflect.getPrototypeOf(o) === proto;"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn reflect_apply_and_construct_enter_vm_call_paths() {
+    assert_eq!(
+        native_eval("Reflect.apply(function (a, b) { return this.x + a + b; }, { x: 1 }, [2, 3]);"),
+        "6"
+    );
+    assert_eq!(
+        native_eval("function Box(x) { this.x = x; } Reflect.construct(Box, [7]).x;"),
+        "7"
+    );
+}
+
+#[test]
+fn bigint_and_template_literals_parse_through_native_pipeline() {
+    assert_eq!(native_eval("1n + 2"), "3");
+    assert_eq!(native_eval("`hello`"), "hello");
+    assert_eq!(native_eval("`a\\n`"), "a\n");
+}

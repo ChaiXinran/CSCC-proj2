@@ -337,11 +337,11 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         let token = self.peek().clone();
         match token.kind {
-            TokenKind::Number(value) => {
+            TokenKind::Number(value) | TokenKind::BigInt(value) => {
                 self.advance();
                 Ok(Expression::Literal(Literal::Number(value)))
             }
-            TokenKind::String(value) => {
+            TokenKind::String(value) | TokenKind::TemplateLiteral(value) => {
                 self.advance();
                 Ok(Expression::Literal(Literal::String(value)))
             }
@@ -571,11 +571,11 @@ impl Parser {
                 self.advance();
                 Ok(PropertyName::Identifier(name))
             }
-            TokenKind::String(s) => {
+            TokenKind::String(s) | TokenKind::TemplateLiteral(s) => {
                 self.advance();
                 Ok(PropertyName::String(s))
             }
-            TokenKind::Number(n) => {
+            TokenKind::Number(n) | TokenKind::BigInt(n) => {
                 self.advance();
                 Ok(PropertyName::Number(n))
             }

@@ -84,6 +84,8 @@ impl<'source> Lexer<'source> {
                 || (ch == '.' && self.cursor.second().is_some_and(|c| c.is_ascii_digit()))
             {
                 self.read_number()?
+            } else if ch == '`' {
+                self.read_template_literal()?
             } else if ch == '"' || ch == '\'' {
                 self.read_string()?
             } else {
@@ -227,27 +229,40 @@ impl<'source> Lexer<'source> {
                 let digits_start = self.cursor.offset();
                 self.cursor
                     .skip_while(|character| character.is_digit(radix));
-                let end = self.cursor.offset();
-                if end == digits_start {
+                let digits_end = self.cursor.offset();
+                if digits_end == digits_start {
                     return Err(LexError {
-                        span: Span::new(start, end),
+                        span: Span::new(start, digits_end),
                         message: format!("missing base-{radix} digits in number literal"),
                     });
                 }
-                let digits = self.cursor.slice(Span::new(digits_start, end));
+                let digits = self.cursor.slice(Span::new(digits_start, digits_end));
                 let value = u64::from_str_radix(digits, radix).map_err(|_| LexError {
-                    span: Span::new(start, end),
+                    span: Span::new(start, digits_end),
                     message: format!("invalid base-{radix} number literal"),
                 })? as f64;
-                return Ok(Token::new(TokenKind::Number(value), Span::new(start, end)));
+                if self.cursor.peek() == Some('n') {
+                    self.cursor.bump();
+                    return Ok(Token::new(
+                        TokenKind::BigInt(value),
+                        Span::new(start, self.cursor.offset()),
+                    ));
+                }
+                return Ok(Token::new(
+                    TokenKind::Number(value),
+                    Span::new(start, digits_end),
+                ));
             }
         }
         self.cursor.skip_while(|c| c.is_ascii_digit());
+        let mut is_integer_literal = true;
         if self.cursor.peek() == Some('.') {
+            is_integer_literal = false;
             self.cursor.bump();
             self.cursor.skip_while(|c| c.is_ascii_digit());
         }
         if matches!(self.cursor.peek(), Some('e' | 'E')) {
+            is_integer_literal = false;
             self.cursor.bump();
             if matches!(self.cursor.peek(), Some('+' | '-')) {
                 self.cursor.bump();
@@ -269,9 +284,47 @@ impl<'source> Lexer<'source> {
             span: Span::new(start, end),
             message: format!("invalid number literal `{text}`"),
         })?;
+        if is_integer_literal && self.cursor.peek() == Some('n') {
+            self.cursor.bump();
+            return Ok(Token::new(
+                TokenKind::BigInt(value),
+                Span::new(start, self.cursor.offset()),
+            ));
+        }
         Ok(Token::new(TokenKind::Number(value), Span::new(start, end)))
     }
-
+    fn read_template_literal(&mut self) -> Result<Token, LexError> {
+        let start = self.cursor.offset();
+        self.cursor
+            .bump()
+            .expect("template literal opens with a backtick");
+        let mut value = String::new();
+        loop {
+            match self.cursor.bump() {
+                None => {
+                    return Err(LexError {
+                        span: Span::new(start, self.cursor.offset()),
+                        message: "unterminated template literal".into(),
+                    });
+                }
+                Some('`') => {
+                    let end = self.cursor.offset();
+                    return Ok(Token::new(
+                        TokenKind::TemplateLiteral(value),
+                        Span::new(start, end),
+                    ));
+                }
+                Some('\\') => self.read_string_escape(start, &mut value)?,
+                Some('$') if self.cursor.peek() == Some('{') => {
+                    return Err(LexError {
+                        span: Span::new(start, self.cursor.offset()),
+                        message: "template substitutions are not supported".into(),
+                    });
+                }
+                Some(ch) => value.push(ch),
+            }
+        }
+    }
     fn read_string(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
         let quote = self
@@ -652,6 +705,19 @@ mod tests {
     }
 
     #[test]
+    fn tokenizes_bigint_literals_as_temporary_numeric_payloads() {
+        assert_eq!(
+            kinds("1n 0xfn 0b101n 0o7n"),
+            [
+                TokenKind::BigInt(1.0),
+                TokenKind::BigInt(15.0),
+                TokenKind::BigInt(5.0),
+                TokenKind::BigInt(7.0),
+                TokenKind::Eof,
+            ]
+        );
+    }
+    #[test]
     fn tokenizes_strings_with_escapes() {
         assert_eq!(
             kinds(r#""a\n\"b" 'c\'d' """#),
@@ -664,6 +730,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn tokenizes_no_substitution_template_literals() {
+        assert_eq!(
+            kinds("`a\\n\\${nope}`"),
+            [
+                TokenKind::TemplateLiteral("a\n${nope}".into()),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn reports_template_substitutions_as_unsupported() {
+        let error = Lexer::new("`a${b}`").tokenize().unwrap_err();
+        assert_eq!(error.message, "template substitutions are not supported");
+    }
     #[test]
     fn tokenizes_hexadecimal_and_unicode_string_escapes() {
         assert_eq!(
