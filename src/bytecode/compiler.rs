@@ -1301,38 +1301,22 @@ impl Compiler {
 
     fn compile_assignment(
         &mut self,
-        operator: &AssignmentOperator,
         target: &Expression,
         value: &Expression,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        match (operator, target) {
-            // ── Simple `=` on identifier ───────────────────────────────────────
-            (AssignmentOperator::Assign, Expression::Identifier(name)) => {
+        match target {
+            Expression::Identifier(name) => {
                 self.compile_expression(value, chunk, context)?;
                 self.emit_store_identifier(name, chunk, context)?;
                 Ok(())
             }
-            // ── Compound `op=` on identifier ──────────────────────────────────
-            (op, Expression::Identifier(name)) => {
-                // load current value, compile rhs, apply op, store back
-                self.compile_identifier(name, chunk, context)?;
-                self.compile_expression(value, chunk, context)?;
-                let instr = compound_op_instruction(op);
-                chunk.emit(instr);
-                self.emit_store_identifier(name, chunk, context)?;
-                Ok(())
-            }
-            // ── Simple `=` on static member ───────────────────────────────────
-            (
-                AssignmentOperator::Assign,
-                Expression::Member {
-                    object,
-                    property,
-                    computed: false,
-                },
-            ) => {
+            Expression::Member {
+                object,
+                property,
+                computed: false,
+            } => {
                 let Expression::Identifier(property_name) = property.as_ref() else {
                     return Err(CompileError::unsupported(
                         "non-identifier static member as assignment target",
@@ -1344,15 +1328,11 @@ impl Compiler {
                 chunk.emit(Instruction::SetProperty(prop_index));
                 Ok(())
             }
-            // ── Simple `=` on computed member ─────────────────────────────────
-            (
-                AssignmentOperator::Assign,
-                Expression::Member {
-                    object,
-                    property,
-                    computed: true,
-                },
-            ) => {
+            Expression::Member {
+                object,
+                property,
+                computed: true,
+            } => {
                 self.compile_expression(object, chunk, context)?;
                 self.compile_expression(property, chunk, context)?;
                 self.compile_expression(value, chunk, context)?;
@@ -1715,17 +1695,6 @@ impl Compiler {
 struct CompiledFunction {
     params: Vec<String>,
     chunk: Chunk,
-}
-
-fn compound_op_instruction(op: &AssignmentOperator) -> Instruction {
-    match op {
-        AssignmentOperator::PlusAssign => Instruction::Add,
-        AssignmentOperator::MinusAssign => Instruction::Subtract,
-        AssignmentOperator::MulAssign => Instruction::Multiply,
-        AssignmentOperator::DivAssign => Instruction::Divide,
-        AssignmentOperator::ModAssign => Instruction::Remainder,
-        AssignmentOperator::Assign => unreachable!("Assign handled before compound branch"),
-    }
 }
 
 fn property_key(key: &PropertyName) -> String {
