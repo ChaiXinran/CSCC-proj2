@@ -106,6 +106,12 @@ pub struct Token {
     /// skipped comments. The parser uses this for restricted productions such
     /// as `throw`, which forbids a newline before its expression.
     pub line_terminator_before: bool,
+    /// Set on `String` and `TemplateLiteral` tokens that contain a legacy
+    /// octal escape sequence (`\1`–`\7`, `\00` followed by a digit) or a
+    /// non-octal decimal escape (`\8`, `\9`). These sequences are forbidden
+    /// inside strict-mode code; the parser checks this flag after determining
+    /// whether the enclosing function or script is strict.
+    pub has_legacy_escape: bool,
 }
 
 impl Token {
@@ -119,6 +125,7 @@ impl Token {
             kind,
             span,
             line_terminator_before: false,
+            has_legacy_escape: false,
         }
     }
 
@@ -133,6 +140,7 @@ impl Token {
             kind,
             span,
             line_terminator_before,
+            has_legacy_escape: false,
         }
     }
 }

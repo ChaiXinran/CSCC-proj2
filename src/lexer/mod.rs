@@ -47,6 +47,10 @@ const PUNCTUATORS: &[char] = &['(', ')', '{', '}', '[', ']', ';', ',', '.', '?',
 /// Stateful tokenizer for AgentJS source text.
 pub struct Lexer<'source> {
     cursor: Cursor<'source>,
+    /// Set to `true` inside `read_string_escape` when a legacy octal or
+    /// non-octal decimal escape is encountered. Consumed by `read_string` to
+    /// stamp the resulting token with `has_legacy_escape`.
+    string_has_legacy_escape: bool,
 }
 
 impl<'source> Lexer<'source> {
@@ -54,6 +58,7 @@ impl<'source> Lexer<'source> {
     pub fn new(source: &'source str) -> Self {
         Self {
             cursor: Cursor::new(source),
+            string_has_legacy_escape: false,
         }
     }
 
@@ -332,6 +337,7 @@ impl<'source> Lexer<'source> {
             .bump()
             .expect("string literal opens with a quote");
         let mut value = String::new();
+        self.string_has_legacy_escape = false;
         loop {
             match self.cursor.bump() {
                 None => {
@@ -342,10 +348,14 @@ impl<'source> Lexer<'source> {
                 }
                 Some(ch) if ch == quote => {
                     let end = self.cursor.offset();
-                    return Ok(Token::new(TokenKind::String(value), Span::new(start, end)));
+                    let mut token = Token::new(TokenKind::String(value), Span::new(start, end));
+                    token.has_legacy_escape = self.string_has_legacy_escape;
+                    return Ok(token);
                 }
                 Some('\\') => self.read_string_escape(start, &mut value)?,
-                Some(ch) if is_line_terminator(ch) => {
+                // ES2019+: U+000A (LF) and U+000D (CR) terminate string literals,
+                // but U+2028 (LS) and U+2029 (PS) are now valid string content.
+                Some('\n' | '\r') => {
                     return Err(LexError {
                         span: Span::new(start, self.cursor.offset()),
                         message: "unterminated string literal".into(),
@@ -368,7 +378,56 @@ impl<'source> Lexer<'source> {
             'b' => value.push('\u{0008}'),
             'f' => value.push('\u{000C}'),
             'v' => value.push('\u{000B}'),
-            '0' => value.push('\0'),
+            '0' => {
+                // `\0` is a null escape. If followed by a decimal digit it
+                // becomes a legacy octal escape sequence (`\00`, `\01`, …),
+                // which is forbidden in strict-mode code.
+                if self.cursor.peek().is_some_and(|c| c.is_ascii_digit()) {
+                    self.string_has_legacy_escape = true;
+                    // Read the additional octal digits (up to 2 more for \0NN).
+                    let mut octal = 0u32;
+                    for _ in 0..2 {
+                        match self.cursor.peek() {
+                            Some(d @ '0'..='7') => {
+                                octal = octal * 8 + (d as u32 - '0' as u32);
+                                self.cursor.bump();
+                            }
+                            _ => break,
+                        }
+                    }
+                    let ch = char::from_u32(octal).unwrap_or('\0');
+                    value.push(ch);
+                } else {
+                    value.push('\0');
+                }
+            }
+            // Legacy octal escape sequences \1–\7 (single-digit).
+            d @ '1'..='7' => {
+                self.string_has_legacy_escape = true;
+                let mut octal = d as u32 - '0' as u32;
+                // Two-digit octal: \NM where N is 1–3 and M is 0–7.
+                if d <= '3' {
+                    if let Some(m @ '0'..='7') = self.cursor.peek() {
+                        octal = octal * 8 + (m as u32 - '0' as u32);
+                        self.cursor.bump();
+                        // Three-digit octal: \NML.
+                        if let Some(l @ '0'..='7') = self.cursor.peek() {
+                            octal = octal * 8 + (l as u32 - '0' as u32);
+                            self.cursor.bump();
+                        }
+                    }
+                } else if let Some(m @ '0'..='7') = self.cursor.peek() {
+                    octal = octal * 8 + (m as u32 - '0' as u32);
+                    self.cursor.bump();
+                }
+                let ch = char::from_u32(octal).unwrap_or('\u{FFFD}');
+                value.push(ch);
+            }
+            // Non-octal decimal escapes \8 and \9 — also forbidden in strict mode.
+            '8' | '9' => {
+                self.string_has_legacy_escape = true;
+                value.push(escape);
+            }
             'x' => {
                 let code_point = self.read_hex_escape(start, 2)?;
                 value.push(char::from_u32(code_point).expect("two hex digits form a scalar value"));

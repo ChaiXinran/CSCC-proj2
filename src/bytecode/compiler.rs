@@ -877,8 +877,11 @@ impl Compiler {
         Ok(())
     }
 
-    /// Compiles `++x` / `x++` / `--x` / `x--` on an identifier operand. The
-    /// operand is read with `ToNumber` semantics so `"5"++` yields `6`.
+    /// Compiles `++x` / `x++` / `--x` / `x--`.
+    ///
+    /// Supports identifier operands and static/computed member expression
+    /// operands. The operand is coerced to a number (`ToNumber` / `UnaryPlus`)
+    /// before the step, matching the ECMAScript specification.
     fn compile_update(
         &mut self,
         operator: UpdateOperator,
@@ -887,30 +890,146 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let Expression::Identifier(name) = argument else {
-            return Err(CompileError::unsupported(
-                "`++`/`--` is only supported on identifier operands",
-            ));
-        };
         let step = match operator {
             UpdateOperator::Increment => Instruction::Add,
             UpdateOperator::Decrement => Instruction::Subtract,
         };
-        self.compile_identifier(name, chunk, context)?;
-        chunk.emit(Instruction::UnaryPlus); // ToNumber(old)
         let one = chunk
             .add_constant(Constant::Number(1.0))
             .map_err(CompileError::from_chunk)?;
-        if prefix {
-            chunk.emit(Instruction::Constant(one));
-            chunk.emit(step);
-            self.emit_store_identifier(name, chunk, context)?;
-        } else {
-            chunk.emit(Instruction::Duplicate);
-            chunk.emit(Instruction::Constant(one));
-            chunk.emit(step);
-            self.emit_store_identifier(name, chunk, context)?;
-            chunk.emit(Instruction::Pop);
+
+        match argument {
+            Expression::Identifier(name) => {
+                self.compile_identifier(name, chunk, context)?;
+                chunk.emit(Instruction::UnaryPlus); // ToNumber(old)
+                if prefix {
+                    chunk.emit(Instruction::Constant(one));
+                    chunk.emit(step);
+                    self.emit_store_identifier(name, chunk, context)?;
+                } else {
+                    chunk.emit(Instruction::Duplicate);
+                    chunk.emit(Instruction::Constant(one));
+                    chunk.emit(step);
+                    self.emit_store_identifier(name, chunk, context)?;
+                    chunk.emit(Instruction::Pop);
+                }
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: false,
+            } => {
+                let Expression::Identifier(prop_name) = property.as_ref() else {
+                    return Err(CompileError::unsupported(
+                        "non-identifier static property in `++`/`--`",
+                    ));
+                };
+                let prop_index = self.add_name(prop_name, chunk)?;
+                // Stack before step: [obj, old_num]
+                self.compile_expression(object, chunk, context)?;
+                chunk.emit(Instruction::Duplicate); // [obj, obj]
+                chunk.emit(Instruction::GetProperty(prop_index)); // [obj, old]
+                chunk.emit(Instruction::UnaryPlus); // [obj, old_num]
+                if prefix {
+                    // Result = new: [obj, old_num, 1] → [obj, new] → SetProperty → [new]
+                    chunk.emit(Instruction::Constant(one));
+                    chunk.emit(step);
+                    chunk.emit(Instruction::SetProperty(prop_index));
+                } else {
+                    // Result = old: use DuplicatePair to save [obj, old_num], compute new,
+                    // SetProperty, pop new, pop extra obj  → leaves old_num.
+                    // Stack trace: [obj, old_num]
+                    //   DuplicatePair → [obj, old_num, obj, old_num]
+                    //   Constant(1)   → [obj, old_num, obj, old_num, 1]
+                    //   step          → [obj, old_num, obj, new]
+                    //   SetProperty   → [obj, old_num, new]   (SetProperty: [o,v]→[v])
+                    //   Pop           → [obj, old_num]
+                    //   Pop           → [old_num]
+                    chunk.emit(Instruction::DuplicatePair);
+                    chunk.emit(Instruction::Constant(one));
+                    chunk.emit(step);
+                    chunk.emit(Instruction::SetProperty(prop_index));
+                    chunk.emit(Instruction::Pop);
+                    chunk.emit(Instruction::Pop);
+                }
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: true,
+            } => {
+                // Stack before step: [obj, key, old_num]
+                self.compile_expression(object, chunk, context)?;
+                self.compile_expression(property, chunk, context)?;
+                chunk.emit(Instruction::DuplicatePair); // [obj, key, obj, key]
+                chunk.emit(Instruction::GetElement); // [obj, key, old]
+                chunk.emit(Instruction::UnaryPlus); // [obj, key, old_num]
+                if prefix {
+                    // [obj, key, old_num, 1] → [obj, key, new] → SetElement → [new]
+                    chunk.emit(Instruction::Constant(one));
+                    chunk.emit(step);
+                    chunk.emit(Instruction::SetElement);
+                } else {
+                    // Need to leave old_num as result after storing new.
+                    // Use Duplicate to save old_num, then build [obj, key, new]
+                    // for SetElement. This requires moving old_num out of the way.
+                    //
+                    // Stack trace: [obj, key, old_num]
+                    //   Duplicate    → [obj, key, old_num, old_num]
+                    //   Constant(1)  → [obj, key, old_num, old_num, 1]
+                    //   step         → [obj, key, old_num, new]
+                    //   — need SetElement([obj, key, new]) but stack has
+                    //     extra old_num; re-read element from duplicated [obj,key].
+                    //   — Instead: evaluate object and key again (safe for simple
+                    //     cases; may double side-effects for complex expressions).
+                    //
+                    // Simpler sequence that re-evaluates object/key:
+                    //   Duplicate (old_num) → save it deeper
+                    //   compile(object)
+                    //   compile(key_expr)
+                    //   stack: [obj, key, old_num, old_num, obj2, key2]
+                    //   — but key_expr may not be re-evaluatable here easily.
+                    //
+                    // Compromise: for computed postfix we emit a Duplicate to
+                    // preserve old, compute new into a fresh [obj,key,new] pair
+                    // by using the saved [obj,key] still below old_num.
+                    //
+                    // Final chosen sequence (avoids re-evaluation):
+                    //   [obj, key, old_num]
+                    //   Duplicate       → [obj, key, old_num, old_num]
+                    //   Constant(1)     → [obj, key, old_num, old_num, 1]
+                    //   step            → [obj, key, old_num, new]
+                    //   — rotate new below old_num to make [obj, key, new, old_num]
+                    //   — then SetElement([obj,key,new])→[old_num]
+                    // Without a rotate instruction we fall back to DuplicatePair
+                    // on [old_num] which would only dup 1 value.
+                    //
+                    // Use DuplicatePair on the full 4-value window:
+                    // Before GetElement we had [obj,key,obj,key] from above.
+                    // After GetElement: [obj,key,old]. After UnaryPlus: [obj,key,old_num].
+                    // The saved [obj,key] are still at positions -3,-2 below old_num.
+                    // Stack: bottom→top: [obj_s, key_s, old_num]  (obj_s/key_s = saved copies)
+                    //
+                    // Emit: Duplicate → [obj_s, key_s, old_num, old_num]
+                    //        Constant, step → [obj_s, key_s, old_num, new]
+                    //        SetElement consumes TOP 3 as [object=key_s, key=old_num, value=new]
+                    //        which is WRONG.
+                    //
+                    // There is no clean way to express computed-member postfix
+                    // update without a dedicated swap/rotate instruction. Emit an
+                    // unsupported error for this specific case; prefix computed and
+                    // all static-member variants work correctly above.
+                    return Err(CompileError::unsupported(
+                        "postfix `++`/`--` on a computed member expression is not yet supported; \
+                         use prefix `++`/`--` or assign to a local variable first",
+                    ));
+                }
+            }
+            _ => {
+                return Err(CompileError::unsupported(
+                    "`++`/`--` requires an identifier or member expression operand",
+                ));
+            }
         }
         Ok(())
     }
@@ -1653,9 +1772,28 @@ impl Compiler {
                 chunk.emit(Instruction::DeleteElement);
                 Ok(())
             }
-            _ => Err(CompileError::unsupported(
-                "delete operand other than a member expression",
-            )),
+            // `delete identifier` — strict mode is rejected at parse time.
+            // In sloppy mode, declared bindings are non-configurable and
+            // `delete` always returns `false` for them.
+            Expression::Identifier(_) => {
+                let false_idx = chunk
+                    .add_constant(Constant::Boolean(false))
+                    .map_err(CompileError::from_chunk)?;
+                chunk.emit(Instruction::Constant(false_idx));
+                Ok(())
+            }
+            // `delete (non-reference)` — e.g. `delete 1`, `delete (a + b)`.
+            // The operand is evaluated for side effects, popped, and `true`
+            // is pushed (deleting a non-reference always succeeds per spec).
+            _ => {
+                self.compile_expression(argument, chunk, context)?;
+                chunk.emit(Instruction::Pop);
+                let true_idx = chunk
+                    .add_constant(Constant::Boolean(true))
+                    .map_err(CompileError::from_chunk)?;
+                chunk.emit(Instruction::Constant(true_idx));
+                Ok(())
+            }
         }
     }
 

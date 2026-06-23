@@ -1,7 +1,7 @@
 use agentjs::{
     ast::{
         AssignmentOperator, BinaryOperator, Expression, Literal, Program, Statement, UnaryOperator,
-        VariableDeclarator, VariableKind,
+        UpdateOperator, VariableDeclarator, VariableKind,
     },
     bytecode::{Chunk, ChunkError, Compiler, Constant, Instruction, StackAnalysis, StackEffect},
     contracts::{NativeError, ProgramCompiler},
@@ -18,21 +18,33 @@ fn compiler_direct_api_accepts_a_hand_built_program() {
     assert!(chunk.constants.is_empty());
 }
 
+/// Postfix computed-member update (`a[b]++`) is not yet supported because the
+/// VM's stack-based design requires a rotate/tuck instruction that does not
+/// exist yet. Using this AST node directly (without the parser) verifies that
+/// the compiler returns a clean `CompileError` rather than producing malformed
+/// bytecode.
 #[test]
 fn compiler_rejects_unsupported_ast_without_parser_or_vm() {
-    // Deleting a non-reference remains unsupported and provides a direct
-    // compiler error sentinel without involving the parser or VM.
     let program = Program {
-        body: vec![Statement::Expression(Expression::Unary {
-            operator: UnaryOperator::Delete,
-            argument: Box::new(Expression::Literal(Literal::Number(1.0))),
+        body: vec![Statement::Expression(Expression::Update {
+            operator: UpdateOperator::Increment,
+            prefix: false,
+            argument: Box::new(Expression::Member {
+                object: Box::new(Expression::Identifier("a".into())),
+                property: Box::new(Expression::Identifier("b".into())),
+                computed: true,
+            }),
         })],
     };
     let error = Compiler::new()
         .compile_program(&program)
         .expect_err("unsupported AST must return a compile error");
 
-    assert!(error.message.contains("does not support"));
+    assert!(
+        error.message.contains("not yet supported") || error.message.contains("unsupported"),
+        "unexpected error: {}",
+        error.message
+    );
 }
 
 #[test]
@@ -43,9 +55,14 @@ fn shared_program_compiler_contract_delegates_to_bytecode_compiler() {
     assert!(result.is_ok());
 
     let unsupported = Program {
-        body: vec![Statement::Expression(Expression::Unary {
-            operator: UnaryOperator::Delete,
-            argument: Box::new(Expression::Literal(Literal::Number(1.0))),
+        body: vec![Statement::Expression(Expression::Update {
+            operator: UpdateOperator::Increment,
+            prefix: false,
+            argument: Box::new(Expression::Member {
+                object: Box::new(Expression::Identifier("a".into())),
+                property: Box::new(Expression::Identifier("b".into())),
+                computed: true,
+            }),
         })],
     };
     assert!(matches!(

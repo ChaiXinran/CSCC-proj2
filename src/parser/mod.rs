@@ -69,6 +69,11 @@ pub struct Parser {
     /// Current recursive nesting depth across parenthesized expressions, unary
     /// chains, and statement blocks. Checked against [`MAX_PARSE_DEPTH`].
     nesting_depth: usize,
+    /// Whether the current parsing context is strict-mode code. Set when a
+    /// `"use strict"` directive prologue is detected in a script or function
+    /// body. Used to enforce strict-mode early errors (e.g. legacy octal
+    /// escapes in string literals, `delete` of an unqualified identifier).
+    pub(super) is_strict: bool,
 }
 
 impl Parser {
@@ -87,6 +92,7 @@ impl Parser {
             no_in: false,
             source: None,
             nesting_depth: 0,
+            is_strict: false,
         }
     }
 
@@ -117,6 +123,7 @@ impl Parser {
 
     /// Parses a complete script, consuming every token up to and including EOF.
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
+        self.consume_directive_prologue()?;
         let mut body = Vec::new();
         while !self.at_eof() {
             body.push(self.parse_statement()?);
