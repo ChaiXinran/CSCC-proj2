@@ -260,3 +260,83 @@ cargo test --all-targets
 cargo run --release --no-default-features -- test262 --native-v6-scan --jobs 4 \
   --json reports/native-v6-frontend-summary.json
 ```
+
+---
+
+# 三人并行修复方案（基于「建议修复顺序」，2026-06-21）
+
+## 进度基线
+
+- **已完成**：建议顺序 #1 `Function.prototype.bind`（及 `Array.join/push`、`Object.hasOwnProperty/propertyIsEnumerable` 经核实已存在）。`propertyHelper.js` 的 harness 加载失败从 **318 → 2**。
+- **当前卡点**：`propertyHelper.js` 的 `verifyProperty` 第一行 `arguments.length > 2` 撞上引擎**不支持 `arguments` 对象**，**279 个**用例卡在 `arguments is not defined`。这是 bind 之后最大的单点。
+- 当前扫描：`1360 / 2199 = 61.85%`。
+
+下面把建议顺序 #2、#3 与紧接的 `arguments` 拆成**三条互不冲突**的并行轨道。
+
+## 三条并行轨道
+
+### 轨道 A —— `arguments` 对象（C 组：vm / runtime）｜最高收益
+
+| 项 | 内容 |
+|---|---|
+| 目标 | 用户函数体内可用 `arguments`：类数组、`length`、按索引取实参 |
+| 收益 | 解锁约 **280** 个 propertyHelper 用例（其中一批会进一步暴露真实断言，由轨道 B 接力） |
+| 实现要点 | ① `vm/interpreter.rs::call_user_function` 进入函数时，用调用实参构造一个 `arguments` 对象并在函数环境声明绑定 `arguments`；② 简化实现用普通数组对象（不做 mapped arguments / `callee`），`length` = 实参个数；③ **无需改 lexer/parser** —— `arguments` 是普通标识符，函数内 `compile_identifier` 已 emit `LoadName "arguments"`；④ 箭头函数不应有自己的 `arguments`（当前箭头实现简单，先记 TODO） |
+| 涉及文件 | `src/vm/interpreter.rs`、`src/runtime/context.rs`（如需 arguments 工厂）、`src/runtime/function.rs` |
+| 验收 | 新增 `tests/native_arguments.rs`（`arguments.length`、`arguments[i]`、转发求和）；扫描中 `arguments is not defined` ≈ 0 |
+| 边界 | 只动 VM call path 与 runtime，不碰 builtins / 前端 |
+
+### 轨道 B —— Error / JSON / Math 语义修复（C 组：builtins）｜修真实 bug
+
+| 项 | 内容 |
+|---|---|
+| 目标 | 提升三个低分目录：Error 35.5%、JSON 44.9%、Math 60.2% |
+| 收益 | 188 个「断言/语义不一致」大多在此，预计可修 **80–120** |
+| 实现要点 | **Error**：子类原型链（`TypeError.prototype → Error.prototype`）、`Error.prototype.toString`、`name`/`message` 描述符；**JSON**：`parse` 的 reviver、`stringify` 的 replacer / space / `toJSON` / 属性顺序 / 循环检测；**Math**：特殊值（`±0`、`NaN`、空参 `hypot/max/min`）、`round` 负零边界 |
+| 涉及文件 | `src/builtins/{error.rs, json.rs, math.rs}`、`src/builtins/v6.rs`（对应 wiring 段） |
+| 验收 | 各目录 `--suite test/built-ins/{Error,JSON,Math}` 通过率上升；扩展 `tests/native_v6_*` |
+| 边界 | 只动 builtins，不碰 VM core / 前端。内部可再按 Error / JSON / Math 三小块细分 |
+
+### 轨道 C —— 复合赋值 + 计算属性键（A 组：lexer/parser，+ B 组 compiler）｜低风险解锁
+
+| 项 | 内容 |
+|---|---|
+| 目标 | `+=` `-=` `*=` `/=` `%=` 复合赋值；对象字面量计算属性键 `{[expr]: v}` |
+| 收益 | parse error 中复合赋值 ~26 + 计算属性 ~9 ≈ **35**，且复合赋值在 builtin 测试里极常见，连带效应更大 |
+| 实现要点 | ① `lexer`：`OPERATORS` 加 `+=`/`-=`/`*=`/`/=`/`%=`（置于单字符运算符之前，保证最长匹配）；② `ast`：`Assignment` 增加可选 `operator`（或新增 `CompoundAssignment`）；③ `parser::parse_assignment` 识别复合赋值；④ `compiler::compile_assignment` 复合赋值 = `load target → 运算 → store`（与 `compile_update` 同套路）；⑤ 计算属性键 `[expr]:` 的 parser + 字节码（沿用 `SetElement`/`DefineElement`） |
+| 涉及文件 | `src/lexer/mod.rs`、`src/ast/expression.rs`、`src/parser/expression.rs`、`src/bytecode/compiler.rs` |
+| 验收 | 新增复合赋值 / 计算属性测试；对应 parse error 降到 0 |
+| 边界 | 前端 + compiler。**BigInt 不在本轨道**（需新值类型，独立里程碑） |
+
+## 防冲突约定
+
+| 维度 | 约定 |
+|---|---|
+| 文件所有权 | A=`vm/interpreter.rs` + `runtime/*`；B=`builtins/{error,json,math}.rs` + `v6.rs`；C=`lexer` + `ast` + `parser` + `bytecode/compiler.rs` |
+| 唯一交汇点 | `bytecode/compiler.rs`：A（若给 `arguments` 加注入逻辑）集中在 `call`/`compile_function` 区；C 集中在 `compile_assignment`。**两人改不同函数**，合并时按函数粒度即可 |
+| 契约先行 | 若 A 需新 VM 指令（如 `CreateArguments`）或 C 需新指令（计算属性多半可复用现有 `DefineElement`/`SetElement`，不必新增），**先合并 `opcode.rs`/`contracts.rs` 的契约 PR**，再并行实现（遵循 CLAUDE.md：契约变更先合并） |
+| `runtime/context.rs` | 仅 A 可能新增 `arguments` 工厂方法；B/C 不动该文件，避免三方争用 |
+| 验证（统一，每人提交前跑） | `cargo fmt --all -- --check`；`cargo clippy --no-default-features --all-targets -- -D warnings`；`cargo test --no-default-features --all-targets`；`cargo run --release --no-default-features -- test262 --native-v6-scan --jobs 4`。**门禁 V1–V6 必须 100% 零回归** |
+| Boa 环境 | 本机 `target/` 的 `boa_engine` 是 Linux 目标缓存，统一用 `--no-default-features` 验证 native；**建议开工前由任一人跑一次 `cargo clean && cargo build --release`** 修复 Boa，让默认门禁恢复（与三轨道独立） |
+| 合并顺序 | A 最独立、收益最高，建议先落地；B、C 并行；任何动 `opcode/contracts` 的契约 PR 最先合并 |
+
+## A 与 B 的协同
+
+轨道 A 解锁 `arguments` 后，propertyHelper 的 `verifyProperty` 会真正执行，**把一批用例从「arguments 未定义」推进到「描述符/语义断言」**——这些正是轨道 B 的修复目标。因此 **A+B 有叠加放大效应**：单看 A 解锁的部分用例可能仍因断言失败，需 B 接力才转为通过。建议 A 先合并、B 紧随。
+
+## 不在本轮（更大里程碑，后续单独立项）
+
+- **RegExp**：正则字面量 68 + String 的 `match/replace/split` 等，跨 lexer（正则识别）+ runtime（RegExp 值）+ builtins，是最大单块。
+- **Symbol**（92）：新原始值类型，跨 runtime/vm/builtins。
+- **BigInt**（19）：新值类型。
+- **Proxy / eval / Date**；其中 **`$262`**（10）成本低，可顺带补。
+
+## 预期收益（粗估）
+
+| 轨道 | 解锁量级 | 说明 |
+|---|---:|---|
+| A `arguments` | ~280 | propertyHelper 主体放行（部分需 B 接力） |
+| B Error/JSON/Math | ~80–120 | 真实语义修复 |
+| C 复合赋值 + 计算属性 | ~35 | 低风险前端 |
+
+三者叠加后，V6 扫描通过率有望从 **61.85%** 升至 **~75%+**（A 与 B 的协同会进一步放大）。
