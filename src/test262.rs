@@ -321,7 +321,9 @@ struct Metadata {
 #[derive(Debug, Clone)]
 struct Harness {
     assert: Arc<str>,
+    #[cfg(feature = "boa-backend")]
     sta: Arc<str>,
+    #[cfg(feature = "boa-backend")]
     doneprint: Arc<str>,
     includes: Arc<HashMap<String, Arc<str>>>,
 }
@@ -333,7 +335,9 @@ impl Harness {
     fn minimal_native() -> Self {
         Self {
             assert: Arc::from(""),
+            #[cfg(feature = "boa-backend")]
             sta: Arc::from(""),
+            #[cfg(feature = "boa-backend")]
             doneprint: Arc::from(""),
             includes: Arc::new(HashMap::new()),
         }
@@ -817,7 +821,9 @@ fn load_harness(root: &Path) -> Result<Harness, String> {
 
     Ok(Harness {
         assert: required("assert.js")?,
+        #[cfg(feature = "boa-backend")]
         sta: required("sta.js")?,
+        #[cfg(feature = "boa-backend")]
         doneprint: required("doneprintHandle.js")?,
         includes: Arc::new(files),
     })
