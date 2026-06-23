@@ -194,5 +194,106 @@ fn json_stringify_object_with_symbol_value_omits_the_entry() {
 #[test]
 fn new_symbol_throws_typeerror() {
     let e = native_eval_err("new Symbol()");
-    assert!(e.contains("TypeError") || e.contains("constructor"), "got: {e}");
+    assert!(
+        e.contains("TypeError") || e.contains("constructor"),
+        "got: {e}"
+    );
+}
+
+// ── Symbol.for and Symbol.keyFor ─────────────────────────────────────────────
+
+#[test]
+fn symbol_for_returns_same_symbol_for_same_key() {
+    assert_eq!(
+        native_eval("Symbol.for('test') === Symbol.for('test')"),
+        "true"
+    );
+}
+
+#[test]
+fn symbol_for_returns_different_symbol_from_symbol_call() {
+    assert_eq!(
+        native_eval("Symbol.for('test') === Symbol('test')"),
+        "false"
+    );
+}
+
+#[test]
+fn symbol_key_for_returns_key_for_global_symbol() {
+    assert_eq!(native_eval("Symbol.keyFor(Symbol.for('myKey'))"), "myKey");
+}
+
+#[test]
+fn symbol_key_for_returns_undefined_for_non_global_symbol() {
+    assert_eq!(native_eval("Symbol.keyFor(Symbol('local'))"), "undefined");
+}
+
+#[test]
+fn symbol_key_for_returns_undefined_for_well_known_symbols() {
+    assert_eq!(native_eval("Symbol.keyFor(Symbol.iterator)"), "undefined");
+}
+
+#[test]
+fn symbol_key_for_throws_on_non_symbol() {
+    let e = native_eval_err("Symbol.keyFor('not a symbol')");
+    assert!(e.contains("TypeError") || e.contains("symbol"), "got: {e}");
+}
+
+// ── Symbol wrapper objects ────────────────────────────────────────────────────
+
+#[test]
+fn object_symbol_creates_wrapper() {
+    assert_eq!(native_eval("typeof Object(Symbol())"), "object");
+}
+
+#[test]
+fn symbol_wrapper_valueof_returns_primitive() {
+    assert_eq!(
+        native_eval("var s = Symbol('x'); Object(s).valueOf() === s"),
+        "true"
+    );
+}
+
+#[test]
+fn symbol_wrapper_tostring_works() {
+    assert_eq!(
+        native_eval("Object(Symbol('test')).toString()"),
+        "Symbol(test)"
+    );
+}
+
+#[test]
+fn symbol_wrapper_description_works() {
+    assert_eq!(native_eval("Object(Symbol('wrap')).description"), "wrap");
+}
+
+#[test]
+fn typeof_symbol_wrapper_is_object() {
+    assert_eq!(native_eval("typeof Object(Symbol('x'))"), "object");
+}
+
+#[test]
+fn json_stringify_symbol_wrapper_produces_undefined() {
+    assert_eq!(
+        native_eval("JSON.stringify(Object(Symbol('x')))"),
+        "undefined"
+    );
+}
+
+// ── Symbol description coercion ───────────────────────────────────────────────
+
+#[test]
+fn symbol_call_coerces_description_via_tostring() {
+    assert_eq!(
+        native_eval("Symbol({ toString() { return 'coerced'; } }).description"),
+        "coerced"
+    );
+}
+
+#[test]
+fn symbol_for_coerces_key_via_tostring() {
+    assert_eq!(
+        native_eval("Symbol.for({ toString() { return 'key'; } }) === Symbol.for('key')"),
+        "true"
+    );
 }

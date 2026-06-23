@@ -4,8 +4,6 @@
 //! integration step. The functions here avoid VM/runtime dependencies so C2
 //! can be developed without touching shared C0 or D-owned files.
 
-
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NumberMethodSpec {
     pub name: &'static str,

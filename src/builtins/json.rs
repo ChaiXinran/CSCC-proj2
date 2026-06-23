@@ -234,6 +234,7 @@ impl StringifyState<'_> {
                         self.vm
                             .to_string_coerce(JsValue::Object(object), self.context)?,
                     ),
+                    PrimitiveValue::Symbol(id) => JsValue::Symbol(*id),
                 };
             } else {
                 value = JsValue::Object(object);
@@ -672,6 +673,7 @@ fn stringify_object(
                 }
             }
             crate::runtime::PrimitiveValue::String(value) => quote_json_string(value),
+            crate::runtime::PrimitiveValue::Symbol(_) => return Ok(None), // Symbol wrapper is non-serializable
         },
         ObjectKind::Ordinary | ObjectKind::RegExp { .. } => {
             let mut parts = Vec::new();

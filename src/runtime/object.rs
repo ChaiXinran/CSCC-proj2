@@ -13,6 +13,7 @@ pub enum PrimitiveValue {
     Boolean(bool),
     Number(f64),
     String(String),
+    Symbol(SymbolId),
 }
 
 /// Object storage variants.

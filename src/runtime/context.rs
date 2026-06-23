@@ -6,8 +6,7 @@ use super::{
     BoundFunction, BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap,
     JsFunction, JsObject, JsValue, NativeCall, NativeConstruct, NativeErrorKind, ObjectId,
     ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
-    SymbolId, SymbolRegistry, WellKnownSymbols,
-    object::array_index,
+    SymbolId, SymbolRegistry, WellKnownSymbols, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 
@@ -51,6 +50,7 @@ pub struct NativeContext {
     intrinsics: Option<Intrinsics>,
     function_prototype_call: Option<BuiltinId>,
     symbol_registry: SymbolRegistry,
+    symbol_for_registry: HashMap<String, SymbolId>,
     strict: bool,
     output: Vec<String>,
     loop_budget_remaining: u64,
@@ -80,6 +80,7 @@ impl Default for NativeContext {
             intrinsics: None,
             function_prototype_call: None,
             symbol_registry: SymbolRegistry::new(),
+            symbol_for_registry: HashMap::new(),
             strict: false,
             output: Vec::new(),
             loop_budget_remaining: u64::MAX,
@@ -230,6 +231,27 @@ impl NativeContext {
         JsValue::Symbol(self.symbol_registry.create(description))
     }
 
+    /// `Symbol.for(key)` — return a globally-registered symbol for the given key.
+    /// If no symbol exists for this key, create one and store it in the global registry.
+    pub fn symbol_for(&mut self, key: String) -> JsValue {
+        if let Some(&id) = self.symbol_for_registry.get(&key) {
+            return JsValue::Symbol(id);
+        }
+        let id = self.symbol_registry.create(Some(key.clone()));
+        self.symbol_for_registry.insert(key, id);
+        JsValue::Symbol(id)
+    }
+
+    /// `Symbol.keyFor(sym)` — return the key for a globally-registered symbol,
+    /// or `None` if the symbol was not created via `Symbol.for`.
+    #[must_use]
+    pub fn symbol_key_for(&self, id: SymbolId) -> Option<String> {
+        self.symbol_for_registry
+            .iter()
+            .find(|(_, sym_id)| **sym_id == id)
+            .map(|(key, _)| key.clone())
+    }
+
     /// Define a symbol-keyed own property on an object.
     pub fn define_symbol_own_property(
         &mut self,
@@ -275,7 +297,10 @@ impl NativeContext {
         object: ObjectId,
         symbol: SymbolId,
     ) -> Option<PropertyDescriptor> {
-        self.heap.object(object)?.own_symbol_property(symbol).cloned()
+        self.heap
+            .object(object)?
+            .own_symbol_property(symbol)
+            .cloned()
     }
 
     pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
@@ -1433,9 +1458,7 @@ pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
         JsValue::Boolean(value) => Ok(value.to_string()),
         JsValue::Null => Ok("null".into()),
         JsValue::Undefined => Ok("undefined".into()),
-        JsValue::Symbol(_) => Err(VmError::type_error(
-            "Cannot convert a Symbol to a string",
-        )),
+        JsValue::Symbol(_) => Err(VmError::type_error("Cannot convert a Symbol to a string")),
         JsValue::Object(_)
         | JsValue::Function(_)
         | JsValue::BuiltinFunction(_)
