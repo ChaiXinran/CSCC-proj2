@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 
 use super::{
     BoundFunction, BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap,
-    JsFunction, JsObject, JsValue, NativeCall, NativeConstruct, ObjectId, ObjectKind,
-    PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
+    JsFunction, JsObject, JsValue, NativeCall, NativeConstruct, NativeErrorKind, ObjectId,
+    ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
     object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
@@ -956,6 +956,22 @@ impl NativeContext {
     }
 
     pub fn instance_of(&self, value: JsValue, constructor: JsValue) -> Result<bool, VmError> {
+        // Native error values (JsValue::Error) are not heap objects, so handle them
+        // separately: check the error kind against the constructor name hierarchy.
+        if let JsValue::Error(ref error) = value {
+            if !self.is_constructable_value(&constructor) {
+                return Err(VmError::type_error(
+                    "right-hand side of instanceof is not a constructor",
+                ));
+            }
+            let JsValue::BuiltinFunction(id) = &constructor else {
+                return Ok(false);
+            };
+            let Some(builtin) = self.builtin(*id) else {
+                return Ok(false);
+            };
+            return Ok(native_error_is_instance_of(&error.kind, builtin.name));
+        }
         let Some(object) = self.value_object(&value) else {
             return Ok(false);
         };
@@ -1400,6 +1416,19 @@ fn bound_construct_unreachable(
     Err(VmError::runtime(
         "bound function must be dispatched by the VM",
     ))
+}
+
+/// Returns true if a native error with `kind` is an ECMAScript instance of the named constructor.
+/// Error → all; TypeError → TypeError + Error; SyntaxError → SyntaxError + Error; etc.
+fn native_error_is_instance_of(kind: &NativeErrorKind, constructor_name: &str) -> bool {
+    match constructor_name {
+        "Error" => true,
+        "TypeError" => matches!(kind, NativeErrorKind::Type),
+        "SyntaxError" => matches!(kind, NativeErrorKind::Syntax),
+        "ReferenceError" => matches!(kind, NativeErrorKind::Reference),
+        "RangeError" => matches!(kind, NativeErrorKind::Range),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

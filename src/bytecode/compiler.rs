@@ -3,9 +3,9 @@
 use std::{collections::HashSet, fmt};
 
 use crate::ast::{
-    ArrayElement, BinaryOperator, CatchClause, Expression, FunctionBody, FunctionLiteral, Literal,
-    LogicalOperator, ObjectProperty, Program, PropertyName, Statement, SwitchCase, UnaryOperator,
-    UpdateOperator, VariableKind,
+    ArrayElement, AssignmentOperator, BinaryOperator, CatchClause, Expression, FunctionBody,
+    FunctionLiteral, Literal, LogicalOperator, ObjectProperty, Program, PropertyName, Statement,
+    SwitchCase, UnaryOperator, UpdateOperator, VariableKind,
 };
 
 use super::{
@@ -1058,9 +1058,11 @@ impl Compiler {
                 right,
             } => self.compile_logical(*operator, left, right, chunk, context),
             Expression::Identifier(name) => self.compile_identifier(name, chunk, context),
-            Expression::Assignment { target, value } => {
-                self.compile_assignment(target, value, chunk, context)
-            }
+            Expression::Assignment {
+                operator,
+                target,
+                value,
+            } => self.compile_assignment(operator, target, value, chunk, context),
             Expression::Member {
                 object,
                 property,
@@ -1296,28 +1298,38 @@ impl Compiler {
 
     fn compile_assignment(
         &mut self,
+        operator: &AssignmentOperator,
         target: &Expression,
         value: &Expression,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        match target {
-            Expression::Identifier(name) => {
+        match (operator, target) {
+            // ── Simple `=` on identifier ───────────────────────────────────────
+            (AssignmentOperator::Assign, Expression::Identifier(name)) => {
                 self.compile_expression(value, chunk, context)?;
-                let name_index = self.add_name(name, chunk)?;
-                if context.inside_function() || context.is_lexical(name) {
-                    chunk.emit(Instruction::StoreName(name_index));
-                } else {
-                    chunk.emit(Instruction::StoreGlobal(name_index));
-                }
+                self.emit_store_identifier(name, chunk, context)?;
                 Ok(())
             }
-            Expression::Member {
-                object,
-                property,
-                computed: false,
-            } => {
-                // obj.prop = value  →  [object, value] → SetProperty
+            // ── Compound `op=` on identifier ──────────────────────────────────
+            (op, Expression::Identifier(name)) => {
+                // load current value, compile rhs, apply op, store back
+                self.compile_identifier(name, chunk, context)?;
+                self.compile_expression(value, chunk, context)?;
+                let instr = compound_op_instruction(op);
+                chunk.emit(instr);
+                self.emit_store_identifier(name, chunk, context)?;
+                Ok(())
+            }
+            // ── Simple `=` on static member ───────────────────────────────────
+            (
+                AssignmentOperator::Assign,
+                Expression::Member {
+                    object,
+                    property,
+                    computed: false,
+                },
+            ) => {
                 let Expression::Identifier(property_name) = property.as_ref() else {
                     return Err(CompileError::unsupported(
                         "non-identifier static member as assignment target",
@@ -1329,12 +1341,15 @@ impl Compiler {
                 chunk.emit(Instruction::SetProperty(prop_index));
                 Ok(())
             }
-            Expression::Member {
-                object,
-                property,
-                computed: true,
-            } => {
-                // obj[key] = value  →  [object, key, value] → SetElement
+            // ── Simple `=` on computed member ─────────────────────────────────
+            (
+                AssignmentOperator::Assign,
+                Expression::Member {
+                    object,
+                    property,
+                    computed: true,
+                },
+            ) => {
                 self.compile_expression(object, chunk, context)?;
                 self.compile_expression(property, chunk, context)?;
                 self.compile_expression(value, chunk, context)?;
@@ -1642,6 +1657,17 @@ impl Compiler {
 struct CompiledFunction {
     params: Vec<String>,
     chunk: Chunk,
+}
+
+fn compound_op_instruction(op: &AssignmentOperator) -> Instruction {
+    match op {
+        AssignmentOperator::PlusAssign => Instruction::Add,
+        AssignmentOperator::MinusAssign => Instruction::Subtract,
+        AssignmentOperator::MulAssign => Instruction::Multiply,
+        AssignmentOperator::DivAssign => Instruction::Divide,
+        AssignmentOperator::ModAssign => Instruction::Remainder,
+        AssignmentOperator::Assign => unreachable!("Assign handled before compound branch"),
+    }
 }
 
 fn property_key(key: &PropertyName) -> String {

@@ -18,6 +18,7 @@ use crate::{
 pub enum VmErrorKind {
     Reference,
     Type,
+    Syntax,
     Range,
     Test262,
     RuntimeLimit,
@@ -52,6 +53,14 @@ impl VmError {
     pub fn type_error(message: impl Into<String>) -> Self {
         Self {
             kind: VmErrorKind::Type,
+            message: message.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn syntax_error(message: impl Into<String>) -> Self {
+        Self {
+            kind: VmErrorKind::Syntax,
             message: message.into(),
         }
     }
@@ -867,7 +876,10 @@ impl Vm {
                         // ECMAScript error types raised directly by a builtin are
                         // catchable throws; engine-internal failures are not.
                         None => match error.kind {
-                            VmErrorKind::Reference | VmErrorKind::Type | VmErrorKind::Range => {
+                            VmErrorKind::Reference
+                            | VmErrorKind::Type
+                            | VmErrorKind::Syntax
+                            | VmErrorKind::Range => {
                                 Ok(OperationResult::Throw(vm_error_to_value(error)))
                             }
                             _ => Err(error),
@@ -893,19 +905,6 @@ impl Vm {
                 Err(VmError::runtime("JavaScript callback threw"))
             }
         }
-    }
-
-    pub(crate) fn call_value_threw(
-        &mut self,
-        callee: JsValue,
-        this_value: JsValue,
-        arguments: Vec<JsValue>,
-        context: &mut NativeContext,
-    ) -> bool {
-        !matches!(
-            self.call_value(callee, this_value, arguments, context),
-            Ok(OperationResult::Value(_))
-        )
     }
 
     fn abstract_equals(
@@ -1194,6 +1193,25 @@ impl Vm {
             JsValue::Boolean(_) => context
                 .boolean_prototype()
                 .ok_or_else(|| VmError::type_error("cannot read property on boolean")),
+            JsValue::Error(error) => {
+                // Resolve the prototype of the corresponding error constructor so that
+                // property reads like `thrown.constructor` and `thrown.message` work.
+                let name = native_error_constructor_name(&error.kind);
+                context
+                    .get_global(name)
+                    .and_then(|ctor| context.value_object(&ctor))
+                    .and_then(|ctor_obj| {
+                        context
+                            .find_property_descriptor(ctor_obj, "prototype")
+                            .ok()
+                            .flatten()
+                            .and_then(|(_, d)| d.value_cloned())
+                            .and_then(|v| context.value_object(&v))
+                    })
+                    .ok_or_else(|| {
+                        VmError::type_error(format!("cannot read property on {receiver}"))
+                    })
+            }
             _ => context.require_object(receiver, "read property"),
         }
     }
@@ -1282,9 +1300,11 @@ impl Vm {
             };
             for (i, arg) in arguments.iter().enumerate() {
                 let key = i.to_string();
-                if let Err(e) = context
-                    .define_own_property(arguments_id, key, PropertyDescriptor::data(arg.clone()))
-                {
+                if let Err(e) = context.define_own_property(
+                    arguments_id,
+                    key,
+                    PropertyDescriptor::data(arg.clone()),
+                ) {
                     let _ = context.restore_environment_depth(caller_environment_depth);
                     return Err(e);
                 }
@@ -1557,6 +1577,9 @@ fn throw_value(value: JsValue) -> VmError {
         JsValue::Error(error) if error.kind == NativeErrorKind::Type => {
             VmError::type_error(error.message)
         }
+        JsValue::Error(error) if error.kind == NativeErrorKind::Syntax => {
+            VmError::syntax_error(error.message)
+        }
         JsValue::Error(error) if error.kind == NativeErrorKind::Range => {
             VmError::range(error.message)
         }
@@ -1571,6 +1594,7 @@ fn vm_error_to_value(error: VmError) -> JsValue {
     let kind = match error.kind {
         VmErrorKind::Reference => NativeErrorKind::Reference,
         VmErrorKind::Type => NativeErrorKind::Type,
+        VmErrorKind::Syntax => NativeErrorKind::Syntax,
         VmErrorKind::Range => NativeErrorKind::Range,
         VmErrorKind::Test262 => NativeErrorKind::Test262,
         VmErrorKind::RuntimeLimit => NativeErrorKind::RuntimeLimit,
@@ -1580,6 +1604,18 @@ fn vm_error_to_value(error: VmError) -> JsValue {
         kind,
         error.to_string(),
     ))
+}
+
+fn native_error_constructor_name(kind: &NativeErrorKind) -> &'static str {
+    match kind {
+        NativeErrorKind::Reference => "ReferenceError",
+        NativeErrorKind::Type => "TypeError",
+        NativeErrorKind::Syntax => "SyntaxError",
+        NativeErrorKind::Range => "RangeError",
+        NativeErrorKind::RuntimeLimit => "RangeError",
+        NativeErrorKind::Error => "Error",
+        NativeErrorKind::Test262 => "Error",
+    }
 }
 
 fn label_suffix(label: Option<&str>) -> String {
@@ -1868,40 +1904,57 @@ mod tests {
     }
 
     #[test]
-    fn calls_minimal_test262_assert_same_value() {
+    fn test262_error_call_throws_test262_vmerror() {
+        // Calling Test262Error("msg") as a function propagates a VmError::test262
+        // so the test runner can detect assertion failures.
         let mut context = NativeContext::default();
         builtins::install_test262_harness(&mut context);
 
         let mut chunk = Chunk::default();
-        let assert_name = constant(&mut chunk, Constant::String("assert".into()));
-        let same_value = constant(&mut chunk, Constant::String("sameValue".into()));
-        let one = constant(&mut chunk, Constant::Number(1.0));
-
-        chunk.emit(Instruction::LoadGlobal(assert_name));
-        chunk.emit(Instruction::GetProperty(same_value));
-        chunk.emit(Instruction::Constant(one));
-        chunk.emit(Instruction::Constant(one));
-        chunk.emit(Instruction::Call(2));
+        let ctor = constant(&mut chunk, Constant::String("Test262Error".into()));
+        let msg = constant(&mut chunk, Constant::String("boom".into()));
+        chunk.emit(Instruction::LoadGlobal(ctor));
+        chunk.emit(Instruction::Constant(msg));
+        chunk.emit(Instruction::Call(1));
         chunk.emit(Instruction::Return);
 
-        assert_eq!(
-            Vm::default()
-                .execute_with_context(&chunk, &mut context)
-                .unwrap(),
-            JsValue::Undefined
-        );
+        let error = Vm::default()
+            .execute_with_context(&chunk, &mut context)
+            .unwrap_err();
+        assert_eq!(error.kind, VmErrorKind::Test262);
+        assert!(error.message.contains("boom"));
     }
 
     #[test]
-    fn missing_object_properties_read_as_undefined() {
+    fn test262_error_construct_returns_error_value() {
+        // `new Test262Error("msg")` should return a JsValue::Error with Test262 kind.
         let mut context = NativeContext::default();
         builtins::install_test262_harness(&mut context);
 
         let mut chunk = Chunk::default();
-        let assert_name = constant(&mut chunk, Constant::String("assert".into()));
-        let missing = constant(&mut chunk, Constant::String("missing".into()));
+        let ctor = constant(&mut chunk, Constant::String("Test262Error".into()));
+        let msg = constant(&mut chunk, Constant::String("oops".into()));
+        chunk.emit(Instruction::LoadGlobal(ctor));
+        chunk.emit(Instruction::Constant(msg));
+        chunk.emit(Instruction::Construct(1));
+        chunk.emit(Instruction::Return);
 
-        chunk.emit(Instruction::LoadGlobal(assert_name));
+        let result = Vm::default()
+            .execute_with_context(&chunk, &mut context)
+            .unwrap();
+        assert!(matches!(result, JsValue::Error(_)));
+    }
+
+    #[test]
+    fn missing_property_on_builtin_reads_as_undefined() {
+        // Reading a non-existent property on a builtin object returns undefined.
+        let mut context = NativeContext::default();
+        builtins::install_test262_harness(&mut context);
+
+        let mut chunk = Chunk::default();
+        let ctor = constant(&mut chunk, Constant::String("Test262Error".into()));
+        let missing = constant(&mut chunk, Constant::String("missing".into()));
+        chunk.emit(Instruction::LoadGlobal(ctor));
         chunk.emit(Instruction::GetProperty(missing));
         chunk.emit(Instruction::Return);
 
@@ -1911,30 +1964,6 @@ mod tests {
                 .unwrap(),
             JsValue::Undefined
         );
-    }
-
-    #[test]
-    fn reports_test262_assertion_failures() {
-        let mut context = NativeContext::default();
-        builtins::install_test262_harness(&mut context);
-
-        let mut chunk = Chunk::default();
-        let assert_name = constant(&mut chunk, Constant::String("assert".into()));
-        let same_value = constant(&mut chunk, Constant::String("sameValue".into()));
-        let one = constant(&mut chunk, Constant::Number(1.0));
-        let two = constant(&mut chunk, Constant::Number(2.0));
-
-        chunk.emit(Instruction::LoadGlobal(assert_name));
-        chunk.emit(Instruction::GetProperty(same_value));
-        chunk.emit(Instruction::Constant(one));
-        chunk.emit(Instruction::Constant(two));
-        chunk.emit(Instruction::Call(2));
-        chunk.emit(Instruction::Return);
-
-        let error = Vm::default()
-            .execute_with_context(&chunk, &mut context)
-            .unwrap_err();
-        assert_eq!(error.kind, VmErrorKind::Test262);
     }
 
     #[test]

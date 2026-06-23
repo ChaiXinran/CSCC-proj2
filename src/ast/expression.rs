@@ -30,6 +30,17 @@ pub enum UpdateOperator {
     Decrement,
 }
 
+/// Assignment operators: `=` and the compound variants `+=` `-=` `*=` `/=` `%=`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentOperator {
+    Assign,
+    PlusAssign,
+    MinusAssign,
+    MulAssign,
+    DivAssign,
+    ModAssign,
+}
+
 /// Binary expression operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
@@ -193,6 +204,7 @@ pub enum Expression {
         right: Box<Expression>,
     },
     Assignment {
+        operator: AssignmentOperator,
         target: Box<Expression>,
         value: Box<Expression>,
     },

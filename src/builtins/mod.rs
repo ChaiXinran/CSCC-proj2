@@ -26,7 +26,7 @@ use crate::{
         Intrinsics, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
         ObjectKind, PrimitiveValue, PropertyDescriptor,
     },
-    vm::{Vm, VmError, VmErrorKind},
+    vm::{Vm, VmError},
 };
 
 /// Installs the foundational constructors, prototypes, and V4 methods.
@@ -177,50 +177,14 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
 }
 
 /// Installs the minimal Test262 host surface used by the native runtime.
+///
+/// Only `Test262Error` is wired as a Rust host function so that the test runner
+/// can reliably detect assertion failures via `VmError::test262`.  All other
+/// harness globals (`assert`, `assert.sameValue`, `assert.compareArray`, …) are
+/// provided by eval'ing the official `assert.js` at the start of each test case.
+/// `sta.js` is intentionally NOT eval'd: it redefines `Test262Error` as a plain
+/// JS class which would shadow our Rust host function and break error detection.
 pub fn install_test262_harness(context: &mut NativeContext) {
-    // assert is a callable function AND has sub-methods as properties
-    let assert_fn = context
-        .register_builtin("assert", 1, assert_fn, None)
-        .expect("install assert");
-    let JsValue::BuiltinFunction(assert_id) = &assert_fn else {
-        unreachable!()
-    };
-    let assert_backing = context.builtin(*assert_id).unwrap().object;
-
-    let same_value = context
-        .register_builtin("sameValue", 2, assert_same_value, None)
-        .expect("install assert.sameValue");
-    let not_same_value = context
-        .register_builtin("notSameValue", 2, assert_not_same_value, None)
-        .expect("install assert.notSameValue");
-    let throws = context
-        .register_builtin("throws", 1, assert_throws, None)
-        .expect("install assert.throws");
-
-    context
-        .define_own_property(
-            assert_backing,
-            "sameValue".into(),
-            PropertyDescriptor::data(same_value),
-        )
-        .expect("define assert.sameValue");
-    context
-        .define_own_property(
-            assert_backing,
-            "notSameValue".into(),
-            PropertyDescriptor::data(not_same_value),
-        )
-        .expect("define assert.notSameValue");
-    context
-        .define_own_property(
-            assert_backing,
-            "throws".into(),
-            PropertyDescriptor::data(throws),
-        )
-        .expect("define assert.throws");
-
-    context.declare_global("assert", assert_fn);
-
     let test262_error = context
         .register_builtin(
             "Test262Error",
@@ -230,81 +194,6 @@ pub fn install_test262_harness(context: &mut NativeContext) {
         )
         .expect("install Test262Error");
     context.declare_global("Test262Error", test262_error);
-}
-
-fn assert_fn(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
-    _this: JsValue,
-    arguments: &[JsValue],
-) -> Result<JsValue, VmError> {
-    let condition = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    if condition.to_boolean() {
-        Ok(JsValue::Undefined)
-    } else {
-        let message = arguments
-            .get(1)
-            .and_then(JsValue::to_js_string)
-            .unwrap_or_else(|| "assertion failed".into());
-        Err(VmError::test262(message))
-    }
-}
-
-fn assert_throws(
-    vm: &mut Vm,
-    context: &mut NativeContext,
-    _this: JsValue,
-    arguments: &[JsValue],
-) -> Result<JsValue, VmError> {
-    let func = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    if !matches!(func, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
-        return Err(VmError::type_error(
-            "assert.throws: second argument must be callable",
-        ));
-    }
-    if vm.call_value_threw(func, JsValue::Undefined, vec![], context) {
-        Ok(JsValue::Undefined)
-    } else {
-        Err(VmError::test262(
-            "assert.throws: no exception was thrown".to_string(),
-        ))
-    }
-}
-
-fn assert_same_value(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
-    _this: JsValue,
-    arguments: &[JsValue],
-) -> Result<JsValue, VmError> {
-    let actual = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let expected = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    if actual.same_value(&expected) {
-        Ok(JsValue::Undefined)
-    } else {
-        Err(assertion_error(
-            arguments,
-            format!("expected SameValue({actual}, {expected})"),
-        ))
-    }
-}
-
-fn assert_not_same_value(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
-    _this: JsValue,
-    arguments: &[JsValue],
-) -> Result<JsValue, VmError> {
-    let actual = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let unexpected = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    if !actual.same_value(&unexpected) {
-        Ok(JsValue::Undefined)
-    } else {
-        Err(assertion_error(
-            arguments,
-            format!("expected values not to be SameValue: {actual}"),
-        ))
-    }
 }
 
 fn test262_error_call(
@@ -343,18 +232,6 @@ fn test262_error_construct(
 /// which bridges the pure C1/C2 algorithm modules into the runtime.
 fn install_std_globals(context: &mut NativeContext) -> Result<(), VmError> {
     v6::install(context)
-}
-
-fn assertion_error(arguments: &[JsValue], fallback: String) -> VmError {
-    let message = arguments
-        .get(2)
-        .and_then(JsValue::to_js_string)
-        .filter(|message| !message.is_empty())
-        .unwrap_or(fallback);
-    VmError {
-        kind: VmErrorKind::Test262,
-        message,
-    }
 }
 
 #[cfg(test)]

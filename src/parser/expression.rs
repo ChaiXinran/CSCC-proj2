@@ -19,8 +19,9 @@
 
 use crate::{
     ast::{
-        ArrayElement, BinaryOperator, Expression, FunctionLiteral, FunctionParam, Literal,
-        LogicalOperator, ObjectProperty, PropertyName, Statement, UnaryOperator, UpdateOperator,
+        ArrayElement, AssignmentOperator, BinaryOperator, Expression, FunctionLiteral,
+        FunctionParam, Literal, LogicalOperator, ObjectProperty, PropertyName, Statement,
+        UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -45,25 +46,37 @@ impl Parser {
         result
     }
 
-    /// Parses `target = value`. Assignment is right associative and binds looser
-    /// than the conditional operator and every binary operator.
+    /// Parses `target = value` and compound assignments `+= -= *= /= %=`.
+    /// Assignment is right associative and binds looser than every binary operator.
     pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
         if let Some(arrow) = self.try_parse_arrow_function()? {
             return Ok(arrow);
         }
         let left = self.parse_conditional()?;
-        if self.eat_operator("=") {
-            if !is_assignment_target(&left) {
-                return Err(self.error("invalid assignment target".into()));
-            }
-            let value = self.parse_assignment()?;
-            Ok(Expression::Assignment {
-                target: Box::new(left),
-                value: Box::new(value),
-            })
+        let operator = if self.eat_operator("=") {
+            AssignmentOperator::Assign
+        } else if self.eat_operator("+=") {
+            AssignmentOperator::PlusAssign
+        } else if self.eat_operator("-=") {
+            AssignmentOperator::MinusAssign
+        } else if self.eat_operator("*=") {
+            AssignmentOperator::MulAssign
+        } else if self.eat_operator("/=") {
+            AssignmentOperator::DivAssign
+        } else if self.eat_operator("%=") {
+            AssignmentOperator::ModAssign
         } else {
-            Ok(left)
+            return Ok(left);
+        };
+        if !is_assignment_target(&left) {
+            return Err(self.error("invalid assignment target".into()));
         }
+        let value = self.parse_assignment()?;
+        Ok(Expression::Assignment {
+            operator,
+            target: Box::new(left),
+            value: Box::new(value),
+        })
     }
 
     fn try_parse_arrow_function(&mut self) -> Result<Option<Expression>, ParseError> {
@@ -767,7 +780,7 @@ mod tests {
     #[test]
     fn assignment_is_right_associative() {
         let expression = parse_expression("a = b = 1");
-        let Expression::Assignment { target, value } = expression else {
+        let Expression::Assignment { target, value, .. } = expression else {
             panic!("expected assignment");
         };
         assert_eq!(*target, Expression::Identifier("a".into()));
@@ -1014,7 +1027,7 @@ mod tests {
     fn parses_member_assignment() {
         // obj.x = 5 should parse as an assignment with a Member target
         let expr = parse_expression("obj.x = 5");
-        let Expression::Assignment { target, value } = expr else {
+        let Expression::Assignment { target, value, .. } = expr else {
             panic!("expected assignment");
         };
         assert!(matches!(

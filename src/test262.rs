@@ -625,11 +625,18 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                 .map_err(|error| format!("harness `{include}` failed: {error}"))?;
         }
     } else if backend == BackendKind::Native {
-        // The native runtime installs assert/sta as host functions, so only the
-        // declared `includes` (propertyHelper.js, nativeErrors.js, …) need to be
-        // evaluated here. A harness helper that trips over a still-unsupported
-        // native feature is reported as Skipped (matching the test-body path);
-        // anything else is a genuine failure.
+        // Eval the official assert.js to provide the full assert suite:
+        // assert.compareArray, assert.throws (with constructor check), assert._isSameValue,
+        // isNegativeZero, compareArray, etc.  Test262Error stays as a Rust host function
+        // so the test runner can detect assertion failures; assert.js calls it via
+        // `throw new Test262Error(...)` which routes through our Rust builtin correctly.
+        // sta.js is intentionally skipped: it redefines Test262Error as a plain JS class
+        // which would shadow the Rust host function and break error detection.
+        if !metadata.flags.contains("raw") {
+            runtime
+                .eval_fragment(&harness.assert)
+                .map_err(|error| format!("assert.js failed: {error}"))?;
+        }
         for include in &metadata.includes {
             let code = harness.includes.get(include).ok_or_else(|| {
                 VariantFailure::Failed(format!("missing harness include `{include}`"))
