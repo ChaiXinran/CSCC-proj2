@@ -1261,6 +1261,51 @@ impl Vm {
             return Err(error);
         }
 
+        // Build the `arguments` exotic object only when the function does not
+        // already declare an explicit `arguments` parameter (ES5 §10.6: if the
+        // function has a formal parameter named "arguments" that binding wins).
+        let has_explicit_arguments = function.params.iter().any(|p| p == "arguments")
+            || function.name.as_deref() == Some("arguments");
+
+        if !has_explicit_arguments {
+            let proto = context.object_prototype();
+            let arguments_obj = match context.ordinary_object_with_prototype(proto) {
+                Ok(obj) => obj,
+                Err(e) => {
+                    let _ = context.restore_environment_depth(caller_environment_depth);
+                    return Err(e);
+                }
+            };
+            let arguments_id = match &arguments_obj {
+                JsValue::Object(id) => *id,
+                _ => unreachable!("ordinary_object_with_prototype always returns Object"),
+            };
+            for (i, arg) in arguments.iter().enumerate() {
+                let key = i.to_string();
+                if let Err(e) = context
+                    .define_own_property(arguments_id, key, PropertyDescriptor::data(arg.clone()))
+                {
+                    let _ = context.restore_environment_depth(caller_environment_depth);
+                    return Err(e);
+                }
+            }
+            let length_val = JsValue::Number(arguments.len() as f64);
+            if let Err(e) = context.define_own_property(
+                arguments_id,
+                "length".into(),
+                PropertyDescriptor::data_with(length_val, true, false, true),
+            ) {
+                let _ = context.restore_environment_depth(caller_environment_depth);
+                return Err(e);
+            }
+            if let Err(error) =
+                context.declare_binding(environment, "arguments", arguments_obj, true)
+            {
+                let _ = context.restore_environment_depth(caller_environment_depth);
+                return Err(error);
+            }
+        }
+
         let frame = CallFrame::new(Some(function_id), 0, environment, this_value, stack_base);
         if let Err(error) = context.push_call_frame(frame) {
             let _ = context.restore_environment_depth(caller_environment_depth);
