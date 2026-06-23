@@ -12,6 +12,9 @@
 !/reports/native-v6-test262-report.md
 !/reports/native-v6-test262-analysis.md
 !/reports/native-v6-summary.json
+!/reports/native-v7-gate-summary.json
+!/reports/native-v7-frontend-summary.json
+!/reports/native-v7-test262-report.md
 !/reports/jetstream2-summary.json
 !/reports/jetstream2-report.md
 
