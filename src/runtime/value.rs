@@ -151,7 +151,8 @@ fn string_to_number(value: &str) -> f64 {
         "Infinity" | "+Infinity" => f64::INFINITY,
         "-Infinity" => f64::NEG_INFINITY,
         _ => parse_prefixed_integer(trimmed)
-            .unwrap_or_else(|| trimmed.parse::<f64>().unwrap_or(f64::NAN)),
+            .or_else(|| parse_decimal_number(trimmed))
+            .unwrap_or(f64::NAN),
     }
 }
 
@@ -185,6 +186,58 @@ fn parse_prefixed_integer(input: &str) -> Option<f64> {
     Some(value)
 }
 
+fn parse_decimal_number(input: &str) -> Option<f64> {
+    let mut chars = input.chars().peekable();
+    if matches!(chars.peek(), Some('+') | Some('-')) {
+        chars.next();
+    }
+
+    let mut digits = 0usize;
+    while chars
+        .peek()
+        .is_some_and(|character| character.is_ascii_digit())
+    {
+        chars.next();
+        digits += 1;
+    }
+
+    if matches!(chars.peek(), Some('.')) {
+        chars.next();
+        while chars
+            .peek()
+            .is_some_and(|character| character.is_ascii_digit())
+        {
+            chars.next();
+            digits += 1;
+        }
+    }
+    if digits == 0 {
+        return None;
+    }
+
+    if matches!(chars.peek(), Some('e') | Some('E')) {
+        chars.next();
+        if matches!(chars.peek(), Some('+') | Some('-')) {
+            chars.next();
+        }
+        let mut exponent_digits = 0usize;
+        while chars
+            .peek()
+            .is_some_and(|character| character.is_ascii_digit())
+        {
+            chars.next();
+            exponent_digits += 1;
+        }
+        if exponent_digits == 0 {
+            return None;
+        }
+    }
+
+    if chars.next().is_some() {
+        return None;
+    }
+    input.parse::<f64>().ok()
+}
 fn is_ecmascript_whitespace(character: char) -> bool {
     matches!(
         character,
