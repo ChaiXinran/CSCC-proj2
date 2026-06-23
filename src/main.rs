@@ -8,6 +8,7 @@ use std::{
 
 use agentjs::{
     BackendKind, Engine, ExecutionOptions, Runtime, RuntimeConfig,
+    backend::NativeRuntime,
     test262::{RunnerOptions, Status},
 };
 
@@ -220,7 +221,17 @@ fn command_test262(args: &[String]) -> Result<(), String> {
 }
 
 fn command_bench(args: &[String]) -> Result<(), String> {
-    let iterations = match args.first() {
+    // Parse optional --native flag and iteration count.
+    let mut native = false;
+    let mut iter_arg: Option<&str> = None;
+    for arg in args {
+        if arg == "--native" {
+            native = true;
+        } else {
+            iter_arg = Some(arg.as_str());
+        }
+    }
+    let iterations = match iter_arg {
         Some(value) => parse_usize(value)?,
         None => 1_000,
     };
@@ -228,6 +239,16 @@ fn command_bench(args: &[String]) -> Result<(), String> {
         return Err("benchmark iterations must be greater than zero".into());
     }
     let source = "(function(){ let x = 0; for (let i = 0; i < 1000; i++) x += i; return x; })()";
+
+    if native {
+        bench_native(source, iterations)
+    } else {
+        bench_boa(source, iterations)
+    }
+}
+
+fn bench_boa(source: &str, iterations: usize) -> Result<(), String> {
+    println!("backend=boa iterations={iterations}");
 
     let cold_started = Instant::now();
     let engine = Engine::default();
@@ -261,7 +282,61 @@ fn command_bench(args: &[String]) -> Result<(), String> {
     }
     let cached = cached_started.elapsed();
 
-    println!("iterations={iterations}");
+    print_bench_results(cold, uncached, cached, iterations);
+    Ok(())
+}
+
+fn bench_native(source: &str, iterations: usize) -> Result<(), String> {
+    println!("backend=native iterations={iterations}");
+
+    // Cold: fresh isolate per iteration via Engine::with_backend.
+    let cold_started = Instant::now();
+    let engine = Engine::with_backend(BackendKind::Native, RuntimeConfig::default());
+    for _ in 0..iterations {
+        engine
+            .execute(source, ExecutionOptions::default())
+            .map_err(|error| error.to_string())?;
+    }
+    let cold = cold_started.elapsed();
+
+    // Warm uncached: persistent isolate, cache disabled.
+    let mut uncached_runtime = NativeRuntime::new(RuntimeConfig {
+        script_cache_capacity: 0,
+        ..RuntimeConfig::default()
+    });
+    let uncached_started = Instant::now();
+    for _ in 0..iterations {
+        uncached_runtime
+            .eval_source(source, ExecutionOptions::default())
+            .map_err(|error| error.to_string())?;
+    }
+    let uncached = uncached_started.elapsed();
+
+    // Warm cached: persistent isolate, LRU cache enabled.
+    let mut cached_runtime = NativeRuntime::new(RuntimeConfig::default());
+    let cached_started = Instant::now();
+    for _ in 0..iterations {
+        cached_runtime
+            .eval_source(source, ExecutionOptions::default())
+            .map_err(|error| error.to_string())?;
+    }
+    let cached = cached_started.elapsed();
+
+    print_bench_results(cold, uncached, cached, iterations);
+    println!(
+        "cache_hits={} cache_misses={}",
+        cached_runtime.cache_stats().hits,
+        cached_runtime.cache_stats().misses,
+    );
+    Ok(())
+}
+
+fn print_bench_results(
+    cold: std::time::Duration,
+    uncached: std::time::Duration,
+    cached: std::time::Duration,
+    iterations: usize,
+) {
     println!(
         "cold_total_ms={} cold_avg_us={:.2}",
         cold.as_millis(),
@@ -277,7 +352,6 @@ fn command_bench(args: &[String]) -> Result<(), String> {
         cached.as_millis(),
         cached.as_secs_f64() * 1_000_000.0 / iterations as f64
     );
-    Ok(())
 }
 
 fn print_report(report: agentjs::ExecutionReport) {
