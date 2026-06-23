@@ -244,5 +244,15 @@ $env:AGENTJS_TEST262_SUITE = "test/language"
 cargo test --release --no-default-features --test native_full_test262_by_dir native_test262_dashboard_children -- --ignored --nocapture
 ```
 
+Dashboard environment variables:
+
+- `AGENTJS_TEST262_JOBS`: worker count, defaults to `4`;
+- `AGENTJS_TEST262_SUITE`: child suite used by child-dashboard and failure
+  sample modes;
+- `AGENTJS_TEST262_REPORT`: output JSON path;
+- `AGENTJS_TEST262_SUITE_TIMEOUT_SECS`: per-child-suite dashboard timeout,
+  defaults to `300`;
+- `AGENTJS_TEST262_SAMPLE_LIMIT`: failure sample cap.
+
 The dashboard percentages are diagnostic. V7 completion depends on stable,
 truthful reporting and bounded execution, not pretending unsupported tests pass.

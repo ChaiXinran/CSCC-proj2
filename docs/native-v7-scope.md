@@ -131,6 +131,11 @@ Recommended command:
 cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
 ```
 
+Crash-safe dashboard runs execute each child suite in a separate process. Use
+`AGENTJS_TEST262_SUITE_TIMEOUT_SECS` to bound one child suite without hiding it
+from the final report; timed-out suites are counted separately from crashed
+suites.
+
 The V7 pinned gate should contain only zero-failure, zero-skip regression tests
 for newly stabilized engineering behavior. Broad dashboards are diagnostic and
 must not count crashed, timed-out, or skipped suites as passes.

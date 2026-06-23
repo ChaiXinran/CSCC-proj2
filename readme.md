@@ -303,9 +303,10 @@ skipped and failed tests are reported separately and never count as passes.
 
 V7 dashboard tests are reporting tools rather than ordinary pass/fail gates.
 They run child suites separately so parent reporting survives child OOM, stack
-overflow, panic, or non-zero process exit:
+overflow, panic, non-zero process exit, or a child-suite timeout:
 
 ```powershell
+$env:AGENTJS_TEST262_SUITE_TIMEOUT_SECS = "300"
 cargo test --release --no-default-features --test native_full_test262_by_dir native_test262_dashboard_top_level -- --ignored --nocapture
 
 $env:AGENTJS_TEST262_SUITE = "test/built-ins"
@@ -314,6 +315,10 @@ cargo test --release --no-default-features --test native_full_test262_by_dir nat
 $env:AGENTJS_TEST262_SUITE = "test/language"
 cargo test --release --no-default-features --test native_full_test262_by_dir native_test262_dashboard_children -- --ignored --nocapture
 ```
+
+Dashboard JSON reports include separate `crashed_suites` and
+`timed_out_suites` counters. Timed-out, crashed, skipped, and unsupported
+tests are visible diagnostics, not passes.
 
 Start with the feature directory affected by a change:
 
