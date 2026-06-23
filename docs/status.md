@@ -56,6 +56,9 @@
   processes, writes incremental JSON reports, and classifies completed,
   crashed, and timed-out child suites. Set
   `AGENTJS_TEST262_SUITE_TIMEOUT_SECS` to adjust the per-child-suite timeout.
+- `--native-v7` is now the pinned V7 integration gate. It runs the native
+  backend over the zero-failure, zero-skip V1-V6 Test262 files to catch
+  regressions after V7 stability, GC, cache, and reporting work.
 - `--native-v7-scan` selects a lightweight frontend/cache-safety Test262 sample
   of selected language and builtin directories. The recommended local command
   is `cargo run --release --no-default-features -- test262 --native-v7-scan

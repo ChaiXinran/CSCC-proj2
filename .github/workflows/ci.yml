@@ -150,6 +150,11 @@ jobs:
       - name: Run fixed Native V1-V6 gates and V7 scan selector tests
         run: cargo test --locked --no-default-features --test native_test262
 
+      - name: Verify the Native V7 CLI gate
+        run: >-
+          cargo run --locked --release --no-default-features --
+          test262 --native-v7 --jobs 1
+
       - name: Verify Test262 dashboard harness compiles
         run: >-
           cargo test --locked --release --no-default-features

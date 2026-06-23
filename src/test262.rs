@@ -144,6 +144,20 @@ pub const NATIVE_V6_SCAN_SUITES: [&str; 6] = [
     "test/built-ins/JSON",
 ];
 
+/// Native V7 pinned integration gate.
+///
+/// V7 is an engineering-hardening milestone rather than a new syntax or
+/// builtin-coverage milestone. Its pinned Test262 gate therefore aggregates the
+/// already zero-failure, zero-skip V1-V6 gates and runs them through the V7
+/// native runtime path. Broader V7 coverage remains diagnostic through
+/// `--native-v7-scan` and the dashboard tests.
+pub const NATIVE_V7_TEST_COUNT: usize = NATIVE_V1_TESTS.len()
+    + NATIVE_V2_TESTS.len()
+    + NATIVE_V3_TESTS.len()
+    + NATIVE_V4_TESTS.len()
+    + NATIVE_V5_TESTS.len()
+    + NATIVE_V6_TESTS.len();
+
 /// Lightweight frontend/cache-safety directories scanned by `--native-v7-scan`.
 ///
 /// The selection intentionally covers a few thousand representative Test262
@@ -271,6 +285,21 @@ impl RunnerOptions {
         self.files.clear();
         self.suites = NATIVE_V6_SCAN_SUITES.iter().map(PathBuf::from).collect();
         self.skip_unsupported = true;
+    }
+
+    /// Selects the Native V7 pinned integration gate.
+    pub fn select_native_v7(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files.clear();
+        self.files.extend(NATIVE_V1_TESTS.iter().map(PathBuf::from));
+        self.files.extend(NATIVE_V2_TESTS.iter().map(PathBuf::from));
+        self.files.extend(NATIVE_V3_TESTS.iter().map(PathBuf::from));
+        self.files.extend(NATIVE_V4_TESTS.iter().map(PathBuf::from));
+        self.files.extend(NATIVE_V5_TESTS.iter().map(PathBuf::from));
+        self.files.extend(NATIVE_V6_TESTS.iter().map(PathBuf::from));
+        debug_assert_eq!(self.files.len(), NATIVE_V7_TEST_COUNT);
+        self.suites.clear();
+        self.skip_unsupported = false;
     }
 
     /// Selects V7 frontend/cache-safety directories as a diagnostic scan.

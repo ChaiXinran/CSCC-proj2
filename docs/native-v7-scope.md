@@ -128,8 +128,14 @@ intended for frontend/cache-safety smoke coverage over a few thousand files:
 Recommended command:
 
 ```powershell
+cargo run --release --no-default-features -- test262 --native-v7 --jobs 1 --verbose
 cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
 ```
+
+`--native-v7` is the pinned integration gate. Since V7 is not a syntax or
+builtin-expansion milestone, the gate aggregates the already zero-failure,
+zero-skip V1-V6 pinned Test262 files and verifies that they still pass through
+the native runtime after the V7 stability, limit, GC, cache, and reporting work.
 
 Crash-safe dashboard runs execute each child suite in a separate process. Use
 `AGENTJS_TEST262_SUITE_TIMEOUT_SECS` to bound one child suite without hiding it
