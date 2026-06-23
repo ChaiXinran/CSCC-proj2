@@ -28,13 +28,16 @@
 //! - `AGENTJS_TEST262_JOBS`: worker count, defaults to `4`.
 //! - `AGENTJS_TEST262_SUITE`: suite used by child/samples modes.
 //! - `AGENTJS_TEST262_REPORT`: output JSON path.
+//! - `AGENTJS_TEST262_SUITE_TIMEOUT_SECS`: per-child-suite timeout for dashboard
+//!   modes, defaults to `300`.
 //! - `AGENTJS_TEST262_SAMPLE_LIMIT`: failure sample cap for samples mode,
 //!   defaults to `100`.
 
 use std::{
     env, fs,
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -45,6 +48,7 @@ use agentjs::{
 
 const DEFAULT_JOBS: usize = 4;
 const DEFAULT_SAMPLE_LIMIT: usize = 100;
+const DEFAULT_SUITE_TIMEOUT_SECS: u64 = 300;
 
 #[derive(Debug)]
 struct SuiteReport {
@@ -63,6 +67,7 @@ struct SuiteReport {
 #[derive(Debug, Clone, Copy)]
 enum SuiteStatus {
     Completed,
+    TimedOut,
     Crashed,
 }
 
@@ -256,6 +261,8 @@ fn run_suite_in_child(config: &Config, suite: &Path) -> SuiteReport {
     let _ = fs::remove_file(&tmp_json);
 
     let output = Command::new(env!("CARGO_BIN_EXE_agentjs"))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .arg("test262")
         .arg("--backend")
         .arg("native")
@@ -267,8 +274,11 @@ fn run_suite_in_child(config: &Config, suite: &Path) -> SuiteReport {
         .arg(config.jobs.to_string())
         .arg("--json")
         .arg(&tmp_json)
-        .output()
+        .spawn()
         .unwrap_or_else(|error| panic!("failed to spawn agentjs for `{suite_display}`: {error}"));
+
+    let (timed_out, output) = wait_for_child(output, config.suite_timeout)
+        .unwrap_or_else(|error| panic!("failed to wait for `{suite_display}`: {error}"));
 
     if output.status.success() {
         let summary = read_cli_summary(&tmp_json).unwrap_or_else(|error| {
@@ -287,6 +297,19 @@ fn run_suite_in_child(config: &Config, suite: &Path) -> SuiteReport {
             conformance_percent: summary.conformance_percent,
             elapsed_ms: summary.elapsed_ms,
             detail: String::new(),
+            failure_samples: Vec::new(),
+        }
+    } else if timed_out {
+        SuiteReport {
+            suite: suite_display,
+            status: SuiteStatus::TimedOut,
+            total: 0,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            conformance_percent: 0.0,
+            elapsed_ms: config.suite_timeout.as_millis(),
+            detail: child_failure_detail(&output),
             failure_samples: Vec::new(),
         }
     } else {
@@ -312,6 +335,7 @@ struct Config {
     tmp_dir: PathBuf,
     jobs: usize,
     mode: &'static str,
+    suite_timeout: Duration,
 }
 
 impl Config {
@@ -334,6 +358,10 @@ impl Config {
             tmp_dir,
             jobs: env_usize("AGENTJS_TEST262_JOBS", DEFAULT_JOBS),
             mode,
+            suite_timeout: Duration::from_secs(env_u64(
+                "AGENTJS_TEST262_SUITE_TIMEOUT_SECS",
+                DEFAULT_SUITE_TIMEOUT_SECS,
+            )),
         }
     }
 }
@@ -397,6 +425,10 @@ fn report_json(
         .iter()
         .filter(|report| matches!(report.status, SuiteStatus::Crashed))
         .count();
+    let timed_out = suites
+        .iter()
+        .filter(|report| matches!(report.status, SuiteStatus::TimedOut))
+        .count();
 
     let mut json = String::new();
     json.push_str("{\n");
@@ -415,6 +447,7 @@ fn report_json(
     json.push_str(&format!("  \"failed\": {failed},\n"));
     json.push_str(&format!("  \"skipped\": {skipped},\n"));
     json.push_str(&format!("  \"crashed_suites\": {crashed},\n"));
+    json.push_str(&format!("  \"timed_out_suites\": {timed_out},\n"));
     json.push_str(&format!(
         "  \"conformance_percent\": {:.4},\n",
         percent(passed, total)
@@ -530,6 +563,25 @@ fn child_failure_detail(output: &std::process::Output) -> String {
     )
 }
 
+fn wait_for_child(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> std::io::Result<(bool, std::process::Output)> {
+    let started = Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map(|output| (false, output));
+        }
+
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            return child.wait_with_output().map(|output| (true, output));
+        }
+
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn push_json_string(json: &mut String, value: &str) {
     json.push('"');
     for ch in value.chars() {
@@ -579,6 +631,7 @@ fn status_label(status: Status) -> &'static str {
 fn suite_status_label(status: SuiteStatus) -> &'static str {
     match status {
         SuiteStatus::Completed => "completed",
+        SuiteStatus::TimedOut => "timed_out",
         SuiteStatus::Crashed => "crashed",
     }
 }
@@ -597,4 +650,68 @@ fn env_usize(name: &str, default: usize) -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(default)
+}
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+#[test]
+fn dashboard_report_counts_crashed_and_timed_out_suites() {
+    let config = Config {
+        test262_root: PathBuf::from("test262"),
+        report_path: PathBuf::from("reports/native-test262-dashboard-unit.json"),
+        tmp_dir: PathBuf::from("reports/.native-test262-tmp"),
+        jobs: 4,
+        mode: "unit",
+        suite_timeout: Duration::from_secs(10),
+    };
+    let suites = vec![
+        SuiteReport {
+            suite: "test/built-ins".into(),
+            status: SuiteStatus::Completed,
+            total: 10,
+            passed: 6,
+            failed: 3,
+            skipped: 1,
+            conformance_percent: 60.0,
+            elapsed_ms: 12,
+            detail: String::new(),
+            failure_samples: Vec::new(),
+        },
+        SuiteReport {
+            suite: "test/language".into(),
+            status: SuiteStatus::TimedOut,
+            total: 0,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            conformance_percent: 0.0,
+            elapsed_ms: 10_000,
+            detail: "deadline exceeded".into(),
+            failure_samples: Vec::new(),
+        },
+        SuiteReport {
+            suite: "test/intl402".into(),
+            status: SuiteStatus::Crashed,
+            total: 0,
+            passed: 0,
+            failed: 0,
+            skipped: 0,
+            conformance_percent: 0.0,
+            elapsed_ms: 0,
+            detail: "process exited with code 1".into(),
+            failure_samples: Vec::new(),
+        },
+    ];
+
+    let json = report_json(true, &config, Duration::from_millis(123), &suites);
+    assert!(json.contains("\"crashed_suites\": 1"));
+    assert!(json.contains("\"timed_out_suites\": 1"));
+    assert!(json.contains("\"status\": \"timed_out\""));
+    assert!(json.contains("\"conformance_percent\": 60.0000"));
 }

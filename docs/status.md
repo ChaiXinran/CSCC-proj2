@@ -41,15 +41,24 @@
   failure gives a conservative full-suite lower bound of 87.31%. See
   `reports/test262-report.md`.
 - Native V7 planning is frozen in `docs/native-v7-scope.md`,
-  `docs/native-v7-interface.md`, and `docs/native-v7-team-plan.md`. V7 targets
-  the remaining engineering gaps above: hard byte budgets, cooperative
-  deadlines, non-moving GC, crash-safe Test262 dashboards, native script
-  caching, and native benchmark evidence.
-- V7 B-group bytecode groundwork has started: `ChunkCacheMetadata` exposes
-  recursive cache-safe chunk metadata, VM execution rejects invalid chunks
-  before interpretation, and focused V7 bytecode/frontend-bytecode tests cover
-  high stack depth, handler restore invariants, nested-function validation, and
-  source-to-cache-metadata lowering.
+  `docs/native-v7-interface.md`, and `docs/native-v7-team-plan.md`. The A/B/C/D
+  integration now has focused frontend stress tests, cache-safe bytecode
+  metadata, runtime budget checks, GC/cache regression tests, crash-safe
+  Test262 dashboards, and CI coverage for no-default-features native builds.
+- V7 bytecode groundwork exposes recursive `ChunkCacheMetadata`, rejects
+  invalid chunks before interpretation, and covers high stack depth, handler
+  restore invariants, nested-function validation, and source-to-cache-metadata
+  lowering.
+- V7 runtime/GC/cache focused tests cover wall-clock and allocation limits,
+  stack-budget rejection, non-moving GC preservation/collection behavior, and
+  native script-cache hit/miss and capacity-zero behavior.
+- The full Test262 dashboard helper now runs child suites in separate
+  processes, writes incremental JSON reports, and classifies completed,
+  crashed, and timed-out child suites. Set
+  `AGENTJS_TEST262_SUITE_TIMEOUT_SECS` to adjust the per-child-suite timeout.
+- `--native-v7` is now the pinned V7 integration gate. It runs the native
+  backend over the zero-failure, zero-skip V1-V6 Test262 files to catch
+  regressions after V7 stability, GC, cache, and reporting work.
 - `--native-v7-scan` selects a lightweight frontend/cache-safety Test262 sample
   of selected language and builtin directories. The recommended local command
   is `cargo run --release --no-default-features -- test262 --native-v7-scan
@@ -73,5 +82,8 @@ when broad native scans produce truthful crash-safe reports, resource
 exhaustion is categorized as `RuntimeLimit`, and benchmark reports use native
 release builds rather than Boa-backed baselines.
 
-CI is defined in `.github/workflows/ci.yml`. A local focused run is available
-through `scripts/test262-sample.ps1`.
+CI is defined in `.github/workflows/ci.yml`. It includes default-feature
+quality checks, no-default-features native checks, V7 focused contracts, the
+fixed Native V1-V6 Test262 gates plus V7 scan selector tests, dashboard
+compilation, and a small V7 diagnostic-scan JSON smoke. A local focused run is
+available through `scripts/test262-sample.ps1`.
