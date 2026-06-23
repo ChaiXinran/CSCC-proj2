@@ -99,6 +99,7 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
         "constructor".into(),
         PropertyDescriptor::data_with(function_constructor.clone(), true, false, true),
     )?;
+    let eval_function = context.register_builtin("eval", 1, function::eval_call, None)?;
 
     let mut array_prototype_object = JsObject::sparse_array(0);
     array_prototype_object.prototype = Some(object_prototype);
@@ -183,6 +184,8 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
     context.declare_global("Object", object_constructor);
     context.declare_global("Function", function_constructor);
     context.declare_global("Array", array_constructor);
+    context.declare_global("eval", eval_function);
+    context.declare_global("globalThis", JsValue::Object(context.global_object()));
     Ok(())
 }
 

@@ -60,29 +60,37 @@ Result:
 
 | Total | Passed | Failed | Skipped | Conformance |
 | ---: | ---: | ---: | ---: | ---: |
-| 3,034 | 1,771 | 1,251 | 12 | 58.37% |
+| 3,034 | 1,977 | 1,045 | 12 | 65.16% |
 
 Skipped tests are not counted as passes. The diagnostic scan intentionally
 covers several areas outside the V7 feature scope so that future conformance
 work has a stable baseline.
 
+B-line integration added dynamic `Function`, global `eval`,
+`Function.prototype.apply`, `Function.prototype[Symbol.hasInstance]`, bound
+function `instanceof`, catchable invalid-call / invalid-`instanceof`
+TypeErrors, top-level `this`, `globalThis`, and sloppy/strict receiver
+handling. Compared with the previous V7 scan baseline, this adds 206 passing
+tests without changing the 12 explicit unsupported skips.
+
 ## Per-Directory Results
 
 | Area | Total | Passed | Failed | Skipped | Conformance |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `test/language/literals` | 534 | 236 | 298 | 0 | 44.19% |
-| `test/language/types` | 113 | 92 | 13 | 8 | 81.42% |
+| `test/language/literals` | 534 | 240 | 294 | 0 | 44.94% |
+| `test/language/types` | 113 | 94 | 11 | 8 | 83.19% |
 | `test/language/block-scope` | 145 | 110 | 35 | 0 | 75.86% |
-| `test/language/function-code` | 217 | 98 | 118 | 1 | 45.16% |
+| `test/language/function-code` | 217 | 161 | 55 | 1 | 74.19% |
 | `test/language/global-code` | 42 | 11 | 29 | 2 | 26.19% |
-| `test/built-ins/Function` | 509 | 118 | 391 | 0 | 23.18% |
-| `test/built-ins/String` | 1,223 | 962 | 260 | 1 | 78.66% |
+| `test/built-ins/Function` | 509 | 242 | 267 | 0 | 47.54% |
+| `test/built-ins/String` | 1,223 | 975 | 247 | 1 | 79.72% |
 | `test/built-ins/Symbol` | 98 | 39 | 59 | 0 | 39.80% |
 | `test/built-ins/Reflect` | 153 | 105 | 48 | 0 | 68.63% |
 
-The largest absolute failure buckets are `Function` and `language/literals`.
+The largest remaining absolute failure bucket is now `language/literals`.
+`Function` remains important, but B-line work reduced it by 124 failures.
 `String` has many scanned files but a comparatively strong pass rate after the
-V6 builtin work.
+V6 builtin work plus B-line call/apply/eval improvements.
 
 ## Failure Classification
 
@@ -92,15 +100,13 @@ spec taxonomy.
 
 | Failure class | Count | Share of failures |
 | --- | ---: | ---: |
-| Syntax, lexer, or static-negative mismatch | 424 | 33.9% |
-| Assertion or semantic mismatch | 273 | 21.8% |
-| Dynamic `Function` / `eval` not implemented | 196 | 15.7% |
-| Undefined property or call target | 124 | 9.9% |
-| Missing `this` / global binding semantics | 99 | 7.9% |
-| Missing global object or cross-realm host support | 53 | 4.2% |
-| TypeError / runtime object-model gap | 45 | 3.6% |
-| Reference binding or property gap | 30 | 2.4% |
-| Other runtime or semantic failure | 7 | 0.6% |
+| Syntax, lexer, or static-negative mismatch | 424 | 40.6% |
+| Assertion or semantic mismatch | 311 | 29.8% |
+| Undefined property or call target | 93 | 8.9% |
+| TypeError / runtime object-model gap | 68 | 6.5% |
+| Missing global object or cross-realm host support | 55 | 5.2% |
+| Other runtime or semantic failure | 48 | 4.6% |
+| Reference binding or property gap | 46 | 4.4% |
 
 ### Syntax, lexer, and static-negative mismatch
 
@@ -126,32 +132,46 @@ conformance.
 
 ### Dynamic `Function` and `eval`
 
-Many `Function` tests require dynamic source compilation through `Function(...)`
-or `eval(...)`. Native currently reports dynamic Function compilation as
-unsupported and does not install `eval` as a global function.
+The B-line integration now installs global `eval` and routes both
+`Function(...)` and `new Function(...)` through the native lexer, parser,
+compiler, VM, and runtime. Dynamic functions are created in the global
+environment, expose `name`, `length`, and `prototype`, and surface syntax
+errors as catchable `SyntaxError` values.
 
-Representative failures:
+Remaining failures in this neighborhood are no longer caused by a missing
+global `eval` or missing dynamic Function entry point. They mostly come from
+source forms the current native frontend still rejects or only partially
+models, especially strict-mode string literal early errors, Unicode
+line/paragraph separator behavior, class syntax used by internal Function
+tests, and advanced construct/newTarget cases.
 
-- `test/built-ins/Function/15.3.2.1-10-6gs.js`
-- `test/built-ins/Function/15.3.2.1-11-1.js`
-- `test/built-ins/Function/15.3.5.4_2-12gs.js`
+Representative remaining failures:
+
+- `test/built-ins/Function/internals/Call/class-ctor.js`
+- `test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js`
 - `test/language/literals/string/line-separator-eval.js`
-
-This explains much of the low `Function` directory pass rate.
 
 ### Function object and object-model semantics
 
-The `Function` directory also exposes missing or incomplete details around:
+The main B-line call surface is now covered by focused native tests:
+`Function.prototype.apply`, existing `call` / `bind` forwarding, dynamic
+Function construction, global `eval`, `Function.prototype[Symbol.hasInstance]`,
+bound function `instanceof`, top-level `this`, `globalThis`, sloppy/strict
+receiver handling, and catchable invalid call / invalid `instanceof`
+TypeErrors.
+
+The `Function` directory still exposes incomplete details around:
 
 - `Function.prototype` property descriptors;
-- `Function.prototype.apply`, `call`, `bind`, and `@@hasInstance`;
-- expected TypeError behavior for invalid call or construct paths;
-- function `this` binding in sloppy and strict modes;
-- global binding and reference behavior.
+- exact `name`, `length`, and native-source `toString` behavior for every
+  builtin and bound function shape;
+- construct/newTarget semantics for bound functions and classes;
+- cross-realm receiver and constructor identity checks;
+- Proxy/class paths that are outside the current Native V7 scope.
 
-Representative failure messages include expected TypeError mismatches,
-`cannot read property on undefined`, `undefined is not callable`, and
-`this is not defined`.
+Representative failure messages now mostly include assertion mismatches,
+unsupported class/proxy syntax, and object-model descriptor differences rather
+than missing `apply`, missing `eval`, or missing top-level `this`.
 
 These are real conformance gaps, but they are mostly V4/V6 object-model and
 function-semantics follow-up work rather than V7 GC/cache/reporting issues.
@@ -179,7 +199,7 @@ These are intentionally not V7 goals.
 
 | Area | Passed | Failed | Skipped | Conformance |
 | --- | ---: | ---: | ---: | ---: |
-| `test/built-ins/String` | 962 | 260 | 1 | 78.66% |
+| `test/built-ins/String` | 975 | 247 | 1 | 79.72% |
 
 Remaining String failures mostly come from advanced method semantics,
 RegExp-like replacement behavior, Unicode edge cases, and callback ordering.
@@ -212,19 +232,21 @@ Representative skipped files:
 
 ## Interpretation
 
-The V7 diagnostic pass rate did not increase because V7 primarily adds
-stability infrastructure rather than new ECMAScript surface area. The scan is
-still useful because it proves the V7 runner, native runtime, GC/cache path,
-and JSON reporting can survive a few thousand representative Test262 files and
-produce a repeatable failure baseline.
+The pinned V7 gate remains stable while the broad diagnostic scan now also
+reflects B-line Function/runtime improvements. The scan is still useful because
+it proves the V7 runner, native runtime, GC/cache path, and JSON reporting can
+survive a few thousand representative Test262 files and produce a repeatable
+failure baseline.
 
 The current data says:
 
 1. The pinned V7 integration gate is healthy: 69/69, zero failures, zero skips.
-2. The broad V7 scan is dominated by known non-goals: dynamic `Function`,
-   `eval`, class syntax, Proxy, cross-realm `$262`, and advanced object-model
-   details.
-3. The best near-term conformance gains are likely not in GC/cache, but in
+2. The broad V7 scan is now 1,977/3,034, or 65.16%, with 12 explicit
+   unsupported skips. B-line work accounts for +206 passing tests versus the
+   previous baseline.
+3. The largest remaining bucket is syntax/static-negative and literal
+   behavior, followed by object-model assertion mismatches.
+4. The best near-term conformance gains are likely not in GC/cache, but in
    frontend syntax/static-negative handling and Function/object-model semantics.
 
 ## Suggested Follow-Up Order
@@ -232,15 +254,14 @@ The current data says:
 1. Fix strict-mode string literal early errors and Unicode line/paragraph
    separator behavior. This targets `language/literals` and should unlock many
    syntax/static-negative failures.
-2. Add direct `this` and global binding semantics tests before changing broad
-   Function behavior.
-3. Improve `Function.prototype` descriptors and `call` / `apply` / `bind`
-   semantics.
-4. Decide whether dynamic `Function` and `eval` are in the next milestone. If
-   they remain out of scope, keep them clearly reported as unsupported.
-5. Fill small compiler gaps for `delete` and non-identifier `++` / `--`
-   operands so skipped tests become real pass/fail signals.
-6. Treat Proxy, class syntax, cross-realm `$262`, and resizable ArrayBuffer
+2. Improve residual Function descriptor and construct/newTarget edge cases.
+   Coordinate with the B-line owners before changing `Function.prototype`,
+   bound-function dispatch, or `instanceof`.
+3. Continue C-line String/Symbol/Reflect precision work, especially descriptor
+   exactness and well-known-symbol protocol interactions.
+4. Fill the remaining small compiler gaps for `delete` and non-identifier
+   `++` / `--` operands so skipped tests become real pass/fail signals.
+5. Treat Proxy, class syntax, cross-realm `$262`, and resizable ArrayBuffer
    helper syntax as future larger milestones unless the scope changes.
 
 ## Quality Gates
@@ -250,6 +271,8 @@ The following commands pass on the tested Windows environment:
 ```powershell
 cargo fmt --all -- --check
 cargo check --no-default-features --all-targets
+cargo test --no-default-features --test native_function_bind
+cargo test --no-default-features --test native_v7_runtime
 cargo test --no-default-features --test native_test262
 cargo run --release --no-default-features -- test262 --native-v7 --jobs 1 --json reports/native-v7-gate-summary.json
 cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json

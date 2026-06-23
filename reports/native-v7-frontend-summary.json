@@ -1,5 +1,10 @@
 {
   "total": 3034,
+  "passed": 1977,
+  "failed": 1045,
+  "skipped": 12,
+  "conformance_percent": 65.1615,
+  "elapsed_ms": 1900
   "passed": 1780,
   "failed": 1254,
   "skipped": 0,

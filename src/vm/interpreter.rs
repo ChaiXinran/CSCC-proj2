@@ -499,7 +499,7 @@ impl Vm {
                     }
                 }
                 Instruction::LoadThis => {
-                    self.stack.push(context.current_this());
+                    self.stack.push(context.current_or_global_this());
                 }
                 Instruction::ArrayCreate(count) => {
                     let elements = self.pop_arguments(count)?;
@@ -745,8 +745,13 @@ impl Vm {
                 Instruction::InstanceOf => {
                     let constructor = self.pop_value()?;
                     let value = self.pop_value()?;
-                    self.stack
-                        .push(JsValue::Boolean(context.instance_of(value, constructor)?));
+                    match self.instance_of_value(value, constructor, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Duplicate => {
                     self.stack.push(self.peek_value()?.clone());
@@ -940,6 +945,48 @@ impl Vm {
         Ok(JsValue::Function(id))
     }
 
+    fn instance_of_value(
+        &mut self,
+        value: JsValue,
+        constructor: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        if let Some(object) = context.value_object(&constructor) {
+            let symbol = context.well_known_symbols().has_instance;
+            if let Some(method) = context.get_symbol_property_value(object, symbol)
+                && !matches!(method, JsValue::Undefined | JsValue::Null)
+            {
+                if !is_callable_value(&method) {
+                    return Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error("Symbol.hasInstance method is not callable"),
+                    )));
+                }
+                return match self.call_value(method, constructor, vec![value], context)? {
+                    OperationResult::Value(result) => Ok(OperationResult::Value(JsValue::Boolean(
+                        result.to_boolean(),
+                    ))),
+                    OperationResult::Throw(value) => Ok(OperationResult::Throw(value)),
+                };
+            }
+        }
+
+        match context.ordinary_instance_of(value, constructor) {
+            Ok(result) => Ok(OperationResult::Value(JsValue::Boolean(result))),
+            Err(error)
+                if matches!(
+                    error.kind,
+                    VmErrorKind::Reference
+                        | VmErrorKind::Type
+                        | VmErrorKind::Syntax
+                        | VmErrorKind::Range
+                ) =>
+            {
+                Ok(OperationResult::Throw(vm_error_to_value(error)))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     fn call_value(
         &mut self,
         callee: JsValue,
@@ -973,6 +1020,27 @@ impl Vm {
                         let forwarded = arguments.into_iter().skip(1).collect();
                         return self.call_value(target, call_this, forwarded, context);
                     }
+                    if context.is_function_prototype_apply(id) {
+                        let target = this_value;
+                        let apply_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+                        let arg_array = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+                        let forwarded = match self.function_apply_arguments(arg_array, context) {
+                            Ok(values) => values,
+                            Err(error)
+                                if matches!(
+                                    error.kind,
+                                    VmErrorKind::Reference
+                                        | VmErrorKind::Type
+                                        | VmErrorKind::Syntax
+                                        | VmErrorKind::Range
+                                ) =>
+                            {
+                                return Ok(OperationResult::Throw(vm_error_to_value(error)));
+                            }
+                            Err(error) => return Err(error),
+                        };
+                        return self.call_value(target, apply_this, forwarded, context);
+                    }
                     match (def.call)(self, context, this_value, &arguments) {
                         Ok(value) => Ok(OperationResult::Value(value)),
                         Err(error) => match self.pending_exception.take() {
@@ -995,8 +1063,41 @@ impl Vm {
                 context.release_call_depth();
                 result
             }
-            other => Err(VmError::type_error(format!("{other} is not callable"))),
+            other => Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error(format!("{other} is not callable")),
+            ))),
         }
+    }
+
+    fn function_apply_arguments(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Vec<JsValue>, VmError> {
+        if matches!(value, JsValue::Undefined | JsValue::Null) {
+            return Ok(Vec::new());
+        }
+        let object = context.require_object(&value, "Function.prototype.apply")?;
+        let object_value = context.object_value(object);
+        let length_value = self.get_property_value(object_value.clone(), "length", context)?;
+        let length_number = self.to_number(length_value, context)?;
+        let length = if !length_number.is_finite() || length_number <= 0.0 {
+            0
+        } else {
+            length_number.floor() as usize
+        };
+        if length > 1_000_000 {
+            return Err(VmError::range("argument list is too large"));
+        }
+        let mut values = Vec::with_capacity(length);
+        for index in 0..length {
+            values.push(self.get_property_value(
+                object_value.clone(),
+                &index.to_string(),
+                context,
+            )?);
+        }
+        Ok(values)
     }
 
     pub(crate) fn call_value_from_builtin(
@@ -1491,6 +1592,12 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
+        let this_value =
+            if !context.strict() && matches!(this_value, JsValue::Undefined | JsValue::Null) {
+                context.global_this_value()
+            } else {
+                this_value
+            };
         let function = context
             .function(function_id)
             .cloned()
@@ -1716,6 +1823,10 @@ fn is_object_like(value: &JsValue) -> bool {
         value,
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
     )
+}
+
+fn is_callable_value(value: &JsValue) -> bool {
+    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
 }
 
 fn existing_accessor_getter(
