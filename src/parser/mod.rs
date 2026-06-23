@@ -31,6 +31,15 @@ impl fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
+/// Maximum nesting depth for parenthesized expressions, unary chains, and
+/// statement blocks. Inputs that exceed this limit receive a `SyntaxError`
+/// instead of overflowing the Rust call stack.
+///
+/// Kept at 50 so that even debug builds on Windows (1 MB default thread stack,
+/// ~1 KB per recursive frame) stay well within the stack budget. Real-world
+/// JavaScript rarely exceeds 20 levels of expression nesting.
+pub(crate) const MAX_PARSE_DEPTH: usize = 50;
+
 /// Recursive-descent parser with Pratt expression precedence.
 ///
 /// The token stream must be terminated by a single [`TokenKind::Eof`], which is
@@ -57,6 +66,9 @@ pub struct Parser {
     /// encounters `/` in a primary-expression position it uses this to re-read
     /// the bytes that the context-free lexer split into separate tokens.
     source: Option<Box<str>>,
+    /// Current recursive nesting depth across parenthesized expressions, unary
+    /// chains, and statement blocks. Checked against [`MAX_PARSE_DEPTH`].
+    nesting_depth: usize,
 }
 
 impl Parser {
@@ -74,6 +86,7 @@ impl Parser {
             function_depth: 0,
             no_in: false,
             source: None,
+            nesting_depth: 0,
         }
     }
 
@@ -84,6 +97,22 @@ impl Parser {
         let mut parser = Self::new(tokens);
         parser.source = Some(source.into());
         parser
+    }
+
+    /// Increments the nesting counter and returns `Err` if the limit is exceeded.
+    /// Call [`Parser::leave_depth`] after the nested sub-parse completes.
+    pub(super) fn enter_depth(&mut self) -> Result<(), ParseError> {
+        self.nesting_depth += 1;
+        if self.nesting_depth > MAX_PARSE_DEPTH {
+            Err(self.error(format!("nesting depth exceeds limit of {MAX_PARSE_DEPTH}")))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Decrements the nesting counter after a nested sub-parse.
+    pub(super) fn leave_depth(&mut self) {
+        self.nesting_depth = self.nesting_depth.saturating_sub(1);
     }
 
     /// Parses a complete script, consuming every token up to and including EOF.
