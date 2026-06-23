@@ -63,6 +63,8 @@
   of selected language and builtin directories. The recommended local command
   is `cargo run --release --no-default-features -- test262 --native-v7-scan
   --jobs 4 --json reports/native-v7-frontend-summary.json`.
+  Current V7 scan results and failure classification are recorded in
+  `reports/native-v7-test262-report.md`.
 
 ## Acceptance Gates
 
