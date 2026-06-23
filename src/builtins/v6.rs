@@ -272,6 +272,13 @@ fn install_error(context: &mut NativeContext) -> Result<(), VmError> {
 
     // Error.prototype.toString is shared by the whole hierarchy.
     define_method(context, error_proto, "toString", 0, error_to_string)?;
+    let stack_getter = context.register_builtin("get stack", 0, error_stack_get, None)?;
+    let stack_setter = context.register_builtin("set stack", 1, error_stack_set, None)?;
+    context.define_own_property(
+        error_proto,
+        "stack".into(),
+        PropertyDescriptor::accessor(Some(stack_getter), Some(stack_setter), false, true),
+    )?;
     Ok(())
 }
 
@@ -308,19 +315,27 @@ fn json_parse(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let source = arg_string(vm, context, arguments, 0)?;
-    json::parse_json(&source, context)
+    json::parse_json_with_reviver(&source, arg(arguments, 1), vm, context)
 }
 
 fn json_stringify(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(match json::stringify_json(arg(arguments, 0), context)? {
-        Some(value) => JsValue::String(value),
-        None => JsValue::Undefined,
-    })
+    Ok(
+        match json::stringify_json_with_options(
+            arg(arguments, 0),
+            arg(arguments, 1),
+            arg(arguments, 2),
+            vm,
+            context,
+        )? {
+            Some(value) => JsValue::String(value),
+            None => JsValue::Undefined,
+        },
+    )
 }
 
 fn json_raw_json(
@@ -437,6 +452,13 @@ fn create_error_object(
             method_descriptor(JsValue::String(message)),
         )?;
     }
+    if let Some(options) = arguments.get(1)
+        && let Some(options_object) = context.value_object(options)
+        && context.has_property(options_object, "cause")?
+    {
+        let cause = vm.get_property_value(options.clone(), "cause", context)?;
+        context.define_own_property(id, "cause".into(), method_descriptor(cause))?;
+    }
     Ok(JsValue::Object(id))
 }
 
@@ -494,6 +516,78 @@ fn error_to_string(
         format_error(&name, &message)
     };
     Ok(JsValue::String(formatted))
+}
+
+fn error_stack_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = context
+        .value_object(&this)
+        .ok_or_else(|| VmError::type_error("Error.prototype.stack getter requires an object"))?;
+    if !context.is_error_object(object) {
+        return Ok(JsValue::Undefined);
+    }
+
+    let name = context
+        .get_property(this.clone(), "name")?
+        .to_js_string()
+        .unwrap_or_else(|| "Error".into());
+    let message = context
+        .get_property(this, "message")?
+        .to_js_string()
+        .unwrap_or_default();
+    Ok(JsValue::String(format_error(&name, &message)))
+}
+
+fn error_stack_set(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = context
+        .value_object(&this)
+        .ok_or_else(|| VmError::type_error("Error.prototype.stack setter requires an object"))?;
+    if context.error_prototype() == Some(object) {
+        return Err(VmError::type_error(
+            "Error.prototype.stack cannot be set on Error.prototype",
+        ));
+    }
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !matches!(value, JsValue::String(_)) {
+        return Err(VmError::type_error(
+            "Error.prototype.stack setter requires a string",
+        ));
+    }
+
+    if let Some(mut descriptor) = context.get_own_property_descriptor(object, "stack") {
+        match &mut descriptor.kind {
+            crate::runtime::PropertyKind::Data {
+                value: current,
+                writable,
+            } => {
+                if !*writable {
+                    return Err(VmError::type_error("stack property is not writable"));
+                }
+                *current = value;
+                context.define_own_property(object, "stack".into(), descriptor)?;
+            }
+            crate::runtime::PropertyKind::Accessor {
+                set: Some(setter), ..
+            } => {
+                vm.call_value_from_builtin(setter.clone(), this, vec![value], context)?;
+            }
+            crate::runtime::PropertyKind::Accessor { set: None, .. } => {
+                return Err(VmError::type_error("stack property has no setter"));
+            }
+        }
+    } else {
+        context.define_own_property(object, "stack".into(), PropertyDescriptor::data(value))?;
+    }
+    Ok(JsValue::Undefined)
 }
 
 /// Maps a runtime error name onto the `'static` name expected by C2, falling
@@ -1578,6 +1672,7 @@ fn math_method_call(name: &str) -> Option<NativeCall> {
         "cosh" => math_cosh,
         "exp" => math_exp,
         "expm1" => math_expm1,
+        "f16round" => math_f16round,
         "floor" => math_floor,
         "fround" => math_fround,
         "hypot" => math_hypot,
@@ -1665,6 +1760,17 @@ fn math_fround(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     Ok(JsValue::Number(math::fround(arg_number(
+        vm, context, arguments, 0,
+    )?)))
+}
+
+fn math_f16round(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(JsValue::Number(math::f16round(arg_number(
         vm, context, arguments, 0,
     )?)))
 }

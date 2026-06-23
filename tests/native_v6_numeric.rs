@@ -9,7 +9,7 @@ mod number;
 
 use boolean::{BOOLEAN_PROTOTYPE_METHODS, boolean_call, boolean_to_string, boolean_value_of};
 use error::{ERROR_CONSTRUCTORS, constructor_spec, create_error_record, error_to_string};
-use math::{MATH_CONSTANTS, MATH_METHODS};
+use math::{MATH_CONSTANTS, MATH_METHODS, f16round, sum_precise};
 use number::{
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, NUMBER_CONSTANTS, NUMBER_PROTOTYPE_METHODS,
     NUMBER_STATIC_METHODS, NumberFormatError, is_finite, is_integer, is_nan, is_safe_integer,
@@ -45,6 +45,22 @@ fn numeric_metadata_matches_the_v6_contract() {
             name: "valueOf",
             length: 0,
         })
+    );
+}
+
+#[test]
+fn f16round_uses_binary16_ties_to_even() {
+    assert_eq!(f16round(2_f64.powi(-25)), 0.0);
+    assert_eq!(f16round(2_f64.powi(-25) + 2_f64.powi(-50)), 2_f64.powi(-24));
+    assert_eq!(f16round(-0.0).to_bits(), (-0.0_f64).to_bits());
+    assert_eq!(f16round(65_520.0), f64::INFINITY);
+}
+
+#[test]
+fn sum_precise_survives_large_cancellation() {
+    assert_eq!(
+        sum_precise(&[1e308, 1e308, 0.1, 0.1, 1e30, 0.1, -1e30, -1e308, -1e308,]),
+        0.30000000000000004
     );
 }
 

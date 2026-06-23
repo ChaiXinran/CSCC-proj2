@@ -26,6 +26,19 @@ fn parses_json_escapes_and_unicode() {
 }
 
 #[test]
+fn parse_reviver_walks_children_and_root() {
+    assert_eq!(
+        native_eval(
+            "JSON.parse('{\"x\":2}', function (key, value) { \
+                if (key === 'x') return value * 3; \
+                return value; \
+             }).x"
+        ),
+        "6"
+    );
+}
+
+#[test]
 fn rejects_malformed_json_with_a_catchable_error() {
     assert_eq!(
         native_eval("var r = 0; try { JSON.parse('{]'); } catch (e) { r = 1; } r;"),
@@ -44,6 +57,27 @@ fn stringifies_primitives_arrays_and_objects() {
     assert_eq!(
         native_eval("JSON.stringify({ a: 1, b: true })"),
         "{\"a\":1,\"b\":true}"
+    );
+}
+
+#[test]
+fn stringify_supports_replacer_space_and_to_json() {
+    assert_eq!(
+        native_eval(
+            "JSON.stringify({ a: 1, b: 2 }, function (key, value) { \
+                if (key === 'b') return undefined; \
+                return value; \
+             })"
+        ),
+        "{\"a\":1}"
+    );
+    assert_eq!(
+        native_eval("JSON.stringify({ a: 1 }, null, 2)"),
+        "{\n  \"a\": 1\n}"
+    );
+    assert_eq!(
+        native_eval("JSON.stringify({ toJSON: function () { return 7; } })"),
+        "7"
     );
 }
 
