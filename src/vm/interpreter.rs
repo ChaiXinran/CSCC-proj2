@@ -128,6 +128,9 @@ impl Vm {
         chunk: &Chunk,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
+        chunk
+            .cache_metadata()
+            .map_err(|error| VmError::runtime(format!("invalid bytecode chunk: {error}")))?;
         self.stack.clear();
         self.pending_exception = None;
         self.finally_stack.clear();
@@ -1600,9 +1603,9 @@ impl Vm {
                             },
                         }
                     }
-                    None => Ok(OperationResult::Throw(vm_error_to_value(VmError::type_error(
-                        format!("{} is not a constructor", def.name),
-                    )))),
+                    None => Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error(format!("{} is not a constructor", def.name)),
+                    ))),
                 }
             }
             other => Ok(OperationResult::Throw(vm_error_to_value(

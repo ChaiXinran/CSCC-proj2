@@ -45,6 +45,11 @@
   the remaining engineering gaps above: hard byte budgets, cooperative
   deadlines, non-moving GC, crash-safe Test262 dashboards, native script
   caching, and native benchmark evidence.
+- V7 B-group bytecode groundwork has started: `ChunkCacheMetadata` exposes
+  recursive cache-safe chunk metadata, VM execution rejects invalid chunks
+  before interpretation, and focused V7 bytecode/frontend-bytecode tests cover
+  high stack depth, handler restore invariants, nested-function validation, and
+  source-to-cache-metadata lowering.
 
 ## Acceptance Gates
 
