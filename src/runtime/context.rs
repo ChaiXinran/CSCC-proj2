@@ -50,6 +50,7 @@ pub struct NativeContext {
     intrinsics: Option<Intrinsics>,
     function_prototype_call: Option<BuiltinId>,
     symbol_registry: SymbolRegistry,
+    symbol_for_registry: HashMap<String, SymbolId>,
     strict: bool,
     output: Vec<String>,
     loop_budget_remaining: u64,
@@ -79,6 +80,7 @@ impl Default for NativeContext {
             intrinsics: None,
             function_prototype_call: None,
             symbol_registry: SymbolRegistry::new(),
+            symbol_for_registry: HashMap::new(),
             strict: false,
             output: Vec::new(),
             loop_budget_remaining: u64::MAX,
@@ -237,6 +239,25 @@ impl NativeContext {
     /// Allocate a new user Symbol and return `JsValue::Symbol(id)`.
     pub fn create_symbol(&mut self, description: Option<String>) -> JsValue {
         JsValue::Symbol(self.symbol_registry.create(description))
+    }
+
+    /// `Symbol.for(key)` — return the same symbol for the same key string.
+    pub fn symbol_for(&mut self, key: String) -> JsValue {
+        if let Some(&id) = self.symbol_for_registry.get(&key) {
+            return JsValue::Symbol(id);
+        }
+        let id = self.symbol_registry.create(Some(key.clone()));
+        self.symbol_for_registry.insert(key, id);
+        JsValue::Symbol(id)
+    }
+
+    /// `Symbol.keyFor(sym)` — return the key if `sym` was created via `Symbol.for`.
+    #[must_use]
+    pub fn symbol_key_for(&self, id: SymbolId) -> Option<&str> {
+        self.symbol_for_registry
+            .iter()
+            .find(|&(_, &v)| v == id)
+            .map(|(k, _)| k.as_str())
     }
 
     /// Define a symbol-keyed own property on an object.

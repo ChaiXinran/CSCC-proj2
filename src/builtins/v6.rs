@@ -2337,6 +2337,10 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
         constant_descriptor(JsValue::String("Symbol".into())),
     )?;
 
+    // Symbol.for and Symbol.keyFor — global shared-key registry.
+    define_method(context, backing, "for", 1, symbol_for)?;
+    define_method(context, backing, "keyFor", 1, symbol_key_for)?;
+
     // Install Symbol.toStringTag on existing built-in prototypes so that
     // Object.prototype.toString returns the correct "[object X]" tag.
     install_to_string_tags(context, wk.to_string_tag)?;
@@ -2453,6 +2457,33 @@ fn symbol_proto_description(
     })
 }
 
+/// ECMAScript `ToString(value)`: coerce a value to a Rust `String`.
+/// For object types, calls the `toString()` method via the VM so that
+/// custom `toString` implementations (as in test262 fixtures) are honoured.
+fn vm_to_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<String, VmError> {
+    match &value {
+        JsValue::Symbol(_) => Err(VmError::type_error(
+            "Cannot convert a Symbol value to a string",
+        )),
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            // Call value.toString() via the VM so user-defined toString is respected.
+            let to_string_fn = vm.get_property_value(value.clone(), "toString", context)?;
+            let result =
+                vm.call_value_from_builtin(to_string_fn, value, Vec::new(), context)?;
+            result
+                .to_js_string()
+                .ok_or_else(|| VmError::type_error("toString did not return a string"))
+        }
+        other => other
+            .to_js_string()
+            .ok_or_else(|| VmError::type_error("Cannot convert value to string")),
+    }
+}
+
 /// Extract the underlying SymbolId from a Symbol primitive or Symbol wrapper.
 fn extract_symbol(
     _context: &NativeContext,
@@ -2463,5 +2494,34 @@ fn extract_symbol(
         _ => Err(VmError::type_error(
             "Symbol.prototype method called on non-symbol",
         )),
+    }
+}
+
+fn symbol_for(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let arg = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let key = vm_to_string(vm, context, arg)?;
+    Ok(context.symbol_for(key))
+}
+
+fn symbol_key_for(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    match arguments.first() {
+        Some(JsValue::Symbol(id)) => {
+            let id = *id;
+            Ok(context
+                .symbol_key_for(id)
+                .map(|k| JsValue::String(k.into()))
+                .unwrap_or(JsValue::Undefined))
+        }
+        _ => Err(VmError::type_error("is not a symbol")),
     }
 }

@@ -672,15 +672,37 @@ impl Vm {
                         .to_string();
                     let value = self.pop_value()?;
                     let object = context.require_object(&value, "delete property")?;
-                    let deleted = context.delete_property(object, &name, context.strict())?;
-                    self.stack.push(JsValue::Boolean(deleted));
+                    match context.delete_property(object, &name, context.strict()) {
+                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
+                        Err(error)
+                            if matches!(
+                                error.kind,
+                                VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
+                            ) =>
+                        {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Instruction::DeleteElement => {
                     let key = to_property_key(&self.pop_value()?)?;
                     let value = self.pop_value()?;
                     let object = context.require_object(&value, "delete property")?;
-                    let deleted = context.delete_property(object, &key, context.strict())?;
-                    self.stack.push(JsValue::Boolean(deleted));
+                    match context.delete_property(object, &key, context.strict()) {
+                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
+                        Err(error)
+                            if matches!(
+                                error.kind,
+                                VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
+                            ) =>
+                        {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 Instruction::HasProperty => {
                     let value = self.pop_value()?;
@@ -1521,16 +1543,30 @@ impl Vm {
                 }
                 match def.construct {
                     Some(construct) => {
-                        construct(self, context, &arguments, JsValue::BuiltinFunction(id))
-                            .map(OperationResult::Value)
+                        match construct(self, context, &arguments, JsValue::BuiltinFunction(id)) {
+                            Ok(value) => Ok(OperationResult::Value(value)),
+                            Err(error) => match self.pending_exception.take() {
+                                Some(value) => Ok(OperationResult::Throw(value)),
+                                None => match error.kind {
+                                    VmErrorKind::Reference
+                                    | VmErrorKind::Type
+                                    | VmErrorKind::Syntax
+                                    | VmErrorKind::Range => {
+                                        Ok(OperationResult::Throw(vm_error_to_value(error)))
+                                    }
+                                    _ => Err(error),
+                                },
+                            },
+                        }
                     }
-                    None => Err(VmError::type_error(format!(
-                        "{} is not a constructor",
-                        def.name
-                    ))),
+                    None => Ok(OperationResult::Throw(vm_error_to_value(VmError::type_error(
+                        format!("{} is not a constructor", def.name),
+                    )))),
                 }
             }
-            other => Err(VmError::type_error(format!("{other} is not a constructor"))),
+            other => Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error(format!("{other} is not a constructor")),
+            ))),
         }
     }
 
