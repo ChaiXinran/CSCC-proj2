@@ -18,6 +18,8 @@ mod math;
 #[allow(dead_code)]
 mod number;
 #[allow(dead_code)]
+pub(crate) mod regexp;
+#[allow(dead_code)]
 mod string;
 mod v6;
 
@@ -158,6 +160,13 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
         .allocate_object(error_proto_obj)
         .ok_or_else(|| VmError::runtime("heap exhausted"))?;
 
+    let mut regexp_proto_obj = JsObject::ordinary();
+    regexp_proto_obj.prototype = Some(object_prototype);
+    let regexp_prototype = context
+        .heap_mut()
+        .allocate_object(regexp_proto_obj)
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+
     context.set_intrinsics(Intrinsics {
         object_prototype,
         function_prototype,
@@ -169,6 +178,7 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
         number_prototype,
         boolean_prototype,
         error_prototype,
+        regexp_prototype,
     });
     context.declare_global("Object", object_constructor);
     context.declare_global("Function", function_constructor);

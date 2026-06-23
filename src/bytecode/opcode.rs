@@ -190,6 +190,12 @@ pub enum Instruction {
     /// empty array.
     /// Stack: [object] → [keys_array]
     ForInKeys,
+
+    // V6 regex instruction.
+    /// Pops `flags` (String) and `pattern` (String) from the stack and pushes a
+    /// new RegExp object with those values. Emitted for `/pattern/flags` literals.
+    /// Stack: [pattern, flags] → [regexp_object]
+    CreateRegExp,
 }
 
 impl Instruction {
@@ -247,7 +253,8 @@ impl Instruction {
             | Self::GetElement
             | Self::DeleteElement
             | Self::HasProperty
-            | Self::InstanceOf => StackEffect::new(2, 1),
+            | Self::InstanceOf
+            | Self::CreateRegExp => StackEffect::new(2, 1),
 
             // observe top (no stack change)
             Self::JumpIfFalse(_) | Self::JumpIfTrue(_) => StackEffect::with_required(1, 0, 0),

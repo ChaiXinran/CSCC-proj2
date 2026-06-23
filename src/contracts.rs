@@ -108,7 +108,7 @@ pub struct NativeFrontend;
 impl SourceParser for NativeFrontend {
     fn parse_source(&mut self, source: &str) -> Result<Program, NativeError> {
         let tokens = crate::lexer::Lexer::new(source).tokenize()?;
-        Ok(Parser::new(tokens).parse_program()?)
+        Ok(Parser::with_source(tokens, source).parse_program()?)
     }
 }
 

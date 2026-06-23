@@ -10,6 +10,11 @@ pub enum Literal {
     Boolean(bool),
     Number(f64),
     String(String),
+    /// `/pattern/flags` regex literal.
+    RegExp {
+        pattern: String,
+        flags: String,
+    },
 }
 
 /// Unary expression operators.
