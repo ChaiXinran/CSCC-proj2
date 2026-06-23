@@ -43,6 +43,8 @@ pub enum Instruction {
     Pop,
     /// Duplicates the top stack value without consuming it.
     Duplicate,
+    /// Duplicates the top two stack values while preserving their order.
+    DuplicatePair,
 
     DeclareGlobal(u16),
     LoadGlobal(u16),
@@ -208,6 +210,7 @@ impl Instruction {
             | Self::LoadException => StackEffect::new(0, 1),
 
             Self::Duplicate => StackEffect::with_required(1, 0, 1),
+            Self::DuplicatePair => StackEffect::with_required(2, 0, 2),
 
             // pop 1, push 0
             Self::Pop
