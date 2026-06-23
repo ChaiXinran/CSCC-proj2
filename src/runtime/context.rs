@@ -99,6 +99,7 @@ impl ExecutionBudget {
 pub struct NativeContext {
     heap: Heap,
     global_environment: EnvironmentId,
+    global_object: ObjectId,
     current_environment: EnvironmentId,
     environment_stack: Vec<EnvironmentId>,
     call_frames: Vec<CallFrame>,
@@ -110,6 +111,7 @@ pub struct NativeContext {
     builtin_registry: Vec<BuiltinFunction>,
     intrinsics: Option<Intrinsics>,
     function_prototype_call: Option<BuiltinId>,
+    function_prototype_apply: Option<BuiltinId>,
     symbol_registry: SymbolRegistry,
     symbol_for_registry: HashMap<String, SymbolId>,
     strict: bool,
@@ -138,10 +140,14 @@ impl NativeContext {
         let global_environment = heap
             .allocate_environment(Environment::default())
             .expect("a fresh heap can allocate the global environment");
+        let global_object = heap
+            .allocate_object(JsObject::ordinary())
+            .expect("a fresh heap can allocate the global object");
 
         let mut context = Self {
             heap,
             global_environment,
+            global_object,
             current_environment: global_environment,
             environment_stack: Vec::new(),
             call_frames: Vec::new(),
@@ -153,6 +159,7 @@ impl NativeContext {
             builtin_registry: Vec::new(),
             intrinsics: None,
             function_prototype_call: None,
+            function_prototype_apply: None,
             symbol_registry: SymbolRegistry::new(),
             symbol_for_registry: HashMap::new(),
             strict: false,
@@ -236,6 +243,7 @@ impl NativeContext {
     }
 
     fn add_internal_roots(&self, roots: &mut RootSet) {
+        roots.object_roots.push(self.global_object);
         if let Some(intrinsics) = &self.intrinsics {
             roots.object_roots.extend([
                 intrinsics.object_prototype,
@@ -390,6 +398,15 @@ impl NativeContext {
     #[must_use]
     pub fn is_function_prototype_call(&self, id: BuiltinId) -> bool {
         self.function_prototype_call == Some(id)
+    }
+
+    pub fn set_function_prototype_apply(&mut self, id: BuiltinId) {
+        self.function_prototype_apply = Some(id);
+    }
+
+    #[must_use]
+    pub fn is_function_prototype_apply(&self, id: BuiltinId) -> bool {
+        self.function_prototype_apply == Some(id)
     }
 
     #[must_use]
@@ -711,11 +728,20 @@ impl NativeContext {
     }
 
     pub fn declare_global(&mut self, name: impl Into<String>, value: JsValue) -> bool {
-        let environment = self
-            .heap
-            .environment_mut(self.global_environment)
-            .expect("global environment must exist");
-        environment.create_binding(name, value, true)
+        let name = name.into();
+        let created = {
+            let environment = self
+                .heap
+                .environment_mut(self.global_environment)
+                .expect("global environment must exist");
+            environment.create_binding(name.clone(), value.clone(), true)
+        };
+        let _ = self.define_own_property(
+            self.global_object,
+            name,
+            PropertyDescriptor::data_with(value, true, true, true),
+        );
+        created
     }
 
     #[must_use]
@@ -725,10 +751,20 @@ impl NativeContext {
     }
 
     pub fn set_global(&mut self, name: &str, value: JsValue) -> bool {
-        let Some(environment) = self.heap.environment_mut(self.global_environment) else {
-            return false;
+        let ok = {
+            let Some(environment) = self.heap.environment_mut(self.global_environment) else {
+                return false;
+            };
+            environment.set_mutable_binding(name, value.clone()).is_ok()
         };
-        environment.set_mutable_binding(name, value).is_ok()
+        if ok {
+            let _ = self.define_own_property(
+                self.global_object,
+                name.into(),
+                PropertyDescriptor::data_with(value, true, true, true),
+            );
+        }
+        ok
     }
 
     pub fn declare_binding(
@@ -849,6 +885,8 @@ impl NativeContext {
     }
 
     pub fn allocate_function(&mut self, function: JsFunction) -> Result<FunctionId, VmError> {
+        let function_name = function.name.clone().unwrap_or_default();
+        let function_length = function.params.len();
         let mut function_object = JsObject::ordinary();
         function_object.prototype = self.function_prototype_object();
         let function_object_id = self
@@ -878,6 +916,19 @@ impl NativeContext {
             .heap
             .object_mut(function_object_id)
             .ok_or_else(|| VmError::runtime("missing function object"))?;
+        function_object.define_property(
+            "name",
+            PropertyDescriptor::data_with(JsValue::String(function_name), false, false, true),
+        );
+        function_object.define_property(
+            "length",
+            PropertyDescriptor::data_with(
+                JsValue::Number(function_length as f64),
+                false,
+                false,
+                true,
+            ),
+        );
         function_object.define_property(
             "prototype",
             PropertyDescriptor::data_with(JsValue::Object(prototype_id), true, false, false),
@@ -915,6 +966,25 @@ impl NativeContext {
         self.call_frames
             .last()
             .map_or(JsValue::Undefined, |frame| frame.this_value.clone())
+    }
+
+    #[must_use]
+    pub fn current_or_global_this(&self) -> JsValue {
+        self.call_frames
+            .last()
+            .map_or(JsValue::Object(self.global_object), |frame| {
+                frame.this_value.clone()
+            })
+    }
+
+    #[must_use]
+    pub const fn global_object(&self) -> ObjectId {
+        self.global_object
+    }
+
+    #[must_use]
+    pub const fn global_this_value(&self) -> JsValue {
+        JsValue::Object(self.global_object)
     }
 
     pub fn create_object(
@@ -1286,6 +1356,20 @@ impl NativeContext {
     }
 
     pub fn instance_of(&self, value: JsValue, constructor: JsValue) -> Result<bool, VmError> {
+        self.ordinary_instance_of(value, constructor)
+    }
+
+    pub fn ordinary_instance_of(
+        &self,
+        value: JsValue,
+        constructor: JsValue,
+    ) -> Result<bool, VmError> {
+        if let JsValue::BuiltinFunction(id) = &constructor
+            && let Some(bound) = self.builtin(*id).and_then(|builtin| builtin.bound.as_ref())
+        {
+            return self.ordinary_instance_of(value, bound.target.clone());
+        }
+
         // Native error values (JsValue::Error) are not heap objects, so handle them
         // separately: check the error kind against the constructor name hierarchy.
         if let JsValue::Error(ref error) = value {

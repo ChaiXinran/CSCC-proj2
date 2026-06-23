@@ -57,6 +57,44 @@ Root Rust code uses four spaces and `rustfmt`; use `snake_case` for functions/mo
 
 Add unit tests beside private modules and public behavior tests under `tests/`. Every runtime change should cover successful execution plus its isolation or limit behavior. Prefer focused Test262 runs before the full suite. Never count skipped cases as passes, and attach pass-rate or benchmark deltas to engine changes.
 
+## Native V7 Collaboration Status
+
+B-line Function/runtime integration is complete as of the current V7 merge pass.
+Implemented items include:
+
+- `Function.prototype.apply` with array and array-like argument spreading.
+- Dynamic `Function(...)` and `new Function(...)` through the native
+  lexer/parser/compiler/VM path.
+- Global `eval` for string source, plus unchanged pass-through for non-string
+  inputs.
+- Catchable TypeErrors for invalid call targets and invalid `instanceof`
+  paths.
+- Top-level `this`, `globalThis`, and sloppy/strict function receiver handling.
+- `Function.prototype[Symbol.hasInstance]` and bound-function `instanceof`.
+
+Current B-line hot files are `src/builtins/function.rs`,
+`src/builtins/mod.rs`, `src/bytecode/compiler.rs`,
+`src/runtime/context.rs`, `src/vm/interpreter.rs`, and
+`tests/native_function_bind.rs`.
+
+Coordination notes:
+
+- A-line frontend work should coordinate before changing
+  `src/bytecode/compiler.rs` handling for `this`, `instanceof`, or operand
+  lowering.
+- C-line builtin/object-model work should coordinate before changing
+  `src/runtime/context.rs`, Function dispatch, bound-function dispatch, or
+  symbol-keyed Function behavior.
+- Do not reimplement dynamic Function or eval independently; reuse the B-line
+  entry points in `src/builtins/function.rs`.
+
+Latest local V7 results:
+
+- V7 pinned gate: 69/69 passed, 0 failed, 0 skipped.
+- V7 diagnostic scan: 1,977/3,034 passed, 1,045 failed, 12 skipped,
+  65.16% conformance.
+- Net gain over the prior V7 diagnostic baseline: +206 passing Test262 cases.
+
 ## Commit & Pull Request Guidelines
 
 History varies by subtree: Boa commonly uses scoped Conventional Commit subjects such as `fix(vm): ...`, while QuickJS and Test262 favor concise imperative summaries. Use an imperative subject, add a scope when helpful, and avoid mixing unrelated upstream changes. Pull requests should identify the affected subtree, explain behavior and specification impact, list commands run, link relevant issues, and include benchmark or Test262 results when performance or compatibility changes.

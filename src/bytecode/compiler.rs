@@ -1129,7 +1129,7 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &CompileContext,
     ) -> Result<(), CompileError> {
-        if name == "this" && context.inside_function() {
+        if name == "this" {
             chunk.emit(Instruction::LoadThis);
             return Ok(());
         }
