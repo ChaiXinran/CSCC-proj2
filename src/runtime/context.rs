@@ -6,6 +6,7 @@ use super::{
     BoundFunction, BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap,
     JsFunction, JsObject, JsValue, NativeCall, NativeConstruct, NativeErrorKind, ObjectId,
     ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
+    SymbolId, SymbolRegistry, WellKnownSymbols,
     object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
@@ -49,6 +50,7 @@ pub struct NativeContext {
     builtin_registry: Vec<BuiltinFunction>,
     intrinsics: Option<Intrinsics>,
     function_prototype_call: Option<BuiltinId>,
+    symbol_registry: SymbolRegistry,
     strict: bool,
     output: Vec<String>,
     loop_budget_remaining: u64,
@@ -77,6 +79,7 @@ impl Default for NativeContext {
             builtin_registry: Vec::new(),
             intrinsics: None,
             function_prototype_call: None,
+            symbol_registry: SymbolRegistry::new(),
             strict: false,
             output: Vec::new(),
             loop_budget_remaining: u64::MAX,
@@ -204,6 +207,75 @@ impl NativeContext {
 
     pub fn set_intrinsics(&mut self, intrinsics: Intrinsics) {
         self.intrinsics = Some(intrinsics);
+    }
+
+    // ── Symbol registry ──────────────────────────────────────────────────────
+
+    #[must_use]
+    pub fn symbols(&self) -> &SymbolRegistry {
+        &self.symbol_registry
+    }
+
+    pub fn symbols_mut(&mut self) -> &mut SymbolRegistry {
+        &mut self.symbol_registry
+    }
+
+    #[must_use]
+    pub fn well_known_symbols(&self) -> &WellKnownSymbols {
+        &self.symbol_registry.well_known
+    }
+
+    /// Allocate a new user Symbol and return `JsValue::Symbol(id)`.
+    pub fn create_symbol(&mut self, description: Option<String>) -> JsValue {
+        JsValue::Symbol(self.symbol_registry.create(description))
+    }
+
+    /// Define a symbol-keyed own property on an object.
+    pub fn define_symbol_own_property(
+        &mut self,
+        object: ObjectId,
+        symbol: SymbolId,
+        descriptor: PropertyDescriptor,
+    ) -> Result<bool, crate::vm::VmError> {
+        let obj = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| crate::vm::VmError::runtime("missing object"))?;
+        obj.define_symbol_property(symbol, descriptor);
+        Ok(true)
+    }
+
+    /// Walk the prototype chain and return the first data value for a symbol key.
+    /// Accessor-keyed symbol properties return `None` (the caller can use the VM path).
+    #[must_use]
+    pub fn get_symbol_property_value(&self, object: ObjectId, symbol: SymbolId) -> Option<JsValue> {
+        let mut current = Some(object);
+        let mut depth = 0usize;
+        while let Some(id) = current {
+            if depth > 1024 {
+                return None;
+            }
+            let obj = self.heap.object(id)?;
+            if let Some(descriptor) = obj.own_symbol_property(symbol) {
+                return match &descriptor.kind {
+                    crate::runtime::PropertyKind::Data { value, .. } => Some(value.clone()),
+                    crate::runtime::PropertyKind::Accessor { .. } => None,
+                };
+            }
+            current = obj.prototype;
+            depth += 1;
+        }
+        None
+    }
+
+    /// Return the own symbol property descriptor (does not walk prototype chain).
+    #[must_use]
+    pub fn get_own_symbol_property_descriptor(
+        &self,
+        object: ObjectId,
+        symbol: SymbolId,
+    ) -> Option<PropertyDescriptor> {
+        self.heap.object(object)?.own_symbol_property(symbol).cloned()
     }
 
     pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
@@ -1361,6 +1433,9 @@ pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
         JsValue::Boolean(value) => Ok(value.to_string()),
         JsValue::Null => Ok("null".into()),
         JsValue::Undefined => Ok("undefined".into()),
+        JsValue::Symbol(_) => Err(VmError::type_error(
+            "Cannot convert a Symbol to a string",
+        )),
         JsValue::Object(_)
         | JsValue::Function(_)
         | JsValue::BuiltinFunction(_)

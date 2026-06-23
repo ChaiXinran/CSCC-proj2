@@ -241,7 +241,11 @@ impl StringifyState<'_> {
         }
 
         match value {
-            JsValue::Undefined | JsValue::Function(_) | JsValue::BuiltinFunction(_) => Ok(None),
+            // Symbols are non-serializable (treated like undefined/function).
+            JsValue::Undefined
+            | JsValue::Symbol(_)
+            | JsValue::Function(_)
+            | JsValue::BuiltinFunction(_) => Ok(None),
             JsValue::Null => Ok(Some("null".into())),
             JsValue::Boolean(value) => Ok(Some(value.to_string())),
             JsValue::Number(value) => Ok(Some(if value.is_finite() {
@@ -607,9 +611,11 @@ fn stringify_value(
     in_array: bool,
 ) -> Result<Option<String>, VmError> {
     match value {
-        JsValue::Undefined | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
-            Ok(in_array.then(|| "null".into()))
-        }
+        // Symbols, undefined, and functions are non-serializable (omitted or null in arrays).
+        JsValue::Undefined
+        | JsValue::Symbol(_)
+        | JsValue::Function(_)
+        | JsValue::BuiltinFunction(_) => Ok(in_array.then(|| "null".into())),
         JsValue::Null => Ok(Some("null".into())),
         JsValue::Boolean(value) => Ok(Some(value.to_string())),
         JsValue::Number(value) => Ok(Some(if value.is_finite() {

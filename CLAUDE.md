@@ -26,7 +26,7 @@ The contest release gate is the *native* engine reaching >60% Test262 conformanc
 - `lexer/`, `ast/`, `parser/` — native front end. `bytecode/` — compiler/chunk/opcodes. `vm/` — interpreter/frames. `runtime/` — values, objects, environments, heap, GC. `builtins/` — Object/Function/Array etc., no host APIs exposed.
 - `test262.rs` — parallel Test262 discovery/execution with strict+non-strict variants, harness includes, negative/async handling, `$262`, per-case panic isolation, JSON summaries.
 
-Current state: V1–V5 (front end, bytecode, VM, object model, exceptions/lexical scope) are live and gated; V6 (core builtins — String, Number, Math, Boolean, Error, JSON) is live with fixed gates plus an ongoing diagnostic scan. The fixed Native V1–V6 gates pass 69 curated Test262 files with no failures or skips — these are regression checks, not a conformance percentage. Each version has a `docs/native-vN-scope.md` and `docs/native-vN-interface.md` — the interface files are read-only; changes require review before any implementation PR merges. The version development checklist lives in [docs/version-development-workflow.md](docs/version-development-workflow.md).
+Current state: V1–V6 (front end, bytecode, VM, object model, exceptions/lexical scope, core builtins) are live and gated. The fixed Native V1–V6 gates (V1: 6/6, V2: 15/15, V3: 26/26, V4: 11/11, V5: 4/4, V6: 7/7) pass 69 curated Test262 files with no failures or skips — these are regression checks, not a conformance percentage. V6 diagnostic scans test String, Number, Math, Boolean, Error, and JSON directories; current baseline is 2199 total / 1345 passed (61.16%) with ~479 non-harness real failures after filtering. Active parallel development tracks (A: String+RegExp, B: Symbol+ToPrimitive/object semantics, C: existing builtin fixes) are defined in [Native V6 Team Plan](docs/native-v6-team-plan.md) with detailed implementation roadmaps. Each version has a `docs/native-vN-scope.md` and `docs/native-vN-interface.md` — the interface files are read-only; changes require review before any implementation PR merges. The version development checklist lives in [docs/version-development-workflow.md](docs/version-development-workflow.md).
 
 Planning notes and test strategy rationale live in `thoughts/` (not authoritative, but useful context).
 
@@ -59,15 +59,25 @@ cargo run -- repl
 cargo build --release
 ```
 
-Test262 — start with the feature directory affected by a change, not the full suite:
+Test262 — fixed gates (curated zero-failure, zero-skip acceptance tests) vs. diagnostic scans (broader exploratory testing):
 
+**Fixed gates** — run before merging changes affecting native stages:
 ```sh
-cargo run --release -- test262 --root test262 --suite test/language/expressions --limit 100 --jobs 8 --verbose
-# Scan native conformance for a directory (does not add to fixed gates):
-cargo run --release -- test262 --native-v6-scan --jobs 4 --progress
+cargo run --release -- test262 --native-v1 --jobs 1
+cargo run --release -- test262 --native-v2 --jobs 1
+cargo run --release -- test262 --native-v3 --jobs 1
+cargo run --release -- test262 --native-v4 --jobs 1
+cargo run --release -- test262 --native-v5 --jobs 1
+cargo run --release -- test262 --native-v6 --jobs 1
 ```
 
-Windows focused run: `.\scripts\test262-sample.ps1 -Suite test/language/expressions -Limit 100`
+**Diagnostic scans** — start with the feature directory affected by a change, not the full suite:
+```sh
+cargo run --release -- test262 --native-v6-scan --jobs 4 --progress
+cargo run --release -- test262 --root test262 --suite test/language/expressions --limit 100 --jobs 8 --verbose
+```
+
+Windows convenience wrapper: `.\scripts\test262-sample.ps1 -Suite test/language/expressions -Limit 100`
 
 Benchmarks: `cargo run --release -- bench 1000` (compares cold isolates, warm uncached, warm cached). JetStream2 lives under `benchmarks/`, `scripts/`, [docs/benchmark.md](docs/benchmark.md), and [reports/](reports/).
 
@@ -103,6 +113,16 @@ cargo run --release -- test262 --native-v6 --jobs 1
 
 All versioned gates must stay at zero regressions and zero new skips.
 
+## V6 Active Development
+
+V6 is currently under active three-parallel-track development:
+
+- **Track A** (String + RegExp): Regex literal parsing, RegExp object, String methods. Owner: Frontend contributor.
+- **Track B** (Symbol + ToPrimitive/semantics): Symbol primitive type, PropertyKey system, enhanced ToPrimitive, object coercion. Owner: Runtime contributor. **Quick start**: [TRACK_B_QUICK_START.md](TRACK_B_QUICK_START.md) and [docs/native-v6-track-b-plan.md](docs/native-v6-track-b-plan.md).
+- **Track C** (Number/JSON/Error/Math fixes): Builtin edge cases, constants, reviver/replacer, error hierarchy. Owner: Builtin contributor.
+
+Detailed parallel strategy: [docs/native-v6-track-plan.md](docs/native-v6-track-plan.md).
+
 ## Commits
 
-Imperative subject, scope when helpful (e.g. `feat(lexer): tokenize numeric literals`, `fix(vm): preserve operands across calls`). Keep commits scoped to one module + any necessary shared-contract change; don't mix unrelated upstream-submodule changes. Merge shared-contract changes before dependent branches.
+Imperative subject, scope when helpful (e.g. `feat(lexer): tokenize numeric literals`, `fix(vm): preserve operands across calls`). Keep commits scoped to one module + any necessary shared-contract change; don't mix unrelated upstream-submodule changes. Merge shared-contract changes before dependent branches. During parallel V6 tracks, prefix branch/PR names with track (e.g., `feat/v6-symbol-infrastructure` for Track B).

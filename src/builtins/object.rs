@@ -201,9 +201,32 @@ fn object_define_property(
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let object = context.require_object(&target, "define property")?;
-    let key = to_property_key(arguments.get(1).unwrap_or(&JsValue::Undefined))?;
+    let key_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let descriptor_value = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
     let descriptor_object = context.require_object(&descriptor_value, "read descriptor")?;
+
+    if let JsValue::Symbol(sym_id) = key_arg {
+        let update = descriptor_update_from_object(vm, context, descriptor_object)?;
+        let descriptor = if update.get.is_some() || update.set.is_some() {
+            PropertyDescriptor::accessor(
+                update.get.flatten(),
+                update.set.flatten(),
+                update.enumerable.unwrap_or(false),
+                update.configurable.unwrap_or(false),
+            )
+        } else {
+            PropertyDescriptor::data_with(
+                update.value.unwrap_or(JsValue::Undefined),
+                update.writable.unwrap_or(false),
+                update.enumerable.unwrap_or(false),
+                update.configurable.unwrap_or(false),
+            )
+        };
+        context.define_symbol_own_property(object, sym_id, descriptor)?;
+        return Ok(target);
+    }
+
+    let key = to_property_key(&key_arg)?;
     let update = descriptor_update_from_object(vm, context, descriptor_object)?;
     if context.validate_and_apply_property_descriptor(object, key, update)? {
         Ok(target)
@@ -394,12 +417,23 @@ fn object_to_string(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    // If the value is an object (or wrapper), check for Symbol.toStringTag first.
+    if let Some(object_id) = context.value_object(&this_value) {
+        let to_string_tag = context.well_known_symbols().to_string_tag;
+        if let Some(JsValue::String(tag)) =
+            context.get_symbol_property_value(object_id, to_string_tag)
+        {
+            return Ok(JsValue::String(format!("[object {tag}]")));
+        }
+    }
+
     let tag = match &this_value {
         JsValue::Null => "Null",
         JsValue::Undefined => "Undefined",
         JsValue::Boolean(_) => "Boolean",
         JsValue::Number(_) => "Number",
         JsValue::String(_) => "String",
+        JsValue::Symbol(_) => "Symbol",
         JsValue::Function(_) | JsValue::BuiltinFunction(_) => "Function",
         JsValue::Object(id) => object_builtin_tag(context, *id)?,
         JsValue::Error(_) => "Error",

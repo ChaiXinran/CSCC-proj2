@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use super::{BuiltinId, FunctionId, ObjectId};
+use super::{BuiltinId, FunctionId, ObjectId, SymbolId};
 
 /// Minimal native error categories used by V2 `throw`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +41,9 @@ pub enum JsValue {
     Boolean(bool),
     Number(f64),
     String(String),
+    /// An ECMAScript Symbol primitive. Symbols cannot be implicitly coerced to
+    /// strings or numbers; doing so raises a TypeError.
+    Symbol(SymbolId),
     Object(ObjectId),
     Function(FunctionId),
     /// A builtin function registered in `NativeContext::register_builtin`.
@@ -56,7 +59,12 @@ impl JsValue {
             Self::Boolean(value) => *value,
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
             Self::String(value) => !value.is_empty(),
-            Self::Object(_) | Self::Function(_) | Self::BuiltinFunction(_) | Self::Error(_) => true,
+            // Symbols, objects, functions, and errors are always truthy.
+            Self::Symbol(_)
+            | Self::Object(_)
+            | Self::Function(_)
+            | Self::BuiltinFunction(_)
+            | Self::Error(_) => true,
         }
     }
 
@@ -69,10 +77,17 @@ impl JsValue {
             Self::Boolean(false) => Some(0.0),
             Self::Number(value) => Some(*value),
             Self::String(value) => Some(string_to_number(value)),
-            Self::Object(_) | Self::Function(_) | Self::BuiltinFunction(_) | Self::Error(_) => None,
+            // Symbol, Object, Function, Error: caller must go through ToPrimitive.
+            Self::Symbol(_)
+            | Self::Object(_)
+            | Self::Function(_)
+            | Self::BuiltinFunction(_)
+            | Self::Error(_) => None,
         }
     }
 
+    /// Returns the JS string representation, or `None` for types that cannot be
+    /// implicitly coerced (Symbol — the caller must raise a `TypeError`).
     #[must_use]
     pub fn to_js_string(&self) -> Option<String> {
         match self {
@@ -81,6 +96,8 @@ impl JsValue {
             Self::Boolean(value) => Some(value.to_string()),
             Self::Number(value) => Some(number_to_string(*value)),
             Self::String(value) => Some(value.clone()),
+            // Symbol cannot be implicitly converted to a string (TypeError).
+            Self::Symbol(_) => None,
             Self::Object(id) => Some(format!("[object #{}]", id.0)),
             Self::Function(_) | Self::BuiltinFunction(_) => {
                 Some("function () { [native code] }".into())
@@ -97,6 +114,7 @@ impl JsValue {
             Self::Boolean(_) => "boolean",
             Self::Number(_) => "number",
             Self::String(_) => "string",
+            Self::Symbol(_) => "symbol",
             Self::Function(_) | Self::BuiltinFunction(_) => "function",
         }
     }
@@ -110,6 +128,8 @@ impl JsValue {
                 !left.is_nan() && !right.is_nan() && left == right
             }
             (Self::String(left), Self::String(right)) => left == right,
+            // Two symbols are equal only if they share the same id.
+            (Self::Symbol(left), Self::Symbol(right)) => left == right,
             (Self::Object(left), Self::Object(right)) => left == right,
             (Self::Function(left), Self::Function(right)) => left == right,
             (Self::BuiltinFunction(left), Self::BuiltinFunction(right)) => left == right,
@@ -137,7 +157,10 @@ impl JsValue {
 
 impl fmt::Display for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.to_js_string().unwrap_or_else(|| "<value>".into()))
+        match self {
+            Self::Symbol(id) => write!(f, "Symbol({})", id.0),
+            _ => f.write_str(&self.to_js_string().unwrap_or_else(|| "<value>".into())),
+        }
     }
 }
 

@@ -23,6 +23,7 @@ pub use crate::{
         EnvironmentId, FunctionId, Heap, Intrinsics, JsFunction, JsObject, JsValue, NativeCall,
         NativeConstruct, NativeContext, NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind,
         PropertyDescriptor, PropertyDescriptorUpdate, PropertyEntry, PropertyKind, PropertyMap,
+        Symbol, SymbolId, SymbolRegistry, WellKnownSymbols,
     },
     vm::{CallFrame, Completion, Vm, VmError, VmErrorKind},
 };
