@@ -489,12 +489,23 @@ impl Vm {
                 Instruction::GetElement => {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
-                    let key = to_property_key(&key)?;
-                    match self.get_property_value_completion(object, &key, context)? {
-                        OperationResult::Value(value) => self.stack.push(value),
-                        OperationResult::Throw(value) => {
-                            abrupt = Some(Completion::Throw(value));
-                            discard_saved_finally = true;
+                    if let JsValue::Symbol(sym_id) = &key {
+                        let sym_id = *sym_id;
+                        let result = if let Some(obj_id) = context.value_object(&object) {
+                            context.get_symbol_property_value(obj_id, sym_id)
+                                .unwrap_or(JsValue::Undefined)
+                        } else {
+                            JsValue::Undefined
+                        };
+                        self.stack.push(result);
+                    } else {
+                        let key = to_property_key(&key)?;
+                        match self.get_property_value_completion(object, &key, context)? {
+                            OperationResult::Value(value) => self.stack.push(value),
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
@@ -558,12 +569,25 @@ impl Vm {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
-                    let key = to_property_key(&key)?;
-                    match self.set_property_value(object, &key, value, context)? {
-                        OperationResult::Value(result) => self.stack.push(result),
-                        OperationResult::Throw(value) => {
-                            abrupt = Some(Completion::Throw(value));
-                            discard_saved_finally = true;
+                    if let JsValue::Symbol(sym_id) = &key {
+                        let sym_id = *sym_id;
+                        let obj_id = context.require_object(&object, "set symbol property")?;
+                        context.define_symbol_own_property(
+                            obj_id,
+                            sym_id,
+                            crate::runtime::PropertyDescriptor::data_with(
+                                value.clone(), true, true, true,
+                            ),
+                        )?;
+                        self.stack.push(value);
+                    } else {
+                        let key = to_property_key(&key)?;
+                        match self.set_property_value(object, &key, value, context)? {
+                            OperationResult::Value(result) => self.stack.push(result),
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
@@ -978,8 +1002,8 @@ impl Vm {
     // ── ECMAScript abstract coercion operations ──────────────────────────────
 
     /// ECMAScript `ToPrimitive`. Returns `value` unchanged if it is already a
-    /// primitive. For objects, invokes the `valueOf`/`toString` methods in the
-    /// order dictated by `hint`.
+    /// primitive. For objects, first checks `Symbol.toPrimitive`, then falls
+    /// back to `valueOf`/`toString` in the order dictated by `hint`.
     ///
     /// JavaScript exceptions raised by the conversion methods are stored in
     /// `pending_exception` and returned as `Err`, making them catchable by V5
@@ -998,6 +1022,45 @@ impl Vm {
             return Ok(value);
         }
 
+        // ECMAScript step 1: check @@toPrimitive.
+        if let Some(object_id) = context.value_object(&value) {
+            let to_primitive_sym = context.well_known_symbols().to_primitive;
+            if let Some(method) = context.get_symbol_property_value(object_id, to_primitive_sym)
+                && matches!(method, JsValue::Function(_) | JsValue::BuiltinFunction(_))
+            {
+                let hint_str = match hint {
+                    PreferredType::Default => "default",
+                    PreferredType::Number => "number",
+                    PreferredType::String => "string",
+                };
+                let result = match self.call_value(
+                    method,
+                    value,
+                    vec![JsValue::String(hint_str.into())],
+                    context,
+                )? {
+                    OperationResult::Value(v) => v,
+                    OperationResult::Throw(thrown) => {
+                        self.pending_exception = Some(thrown);
+                        return Err(VmError::runtime(
+                            "Symbol.toPrimitive method threw an exception",
+                        ));
+                    }
+                };
+                // ECMAScript: if the result is not primitive, throw TypeError.
+                if matches!(
+                    result,
+                    JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+                ) {
+                    return Err(VmError::type_error(
+                        "Symbol.toPrimitive must return a primitive",
+                    ));
+                }
+                return Ok(result);
+            }
+        }
+
+        // ECMAScript step 2: ordinary ToPrimitive via valueOf/toString.
         let (first, second) = match hint {
             PreferredType::String => ("toString", "valueOf"),
             PreferredType::Default | PreferredType::Number => ("valueOf", "toString"),
@@ -1067,6 +1130,10 @@ impl Vm {
             JsValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
             JsValue::Number(n) => Ok(n),
             JsValue::String(ref s) => Ok(coerce_string_to_number(s)),
+            // Symbols cannot be converted to numbers — ECMAScript raises a TypeError.
+            JsValue::Symbol(_) => {
+                Err(VmError::type_error("Cannot convert a Symbol value to a number"))
+            }
             JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
                 let prim = self.to_primitive(value, PreferredType::Number, context)?;
                 self.to_number(prim, context)
@@ -1088,6 +1155,10 @@ impl Vm {
             JsValue::Boolean(b) => Ok(b.to_string()),
             JsValue::Number(n) => Ok(coerce_number_to_string(n)),
             JsValue::String(s) => Ok(s),
+            // Symbols cannot be implicitly converted to strings — TypeError.
+            JsValue::Symbol(_) => {
+                Err(VmError::type_error("Cannot convert a Symbol value to a string"))
+            }
             JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
                 let prim = self.to_primitive(value, PreferredType::String, context)?;
                 self.to_string_coerce(prim, context)
@@ -1108,6 +1179,9 @@ impl Vm {
             JsValue::Null | JsValue::Undefined => Err(VmError::type_error(
                 "Cannot convert undefined or null to object",
             )),
+            JsValue::Symbol(_) => {
+                Err(VmError::type_error("Cannot convert a Symbol value to object"))
+            }
             JsValue::Boolean(b) => {
                 let proto = context
                     .boolean_prototype()
@@ -1215,6 +1289,18 @@ impl Vm {
             JsValue::Boolean(_) => context
                 .boolean_prototype()
                 .ok_or_else(|| VmError::type_error("cannot read property on boolean")),
+            JsValue::Symbol(_) => context
+                .get_global("Symbol")
+                .and_then(|ctor| context.value_object(&ctor))
+                .and_then(|ctor_obj| {
+                    context
+                        .find_property_descriptor(ctor_obj, "prototype")
+                        .ok()
+                        .flatten()
+                        .and_then(|(_, d)| d.value_cloned())
+                        .and_then(|v| context.value_object(&v))
+                })
+                .ok_or_else(|| VmError::type_error("cannot read property on symbol")),
             JsValue::Error(error) => {
                 // Resolve the prototype of the corresponding error constructor so that
                 // property reads like `thrown.constructor` and `thrown.message` work.

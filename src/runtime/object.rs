@@ -1,6 +1,6 @@
 //! JavaScript objects and prototype links.
 
-use super::{JsValue, PropertyDescriptor, PropertyMap};
+use super::{JsValue, PropertyDescriptor, PropertyMap, SymbolId};
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -39,6 +39,9 @@ pub struct JsObject {
     pub prototype: Option<ObjectId>,
     pub kind: ObjectKind,
     pub properties: PropertyMap,
+    /// Symbol-keyed own properties stored separately from the string property map.
+    /// Insertion order is preserved; lookup is linear but the expected count is small.
+    pub symbol_properties: Vec<(SymbolId, PropertyDescriptor)>,
 }
 
 impl JsObject {
@@ -59,6 +62,7 @@ impl JsObject {
                 length_writable: true,
             },
             properties: PropertyMap::default(),
+            symbol_properties: Vec::new(),
         }
     }
 
@@ -71,11 +75,47 @@ impl JsObject {
                 length_writable: true,
             },
             properties: PropertyMap::default(),
+            symbol_properties: Vec::new(),
         }
     }
 
     pub fn define_property(&mut self, name: impl Into<String>, descriptor: PropertyDescriptor) {
         self.properties.define(name, descriptor);
+    }
+
+    /// Define or replace a symbol-keyed own property.
+    pub fn define_symbol_property(&mut self, id: SymbolId, descriptor: PropertyDescriptor) {
+        if let Some((_, desc)) = self
+            .symbol_properties
+            .iter_mut()
+            .find(|(sym_id, _)| *sym_id == id)
+        {
+            *desc = descriptor;
+        } else {
+            self.symbol_properties.push((id, descriptor));
+        }
+    }
+
+    /// Look up a symbol-keyed own property descriptor (does not walk prototype chain).
+    #[must_use]
+    pub fn own_symbol_property(&self, id: SymbolId) -> Option<&PropertyDescriptor> {
+        self.symbol_properties
+            .iter()
+            .find(|(sym_id, _)| *sym_id == id)
+            .map(|(_, desc)| desc)
+    }
+
+    /// Delete a symbol-keyed own property, returning the removed descriptor.
+    pub fn delete_own_symbol_property(&mut self, id: SymbolId) -> Option<PropertyDescriptor> {
+        if let Some(pos) = self
+            .symbol_properties
+            .iter()
+            .position(|(sym_id, _)| *sym_id == id)
+        {
+            Some(self.symbol_properties.remove(pos).1)
+        } else {
+            None
+        }
     }
 
     #[must_use]

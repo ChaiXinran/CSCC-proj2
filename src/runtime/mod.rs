@@ -9,6 +9,7 @@ mod heap;
 mod object;
 mod property;
 mod property_map;
+mod symbol;
 mod value;
 
 pub use coercion::PreferredType;
@@ -22,4 +23,5 @@ pub use heap::Heap;
 pub use object::{JsObject, ObjectId, ObjectKind, PrimitiveValue};
 pub use property::{PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind};
 pub use property_map::{PropertyEntry, PropertyMap};
+pub use symbol::{Symbol, SymbolId, SymbolRegistry, WellKnownSymbols};
 pub use value::{JsValue, NativeErrorKind, NativeErrorValue};
