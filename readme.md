@@ -179,6 +179,14 @@ the six-directory diagnostic scan passes 1,489/2,199 after the Track A and B
 merge. Map/Set, RegExp, Date,
 Promise, advanced JSON callbacks, and new language syntax remain deferred.
 
+Native V7 is the stability and performance-evidence milestone. It does not add
+new JavaScript syntax; instead it freezes contracts for resource budgets,
+large-allocation guards, non-moving mark-and-sweep GC, native script caching,
+crash-safe Test262 dashboards, and benchmark reporting. See the
+[Native V7 scope](docs/native-v7-scope.md),
+[shared interface](docs/native-v7-interface.md), and
+[team plan](docs/native-v7-team-plan.md).
+
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
 [`tests/frontend_bytecode_v3.rs`](tests/frontend_bytecode_v3.rs), and
@@ -285,6 +293,20 @@ is the broader diagnostic scan for try, switch, let, and const directories.
 
 `--native-v6` is the curated core-builtin gate. `--native-v6-scan` scans the
 String, Number, Math, Boolean, Error, and JSON directories diagnostically.
+
+V7 dashboard tests are reporting tools rather than ordinary pass/fail gates.
+They run child suites separately so parent reporting survives child OOM, stack
+overflow, panic, or non-zero process exit:
+
+```powershell
+cargo test --release --no-default-features --test native_full_test262_by_dir native_test262_dashboard_top_level -- --ignored --nocapture
+
+$env:AGENTJS_TEST262_SUITE = "test/built-ins"
+cargo test --release --no-default-features --test native_full_test262_by_dir native_test262_dashboard_children -- --ignored --nocapture
+
+$env:AGENTJS_TEST262_SUITE = "test/language"
+cargo test --release --no-default-features --test native_full_test262_by_dir native_test262_dashboard_children -- --ignored --nocapture
+```
 
 Start with the feature directory affected by a change:
 
