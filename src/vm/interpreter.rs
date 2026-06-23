@@ -136,6 +136,9 @@ impl Vm {
         chunk: &Chunk,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
+        chunk
+            .cache_metadata()
+            .map_err(|error| VmError::runtime(format!("invalid bytecode chunk: {error}")))?;
         self.stack.clear();
         self.pending_exception = None;
         self.finally_stack.clear();

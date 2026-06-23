@@ -249,6 +249,21 @@ pub struct StackAnalysis {
     pub max_depth: usize,
 }
 
+/// Cache-safe metadata derived from a chunk and all nested function chunks.
+///
+/// A successful result means the full chunk tree validates structurally and
+/// contains only static bytecode data: instructions, literals, function
+/// templates, and handler metadata. Runtime heap identities are deliberately
+/// absent from this summary so the native script cache can store it safely.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ChunkCacheMetadata {
+    pub max_stack_depth: usize,
+    pub total_instructions: usize,
+    pub total_constants: usize,
+    pub total_functions: usize,
+    pub total_handlers: usize,
+}
+
 impl Chunk {
     /// Adds a constant and returns its lossless `u16` index.
     pub fn add_constant(&mut self, constant: Constant) -> Result<u16, ChunkError> {
@@ -415,6 +430,34 @@ impl Chunk {
         }
         self.analyze_environments()?;
         Ok(())
+    }
+
+    /// Returns recursive metadata for native script caching.
+    ///
+    /// This validates the current chunk and every nested function chunk before
+    /// returning. The result contains only cache-safe bytecode facts and no
+    /// runtime object, function, or environment identities.
+    pub fn cache_metadata(&self) -> Result<ChunkCacheMetadata, ChunkError> {
+        self.validate()?;
+        let analysis = self.analyze_stack()?;
+        let mut metadata = ChunkCacheMetadata {
+            max_stack_depth: analysis.max_depth,
+            total_instructions: self.instructions.len(),
+            total_constants: self.constants.len(),
+            total_functions: self.functions.len(),
+            total_handlers: self.handlers.len(),
+        };
+
+        for template in &self.functions {
+            let child = template.chunk.cache_metadata()?;
+            metadata.max_stack_depth = metadata.max_stack_depth.max(child.max_stack_depth);
+            metadata.total_instructions += child.total_instructions;
+            metadata.total_constants += child.total_constants;
+            metadata.total_functions += child.total_functions;
+            metadata.total_handlers += child.total_handlers;
+        }
+
+        Ok(metadata)
     }
 
     /// Verifies lexical-environment balance at every reachable merge.

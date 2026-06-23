@@ -144,6 +144,24 @@ pub const NATIVE_V6_SCAN_SUITES: [&str; 6] = [
     "test/built-ins/JSON",
 ];
 
+/// Lightweight frontend/cache-safety directories scanned by `--native-v7-scan`.
+///
+/// The selection intentionally covers a few thousand representative Test262
+/// files without sweeping the very large `test/language` or `test/built-ins`
+/// roots. It is diagnostic: skipped and failed tests remain visible and never
+/// count as passes.
+pub const NATIVE_V7_SCAN_SUITES: [&str; 9] = [
+    "test/language/literals",
+    "test/language/types",
+    "test/language/block-scope",
+    "test/language/function-code",
+    "test/language/global-code",
+    "test/built-ins/Function",
+    "test/built-ins/String",
+    "test/built-ins/Symbol",
+    "test/built-ins/Reflect",
+];
+
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
     pub test262_root: PathBuf,
@@ -252,6 +270,14 @@ impl RunnerOptions {
         self.backend = BackendKind::Native;
         self.files.clear();
         self.suites = NATIVE_V6_SCAN_SUITES.iter().map(PathBuf::from).collect();
+        self.skip_unsupported = true;
+    }
+
+    /// Selects V7 frontend/cache-safety directories as a diagnostic scan.
+    pub fn select_native_v7_scan(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files.clear();
+        self.suites = NATIVE_V7_SCAN_SUITES.iter().map(PathBuf::from).collect();
         self.skip_unsupported = true;
     }
 }

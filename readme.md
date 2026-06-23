@@ -271,6 +271,7 @@ cargo run -- test262 --native-v5 --jobs 1 --verbose
 cargo run -- test262 --native-v5-scan --jobs 4 --progress
 cargo run -- test262 --native-v6 --jobs 1 --verbose
 cargo run -- test262 --native-v6-scan --jobs 4 --progress
+cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
 cargo test --test native_test262
 ```
 
@@ -293,6 +294,12 @@ is the broader diagnostic scan for try, switch, let, and const directories.
 
 `--native-v6` is the curated core-builtin gate. `--native-v6-scan` scans the
 String, Number, Math, Boolean, Error, and JSON directories diagnostically.
+
+`--native-v7-scan` is a lightweight frontend/cache-safety diagnostic scan over
+a few thousand representative Test262 files. It covers selected language
+literal/type/scope/function/global-code directories plus Function, String,
+Symbol, and Reflect builtin directories. It is intentionally diagnostic:
+skipped and failed tests are reported separately and never count as passes.
 
 V7 dashboard tests are reporting tools rather than ordinary pass/fail gates.
 They run child suites separately so parent reporting survives child OOM, stack

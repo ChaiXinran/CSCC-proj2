@@ -179,7 +179,9 @@ impl Parser {
             && let Some(operator) = update_operator(operator)
         {
             self.advance();
+            self.enter_depth()?;
             let argument = self.parse_unary()?;
+            self.leave_depth();
             if !is_assignment_target(&argument) {
                 return Err(self.error("invalid operand for `++`/`--`".into()));
             }
@@ -191,7 +193,9 @@ impl Parser {
         }
         if self.check_keyword(Keyword::TypeOf) {
             self.advance();
+            self.enter_depth()?;
             let argument = self.parse_unary()?;
+            self.leave_depth();
             return Ok(Expression::Unary {
                 operator: UnaryOperator::TypeOf,
                 argument: Box::new(argument),
@@ -199,7 +203,9 @@ impl Parser {
         }
         if self.check_keyword(Keyword::Delete) {
             self.advance();
+            self.enter_depth()?;
             let argument = self.parse_unary()?;
+            self.leave_depth();
             return Ok(Expression::Unary {
                 operator: UnaryOperator::Delete,
                 argument: Box::new(argument),
@@ -207,7 +213,9 @@ impl Parser {
         }
         if self.check_keyword(Keyword::Void) {
             self.advance();
+            self.enter_depth()?;
             let argument = self.parse_unary()?;
+            self.leave_depth();
             return Ok(Expression::Unary {
                 operator: UnaryOperator::Void,
                 argument: Box::new(argument),
@@ -222,7 +230,9 @@ impl Parser {
             };
             if let Some(operator) = operator {
                 self.advance();
+                self.enter_depth()?;
                 let argument = self.parse_unary()?;
+                self.leave_depth();
                 return Ok(Expression::Unary {
                     operator,
                     argument: Box::new(argument),
@@ -363,7 +373,9 @@ impl Parser {
             }
             TokenKind::Punctuator('(') => {
                 self.advance();
+                self.enter_depth()?;
                 let inner = self.allowing_in(|parser| parser.parse_expression())?;
+                self.leave_depth();
                 self.expect_punctuator(')')?;
                 Ok(inner)
             }

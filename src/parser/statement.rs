@@ -45,10 +45,12 @@ impl Parser {
     /// Parses a braced statement list and returns its contents.
     fn parse_block_statements(&mut self) -> Result<Vec<Statement>, ParseError> {
         self.expect_punctuator('{')?;
+        self.enter_depth()?;
         let mut body = Vec::new();
         while !self.check_punctuator('}') && !self.at_eof() {
             body.push(self.parse_statement()?);
         }
+        self.leave_depth();
         self.expect_punctuator('}')?;
         self.validate_lexical_declarations(&body)?;
         Ok(body)

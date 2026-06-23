@@ -110,6 +110,27 @@ V7 relies on layered validation rather than one giant in-process test:
 | failure-sample report | focused root-cause inspection without unbounded JSON |
 | benchmark report | cold/warm/cache/JetStream evidence |
 
+The lightweight V7 diagnostic scan is selected by `--native-v7-scan`. It is
+intended for frontend/cache-safety smoke coverage over a few thousand files:
+
+| Area | Purpose |
+| --- | --- |
+| `test/language/literals` | lexical and literal parsing stress |
+| `test/language/types` | primitive type grammar and runtime front door |
+| `test/language/block-scope` | scope-oriented parser/compiler coverage |
+| `test/language/function-code` | function-body frontend coverage |
+| `test/language/global-code` | global script frontend coverage |
+| `test/built-ins/Function` | generic call/construct shapes |
+| `test/built-ins/String` | string literal/coercion-heavy scripts |
+| `test/built-ins/Symbol` | modern identifier/member/builtin shapes |
+| `test/built-ins/Reflect` | reflective call/construct/property shapes |
+
+Recommended command:
+
+```powershell
+cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
+```
+
 The V7 pinned gate should contain only zero-failure, zero-skip regression tests
 for newly stabilized engineering behavior. Broad dashboards are diagnostic and
 must not count crashed, timed-out, or skipped suites as passes.

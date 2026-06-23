@@ -45,6 +45,15 @@
   the remaining engineering gaps above: hard byte budgets, cooperative
   deadlines, non-moving GC, crash-safe Test262 dashboards, native script
   caching, and native benchmark evidence.
+- V7 B-group bytecode groundwork has started: `ChunkCacheMetadata` exposes
+  recursive cache-safe chunk metadata, VM execution rejects invalid chunks
+  before interpretation, and focused V7 bytecode/frontend-bytecode tests cover
+  high stack depth, handler restore invariants, nested-function validation, and
+  source-to-cache-metadata lowering.
+- `--native-v7-scan` selects a lightweight frontend/cache-safety Test262 sample
+  of selected language and builtin directories. The recommended local command
+  is `cargo run --release --no-default-features -- test262 --native-v7-scan
+  --jobs 4 --json reports/native-v7-frontend-summary.json`.
 
 ## Acceptance Gates
 
