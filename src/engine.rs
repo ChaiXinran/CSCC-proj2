@@ -17,6 +17,12 @@ pub struct RuntimeConfig {
     /// Maximum number of heap objects (JsObject + JsFunction + Environment) per isolate.
     /// Exceeding this limit throws a RuntimeLimit error rather than OOM-ing the process.
     pub heap_object_limit: usize,
+    /// Conservative byte budget for heap-owned and guarded large allocations.
+    pub heap_byte_limit: usize,
+    /// Cooperative wall-clock budget for one top-level evaluation.
+    pub wall_clock_limit: Option<Duration>,
+    /// Number of heap allocations between cooperative GC checks.
+    pub gc_allocation_threshold: usize,
 }
 
 impl Default for RuntimeConfig {
@@ -29,6 +35,9 @@ impl Default for RuntimeConfig {
             script_cache_capacity: 32,
             install_test262_host: false,
             heap_object_limit: 500_000,
+            heap_byte_limit: 256 * 1024 * 1024,
+            wall_clock_limit: None,
+            gc_allocation_threshold: 10_000,
         }
     }
 }

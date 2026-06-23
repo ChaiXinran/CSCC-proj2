@@ -86,6 +86,9 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
         script_cache_capacity: 0,
         install_test262_host: false,
         heap_object_limit: usize::MAX,
+        heap_byte_limit: usize::MAX,
+        wall_clock_limit: None,
+        gc_allocation_threshold: 100_000,
     })
     .map_err(|error| error.to_string())?;
     let report = runtime

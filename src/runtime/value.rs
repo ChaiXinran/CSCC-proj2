@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use super::{BuiltinId, FunctionId, ObjectId, SymbolId};
+use super::{BuiltinId, FunctionId, ObjectId, SymbolId, Trace, Tracer};
 
 /// Minimal native error categories used by V2 `throw`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -155,6 +155,33 @@ impl JsValue {
     }
 }
 
+impl Trace for JsValue {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        match self {
+            Self::Object(id) => tracer.mark_object(*id),
+            Self::Function(id) => tracer.mark_function(*id),
+            Self::Undefined
+            | Self::Null
+            | Self::Boolean(_)
+            | Self::Number(_)
+            | Self::String(_)
+            | Self::Symbol(_)
+            | Self::BuiltinFunction(_)
+            | Self::Error(_) => {}
+        }
+    }
+}
+
+impl JsValue {
+    #[must_use]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        match self {
+            Self::String(value) => value.len(),
+            Self::Error(error) => error.message.len().saturating_add(32),
+            _ => std::mem::size_of::<Self>(),
+        }
+    }
+}
 impl fmt::Display for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

@@ -1,6 +1,6 @@
 //! JavaScript objects and prototype links.
 
-use super::{JsValue, PropertyDescriptor, PropertyMap, SymbolId};
+use super::{JsValue, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer};
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -144,7 +144,10 @@ impl JsObject {
 
     #[must_use]
     pub fn get_own_property_value(&self, name: &str) -> Option<JsValue> {
-        if let ObjectKind::Array { elements, length, .. } = &self.kind {
+        if let ObjectKind::Array {
+            elements, length, ..
+        } = &self.kind
+        {
             if name == "length" {
                 return Some(JsValue::Number(*length as f64));
             }
@@ -378,6 +381,54 @@ impl JsObject {
     }
 }
 
+impl Trace for JsObject {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        if let Some(prototype) = self.prototype {
+            tracer.mark_object(prototype);
+        }
+        match &self.kind {
+            ObjectKind::Array { elements, .. } => {
+                for descriptor in elements.iter().flatten() {
+                    descriptor.trace(tracer);
+                }
+            }
+            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {}
+        }
+        self.properties.trace(tracer);
+        for (_, descriptor) in &self.symbol_properties {
+            descriptor.trace(tracer);
+        }
+    }
+}
+
+impl JsObject {
+    #[must_use]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let kind_bytes = match &self.kind {
+            ObjectKind::Ordinary => 0,
+            ObjectKind::Array { elements, .. } => elements
+                .iter()
+                .flatten()
+                .map(PropertyDescriptor::estimated_bytes)
+                .sum::<usize>()
+                .saturating_add(
+                    elements.capacity() * std::mem::size_of::<Option<PropertyDescriptor>>(),
+                ),
+            ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) => value.len(),
+            ObjectKind::PrimitiveWrapper(_) => std::mem::size_of::<PrimitiveValue>(),
+            ObjectKind::RegExp { pattern, flags } => pattern.len().saturating_add(flags.len()),
+        };
+        std::mem::size_of::<Self>()
+            .saturating_add(kind_bytes)
+            .saturating_add(self.properties.estimated_bytes())
+            .saturating_add(
+                self.symbol_properties
+                    .iter()
+                    .map(|(_, descriptor)| descriptor.estimated_bytes())
+                    .sum::<usize>(),
+            )
+    }
+}
 pub(crate) fn array_index(name: &str) -> Option<usize> {
     if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_digit()) {
         return None;

@@ -1,12 +1,16 @@
 //! Persistent state shared by native execution and integration.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
 
 use super::{
-    BoundFunction, BuiltinFunction, BuiltinId, Environment, EnvironmentId, FunctionId, Heap,
-    JsFunction, JsObject, JsValue, NativeCall, NativeConstruct, NativeErrorKind, ObjectId,
-    ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
-    SymbolId, SymbolRegistry, WellKnownSymbols, object::array_index,
+    BoundFunction, BuiltinFunction, BuiltinId, CollectionStats, Collector, Environment,
+    EnvironmentId, FunctionId, Heap, HeapStats, JsFunction, JsObject, JsValue, NativeCall,
+    NativeConstruct, NativeErrorKind, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
+    PropertyDescriptorUpdate, PropertyKind, RootSet, SymbolId, SymbolRegistry, WellKnownSymbols,
+    object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 
@@ -32,6 +36,63 @@ pub struct Intrinsics {
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
 pub const MAX_ARRAY_LENGTH: usize = 1_000_000;
+const MAX_UTF16_ALLOCATION_UNITS: usize = 1 << 23;
+/// Cooperative per-evaluation execution limits shared by VM and builtins.
+#[derive(Debug, Clone)]
+pub struct ExecutionBudget {
+    pub loop_remaining: u64,
+    pub call_depth_limit: u64,
+    pub stack_limit: usize,
+    pub deadline: Option<Instant>,
+}
+
+impl Default for ExecutionBudget {
+    fn default() -> Self {
+        Self {
+            loop_remaining: u64::MAX,
+            call_depth_limit: u64::MAX,
+            stack_limit: usize::MAX,
+            deadline: None,
+        }
+    }
+}
+
+impl ExecutionBudget {
+    pub fn check_loop(&mut self) -> Result<(), VmError> {
+        self.check_deadline()?;
+        if self.loop_remaining == 0 {
+            return Err(VmError::runtime_limit("loop iteration limit exceeded"));
+        }
+        self.loop_remaining -= 1;
+        Ok(())
+    }
+
+    pub fn check_call_depth(&self, depth: u64) -> Result<(), VmError> {
+        self.check_deadline()?;
+        if depth >= self.call_depth_limit {
+            return Err(VmError::runtime_limit("call stack limit exceeded"));
+        }
+        Ok(())
+    }
+
+    pub fn check_stack_depth(&self, depth: usize) -> Result<(), VmError> {
+        self.check_deadline()?;
+        if depth > self.stack_limit {
+            return Err(VmError::runtime_limit("operand stack limit exceeded"));
+        }
+        Ok(())
+    }
+
+    pub fn check_deadline(&self) -> Result<(), VmError> {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(VmError::runtime_limit("wall-clock deadline exceeded"));
+        }
+        Ok(())
+    }
+}
 
 /// Per-isolate language state passed to the bytecode executor.
 #[derive(Debug)]
@@ -53,9 +114,9 @@ pub struct NativeContext {
     symbol_for_registry: HashMap<String, SymbolId>,
     strict: bool,
     output: Vec<String>,
-    loop_budget_remaining: u64,
-    call_stack_limit: u64,
+    budget: ExecutionBudget,
     call_depth: u64,
+    gc_allocation_threshold: usize,
 }
 
 impl Default for NativeContext {
@@ -67,6 +128,10 @@ impl Default for NativeContext {
 impl NativeContext {
     pub fn with_heap_limit(limit: usize) -> Self {
         Self::build(Heap::with_limit(limit))
+    }
+
+    pub fn with_heap_limits(object_limit: usize, byte_limit: usize) -> Self {
+        Self::build(Heap::with_limits(object_limit, byte_limit))
     }
 
     fn build(mut heap: Heap) -> Self {
@@ -92,9 +157,9 @@ impl NativeContext {
             symbol_for_registry: HashMap::new(),
             strict: false,
             output: Vec::new(),
-            loop_budget_remaining: u64::MAX,
-            call_stack_limit: u64::MAX,
+            budget: ExecutionBudget::default(),
             call_depth: 0,
+            gc_allocation_threshold: 10_000,
         };
         context.declare_global("undefined", JsValue::Undefined);
         context.declare_global("NaN", JsValue::Number(f64::NAN));
@@ -111,6 +176,113 @@ impl NativeContext {
 
     pub fn heap_mut(&mut self) -> &mut Heap {
         &mut self.heap
+    }
+
+    pub fn configure_heap_limits(
+        &mut self,
+        heap_byte_limit: usize,
+        gc_allocation_threshold: usize,
+    ) {
+        self.heap.set_byte_limit(heap_byte_limit);
+        self.gc_allocation_threshold = gc_allocation_threshold;
+    }
+
+    #[must_use]
+    pub fn heap_stats(&self) -> HeapStats {
+        self.heap.stats()
+    }
+
+    pub fn ensure_heap_capacity(&mut self, additional_bytes: usize) -> Result<(), VmError> {
+        if self.heap.charge_bytes(additional_bytes) {
+            Ok(())
+        } else {
+            Err(VmError::runtime_limit("heap byte limit exceeded"))
+        }
+    }
+
+    #[must_use]
+    pub fn should_collect_garbage(&self) -> bool {
+        self.heap.should_collect(self.gc_allocation_threshold)
+    }
+
+    pub fn maybe_collect_garbage(&mut self, roots: &RootSet) -> Result<CollectionStats, VmError> {
+        let roots = self.complete_root_set(roots);
+        let mut collector = Collector;
+        let stats = collector.collect(&mut self.heap, &roots);
+        self.prune_swept_metadata();
+        Ok(stats)
+    }
+
+    pub fn collect_garbage_for_vm(&mut self, vm: &Vm) -> Result<CollectionStats, VmError> {
+        let roots = self.root_set(vm);
+        self.maybe_collect_garbage(&roots)
+    }
+
+    #[must_use]
+    pub fn root_set(&self, vm: &Vm) -> RootSet {
+        let mut roots = RootSet::new(self.global_environment, self.current_environment);
+        roots.environment_stack = self.environment_stack.clone();
+        roots.call_frames = self.call_frames.iter().map(Into::into).collect();
+        roots.operand_stack = vm.operand_stack_roots();
+        roots.pending_exception = vm.pending_exception_root();
+        self.add_internal_roots(&mut roots);
+        roots
+    }
+
+    fn complete_root_set(&self, roots: &RootSet) -> RootSet {
+        let mut roots = roots.clone();
+        self.add_internal_roots(&mut roots);
+        roots
+    }
+
+    fn add_internal_roots(&self, roots: &mut RootSet) {
+        if let Some(intrinsics) = &self.intrinsics {
+            roots.object_roots.extend([
+                intrinsics.object_prototype,
+                intrinsics.function_prototype,
+                intrinsics.array_prototype,
+                intrinsics.string_prototype,
+                intrinsics.number_prototype,
+                intrinsics.boolean_prototype,
+                intrinsics.error_prototype,
+                intrinsics.regexp_prototype,
+            ]);
+            roots.value_roots.extend([
+                intrinsics.object_constructor.clone(),
+                intrinsics.function_constructor.clone(),
+                intrinsics.array_constructor.clone(),
+            ]);
+        }
+        roots
+            .object_roots
+            .extend(self.function_prototypes.values().copied());
+        roots
+            .object_roots
+            .extend(self.function_objects.values().copied());
+        for builtin in &self.builtin_registry {
+            roots.object_roots.push(builtin.object);
+            if let Some(bound) = &builtin.bound {
+                roots.value_roots.push(bound.target.clone());
+                roots.value_roots.push(bound.this_value.clone());
+                roots.value_roots.extend(bound.args.iter().cloned());
+            }
+        }
+    }
+
+    fn prune_swept_metadata(&mut self) {
+        self.function_prototypes.retain(|function, object| {
+            self.heap.contains_function(*function) && self.heap.contains_object(*object)
+        });
+        self.function_objects.retain(|function, object| {
+            self.heap.contains_function(*function) && self.heap.contains_object(*object)
+        });
+        self.object_values.retain(|object, value| {
+            self.heap.contains_object(*object) && value_references_live_heap(value, &self.heap)
+        });
+        self.error_objects
+            .retain(|object| self.heap.contains_object(*object));
+        self.raw_json_objects
+            .retain(|object, _| self.heap.contains_object(*object));
     }
 
     /// Register a builtin function and return `JsValue::BuiltinFunction(id)`.
@@ -136,7 +308,7 @@ impl NativeContext {
         let object_id = self
             .heap
             .allocate_object(object)
-            .ok_or_else(|| crate::vm::VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| crate::vm::VmError::runtime_limit("object arena exhausted"))?;
         let idx = self.builtin_registry.len();
         let id = BuiltinId(
             u16::try_from(idx).map_err(|_| crate::vm::VmError::runtime("builtin registry full"))?,
@@ -175,7 +347,7 @@ impl NativeContext {
         let object_id = self
             .heap
             .allocate_object(object)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         let idx = self.builtin_registry.len();
         let id =
             BuiltinId(u16::try_from(idx).map_err(|_| VmError::runtime("builtin registry full"))?);
@@ -443,7 +615,7 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_object(obj)
-            .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("heap exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
@@ -456,23 +628,33 @@ impl NativeContext {
     /// Collects the `for-in` enumeration keys for `object`: own enumerable
     /// string keys followed by inherited ones, de-duplicated, walking the
     /// prototype chain.
-    #[must_use]
-    pub fn for_in_keys(&self, object: ObjectId) -> Vec<String> {
+    pub fn for_in_keys(&self, object: ObjectId) -> Result<Vec<String>, VmError> {
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();
         let mut current = Some(object);
+        let mut depth = 0usize;
         while let Some(id) = current {
+            self.check_deadline()?;
+            if depth > PROTOTYPE_CHAIN_LIMIT {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
             let Some(obj) = self.heap.object(id) else {
                 break;
             };
             for key in obj.enumerable_own_keys() {
                 if seen.insert(key.clone()) {
+                    if result.len() >= MAX_ARRAY_LENGTH {
+                        return Err(VmError::runtime_limit(
+                            "property enumeration limit exceeded",
+                        ));
+                    }
                     result.push(key);
                 }
             }
             current = obj.prototype;
+            depth += 1;
         }
-        result
+        Ok(result)
     }
 
     #[must_use]
@@ -494,7 +676,7 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_environment(environment)
-            .ok_or_else(|| VmError::runtime("environment arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("environment arena exhausted"))?;
         self.environment_stack.push(self.current_environment);
         self.current_environment = id;
         Ok(id)
@@ -672,12 +854,12 @@ impl NativeContext {
         let function_object_id = self
             .heap
             .allocate_object(function_object)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
 
         let id = self
             .heap
             .allocate_function(function)
-            .ok_or_else(|| VmError::runtime("function arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("function arena exhausted"))?;
         self.register_function_object(id, function_object_id);
 
         let mut prototype = JsObject::ordinary();
@@ -689,7 +871,7 @@ impl NativeContext {
         let prototype_id = self
             .heap
             .allocate_object(prototype)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         self.function_prototypes.insert(id, prototype_id);
 
         let function_object = self
@@ -747,7 +929,7 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_object(object)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
@@ -760,7 +942,7 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_object(array)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
@@ -771,7 +953,7 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_object(object)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
@@ -784,7 +966,7 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_object(array)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
@@ -1099,7 +1281,7 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_object(object)
-            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }
 
@@ -1445,48 +1627,52 @@ impl NativeContext {
         let Some(length) = value.to_number() else {
             return Err(VmError::range("invalid array length"));
         };
-        if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > u32::MAX as f64
-        {
-            return Err(VmError::range("invalid array length"));
-        }
-        let length = length as usize;
-        if length > MAX_ARRAY_LENGTH {
-            return Err(VmError::range("invalid array length"));
-        }
-        Ok(length)
+        checked_array_length(length)
     }
 
     pub fn reset_execution_budget(&mut self, loop_limit: u64) {
-        self.loop_budget_remaining = loop_limit;
+        self.budget.loop_remaining = loop_limit;
+    }
+
+    pub fn reset_stack_limit(&mut self, stack_limit: usize) {
+        self.budget.stack_limit = stack_limit;
+    }
+
+    pub fn reset_deadline(&mut self, limit: Option<Duration>) {
+        self.budget.deadline = limit.map(|limit| Instant::now() + limit);
+    }
+
+    pub fn check_deadline(&self) -> Result<(), VmError> {
+        self.budget.check_deadline()
+    }
+
+    pub fn check_stack_depth(&self, depth: usize) -> Result<(), VmError> {
+        self.budget.check_stack_depth(depth)
     }
 
     pub fn consume_loop_iteration(&mut self) -> Result<(), VmError> {
-        if self.loop_budget_remaining == 0 {
-            return Err(VmError::runtime_limit("loop iteration limit exceeded"));
-        }
-
-        self.loop_budget_remaining -= 1;
-        Ok(())
+        self.budget.check_loop()
     }
 
     #[must_use]
     pub const fn loop_budget_remaining(&self) -> u64 {
-        self.loop_budget_remaining
+        self.budget.loop_remaining
     }
 
     pub fn reset_call_depth(&mut self, call_stack_limit: u64) {
-        self.call_stack_limit = call_stack_limit;
+        self.budget.call_depth_limit = call_stack_limit;
         self.call_depth = 0;
     }
 
     pub fn consume_call_depth(&mut self) -> Result<(), VmError> {
-        if self.call_depth >= self.call_stack_limit {
-            return Err(VmError::runtime_limit("call stack limit exceeded"));
-        }
+        self.budget.check_call_depth(self.call_depth)?;
         self.call_depth += 1;
         Ok(())
     }
 
+    pub fn release_call_depth(&mut self) {
+        self.call_depth = self.call_depth.saturating_sub(1);
+    }
     #[must_use]
     pub const fn strict(&self) -> bool {
         self.strict
@@ -1509,6 +1695,45 @@ impl NativeContext {
     }
 }
 
+pub fn checked_string_repeat_len(unit_len: usize, count: usize) -> Result<usize, VmError> {
+    let len = unit_len
+        .checked_mul(count)
+        .ok_or_else(|| VmError::runtime_limit("string allocation limit exceeded"))?;
+    checked_utf16_allocation(len)?;
+    Ok(len)
+}
+
+pub fn checked_array_length(length: f64) -> Result<usize, VmError> {
+    if !length.is_finite() || length < 0.0 || length.fract() != 0.0 || length > u32::MAX as f64 {
+        return Err(VmError::range("invalid array length"));
+    }
+    let length = length as usize;
+    if length > MAX_ARRAY_LENGTH {
+        return Err(VmError::runtime_limit("array allocation limit exceeded"));
+    }
+    Ok(length)
+}
+
+pub fn checked_utf16_allocation(units: usize) -> Result<(), VmError> {
+    if units > MAX_UTF16_ALLOCATION_UNITS {
+        return Err(VmError::runtime_limit("string allocation limit exceeded"));
+    }
+    Ok(())
+}
+fn value_references_live_heap(value: &JsValue, heap: &Heap) -> bool {
+    match value {
+        JsValue::Object(object) => heap.contains_object(*object),
+        JsValue::Function(function) => heap.contains_function(*function),
+        JsValue::Undefined
+        | JsValue::Null
+        | JsValue::Boolean(_)
+        | JsValue::Number(_)
+        | JsValue::String(_)
+        | JsValue::Symbol(_)
+        | JsValue::BuiltinFunction(_)
+        | JsValue::Error(_) => true,
+    }
+}
 pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
     match value {
         JsValue::String(value) => Ok(value.clone()),

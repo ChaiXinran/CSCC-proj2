@@ -2,10 +2,10 @@
 
 use std::fmt;
 
-use crate::bytecode::Chunk;
+use crate::bytecode::{Chunk, Constant};
 use crate::vm::{Vm, VmError};
 
-use super::{EnvironmentId, JsValue, NativeContext, ObjectId};
+use super::{EnvironmentId, JsValue, NativeContext, ObjectId, Trace, Tracer};
 
 /// Stable handle into the runtime function arena.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -72,4 +72,59 @@ impl fmt::Debug for BuiltinFunction {
             .field("bound", &self.bound)
             .finish()
     }
+}
+
+impl Trace for JsFunction {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        if let Some(environment) = self.environment {
+            tracer.mark_environment(environment);
+        }
+    }
+}
+
+impl JsFunction {
+    #[must_use]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>()
+            .saturating_add(self.name.as_ref().map_or(0, String::len))
+            .saturating_add(self.params.iter().map(String::len).sum::<usize>())
+            .saturating_add(estimate_chunk_bytes(&self.chunk))
+    }
+}
+
+impl Trace for BoundFunction {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        self.target.trace(tracer);
+        self.this_value.trace(tracer);
+        for arg in &self.args {
+            arg.trace(tracer);
+        }
+    }
+}
+
+impl Trace for BuiltinFunction {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        tracer.mark_object(self.object);
+        if let Some(bound) = &self.bound {
+            bound.trace(tracer);
+        }
+    }
+}
+
+fn estimate_chunk_bytes(chunk: &Chunk) -> usize {
+    chunk
+        .instructions
+        .len()
+        .saturating_mul(std::mem::size_of::<crate::bytecode::Instruction>())
+        .saturating_add(
+            chunk
+                .constants
+                .iter()
+                .map(|constant| match constant {
+                    Constant::String(value) => value.len(),
+                    _ => std::mem::size_of::<Constant>(),
+                })
+                .sum::<usize>(),
+        )
+        .saturating_add(chunk.functions.len().saturating_mul(64))
 }

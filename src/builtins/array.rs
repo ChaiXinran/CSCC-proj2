@@ -178,6 +178,7 @@ fn get_elem(
     value: JsValue,
     index: usize,
 ) -> Result<JsValue, VmError> {
+    context.consume_loop_iteration()?;
     vm.get_property_value(value, &index.to_string(), context)
 }
 

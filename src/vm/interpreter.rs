@@ -123,6 +123,14 @@ impl Vm {
         self.execute_with_context(chunk, &mut NativeContext::default())
     }
 
+    pub(crate) fn operand_stack_roots(&self) -> Vec<JsValue> {
+        self.stack.clone()
+    }
+
+    pub(crate) fn pending_exception_root(&self) -> Option<JsValue> {
+        self.pending_exception.clone()
+    }
+
     pub fn execute_with_context(
         &mut self,
         chunk: &Chunk,
@@ -131,6 +139,14 @@ impl Vm {
         self.stack.clear();
         self.pending_exception = None;
         self.finally_stack.clear();
+        chunk
+            .validate()
+            .map_err(|error| VmError::runtime(format!("invalid bytecode chunk: {error}")))?;
+        let analysis = chunk
+            .analyze_stack()
+            .map_err(|error| VmError::runtime(format!("invalid bytecode stack: {error}")))?;
+        context.check_stack_depth(analysis.max_depth)?;
+        self.stack.reserve(analysis.max_depth);
         let result = self.run_completion(chunk, context);
         if result.is_err() {
             self.stack.clear();
@@ -167,12 +183,22 @@ impl Vm {
         chunk: &Chunk,
         context: &mut NativeContext,
     ) -> Result<Completion, VmError> {
+        let analysis = chunk
+            .analyze_stack()
+            .map_err(|error| VmError::runtime(format!("invalid bytecode stack: {error}")))?;
+        context.check_stack_depth(self.stack.len().saturating_add(analysis.max_depth))?;
+        self.stack.reserve(analysis.max_depth);
+
         let mut instruction_pointer = 0;
         let baseline = RunBaseline {
             stack_depth: self.stack.len(),
             environment_depth: context.environment_depth(),
         };
         while instruction_pointer < chunk.instructions.len() {
+            context.check_deadline()?;
+            if context.should_collect_garbage() {
+                context.collect_garbage_for_vm(self)?;
+            }
             let current_instruction = instruction_pointer;
             let instruction = chunk.instructions[current_instruction];
             instruction_pointer += 1;
@@ -526,11 +552,13 @@ impl Vm {
                     let value = self.pop_value()?;
                     let keys: Vec<String> = match &value {
                         JsValue::Null | JsValue::Undefined => Vec::new(),
-                        JsValue::String(text) => (0..text.encode_utf16().count())
-                            .map(|index| index.to_string())
-                            .collect(),
+                        JsValue::String(text) => {
+                            let count = text.encode_utf16().count();
+                            context.ensure_heap_capacity(count.saturating_mul(8))?;
+                            (0..count).map(|index| index.to_string()).collect()
+                        }
                         _ => match context.value_object(&value) {
-                            Some(object) => context.for_in_keys(object),
+                            Some(object) => context.for_in_keys(object)?,
                             None => Vec::new(),
                         },
                     };
@@ -921,43 +949,48 @@ impl Vm {
                 self.call_user_function(function, this_value, arguments, context)
             }
             JsValue::BuiltinFunction(id) => {
-                let def = context
-                    .builtin(id)
-                    .ok_or_else(|| VmError::runtime("invalid builtin id"))?
-                    .clone();
-                // A bound function forwards to its target with the bound `this`
-                // and bound arguments prepended.
-                if let Some(bound) = &def.bound {
-                    let mut forwarded = bound.args.clone();
-                    forwarded.extend(arguments);
-                    let target = bound.target.clone();
-                    let this_value = bound.this_value.clone();
-                    return self.call_value(target, this_value, forwarded, context);
-                }
-                if context.is_function_prototype_call(id) {
-                    let target = this_value;
-                    let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-                    let forwarded = arguments.into_iter().skip(1).collect();
-                    return self.call_value(target, call_this, forwarded, context);
-                }
-                match (def.call)(self, context, this_value, &arguments) {
-                    Ok(value) => Ok(OperationResult::Value(value)),
-                    Err(error) => match self.pending_exception.take() {
-                        // A nested JavaScript callback threw; surface its value.
-                        Some(value) => Ok(OperationResult::Throw(value)),
-                        // ECMAScript error types raised directly by a builtin are
-                        // catchable throws; engine-internal failures are not.
-                        None => match error.kind {
-                            VmErrorKind::Reference
-                            | VmErrorKind::Type
-                            | VmErrorKind::Syntax
-                            | VmErrorKind::Range => {
-                                Ok(OperationResult::Throw(vm_error_to_value(error)))
-                            }
-                            _ => Err(error),
+                context.consume_call_depth()?;
+                let result: Result<OperationResult, VmError> = (|| {
+                    let def = context
+                        .builtin(id)
+                        .ok_or_else(|| VmError::runtime("invalid builtin id"))?
+                        .clone();
+                    // A bound function forwards to its target with the bound `this`
+                    // and bound arguments prepended.
+                    if let Some(bound) = &def.bound {
+                        let mut forwarded = bound.args.clone();
+                        forwarded.extend(arguments);
+                        let target = bound.target.clone();
+                        let this_value = bound.this_value.clone();
+                        return self.call_value(target, this_value, forwarded, context);
+                    }
+                    if context.is_function_prototype_call(id) {
+                        let target = this_value;
+                        let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+                        let forwarded = arguments.into_iter().skip(1).collect();
+                        return self.call_value(target, call_this, forwarded, context);
+                    }
+                    match (def.call)(self, context, this_value, &arguments) {
+                        Ok(value) => Ok(OperationResult::Value(value)),
+                        Err(error) => match self.pending_exception.take() {
+                            // A nested JavaScript callback threw; surface its value.
+                            Some(value) => Ok(OperationResult::Throw(value)),
+                            // ECMAScript error types raised directly by a builtin are
+                            // catchable throws; engine-internal failures are not.
+                            None => match error.kind {
+                                VmErrorKind::Reference
+                                | VmErrorKind::Type
+                                | VmErrorKind::Syntax
+                                | VmErrorKind::Range => {
+                                    Ok(OperationResult::Throw(vm_error_to_value(error)))
+                                }
+                                _ => Err(error),
+                            },
                         },
-                    },
-                }
+                    }
+                })();
+                context.release_call_depth();
+                result
             }
             other => Err(VmError::type_error(format!("{other} is not callable"))),
         }
@@ -1570,40 +1603,46 @@ impl Vm {
                 }
             }
             JsValue::BuiltinFunction(id) => {
-                let def = context
-                    .builtin(id)
-                    .ok_or_else(|| VmError::runtime("invalid builtin id"))?
-                    .clone();
-                // `new boundFn(...)` constructs the target with the bound
-                // arguments prepended (the bound `this` is ignored for `new`).
-                if let Some(bound) = &def.bound {
-                    let mut forwarded = bound.args.clone();
-                    forwarded.extend(arguments);
-                    let target = bound.target.clone();
-                    return self.construct_value(target, forwarded, context);
-                }
-                match def.construct {
-                    Some(construct) => {
-                        match construct(self, context, &arguments, JsValue::BuiltinFunction(id)) {
-                            Ok(value) => Ok(OperationResult::Value(value)),
-                            Err(error) => match self.pending_exception.take() {
-                                Some(value) => Ok(OperationResult::Throw(value)),
-                                None => match error.kind {
-                                    VmErrorKind::Reference
-                                    | VmErrorKind::Type
-                                    | VmErrorKind::Syntax
-                                    | VmErrorKind::Range => {
-                                        Ok(OperationResult::Throw(vm_error_to_value(error)))
-                                    }
-                                    _ => Err(error),
-                                },
-                            },
-                        }
+                context.consume_call_depth()?;
+                let result: Result<OperationResult, VmError> = (|| {
+                    let def = context
+                        .builtin(id)
+                        .ok_or_else(|| VmError::runtime("invalid builtin id"))?
+                        .clone();
+                    // `new boundFn(...)` constructs the target with the bound
+                    // arguments prepended (the bound `this` is ignored for `new`).
+                    if let Some(bound) = &def.bound {
+                        let mut forwarded = bound.args.clone();
+                        forwarded.extend(arguments);
+                        let target = bound.target.clone();
+                        return self.construct_value(target, forwarded, context);
                     }
-                    None => Ok(OperationResult::Throw(vm_error_to_value(VmError::type_error(
-                        format!("{} is not a constructor", def.name),
-                    )))),
-                }
+                    match def.construct {
+                        Some(construct) => {
+                            match construct(self, context, &arguments, JsValue::BuiltinFunction(id))
+                            {
+                                Ok(value) => Ok(OperationResult::Value(value)),
+                                Err(error) => match self.pending_exception.take() {
+                                    Some(value) => Ok(OperationResult::Throw(value)),
+                                    None => match error.kind {
+                                        VmErrorKind::Reference
+                                        | VmErrorKind::Type
+                                        | VmErrorKind::Syntax
+                                        | VmErrorKind::Range => {
+                                            Ok(OperationResult::Throw(vm_error_to_value(error)))
+                                        }
+                                        _ => Err(error),
+                                    },
+                                },
+                            }
+                        }
+                        None => Ok(OperationResult::Throw(vm_error_to_value(
+                            VmError::type_error(format!("{} is not a constructor", def.name)),
+                        ))),
+                    }
+                })();
+                context.release_call_depth();
+                result
             }
             other => Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error(format!("{other} is not a constructor")),
@@ -2011,7 +2050,8 @@ mod tests {
         let error = Vm::default().execute(&chunk).unwrap_err();
 
         assert_eq!(error.kind, VmErrorKind::Runtime);
-        assert!(error.message.contains("underflow"));
+        assert!(error.message.contains("invalid bytecode chunk"));
+        assert!(error.message.contains("requires"));
     }
 
     #[test]
@@ -2146,9 +2186,7 @@ mod tests {
     fn clears_temporary_stack_between_runs() {
         let mut first = Chunk::default();
         let one = constant(&mut first, Constant::Number(1.0));
-        let two = constant(&mut first, Constant::Number(2.0));
         first.emit(Instruction::Constant(one));
-        first.emit(Instruction::Constant(two));
         first.emit(Instruction::Return);
 
         let mut second = Chunk::default();
@@ -2156,9 +2194,10 @@ mod tests {
         second.emit(Instruction::Return);
 
         let mut vm = Vm::default();
-        assert_eq!(vm.execute(&first).unwrap(), JsValue::Number(2.0));
+        assert_eq!(vm.execute(&first).unwrap(), JsValue::Number(1.0));
         let error = vm.execute(&second).unwrap_err();
         assert_eq!(error.kind, VmErrorKind::Runtime);
+        assert!(error.message.contains("invalid bytecode chunk"));
     }
 
     #[test]
