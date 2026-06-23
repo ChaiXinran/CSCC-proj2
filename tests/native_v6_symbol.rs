@@ -64,6 +64,36 @@ fn symbol_to_string_with_no_description() {
     assert_eq!(native_eval("Symbol().toString()"), "Symbol()");
 }
 
+#[test]
+fn object_wraps_symbol_primitives() {
+    assert_eq!(native_eval("typeof Object(Symbol('x'))"), "object");
+}
+
+#[test]
+fn symbol_prototype_methods_accept_symbol_wrappers() {
+    assert_eq!(
+        native_eval("Symbol.prototype.toString.call(Object(Symbol('x')))"),
+        "Symbol(x)"
+    );
+    assert_eq!(
+        native_eval("Symbol.prototype.valueOf.call(Object(Symbol('x'))).toString()"),
+        "Symbol(x)"
+    );
+}
+
+#[test]
+fn symbol_description_accepts_symbol_wrappers() {
+    assert_eq!(native_eval("Object(Symbol('x')).description"), "x");
+}
+
+#[test]
+fn object_to_string_reports_symbol_wrapper_tag() {
+    assert_eq!(
+        native_eval("Object.prototype.toString.call(Object(Symbol('x')))"),
+        "[object Symbol]"
+    );
+}
+
 // ── coercion errors ───────────────────────────────────────────────────────────
 
 #[test]
