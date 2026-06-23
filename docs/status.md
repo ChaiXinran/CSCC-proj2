@@ -51,9 +51,9 @@
   1,499 of 2,199 selected String, Number, Math, Boolean, Error, and JSON tests,
   with 1 explicitly skipped.
 - A sharded Test262 run on revision `de8e621c` executed 47,516 non-staging
-  tests and passed 45,310 (87.31% lower bound). See `reports/test262-report.md`.
-- The V7 frontend/cache-safety scan (`--native-v7-scan`) currently passes 1,771
-  of 3,034 tests (58.37%). See `reports/native-v7-frontend-summary.json`.
+  tests and passed 45,310. Treating every unexecuted non-staging test as a
+  failure gives a conservative full-suite lower bound of 87.31%. See
+  `reports/test262-report.md`.
 - V7 bytecode groundwork exposes recursive `ChunkCacheMetadata`, rejects
   invalid chunks before interpretation, and covers high stack depth, handler
   restore invariants, nested-function validation, and source-to-cache-metadata
@@ -61,24 +61,19 @@
 - V7 runtime/GC/cache focused tests cover wall-clock and allocation limits,
   stack-budget rejection, non-moving GC preservation/collection behavior, and
   native script-cache hit/miss and capacity-zero behavior.
-- Peak resident memory is not yet measured automatically on any platform.
-
-## Native Microbenchmark (V7 release build, `--no-default-features`)
-
-Workload: `(function(){ let x = 0; for (let i = 0; i < 1000; i++) x += i; return x; })()`
-
-Platform: Windows 11, Intel Core Ultra 9 185H, Rust 1.96, commit `68ff1fd`
-
-| Scenario | Backend | avg µs/iter |
-| --- | --- | --- |
-| Cold isolate | Native | 721.9 |
-| Warm uncached | Native | 427.2 |
-| Warm cached | Native | 413.8 |
-| Cold isolate | Boa | 739.8 |
-| Warm uncached | Boa | 442.6 |
-| Warm cached | Boa | 445.2 |
-
-Native release binary size (`--no-default-features`): **2.91 MB**
+- The full Test262 dashboard helper now runs child suites in separate
+  processes, writes incremental JSON reports, and classifies completed,
+  crashed, and timed-out child suites. Set
+  `AGENTJS_TEST262_SUITE_TIMEOUT_SECS` to adjust the per-child-suite timeout.
+- `--native-v7` is now the pinned V7 integration gate. It runs the native
+  backend over the zero-failure, zero-skip V1-V6 Test262 files to catch
+  regressions after V7 stability, GC, cache, and reporting work.
+- `--native-v7-scan` selects a lightweight frontend/cache-safety Test262 sample
+  of selected language and builtin directories. The recommended local command
+  is `cargo run --release --no-default-features -- test262 --native-v7-scan
+  --jobs 4 --json reports/native-v7-frontend-summary.json`.
+  Current V7 scan results and failure classification are recorded in
+  `reports/native-v7-test262-report.md`.
 
 ## Acceptance Gates
 
@@ -88,11 +83,12 @@ Before claiming contest readiness:
    macOS, and Windows. ✅ CI enforces this on `ubuntu-latest` and `windows-latest`.
 2. Replace the conservative sharded result with a timeout-safe monolithic
    pinned Test262 run; the current verified lower bound already exceeds 60%.
-3. JetStream 2 and project microbenchmarks are compared with native results. ✅ Native
-   microbenchmark above; JetStream 2 report in `reports/jetstream2-report.md`.
-4. Binary size, cold-start latency, and warm throughput are reported with native
-   numbers. ✅ See table above.
-5. The script cache is measured against an uncached baseline. ✅ Cache hit/miss
+3. JetStream 2 and project microbenchmarks are compared with native results.
+   JetStream 2 report in `reports/jetstream2-report.md`; native microbenchmark
+   via `cargo run --release --no-default-features -- bench --native`.
+4. Binary size, cold-start latency, and warm throughput are reported with
+   native release build numbers.
+5. The script cache is measured against an uncached baseline. Cache hit/miss
    counts are reported by `bench --native`.
 
 V7 engineering milestone is complete. The remaining gap before contest readiness

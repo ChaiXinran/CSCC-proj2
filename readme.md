@@ -283,7 +283,9 @@ Test262 harness. Every file is checked in default and strict mode; Boa is not
 used. Current Native V4 results are recorded in the
 [Native V4 Test262 report](reports/native-v4-test262-report.md). Native V5
 results are recorded in the
-[Native V5 Test262 report](reports/native-v5-test262-report.md).
+[Native V5 Test262 report](reports/native-v5-test262-report.md). Native V7
+diagnostic results and failure classification are recorded in the
+[Native V7 Test262 report](reports/native-v7-test262-report.md).
 
 `--native-v4` is the curated zero-failure, zero-skip gate for the pinned V4
 object-model files. `--native-v4-scan` is the broader diagnostic scan for
