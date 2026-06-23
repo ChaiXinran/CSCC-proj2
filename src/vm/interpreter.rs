@@ -621,6 +621,16 @@ impl Vm {
                 Instruction::Duplicate => {
                     self.stack.push(self.peek_value()?.clone());
                 }
+                Instruction::DuplicatePair => {
+                    let depth = self.stack.len();
+                    if depth < 2 {
+                        return Err(VmError::runtime("operand stack underflow"));
+                    }
+                    let first = self.stack[depth - 2].clone();
+                    let second = self.stack[depth - 1].clone();
+                    self.stack.push(first);
+                    self.stack.push(second);
+                }
                 Instruction::CreateLexicalEnvironment => {
                     context.push_environment(Some(context.current_environment()))?;
                 }

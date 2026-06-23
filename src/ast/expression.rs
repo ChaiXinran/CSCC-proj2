@@ -22,6 +22,26 @@ pub enum UnaryOperator {
     Delete,
 }
 
+<<<<<<< HEAD
+=======
+/// `++`/`--` update operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdateOperator {
+    Increment,
+    Decrement,
+}
+
+/// Compound assignment operators such as `+=` and `*=`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentOperator {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+}
+
+>>>>>>> ebc5479 (Bug fix phase 1 trail C finished.)
 /// Binary expression operators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
@@ -175,6 +195,11 @@ pub enum Expression {
         right: Box<Expression>,
     },
     Assignment {
+        target: Box<Expression>,
+        value: Box<Expression>,
+    },
+    CompoundAssignment {
+        operator: AssignmentOperator,
         target: Box<Expression>,
         value: Box<Expression>,
     },
