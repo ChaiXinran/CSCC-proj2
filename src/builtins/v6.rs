@@ -2275,8 +2275,7 @@ fn regexp_to_string(
 
 fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
     // Symbol is NOT a constructor — new Symbol() throws TypeError.
-    let symbol_fn =
-        context.register_builtin("Symbol", 0, symbol_call, None)?;
+    let symbol_fn = context.register_builtin("Symbol", 0, symbol_call, None)?;
     let JsValue::BuiltinFunction(id) = &symbol_fn else {
         unreachable!()
     };
@@ -2286,12 +2285,12 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
     // properties on the Symbol function object (Symbol.toPrimitive etc.).
     let wk = *context.well_known_symbols();
     let well_known: &[(&str, crate::runtime::SymbolId)] = &[
-        ("toPrimitive",       wk.to_primitive),
-        ("toStringTag",       wk.to_string_tag),
-        ("iterator",          wk.iterator),
-        ("hasInstance",       wk.has_instance),
-        ("isConcatSpreadable",wk.is_concat_spreadable),
-        ("species",           wk.species),
+        ("toPrimitive", wk.to_primitive),
+        ("toStringTag", wk.to_string_tag),
+        ("iterator", wk.iterator),
+        ("hasInstance", wk.has_instance),
+        ("isConcatSpreadable", wk.is_concat_spreadable),
+        ("species", wk.species),
     ];
     for (name, sym_id) in well_known {
         context.define_own_property(
@@ -2319,11 +2318,12 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
     )?;
 
     define_method(context, proto, "toString", 0, symbol_proto_to_string)?;
-    define_method(context, proto, "valueOf",  0, symbol_proto_value_of)?;
+    define_method(context, proto, "valueOf", 0, symbol_proto_value_of)?;
 
     // `description` is an accessor getter — `Symbol('x').description` must return
     // the string "x", not the getter function itself.
-    let desc_getter = context.register_builtin("get description", 0, symbol_proto_description, None)?;
+    let desc_getter =
+        context.register_builtin("get description", 0, symbol_proto_description, None)?;
     context.define_own_property(
         proto,
         "description".into(),
@@ -2361,18 +2361,23 @@ fn install_to_string_tags(
         };
     }
 
-    push_proto!(object_prototype,  "Object");
-    push_proto!(array_prototype,   "Array");
-    push_proto!(string_prototype,  "String");
-    push_proto!(number_prototype,  "Number");
+    push_proto!(object_prototype, "Object");
+    push_proto!(array_prototype, "Array");
+    push_proto!(string_prototype, "String");
+    push_proto!(number_prototype, "Number");
     push_proto!(boolean_prototype, "Boolean");
-    push_proto!(error_prototype,   "Error");
-    push_proto!(regexp_prototype,  "RegExp");
+    push_proto!(error_prototype, "Error");
+    push_proto!(regexp_prototype, "RegExp");
 
     // Sub-error prototypes (TypeError, RangeError, etc.) get their own tag.
-    for name in ["TypeError", "RangeError", "ReferenceError", "SyntaxError",
-                 "URIError", "EvalError"]
-    {
+    for name in [
+        "TypeError",
+        "RangeError",
+        "ReferenceError",
+        "SyntaxError",
+        "URIError",
+        "EvalError",
+    ] {
         if let Some(ctor) = context.get_global(name)
             && let Some(ctor_obj) = context.value_object(&ctor)
             && let Some(proto_desc) = context.get_own_property_descriptor(ctor_obj, "prototype")
@@ -2449,7 +2454,10 @@ fn symbol_proto_description(
 }
 
 /// Extract the underlying SymbolId from a Symbol primitive or Symbol wrapper.
-fn extract_symbol(_context: &NativeContext, this: JsValue) -> Result<crate::runtime::SymbolId, crate::vm::VmError> {
+fn extract_symbol(
+    _context: &NativeContext,
+    this: JsValue,
+) -> Result<crate::runtime::SymbolId, crate::vm::VmError> {
     match this {
         JsValue::Symbol(id) => Ok(id),
         _ => Err(VmError::type_error(

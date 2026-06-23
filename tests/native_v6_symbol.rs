@@ -194,5 +194,8 @@ fn json_stringify_object_with_symbol_value_omits_the_entry() {
 #[test]
 fn new_symbol_throws_typeerror() {
     let e = native_eval_err("new Symbol()");
-    assert!(e.contains("TypeError") || e.contains("constructor"), "got: {e}");
+    assert!(
+        e.contains("TypeError") || e.contains("constructor"),
+        "got: {e}"
+    );
 }
