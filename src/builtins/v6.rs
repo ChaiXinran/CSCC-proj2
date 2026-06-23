@@ -767,18 +767,10 @@ fn number_to_exponential(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_number(context, &this)?;
-    if !value.is_finite() {
-        return number::to_exponential(value, None)
-            .map(JsValue::String)
-            .map_err(map_number_format_error);
-    }
     let fraction_digits = match arguments.first() {
         None | Some(JsValue::Undefined) => None,
         Some(_) => {
             let digits = to_integer_or_infinity(arg_number(vm, context, arguments, 0)?);
-            if !(0.0..=100.0).contains(&digits) {
-                return Err(VmError::range("fraction digits must be between 0 and 100"));
-            }
             Some(digits as u32)
         }
     };
@@ -798,9 +790,6 @@ fn number_to_precision(
         None | Some(JsValue::Undefined) => None,
         Some(_) => {
             let precision = to_integer_or_infinity(arg_number(vm, context, arguments, 0)?);
-            if !(1.0..=100.0).contains(&precision) {
-                return Err(VmError::range("precision must be between 1 and 100"));
-            }
             Some(precision as u32)
         }
     };

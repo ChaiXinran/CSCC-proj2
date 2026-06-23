@@ -11,7 +11,7 @@ use boolean::{BOOLEAN_PROTOTYPE_METHODS, boolean_call, boolean_to_string, boolea
 use error::{ERROR_CONSTRUCTORS, constructor_spec, create_error_record, error_to_string};
 use math::{MATH_CONSTANTS, MATH_METHODS, f16round, sum_precise};
 use number::{
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, NUMBER_CONSTANTS, NUMBER_PROTOTYPE_METHODS,
+    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, MIN_VALUE, NUMBER_CONSTANTS, NUMBER_PROTOTYPE_METHODS,
     NUMBER_STATIC_METHODS, NumberFormatError, is_finite, is_integer, is_nan, is_safe_integer,
     number_call, number_to_string, number_value_of, parse_float, parse_int, to_exponential,
     to_fixed, to_precision,
@@ -25,6 +25,12 @@ fn numeric_metadata_matches_the_v6_contract() {
     assert!(NUMBER_CONSTANTS.iter().any(|constant| {
         constant.name == "MIN_SAFE_INTEGER" && constant.value == MIN_SAFE_INTEGER
     }));
+    assert!(
+        NUMBER_CONSTANTS
+            .iter()
+            .any(|constant| constant.name == "MIN_VALUE" && constant.value == MIN_VALUE)
+    );
+    assert_eq!(MIN_VALUE / 2.0, 0.0);
     assert!(
         NUMBER_CONSTANTS
             .iter()
@@ -106,12 +112,19 @@ fn number_formatting_covers_radix_and_precision_errors() {
         to_fixed(1.0, 101),
         Err(NumberFormatError::FractionDigitsOutOfRange)
     );
-    assert!(to_exponential(12.5, Some(1)).unwrap().starts_with("1.2e"));
+    assert_eq!(to_exponential(3.0, Some(0)).unwrap(), "3e+0");
+    assert_eq!(to_exponential(12.5, Some(1)).unwrap(), "1.2e+1");
+    assert_eq!(to_exponential(0.0, Some(2)).unwrap(), "0.00e+0");
     assert_eq!(
         to_exponential(1.0, Some(101)),
         Err(NumberFormatError::FractionDigitsOutOfRange)
     );
-    assert_eq!(to_precision(12.345, Some(3)).unwrap(), "12.345");
+    assert_eq!(to_fixed(1e21, 1).unwrap(), "1e+21");
+    assert_eq!(to_precision(12.345, Some(3)).unwrap(), "12.3");
+    assert_eq!(to_precision(7.0, Some(3)).unwrap(), "7.00");
+    assert_eq!(to_precision(100.0, Some(2)).unwrap(), "1.0e+2");
+    assert_eq!(to_precision(0.0, Some(3)).unwrap(), "0.00");
+    assert_eq!(to_precision(f64::INFINITY, Some(1000)).unwrap(), "Infinity");
     assert_eq!(
         to_precision(1.0, Some(0)),
         Err(NumberFormatError::PrecisionOutOfRange)

@@ -4,6 +4,8 @@
 //! integration step. The functions here avoid VM/runtime dependencies so C2
 //! can be developed without touching shared C0 or D-owned files.
 
+
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct NumberMethodSpec {
     pub name: &'static str,
@@ -24,6 +26,7 @@ pub(crate) enum NumberFormatError {
 }
 
 pub(crate) const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
+pub(crate) const MIN_VALUE: f64 = f64::from_bits(1);
 pub(crate) const MIN_SAFE_INTEGER: f64 = -9_007_199_254_740_991.0;
 
 pub(crate) const NUMBER_CONSTANTS: &[NumberConstantSpec] = &[
@@ -45,7 +48,7 @@ pub(crate) const NUMBER_CONSTANTS: &[NumberConstantSpec] = &[
     },
     NumberConstantSpec {
         name: "MIN_VALUE",
-        value: f64::MIN_POSITIVE,
+        value: MIN_VALUE,
     },
     NumberConstantSpec {
         name: "NaN",
@@ -166,6 +169,9 @@ pub(crate) fn to_fixed(value: f64, digits: u32) -> Result<String, NumberFormatEr
     if !value.is_finite() {
         return Ok(decimal_number_to_string(value));
     }
+    if value.abs() >= 1e21 {
+        return Ok(decimal_number_to_string(value));
+    }
     Ok(format!("{value:.digits$}", digits = digits as usize))
 }
 
@@ -173,16 +179,18 @@ pub(crate) fn to_exponential(
     value: f64,
     fraction_digits: Option<u32>,
 ) -> Result<String, NumberFormatError> {
-    if fraction_digits.is_some_and(|digits| digits > 100) {
-        return Err(NumberFormatError::FractionDigitsOutOfRange);
-    }
     if !value.is_finite() {
         return Ok(decimal_number_to_string(value));
     }
-    Ok(match fraction_digits {
+    if fraction_digits.is_some_and(|digits| digits > 100) {
+        return Err(NumberFormatError::FractionDigitsOutOfRange);
+    }
+    let value = if value == 0.0 { 0.0 } else { value };
+    let formatted = match fraction_digits {
         Some(digits) => format!("{value:.digits$e}", digits = digits as usize),
         None => format!("{value:e}"),
-    })
+    };
+    Ok(normalize_exponential_notation(&formatted))
 }
 
 pub(crate) fn to_precision(
@@ -192,16 +200,55 @@ pub(crate) fn to_precision(
     let Some(precision) = precision else {
         return Ok(decimal_number_to_string(value));
     };
-    if !(1..=100).contains(&precision) {
-        return Err(NumberFormatError::PrecisionOutOfRange);
-    }
     if !value.is_finite() {
         return Ok(decimal_number_to_string(value));
     }
-    Ok(format!(
-        "{value:.precision$}",
-        precision = precision as usize
-    ))
+    if !(1..=100).contains(&precision) {
+        return Err(NumberFormatError::PrecisionOutOfRange);
+    }
+    if value == 0.0 {
+        if precision == 1 {
+            return Ok("0".into());
+        }
+        return Ok(format!("0.{}", "0".repeat(precision as usize - 1)));
+    }
+
+    let sign = if value.is_sign_negative() { "-" } else { "" };
+    let raw = format!("{:.*e}", precision as usize - 1, value.abs());
+    let Some((mantissa, exponent)) = raw.split_once('e') else {
+        return Ok(format!("{sign}{raw}"));
+    };
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    let digits: String = mantissa
+        .chars()
+        .filter(|character| *character != '.')
+        .collect();
+
+    if exponent < -6 || exponent >= precision as i32 {
+        let mantissa = if precision == 1 {
+            digits
+        } else {
+            format!("{}.{}", &digits[..1], &digits[1..])
+        };
+        return Ok(format!("{sign}{mantissa}e{exponent:+}"));
+    }
+
+    if exponent == precision as i32 - 1 {
+        return Ok(format!("{sign}{digits}"));
+    }
+    if exponent >= 0 {
+        let split = (exponent + 1) as usize;
+        if split >= digits.len() {
+            return Ok(format!(
+                "{sign}{digits}{}",
+                "0".repeat(split.saturating_sub(digits.len()))
+            ));
+        }
+        return Ok(format!("{sign}{}.{}", &digits[..split], &digits[split..]));
+    }
+
+    let leading_zeros = (-exponent - 1) as usize;
+    Ok(format!("{sign}0.{}{}", "0".repeat(leading_zeros), digits))
 }
 
 #[must_use]
@@ -296,11 +343,16 @@ fn decimal_number_to_string(value: f64) -> String {
 fn js_scientific_number_to_string(value: f64) -> String {
     let sign = if value.is_sign_negative() { "-" } else { "" };
     let raw = format!("{:e}", value.abs());
+    let formatted = normalize_exponential_notation(&raw);
+    format!("{sign}{formatted}")
+}
+
+fn normalize_exponential_notation(raw: &str) -> String {
     let Some((mantissa, exponent)) = raw.split_once('e') else {
-        return format!("{sign}{raw}");
+        return raw.into();
     };
     let exponent = exponent.parse::<i32>().unwrap_or(0);
-    format!("{sign}{mantissa}e{exponent:+}")
+    format!("{mantissa}e{exponent:+}")
 }
 
 fn integer_to_radix_string(value: f64, radix: u32) -> String {

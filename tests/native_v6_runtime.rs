@@ -406,3 +406,9 @@ fn number_call_on_empty_string_returns_zero() {
 fn number_call_on_infinity_string_returns_infinity() {
     assert_eq!(native_eval("Number('Infinity');"), "Infinity");
 }
+
+#[test]
+fn number_call_rejects_non_canonical_infinity_spelling() {
+    assert_eq!(native_eval("Number('INFINITY');"), "NaN");
+    assert_eq!(native_eval("Number('inf');"), "NaN");
+}
