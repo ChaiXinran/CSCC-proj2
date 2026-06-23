@@ -46,12 +46,13 @@ Result:
 
 | Total | Passed | Failed | Skipped | Conformance |
 | ---: | ---: | ---: | ---: | ---: |
-| 2,199 | 769 | 967 | 463 | 34.97% |
+| 2,199 | 1,407 | 791 | 1 | 63.98% |
 
-Skipped tests are not counted as passes. The remaining failures include
-unsupported harness helpers, deferred syntax and standard-library features,
-descriptor/metadata edge cases, advanced JSON reviver/replacer/space behavior,
-and semantics outside the V6 core scope.
+This is the latest Native scan after the frontend, `for`/`for-in`, bind, and
+Track B builtin fixes. Skipped tests are not counted as passes. The remaining
+failures are concentrated in the missing `arguments` object, deferred
+Symbol/Proxy/RegExp/Realm support, and syntax or object-model features outside
+the Track B ownership boundary.
 
 ## Project Quality Gates
 

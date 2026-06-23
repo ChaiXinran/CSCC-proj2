@@ -146,6 +146,7 @@ fn math_extended_functions() {
     assert_eq!(native_eval("Math.trunc(4.7)"), "4");
     assert_eq!(native_eval("Math.cbrt(27)"), "3");
     assert_eq!(native_eval("Math.imul(3, 4)"), "12");
+    assert_eq!(native_eval("Math.f16round(1.337)"), "1.3369140625");
 }
 
 // ── Error hierarchy ──────────────────────────────────────────────────────────
@@ -173,6 +174,19 @@ fn error_to_string_formats_name_and_message() {
         native_eval("Error({ toString: function () { return 'converted'; } }).message"),
         "converted"
     );
+}
+
+#[test]
+fn error_stack_accessor_and_cause_follow_v6_contract() {
+    assert_eq!(native_eval("typeof new Error('boom').stack"), "string");
+    assert_eq!(
+        native_eval(
+            "var e = new Error(); e.stack = 'custom'; \
+             Object.prototype.hasOwnProperty.call(e, 'stack') && e.stack;"
+        ),
+        "custom"
+    );
+    assert_eq!(native_eval("new Error('boom', { cause: 7 }).cause"), "7");
 }
 
 #[test]

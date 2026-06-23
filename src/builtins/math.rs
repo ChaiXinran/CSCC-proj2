@@ -117,6 +117,10 @@ pub(crate) const MATH_METHODS: &[MathMethodSpec] = &[
         length: 1,
     },
     MathMethodSpec {
+        name: "f16round",
+        length: 1,
+    },
+    MathMethodSpec {
         name: "hypot",
         length: 2,
     },
@@ -235,6 +239,18 @@ pub(crate) fn min(values: &[f64]) -> f64 {
 
 #[must_use]
 pub(crate) fn pow(base: f64, exponent: f64) -> f64 {
+    if exponent.is_nan() {
+        return f64::NAN;
+    }
+    if exponent == 0.0 {
+        return 1.0;
+    }
+    if base.is_nan() {
+        return f64::NAN;
+    }
+    if base.abs() == 1.0 && exponent.is_infinite() {
+        return f64::NAN;
+    }
     base.powf(exponent)
 }
 
@@ -283,6 +299,29 @@ pub(crate) fn fround(value: f64) -> f64 {
 }
 
 #[must_use]
+pub(crate) fn f16round(value: f64) -> f64 {
+    if value.is_nan() || value.is_infinite() || value == 0.0 {
+        return value;
+    }
+
+    let sign = if value.is_sign_negative() { -1.0 } else { 1.0 };
+    let magnitude = value.abs();
+    let rounded = if magnitude < 2_f64.powi(-14) {
+        (magnitude / 2_f64.powi(-24)).round_ties_even() * 2_f64.powi(-24)
+    } else {
+        let exponent = magnitude.log2().floor() as i32;
+        let step = 2_f64.powi(exponent - 10);
+        (magnitude / step).round_ties_even() * step
+    };
+
+    if rounded >= 65_520.0 {
+        sign * f64::INFINITY
+    } else {
+        sign * rounded
+    }
+}
+
+#[must_use]
 pub(crate) fn imul(left: f64, right: f64) -> i32 {
     let left = to_uint32(left) as i32;
     let right = to_uint32(right) as i32;
@@ -308,9 +347,8 @@ pub(crate) fn hypot(values: &[f64]) -> f64 {
 pub(crate) fn sum_precise(values: &[f64]) -> f64 {
     let mut has_positive_infinity = false;
     let mut has_negative_infinity = false;
-    let mut saw_non_zero = false;
     let mut all_zeroes_are_negative = true;
-    let mut partials = Vec::new();
+    let mut sum = ExactBinarySum::default();
 
     for value in values {
         if value.is_nan() {
@@ -331,9 +369,8 @@ pub(crate) fn sum_precise(values: &[f64]) -> f64 {
             continue;
         }
 
-        saw_non_zero = true;
         all_zeroes_are_negative = false;
-        add_partial(&mut partials, *value);
+        sum.add_f64(*value);
     }
 
     match (has_positive_infinity, has_negative_infinity) {
@@ -343,33 +380,168 @@ pub(crate) fn sum_precise(values: &[f64]) -> f64 {
         (false, false) => {}
     }
 
-    if !saw_non_zero {
+    if sum.is_zero() {
         return if all_zeroes_are_negative { -0.0 } else { 0.0 };
     }
 
-    let result = partials.iter().rev().copied().sum::<f64>();
-    if result == 0.0 { 0.0 } else { result }
+    sum.to_f64()
 }
 
-#[allow(dead_code)]
-fn add_partial(partials: &mut Vec<f64>, mut value: f64) {
-    let mut next = 0;
-    for index in 0..partials.len() {
-        let mut partial = partials[index];
-        if value.abs() < partial.abs() {
-            std::mem::swap(&mut value, &mut partial);
-        }
-        let high = value + partial;
-        let low = partial - (high - value);
-        if low != 0.0 {
-            partials[next] = low;
-            next += 1;
-        }
-        value = high;
+#[derive(Default)]
+struct ExactBinarySum {
+    negative: bool,
+    limbs: Vec<u64>,
+}
+
+impl ExactBinarySum {
+    fn is_zero(&self) -> bool {
+        self.limbs.is_empty()
     }
-    partials.truncate(next);
-    if value != 0.0 {
-        partials.push(value);
+
+    fn add_f64(&mut self, value: f64) {
+        let bits = value.to_bits();
+        let negative = bits >> 63 != 0;
+        let exponent = ((bits >> 52) & 0x7ff) as usize;
+        let fraction = bits & ((1_u64 << 52) - 1);
+        let (significand, shift) = if exponent == 0 {
+            (fraction, 0)
+        } else {
+            ((1_u64 << 52) | fraction, exponent - 1)
+        };
+        let term = shifted_magnitude(significand, shift);
+        if self.is_zero() {
+            self.negative = negative;
+            self.limbs = term;
+        } else if self.negative == negative {
+            add_magnitude(&mut self.limbs, &term);
+        } else {
+            match compare_magnitude(&self.limbs, &term) {
+                std::cmp::Ordering::Greater | std::cmp::Ordering::Equal => {
+                    subtract_magnitude(&mut self.limbs, &term);
+                }
+                std::cmp::Ordering::Less => {
+                    let mut result = term;
+                    subtract_magnitude(&mut result, &self.limbs);
+                    self.limbs = result;
+                    self.negative = negative;
+                }
+            }
+        }
+        trim_zero_limbs(&mut self.limbs);
+    }
+
+    fn to_f64(&self) -> f64 {
+        let sign = u64::from(self.negative) << 63;
+        let highest = bit_length(&self.limbs) - 1;
+        if highest < 52 {
+            return f64::from_bits(sign | self.limbs.first().copied().unwrap_or(0));
+        }
+
+        let mut shift = highest - 52;
+        let mut significand = shifted_low_u64(&self.limbs, shift);
+        if shift > 0 {
+            let half = bit_is_set(&self.limbs, shift - 1);
+            let below_half = any_bits_below(&self.limbs, shift - 1);
+            if half && (below_half || significand & 1 != 0) {
+                significand += 1;
+                if significand == 1_u64 << 53 {
+                    significand >>= 1;
+                    shift += 1;
+                }
+            }
+        }
+
+        let exponent = shift + 1;
+        if exponent >= 0x7ff {
+            return f64::from_bits(sign | (0x7ff_u64 << 52));
+        }
+        let fraction = significand & ((1_u64 << 52) - 1);
+        f64::from_bits(sign | ((exponent as u64) << 52) | fraction)
+    }
+}
+
+fn shifted_magnitude(value: u64, shift: usize) -> Vec<u64> {
+    let word = shift / 64;
+    let offset = shift % 64;
+    let mut result = vec![0; word + 2];
+    result[word] = value << offset;
+    if offset != 0 {
+        result[word + 1] = value >> (64 - offset);
+    }
+    trim_zero_limbs(&mut result);
+    result
+}
+
+fn add_magnitude(left: &mut Vec<u64>, right: &[u64]) {
+    left.resize(left.len().max(right.len()) + 1, 0);
+    let mut carry = 0_u128;
+    for (index, item) in left.iter_mut().enumerate() {
+        let total = u128::from(*item) + u128::from(right.get(index).copied().unwrap_or(0)) + carry;
+        *item = total as u64;
+        carry = total >> 64;
+    }
+    trim_zero_limbs(left);
+}
+
+fn subtract_magnitude(left: &mut Vec<u64>, right: &[u64]) {
+    let mut borrow = 0_u128;
+    for (index, item) in left.iter_mut().enumerate() {
+        let subtrahend = u128::from(right.get(index).copied().unwrap_or(0)) + borrow;
+        let value = u128::from(*item);
+        if value >= subtrahend {
+            *item = (value - subtrahend) as u64;
+            borrow = 0;
+        } else {
+            *item = ((1_u128 << 64) + value - subtrahend) as u64;
+            borrow = 1;
+        }
+    }
+    trim_zero_limbs(left);
+}
+
+fn compare_magnitude(left: &[u64], right: &[u64]) -> std::cmp::Ordering {
+    left.len()
+        .cmp(&right.len())
+        .then_with(|| left.iter().rev().cmp(right.iter().rev()))
+}
+
+fn trim_zero_limbs(limbs: &mut Vec<u64>) {
+    while limbs.last() == Some(&0) {
+        limbs.pop();
+    }
+}
+
+fn bit_length(limbs: &[u64]) -> usize {
+    let last = limbs.last().copied().unwrap_or(0);
+    (limbs.len() - 1) * 64 + (64 - last.leading_zeros() as usize)
+}
+
+fn bit_is_set(limbs: &[u64], bit: usize) -> bool {
+    limbs
+        .get(bit / 64)
+        .is_some_and(|value| value & (1_u64 << (bit % 64)) != 0)
+}
+
+fn any_bits_below(limbs: &[u64], bit: usize) -> bool {
+    let full_words = bit / 64;
+    if limbs.iter().take(full_words).any(|value| *value != 0) {
+        return true;
+    }
+    let remaining = bit % 64;
+    remaining != 0
+        && limbs
+            .get(full_words)
+            .is_some_and(|value| value & ((1_u64 << remaining) - 1) != 0)
+}
+
+fn shifted_low_u64(limbs: &[u64], shift: usize) -> u64 {
+    let word = shift / 64;
+    let offset = shift % 64;
+    let low = limbs.get(word).copied().unwrap_or(0) >> offset;
+    if offset == 0 {
+        low
+    } else {
+        low | (limbs.get(word + 1).copied().unwrap_or(0) << (64 - offset))
     }
 }
 

@@ -340,3 +340,37 @@ cargo run --release --no-default-features -- test262 --native-v6-scan --jobs 4 \
 | C 复合赋值 + 计算属性 | ~35 | 低风险前端 |
 
 三者叠加后，V6 扫描通过率有望从 **61.85%** 升至 **~75%+**（A 与 B 的协同会进一步放大）。
+
+---
+
+# 轨道 B 完成结果（2026-06-23）
+
+轨道 B 已在不修改 VM、runtime 和前端的边界内完成第一轮实现：
+
+- Error：安装 `Error.prototype.stack` getter/setter，实现错误实例 stack 字符串、
+  setter 接收者/字符串校验、own property 创建与 Error `cause`。
+- JSON：实现 reviver 递归遍历，以及 stringify 的 replacer function/array、
+  space 缩进、`toJSON`、primitive wrapper 转换、Raw JSON 和循环检测。
+- Math：实现 `Math.f16round`、修正 `Math.pow` 的 NaN/Infinity 边界，并将
+  `Math.sumPrecise` 改为 IEEE-754 位分解后的精确整数累加和一次性舍入。
+
+真实 Native V6 扫描变化：
+
+| 目录 | 修复前通过 | 修复后通过 | 增量 |
+|---|---:|---:|---:|
+| Error | 33/93 | 47/93 | +14 |
+| JSON | 74/165 | 101/165 | +27 |
+| Math | 197/327 | 203/327 | +6 |
+| V6 合计 | 1360/2199 | 1407/2199 | +47 |
+
+最新总通过率为 **63.98%**，失败 791，跳过 1。V6 固定门保持
+`7/7`，V1–V6 集成测试无回归。
+
+剩余相关失败主要被轨道 B 之外的能力阻塞：
+
+- `arguments` 未实现导致 propertyHelper 元数据测试无法执行；
+- Symbol、Proxy、`$262`、Reflect 和跨 Realm 尚未实现；
+- BigInt、模板字符串、正则字面量、class 等前端能力缺失；
+- Error stack 的 Proxy/Realm/不可扩展对象边界依赖更完整对象模型。
+
+本轮结果保存在 `reports/native-v6-track-b-summary.json`。
