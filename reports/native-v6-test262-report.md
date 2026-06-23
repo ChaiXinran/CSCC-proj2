@@ -46,13 +46,24 @@ Result:
 
 | Total | Passed | Failed | Skipped | Conformance |
 | ---: | ---: | ---: | ---: | ---: |
-| 2,199 | 1,407 | 791 | 1 | 63.98% |
+| 2,199 | 1,489 | 709 | 1 | 67.71% |
 
-This is the latest Native scan after the frontend, `for`/`for-in`, bind, and
-Track B builtin fixes. Skipped tests are not counted as passes. The remaining
-failures are concentrated in the missing `arguments` object, deferred
-Symbol/Proxy/RegExp/Realm support, and syntax or object-model features outside
-the Track B ownership boundary.
+This is the latest Native scan after merging Track A `arguments` support with
+the Track B Error, JSON, and Math fixes. Skipped tests are not counted as
+passes. The remaining failures are concentrated in deferred
+Symbol/Proxy/RegExp/Realm support, frontend syntax gaps, and advanced
+object-model behavior.
+
+Per-directory merged results:
+
+| Area | Passed | Failed | Skipped | Conformance |
+| --- | ---: | ---: | ---: | ---: |
+| String | 784 | 438 | 1 | 64.10% |
+| Number | 262 | 78 | 0 | 77.06% |
+| Math | 240 | 87 | 0 | 73.39% |
+| Boolean | 37 | 14 | 0 | 72.55% |
+| Error | 59 | 34 | 0 | 63.44% |
+| JSON | 107 | 58 | 0 | 64.85% |
 
 ## Project Quality Gates
 

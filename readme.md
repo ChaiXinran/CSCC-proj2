@@ -175,7 +175,8 @@ Boolean, Math, Error, and core JSON through independently owned modules. See
 the [Native V6 scope](docs/native-v6-scope.md),
 [shared interface](docs/native-v6-interface.md), and
 [team plan](docs/native-v6-team-plan.md). Its pinned Test262 gate passes 7/7;
-the six-directory diagnostic scan passes 769/2,199. Map/Set, RegExp, Date,
+the six-directory diagnostic scan passes 1,489/2,199 after the Track A and B
+merge. Map/Set, RegExp, Date,
 Promise, advanced JSON callbacks, and new language syntax remain deferred.
 
 Runnable integration coverage lives in

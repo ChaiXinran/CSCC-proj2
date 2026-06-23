@@ -1292,9 +1292,11 @@ impl Vm {
             };
             for (i, arg) in arguments.iter().enumerate() {
                 let key = i.to_string();
-                if let Err(e) = context
-                    .define_own_property(arguments_id, key, PropertyDescriptor::data(arg.clone()))
-                {
+                if let Err(e) = context.define_own_property(
+                    arguments_id,
+                    key,
+                    PropertyDescriptor::data(arg.clone()),
+                ) {
                     let _ = context.restore_environment_depth(caller_environment_depth);
                     return Err(e);
                 }
