@@ -15,6 +15,11 @@ pub enum PrimitiveValue {
     String(String),
 }
 
+/// Dense storage is capped at this many slots to prevent OOM from large-length arrays.
+/// Indices >= this threshold are stored in the regular property map.
+/// 64K × ~56 bytes ≈ 3.5 MB max per array; keeps 4 concurrent workers bounded.
+const MAX_DENSE_SIZE: usize = 1 << 16; // 65536 elements
+
 /// Object storage variants.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum ObjectKind {
@@ -22,6 +27,8 @@ pub enum ObjectKind {
     Ordinary,
     Array {
         elements: Vec<Option<PropertyDescriptor>>,
+        /// Logical ECMAScript [[Length]] — may exceed `elements.len()` for sparse arrays.
+        length: u32,
         length_writable: bool,
     },
     /// Primitive wrapper object (created by `new Number(…)`, `new String(…)`, `new Boolean(…)`).
@@ -52,13 +59,16 @@ impl JsObject {
 
     #[must_use]
     pub fn array(elements: Vec<JsValue>) -> Self {
+        let elems: Vec<Option<PropertyDescriptor>> = elements
+            .into_iter()
+            .map(|value| Some(PropertyDescriptor::data(value)))
+            .collect();
+        let len = elems.len() as u32;
         Self {
             prototype: None,
             kind: ObjectKind::Array {
-                elements: elements
-                    .into_iter()
-                    .map(|value| Some(PropertyDescriptor::data(value)))
-                    .collect(),
+                elements: elems,
+                length: len,
                 length_writable: true,
             },
             properties: PropertyMap::default(),
@@ -71,7 +81,8 @@ impl JsObject {
         Self {
             prototype: None,
             kind: ObjectKind::Array {
-                elements: vec![None; length],
+                elements: Vec::new(),
+                length: length.min(u32::MAX as usize) as u32,
                 length_writable: true,
             },
             properties: PropertyMap::default(),
@@ -81,6 +92,14 @@ impl JsObject {
 
     pub fn define_property(&mut self, name: impl Into<String>, descriptor: PropertyDescriptor) {
         self.properties.define(name, descriptor);
+    }
+
+    /// Update the logical length if an index write extends past the current length.
+    fn update_length_for_index(length: &mut u32, index: usize) {
+        let new_len = (index + 1).min(u32::MAX as usize) as u32;
+        if new_len > *length {
+            *length = new_len;
+        }
     }
 
     /// Define or replace a symbol-keyed own property.
@@ -125,15 +144,17 @@ impl JsObject {
 
     #[must_use]
     pub fn get_own_property_value(&self, name: &str) -> Option<JsValue> {
-        if let ObjectKind::Array { elements, .. } = &self.kind {
+        if let ObjectKind::Array { elements, length, .. } = &self.kind {
             if name == "length" {
-                return Some(JsValue::Number(elements.len() as f64));
+                return Some(JsValue::Number(*length as f64));
             }
-            if let Some(index) = array_index(name) {
-                return elements
-                    .get(index)
-                    .and_then(|descriptor| descriptor.as_ref())
+            if let Some(index) = array_index(name)
+                && index < elements.len()
+            {
+                return elements[index]
+                    .as_ref()
                     .and_then(PropertyDescriptor::value_cloned);
+                // index beyond dense range — fall through to property map
             }
         }
 
@@ -145,6 +166,7 @@ impl JsObject {
         let name = name.into();
         if let ObjectKind::Array {
             elements,
+            length,
             length_writable,
         } = &mut self.kind
         {
@@ -152,17 +174,24 @@ impl JsObject {
                 return false;
             }
             if let Some(index) = array_index(&name) {
-                if index >= elements.len() && !*length_writable {
+                if index >= *length as usize && !*length_writable {
                     return false;
                 }
-                if index >= elements.len() {
-                    elements.resize(index + 1, None);
+                if index < MAX_DENSE_SIZE {
+                    if index >= elements.len() {
+                        elements.resize(index + 1, None);
+                    }
+                    if let Some(descriptor) = &mut elements[index] {
+                        let ok = descriptor.set_value(value);
+                        Self::update_length_for_index(length, index);
+                        return ok;
+                    }
+                    elements[index] = Some(PropertyDescriptor::data(value));
+                    Self::update_length_for_index(length, index);
+                    return true;
                 }
-                if let Some(descriptor) = &mut elements[index] {
-                    return descriptor.set_value(value);
-                }
-                elements[index] = Some(PropertyDescriptor::data(value));
-                return true;
+                // huge index: fall through to property map, but update length
+                Self::update_length_for_index(length, index);
             }
         }
 
@@ -180,8 +209,11 @@ impl JsObject {
             if name == "length" {
                 return true;
             }
-            if let Some(index) = array_index(name) {
-                return elements.get(index).is_some_and(Option::is_some);
+            if let Some(index) = array_index(name)
+                && index < elements.len()
+            {
+                return elements[index].is_some();
+                // beyond dense range — fall through to property map
             }
         }
         self.properties.contains_key(name)
@@ -190,13 +222,15 @@ impl JsObject {
     pub fn delete_own_property(&mut self, name: &str) -> Option<PropertyDescriptor> {
         if let ObjectKind::Array { elements, .. } = &mut self.kind
             && let Some(index) = array_index(name)
+            && index < elements.len()
         {
             if let Some(slot) = elements.get_mut(index)
                 && let Some(descriptor) = slot.take()
             {
                 return Some(descriptor);
             }
-            return None;
+            return None; // in dense range but not set
+            // huge index: fall through to property map
         }
         self.properties.delete(name)
     }
@@ -204,7 +238,7 @@ impl JsObject {
     #[must_use]
     pub fn array_length(&self) -> Option<usize> {
         match &self.kind {
-            ObjectKind::Array { elements, .. } => Some(elements.len()),
+            ObjectKind::Array { length, .. } => Some(*length as usize),
             ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {
                 None
             }
@@ -230,9 +264,10 @@ impl JsObject {
         }
     }
 
-    pub fn set_array_length(&mut self, length: usize) -> bool {
+    pub fn set_array_length(&mut self, new_len: usize) -> bool {
         let ObjectKind::Array {
             elements,
+            length,
             length_writable,
         } = &mut self.kind
         else {
@@ -241,22 +276,27 @@ impl JsObject {
         if !*length_writable {
             return false;
         }
-        if length >= elements.len() {
-            elements.resize(length, None);
+        let new_len32 = new_len.min(u32::MAX as usize) as u32;
+        if new_len >= elements.len() {
+            // Growing: just update the logical length; no allocation needed.
+            *length = new_len32;
             return true;
         }
 
-        for index in (length..elements.len()).rev() {
+        // Shrinking: delete dense elements from the end.
+        for index in (new_len..elements.len()).rev() {
             if elements[index]
                 .as_ref()
                 .is_some_and(|descriptor| !descriptor.configurable)
             {
                 elements.truncate(index + 1);
+                *length = (index + 1) as u32;
                 return false;
             }
             elements[index] = None;
         }
-        elements.truncate(length);
+        elements.truncate(new_len);
+        *length = new_len32;
         true
     }
 
@@ -282,19 +322,25 @@ impl JsObject {
     pub fn define_array_element(&mut self, index: usize, descriptor: PropertyDescriptor) -> bool {
         let ObjectKind::Array {
             elements,
+            length,
             length_writable,
         } = &mut self.kind
         else {
             return false;
         };
-        if index >= elements.len() && !*length_writable {
+        if index >= *length as usize && !*length_writable {
             return false;
         }
-        if index >= elements.len() {
-            elements.resize(index + 1, None);
+        if index < MAX_DENSE_SIZE {
+            if index >= elements.len() {
+                elements.resize(index + 1, None);
+            }
+            elements[index] = Some(descriptor);
+            Self::update_length_for_index(length, index);
+            return true;
         }
-        elements[index] = Some(descriptor);
-        true
+        // huge index: not supported in dense storage
+        false
     }
 
     #[must_use]

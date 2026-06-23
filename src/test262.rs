@@ -179,6 +179,7 @@ impl Default for RunnerOptions {
                 backtrace_limit: 20,
                 script_cache_capacity: 0,
                 install_test262_host: true,
+                heap_object_limit: 500_000,
             },
         }
     }

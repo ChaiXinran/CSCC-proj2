@@ -8,7 +8,8 @@
 use std::fmt;
 
 /// Conservative allocation guard for operations such as `repeat` and padding.
-pub(crate) const MAX_STRING_CODE_UNITS: usize = 1 << 28;
+/// 8 MB of UTF-16 code units keeps per-test memory bounded across 4 workers.
+pub(crate) const MAX_STRING_CODE_UNITS: usize = 1 << 23;
 
 /// Metadata frozen for the V6 String installer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

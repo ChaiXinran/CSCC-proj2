@@ -24,6 +24,7 @@ pub enum BackendKind {
     Native,
 }
 
+#[allow(clippy::derivable_impls)] // default variant is cfg-conditional
 impl Default for BackendKind {
     fn default() -> Self {
         #[cfg(feature = "boa-backend")]

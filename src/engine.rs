@@ -14,6 +14,9 @@ pub struct RuntimeConfig {
     pub backtrace_limit: usize,
     pub script_cache_capacity: usize,
     pub install_test262_host: bool,
+    /// Maximum number of heap objects (JsObject + JsFunction + Environment) per isolate.
+    /// Exceeding this limit throws a RuntimeLimit error rather than OOM-ing the process.
+    pub heap_object_limit: usize,
 }
 
 impl Default for RuntimeConfig {
@@ -25,6 +28,7 @@ impl Default for RuntimeConfig {
             backtrace_limit: 20,
             script_cache_capacity: 32,
             install_test262_host: false,
+            heap_object_limit: 500_000,
         }
     }
 }

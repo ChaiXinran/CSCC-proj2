@@ -60,7 +60,16 @@ pub struct NativeContext {
 
 impl Default for NativeContext {
     fn default() -> Self {
-        let mut heap = Heap::default();
+        Self::build(Heap::default())
+    }
+}
+
+impl NativeContext {
+    pub fn with_heap_limit(limit: usize) -> Self {
+        Self::build(Heap::with_limit(limit))
+    }
+
+    fn build(mut heap: Heap) -> Self {
         let global_environment = heap
             .allocate_environment(Environment::default())
             .expect("a fresh heap can allocate the global environment");

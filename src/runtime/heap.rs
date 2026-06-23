@@ -3,15 +3,42 @@
 use super::{Environment, EnvironmentId, FunctionId, JsFunction, JsObject, ObjectId};
 
 /// Arena owning native runtime objects and lexical environments.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Heap {
     objects: Vec<Option<JsObject>>,
     environments: Vec<Option<Environment>>,
     functions: Vec<Option<JsFunction>>,
+    /// Hard cap on total live allocations. `allocate_*` returns `None` when exceeded.
+    limit: usize,
+}
+
+impl Default for Heap {
+    fn default() -> Self {
+        Self {
+            objects: Vec::new(),
+            environments: Vec::new(),
+            functions: Vec::new(),
+            limit: usize::MAX,
+        }
+    }
 }
 
 impl Heap {
+    pub fn with_limit(limit: usize) -> Self {
+        Self {
+            limit,
+            ..Self::default()
+        }
+    }
+
+    fn total_count(&self) -> usize {
+        self.objects.len() + self.environments.len() + self.functions.len()
+    }
+
     pub fn allocate_object(&mut self, object: JsObject) -> Option<ObjectId> {
+        if self.total_count() >= self.limit {
+            return None;
+        }
         let id = ObjectId(u32::try_from(self.objects.len()).ok()?);
         self.objects.push(Some(object));
         Some(id)
@@ -27,6 +54,9 @@ impl Heap {
     }
 
     pub fn allocate_environment(&mut self, environment: Environment) -> Option<EnvironmentId> {
+        if self.total_count() >= self.limit {
+            return None;
+        }
         let id = EnvironmentId(u32::try_from(self.environments.len()).ok()?);
         self.environments.push(Some(environment));
         Some(id)
@@ -42,6 +72,9 @@ impl Heap {
     }
 
     pub fn allocate_function(&mut self, function: JsFunction) -> Option<FunctionId> {
+        if self.total_count() >= self.limit {
+            return None;
+        }
         let id = FunctionId(u32::try_from(self.functions.len()).ok()?);
         self.functions.push(Some(function));
         Some(id)

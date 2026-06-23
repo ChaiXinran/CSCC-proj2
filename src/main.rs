@@ -85,6 +85,7 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
         backtrace_limit: 20,
         script_cache_capacity: 0,
         install_test262_host: false,
+        heap_object_limit: usize::MAX,
     })
     .map_err(|error| error.to_string())?;
     let report = runtime
