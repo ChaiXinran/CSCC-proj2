@@ -138,8 +138,9 @@ fn build_property_list(
         return Ok(None);
     };
 
+    let capped = length.min(1 << 20);
     let mut result = Vec::new();
-    for index in 0..length {
+    for index in 0..capped {
         let value = vm.get_property_value(replacer.clone(), &index.to_string(), context)?;
         let key = match value {
             JsValue::String(value) => Some(value),
@@ -293,6 +294,9 @@ impl StringifyState<'_> {
             .object(object)
             .and_then(|value| value.array_length())
             .unwrap_or(0);
+        if length > 1 << 20 {
+            return Err(VmError::range("array too large to JSON-stringify"));
+        }
         let mut parts = Vec::with_capacity(length);
         for index in 0..length {
             parts.push(

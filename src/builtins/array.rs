@@ -615,6 +615,9 @@ fn array_unshift(
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.unshift")?;
     let length = array_like_length(context, object);
+    if length > MAX_DENSE_ALLOC {
+        return Err(VmError::range("Array.prototype.unshift: array too large"));
+    }
     let count = arguments.len();
     // Shift existing elements right
     for i in (0..length).rev() {

@@ -1986,6 +1986,9 @@ fn math_sum_precise(
         .and_then(|value| value.to_number())
         .unwrap_or(0.0)
         .max(0.0) as usize;
+    if length > 1 << 20 {
+        return Err(VmError::range("Math.sumPrecise: iterable too large"));
+    }
     let mut values = Vec::with_capacity(length);
     for index in 0..length {
         let value = vm.get_property_value(source.clone(), &index.to_string(), context)?;

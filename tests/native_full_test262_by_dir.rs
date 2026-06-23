@@ -563,7 +563,7 @@ fn sanitize(value: &str) -> String {
 fn truncate(value: &str, max_chars: usize) -> String {
     let mut result = value.chars().take(max_chars).collect::<String>();
     if result.len() < value.len() {
-        result.push_str("…");
+        result.push('…');
     }
     result
 }
