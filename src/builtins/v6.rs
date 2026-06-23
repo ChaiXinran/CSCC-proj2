@@ -130,8 +130,10 @@ fn to_length(value: f64) -> usize {
 }
 
 fn map_string_error(error: string::StringBuiltinError) -> VmError {
-    // All current C1 string failures map to RangeError per ECMAScript.
-    VmError::range(error.to_string())
+    match error {
+        string::StringBuiltinError::AllocationLimit => VmError::runtime_limit(error.to_string()),
+        _ => VmError::range(error.to_string()),
+    }
 }
 
 fn map_number_format_error(error: number::NumberFormatError) -> VmError {
@@ -1301,6 +1303,12 @@ fn string_repeat(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let count = arg_index(vm, context, arguments, 0)?;
+    if let Ok(count) = usize::try_from(count) {
+        let units = string::utf16_length(&value)
+            .checked_mul(count)
+            .ok_or_else(|| VmError::runtime_limit("string allocation limit exceeded"))?;
+        context.ensure_heap_capacity(units.saturating_mul(2))?;
+    }
     string::repeat(&value, count)
         .map(JsValue::String)
         .map_err(map_string_error)

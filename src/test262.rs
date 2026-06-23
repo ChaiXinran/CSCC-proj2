@@ -198,6 +198,9 @@ impl Default for RunnerOptions {
                 script_cache_capacity: 0,
                 install_test262_host: true,
                 heap_object_limit: 500_000,
+                heap_byte_limit: 512 * 1024 * 1024,
+                wall_clock_limit: None,
+                gc_allocation_threshold: 25_000,
             },
         }
     }

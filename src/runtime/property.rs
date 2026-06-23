@@ -1,6 +1,6 @@
 //! ECMAScript property descriptors.
 
-use super::JsValue;
+use super::{JsValue, Trace, Tracer};
 
 /// Complete V4 property payload stored in the heap.
 #[derive(Debug, Clone, PartialEq)]
@@ -110,5 +110,36 @@ impl PropertyDescriptorUpdate {
             value: Some(value),
             ..Self::default()
         }
+    }
+}
+
+impl Trace for PropertyDescriptor {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        match &self.kind {
+            PropertyKind::Data { value, .. } => value.trace(tracer),
+            PropertyKind::Accessor { get, set } => {
+                if let Some(value) = get {
+                    value.trace(tracer);
+                }
+                if let Some(value) = set {
+                    value.trace(tracer);
+                }
+            }
+        }
+    }
+}
+
+impl PropertyDescriptor {
+    #[must_use]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        let value_bytes = match &self.kind {
+            PropertyKind::Data { value, .. } => value.estimated_bytes(),
+            PropertyKind::Accessor { get, set } => get
+                .iter()
+                .chain(set.iter())
+                .map(JsValue::estimated_bytes)
+                .sum(),
+        };
+        std::mem::size_of::<Self>().saturating_add(value_bytes)
     }
 }

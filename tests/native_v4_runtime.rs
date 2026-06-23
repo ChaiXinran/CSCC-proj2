@@ -207,6 +207,7 @@ fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
     function_chunk.emit(Instruction::LoadThis);
     function_chunk.emit(Instruction::Constant(three));
     function_chunk.emit(Instruction::SetProperty(this_name));
+    function_chunk.emit(Instruction::Pop);
     function_chunk.emit(Instruction::ReturnUndefined);
 
     let mut chunk = Chunk::default();

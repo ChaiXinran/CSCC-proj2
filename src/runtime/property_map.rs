@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::PropertyDescriptor;
+use super::{PropertyDescriptor, Trace, Tracer};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropertyEntry {
@@ -92,6 +92,30 @@ impl PropertyMap {
     }
 }
 
+impl Trace for PropertyMap {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        for entry in &self.entries {
+            entry.descriptor.trace(tracer);
+        }
+    }
+}
+
+impl PropertyMap {
+    #[must_use]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(
+            self.entries
+                .iter()
+                .map(|entry| {
+                    entry
+                        .key
+                        .len()
+                        .saturating_add(entry.descriptor.estimated_bytes())
+                })
+                .sum::<usize>(),
+        )
+    }
+}
 fn array_index(key: &str) -> Option<usize> {
     if key.is_empty() || !key.chars().all(|ch| ch.is_ascii_digit()) {
         return None;

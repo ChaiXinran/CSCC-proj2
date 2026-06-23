@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::JsValue;
+use super::{JsValue, Trace, Tracer};
 use crate::vm::VmError;
 
 /// Stable handle into an environment arena.
@@ -135,5 +135,32 @@ impl Environment {
         }
         binding.value = value;
         Ok(())
+    }
+}
+
+impl Trace for Environment {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        if let Some(outer) = self.outer {
+            tracer.mark_environment(outer);
+        }
+        for binding in self.bindings.values() {
+            binding.value.trace(tracer);
+        }
+    }
+}
+
+impl Environment {
+    #[must_use]
+    pub(crate) fn estimated_bytes(&self) -> usize {
+        std::mem::size_of::<Self>().saturating_add(
+            self.bindings
+                .iter()
+                .map(|(name, binding)| {
+                    name.len()
+                        .saturating_add(std::mem::size_of::<Binding>())
+                        .saturating_add(binding.value.estimated_bytes())
+                })
+                .sum::<usize>(),
+        )
     }
 }

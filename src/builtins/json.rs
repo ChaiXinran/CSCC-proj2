@@ -141,6 +141,7 @@ fn build_property_list(
     let capped = length.min(1 << 20);
     let mut result = Vec::new();
     for index in 0..capped {
+        context.consume_loop_iteration()?;
         let value = vm.get_property_value(replacer.clone(), &index.to_string(), context)?;
         let key = match value {
             JsValue::String(value) => Some(value),
@@ -295,10 +296,11 @@ impl StringifyState<'_> {
             .and_then(|value| value.array_length())
             .unwrap_or(0);
         if length > 1 << 20 {
-            return Err(VmError::range("array too large to JSON-stringify"));
+            return Err(VmError::runtime_limit("array too large to JSON-stringify"));
         }
         let mut parts = Vec::with_capacity(length);
         for index in 0..length {
+            self.context.consume_loop_iteration()?;
             parts.push(
                 self.serialize_property(JsValue::Object(object), &index.to_string())?
                     .unwrap_or_else(|| "null".into()),
@@ -323,6 +325,7 @@ impl StringifyState<'_> {
         };
         let mut parts = Vec::new();
         for key in keys {
+            self.context.consume_loop_iteration()?;
             if let Some(value) = self.serialize_property(JsValue::Object(object), &key)? {
                 let separator = if self.gap.is_empty() { ":" } else { ": " };
                 parts.push(format!("{}{separator}{value}", quote_json_string(&key)));
@@ -400,6 +403,7 @@ impl Parser<'_> {
             return self.context.create_array(values);
         }
         loop {
+            self.context.consume_loop_iteration()?;
             values.push(self.parse_value()?);
             self.skip_whitespace();
             if self.take_byte(b']') {
@@ -419,6 +423,7 @@ impl Parser<'_> {
             return self.context.create_object(properties);
         }
         loop {
+            self.context.consume_loop_iteration()?;
             if self.peek_byte() != Some(b'"') {
                 return Err(self.error("object key must be a string"));
             }
@@ -441,6 +446,7 @@ impl Parser<'_> {
         self.consume_byte(b'"')?;
         let mut result = String::new();
         loop {
+            self.context.consume_loop_iteration()?;
             let Some(byte) = self.peek_byte() else {
                 return Err(self.error("unterminated JSON string"));
             };
