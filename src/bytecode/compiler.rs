@@ -1058,11 +1058,14 @@ impl Compiler {
                 right,
             } => self.compile_logical(*operator, left, right, chunk, context),
             Expression::Identifier(name) => self.compile_identifier(name, chunk, context),
-            Expression::Assignment {
+            Expression::Assignment { target, value } => {
+                self.compile_assignment(target, value, chunk, context)
+            }
+            Expression::CompoundAssignment {
                 operator,
                 target,
                 value,
-            } => self.compile_assignment(operator, target, value, chunk, context),
+            } => self.compile_compound_assignment(*operator, target, value, chunk, context),
             Expression::Member {
                 object,
                 property,
@@ -1358,6 +1361,61 @@ impl Compiler {
             }
             _ => Err(CompileError::unsupported(format!(
                 "assignment target {target:?}"
+            ))),
+        }
+    }
+
+    fn compile_compound_assignment(
+        &mut self,
+        operator: AssignmentOperator,
+        target: &Expression,
+        value: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let instruction = compound_assignment_instruction(operator);
+        match target {
+            Expression::Identifier(name) => {
+                self.compile_identifier(name, chunk, context)?;
+                self.compile_expression(value, chunk, context)?;
+                chunk.emit(instruction);
+                self.emit_store_identifier(name, chunk, context)
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: false,
+            } => {
+                let Expression::Identifier(property_name) = property.as_ref() else {
+                    return Err(CompileError::unsupported(
+                        "non-identifier static member as compound assignment target",
+                    ));
+                };
+                self.compile_expression(object, chunk, context)?;
+                chunk.emit(Instruction::Duplicate);
+                let property_index = self.add_name(property_name, chunk)?;
+                chunk.emit(Instruction::GetProperty(property_index));
+                self.compile_expression(value, chunk, context)?;
+                chunk.emit(instruction);
+                chunk.emit(Instruction::SetProperty(property_index));
+                Ok(())
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: true,
+            } => {
+                self.compile_expression(object, chunk, context)?;
+                self.compile_expression(property, chunk, context)?;
+                chunk.emit(Instruction::DuplicatePair);
+                chunk.emit(Instruction::GetElement);
+                self.compile_expression(value, chunk, context)?;
+                chunk.emit(instruction);
+                chunk.emit(Instruction::SetElement);
+                Ok(())
+            }
+            _ => Err(CompileError::unsupported(format!(
+                "compound assignment target {target:?}"
             ))),
         }
     }
@@ -1672,6 +1730,16 @@ fn compound_op_instruction(op: &AssignmentOperator) -> Instruction {
 
 fn property_key(key: &PropertyName) -> String {
     key.to_key_string()
+}
+
+fn compound_assignment_instruction(operator: AssignmentOperator) -> Instruction {
+    match operator {
+        AssignmentOperator::Add => Instruction::Add,
+        AssignmentOperator::Subtract => Instruction::Subtract,
+        AssignmentOperator::Multiply => Instruction::Multiply,
+        AssignmentOperator::Divide => Instruction::Divide,
+        AssignmentOperator::Remainder => Instruction::Remainder,
+    }
 }
 
 fn lexical_names(statements: &[Statement]) -> Vec<String> {

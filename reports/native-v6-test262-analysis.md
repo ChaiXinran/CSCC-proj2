@@ -340,3 +340,95 @@ cargo run --release --no-default-features -- test262 --native-v6-scan --jobs 4 \
 | C 复合赋值 + 计算属性 | ~35 | 低风险前端 |
 
 三者叠加后，V6 扫描通过率有望从 **61.85%** 升至 **~75%+**（A 与 B 的协同会进一步放大）。
+
+---
+
+# 轨道 B 完成结果（2026-06-23）
+
+轨道 B 已在不修改 VM、runtime 和前端的边界内完成第一轮实现：
+
+- Error：安装 `Error.prototype.stack` getter/setter，实现错误实例 stack 字符串、
+  setter 接收者/字符串校验、own property 创建与 Error `cause`。
+- JSON：实现 reviver 递归遍历，以及 stringify 的 replacer function/array、
+  space 缩进、`toJSON`、primitive wrapper 转换、Raw JSON 和循环检测。
+- Math：实现 `Math.f16round`、修正 `Math.pow` 的 NaN/Infinity 边界，并将
+  `Math.sumPrecise` 改为 IEEE-754 位分解后的精确整数累加和一次性舍入。
+
+真实 Native V6 扫描变化：
+
+| 目录 | 修复前通过 | 修复后通过 | 增量 |
+|---|---:|---:|---:|
+| Error | 33/93 | 47/93 | +14 |
+| JSON | 74/165 | 101/165 | +27 |
+| Math | 197/327 | 203/327 | +6 |
+| V6 合计 | 1360/2199 | 1407/2199 | +47 |
+
+最新总通过率为 **63.98%**，失败 791，跳过 1。V6 固定门保持
+`7/7`，V1–V6 集成测试无回归。
+
+剩余相关失败主要被轨道 B 之外的能力阻塞：
+
+- `arguments` 未实现导致 propertyHelper 元数据测试无法执行；
+- Symbol、Proxy、`$262`、Reflect 和跨 Realm 尚未实现；
+- BigInt、模板字符串、正则字面量、class 等前端能力缺失；
+- Error stack 的 Proxy/Realm/不可扩展对象边界依赖更完整对象模型。
+
+本轮结果保存在 `reports/native-v6-track-b-summary.json`。
+
+---
+
+# 轨道 A + B 合并验证（2026-06-23）
+
+轨道 A 的普通函数 `arguments` 对象与轨道 B 的 Error/JSON/Math 修复已合并。
+合并检查仅发现 `src/vm/interpreter.rs` 一处 rustfmt 差异，没有语义冲突。
+
+| 指标 | 轨道 B 完成时 | A+B 合并后 | 增量 |
+|---|---:|---:|---:|
+| 通过 | 1407 | 1489 | +82 |
+| 失败 | 791 | 709 | -82 |
+| 跳过 | 1 | 1 | 0 |
+| 通过率 | 63.98% | 67.71% | +3.73pp |
+
+合并后的目录结果：
+
+| 目录 | 通过 | 失败 | 跳过 | 通过率 |
+|---|---:|---:|---:|---:|
+| String | 784 | 438 | 1 | 64.10% |
+| Number | 262 | 78 | 0 | 77.06% |
+| Math | 240 | 87 | 0 | 73.39% |
+| Boolean | 37 | 14 | 0 | 72.55% |
+| Error | 59 | 34 | 0 | 63.44% |
+| JSON | 107 | 58 | 0 | 64.85% |
+
+V1–V6 固定门合计 `69/69`，零失败、零跳过。全量 Rust 测试、
+`cargo fmt` 和 Clippy 均通过。合并扫描结果保存在
+`reports/native-v6-merged-summary.json`。
+
+---
+
+# 轨道 A + B + C 合并验证（2026-06-23）
+
+轨道 C 的复合赋值支持已与轨道 A、B 合并。工作区无冲突标记，Rust
+格式、编译、全量测试与 Clippy 均通过；V1–V6 固定门保持 `69/69`。
+
+| 指标 | A+B 基线 | A+B+C 合并后 | 增量 |
+|---|---:|---:|---:|
+| 通过 | 1489 | 1499 | +10 |
+| 失败 | 709 | 699 | -10 |
+| 跳过 | 1 | 1 | 0 |
+| 通过率 | 67.71% | 68.17% | +0.46pp |
+
+目录变化集中在实际使用复合赋值的用例：
+
+| 目录 | A+B 通过 | A+B+C 通过 | 增量 |
+|---|---:|---:|---:|
+| String | 784 | 791 | +7 |
+| JSON | 107 | 110 | +3 |
+| Number / Math / Boolean / Error | 598 | 598 | 0 |
+
+剩余 699 个失败中，主要类别为运行时 `TypeError`（235）、前端词法或
+语法缺口（171）、缺失 `Symbol`（101）、语义断言失败（76），以及缺失
+`RegExp`（29）、`Proxy`（24）、`$262`（12）和 `eval`（10）。其中部分
+“变量未定义”错误属于作用域实现缺口，不应误判为缺失全局对象。
+
+最新规范化摘要保存在 `reports/native-v6-summary.json`。

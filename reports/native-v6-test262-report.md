@@ -46,12 +46,25 @@ Result:
 
 | Total | Passed | Failed | Skipped | Conformance |
 | ---: | ---: | ---: | ---: | ---: |
-| 2,199 | 769 | 967 | 463 | 34.97% |
+| 2,199 | 1,499 | 699 | 1 | 68.17% |
 
-Skipped tests are not counted as passes. The remaining failures include
-unsupported harness helpers, deferred syntax and standard-library features,
-descriptor/metadata edge cases, advanced JSON reviver/replacer/space behavior,
-and semantics outside the V6 core scope.
+This is the latest Native scan after merging Track A `arguments` support,
+Track B Error/JSON/Math fixes, and Track C compound-assignment support.
+Compared with the A+B baseline, Track C adds 10 passes with no regressions.
+Skipped tests are not counted as passes. The remaining failures are concentrated in deferred
+Symbol/Proxy/RegExp/Realm support, frontend syntax gaps, and advanced
+object-model behavior.
+
+Per-directory merged results:
+
+| Area | Passed | Failed | Skipped | Conformance |
+| --- | ---: | ---: | ---: | ---: |
+| String | 791 | 431 | 1 | 64.68% |
+| Number | 262 | 78 | 0 | 77.06% |
+| Math | 240 | 87 | 0 | 73.39% |
+| Boolean | 37 | 14 | 0 | 72.55% |
+| Error | 59 | 34 | 0 | 63.44% |
+| JSON | 110 | 55 | 0 | 66.67% |
 
 ## Project Quality Gates
 
@@ -59,10 +72,10 @@ The following commands pass on the tested Windows environment:
 
 ```powershell
 cargo fmt --all -- --check
-cargo check --all-targets
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
+cargo check --no-default-features --all-targets
+cargo test --no-default-features --all-targets
+cargo clippy --no-default-features --all-targets -- -D warnings
 ```
 
-The V1-V5 pinned Test262 gates remain regression requirements alongside the V6
-gate.
+The V1-V6 pinned Test262 gates pass 69 of 69 files and remain mandatory
+zero-regression requirements.
