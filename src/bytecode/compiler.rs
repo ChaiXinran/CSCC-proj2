@@ -1095,12 +1095,26 @@ impl Compiler {
         literal: &Literal,
         chunk: &mut Chunk,
     ) -> Result<(), CompileError> {
+        // RegExp literals are lowered to two string constants + CreateRegExp.
+        if let Literal::RegExp { pattern, flags } = literal {
+            let pat_idx = chunk
+                .add_constant(Constant::String(pattern.clone()))
+                .map_err(CompileError::from_chunk)?;
+            chunk.emit(Instruction::Constant(pat_idx));
+            let flags_idx = chunk
+                .add_constant(Constant::String(flags.clone()))
+                .map_err(CompileError::from_chunk)?;
+            chunk.emit(Instruction::Constant(flags_idx));
+            chunk.emit(Instruction::CreateRegExp);
+            return Ok(());
+        }
         let constant = match literal {
             Literal::Undefined => Constant::Undefined,
             Literal::Null => Constant::Null,
             Literal::Boolean(value) => Constant::Boolean(*value),
             Literal::Number(value) => Constant::Number(*value),
             Literal::String(value) => Constant::String(value.clone()),
+            Literal::RegExp { .. } => unreachable!(),
         };
         let index = chunk
             .add_constant(constant)

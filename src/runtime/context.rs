@@ -27,6 +27,7 @@ pub struct Intrinsics {
     pub number_prototype: ObjectId,
     pub boolean_prototype: ObjectId,
     pub error_prototype: ObjectId,
+    pub regexp_prototype: ObjectId,
 }
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
@@ -286,6 +287,13 @@ impl NativeContext {
         self.intrinsics
             .as_ref()
             .map(|intrinsics| intrinsics.array_prototype)
+    }
+
+    #[must_use]
+    pub fn regexp_prototype(&self) -> Option<ObjectId> {
+        self.intrinsics
+            .as_ref()
+            .map(|intrinsics| intrinsics.regexp_prototype)
     }
 
     #[must_use]
@@ -638,6 +646,17 @@ impl NativeContext {
         let id = self
             .heap
             .allocate_object(array)
+            .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+        Ok(JsValue::Object(id))
+    }
+
+    pub fn create_regexp(&mut self, pattern: String, flags: String) -> Result<JsValue, VmError> {
+        let mut object = JsObject::ordinary();
+        object.prototype = self.regexp_prototype().or_else(|| self.object_prototype());
+        object.kind = ObjectKind::RegExp { pattern, flags };
+        let id = self
+            .heap
+            .allocate_object(object)
             .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
         Ok(JsValue::Object(id))
     }

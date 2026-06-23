@@ -53,6 +53,10 @@ pub struct Parser {
     /// disambiguated from `for (x in y; …)`. Reset on entry to any nested
     /// bracketed sub-expression.
     no_in: bool,
+    /// Original source text kept for regex literal relexing. When the parser
+    /// encounters `/` in a primary-expression position it uses this to re-read
+    /// the bytes that the context-free lexer split into separate tokens.
+    source: Option<Box<str>>,
 }
 
 impl Parser {
@@ -69,7 +73,17 @@ impl Parser {
             switch_depth: 0,
             function_depth: 0,
             no_in: false,
+            source: None,
         }
+    }
+
+    /// Like [`Parser::new`] but retains the original source text so that regex
+    /// literals can be relexed when `/` appears in a primary-expression context.
+    #[must_use]
+    pub fn with_source(tokens: Vec<Token>, source: &str) -> Self {
+        let mut parser = Self::new(tokens);
+        parser.source = Some(source.into());
+        parser
     }
 
     /// Parses a complete script, consuming every token up to and including EOF.

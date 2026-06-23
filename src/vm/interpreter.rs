@@ -498,6 +498,18 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::CreateRegExp => {
+                    let flags = match self.pop_value()? {
+                        JsValue::String(s) => s,
+                        _ => return Err(VmError::type_error("regexp flags must be a string")),
+                    };
+                    let pattern = match self.pop_value()? {
+                        JsValue::String(s) => s,
+                        _ => return Err(VmError::type_error("regexp pattern must be a string")),
+                    };
+                    let regexp = context.create_regexp(pattern, flags)?;
+                    self.stack.push(regexp);
+                }
                 Instruction::ForInKeys => {
                     let value = self.pop_value()?;
                     let keys: Vec<String> = match &value {

@@ -8,9 +8,10 @@
 //! goes through the V6 `Vm` contract so JavaScript `valueOf`/`toString` throws
 //! stay catchable by V5 handlers.
 
-use super::{boolean, error, json, math, number, string};
+use super::{boolean, error, json, math, number, regexp, string};
 use crate::runtime::{
-    JsObject, JsValue, NativeCall, NativeContext, ObjectId, PrimitiveValue, PropertyDescriptor,
+    JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
+    PropertyDescriptor,
 };
 use crate::vm::{Vm, VmError};
 
@@ -23,6 +24,7 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_math(context)?;
     install_json(context)?;
     install_global_functions(context)?;
+    install_regexp(context)?;
     Ok(())
 }
 
@@ -1137,12 +1139,44 @@ fn string_concat(
     Ok(JsValue::String(string::concat(&value, &borrowed)))
 }
 
+/// Returns `true` if `value` is a `JsValue::Object` whose internal kind is
+/// `ObjectKind::RegExp`. Equivalent to the ECMAScript `IsRegExp` abstract
+/// operation (without Symbol.match support).
+fn is_regexp_value(context: &NativeContext, value: &JsValue) -> bool {
+    let JsValue::Object(id) = value else {
+        return false;
+    };
+    matches!(
+        context.heap().object(*id).map(|o| &o.kind),
+        Some(ObjectKind::RegExp { .. })
+    )
+}
+
+/// Extract (pattern, flags) from a value known to be a RegExp object.
+fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(String, String)> {
+    let JsValue::Object(id) = value else {
+        return None;
+    };
+    if let Some(ObjectKind::RegExp { pattern, flags }) = context.heap().object(*id).map(|o| &o.kind)
+    {
+        Some((pattern.clone(), flags.clone()))
+    } else {
+        None
+    }
+}
+
 fn string_includes(
     vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    let first_arg = arg(arguments, 0);
+    if is_regexp_value(context, &first_arg) {
+        return Err(VmError::type_error(
+            "String.prototype.includes does not accept a regular expression",
+        ));
+    }
     let value = this_string(vm, context, this)?;
     let search = arg_string(vm, context, arguments, 0)?;
     let position = arg_index(vm, context, arguments, 1)?;
@@ -1233,6 +1267,12 @@ fn string_starts_with(
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    let first_arg = arg(arguments, 0);
+    if is_regexp_value(context, &first_arg) {
+        return Err(VmError::type_error(
+            "String.prototype.startsWith does not accept a regular expression",
+        ));
+    }
     let value = this_string(vm, context, this)?;
     let search = arg_string(vm, context, arguments, 0)?;
     let position = arg_index(vm, context, arguments, 1)?;
@@ -1247,6 +1287,12 @@ fn string_ends_with(
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    let first_arg = arg(arguments, 0);
+    if is_regexp_value(context, &first_arg) {
+        return Err(VmError::type_error(
+            "String.prototype.endsWith does not accept a regular expression",
+        ));
+    }
     let value = this_string(vm, context, this)?;
     let search = arg_string(vm, context, arguments, 0)?;
     let end = match arguments.get(1) {
@@ -1276,15 +1322,26 @@ fn string_split(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    let separator = match arguments.first() {
-        None | Some(JsValue::Undefined) => None,
-        Some(_) => Some(arg_string(vm, context, arguments, 0)?),
-    };
+    let first_arg = arg(arguments, 0);
     let limit = match arguments.get(1) {
-        None | Some(JsValue::Undefined) => u32::MAX,
-        Some(_) => to_uint32(arg_number(vm, context, arguments, 1)?),
+        None | Some(JsValue::Undefined) => None,
+        Some(_) => Some(to_uint32(arg_number(vm, context, arguments, 1)?) as usize),
     };
-    let parts = string::split(&value, separator.as_deref(), limit)
+    if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
+        let re = regexp::compile_regex(&pattern, &flags)
+            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        let parts = regexp::split(&re, &value, limit)
+            .into_iter()
+            .map(JsValue::String)
+            .collect();
+        return context.create_array(parts);
+    }
+    let separator = match first_arg {
+        JsValue::Undefined => None,
+        _ => Some(arg_string(vm, context, arguments, 0)?),
+    };
+    let limit32 = limit.map_or(u32::MAX, |l| l.min(u32::MAX as usize) as u32);
+    let parts = string::split(&value, separator.as_deref(), limit32)
         .into_iter()
         .map(JsValue::String)
         .collect();
@@ -1298,6 +1355,14 @@ fn string_search(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
+    let first_arg = arg(arguments, 0);
+    if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
+        let re = regexp::compile_regex(&pattern, &flags)
+            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        return Ok(JsValue::Number(
+            regexp::search(&re, &value).map_or(-1.0, |i| i as f64),
+        ));
+    }
     let search = arg_string(vm, context, arguments, 0)?;
     Ok(JsValue::Number(string::search(&value, &search) as f64))
 }
@@ -1309,8 +1374,19 @@ fn string_replace(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    let search = arg_string(vm, context, arguments, 0)?;
+    let first_arg = arg(arguments, 0);
     let replacement = arg_string(vm, context, arguments, 1)?;
+    if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
+        let re = regexp::compile_regex(&pattern, &flags)
+            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        let result = if regexp::is_global(&flags) {
+            regexp::replace_all(&re, &value, &replacement)
+        } else {
+            regexp::replace_first(&re, &value, &replacement)
+        };
+        return Ok(JsValue::String(result));
+    }
+    let search = arg_string(vm, context, arguments, 0)?;
     Ok(JsValue::String(string::replace(
         &value,
         &search,
@@ -1325,8 +1401,23 @@ fn string_replace_all(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    let search = arg_string(vm, context, arguments, 0)?;
+    let first_arg = arg(arguments, 0);
     let replacement = arg_string(vm, context, arguments, 1)?;
+    if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
+        if !regexp::is_global(&flags) {
+            return Err(VmError::type_error(
+                "String.prototype.replaceAll must be called with a global RegExp",
+            ));
+        }
+        let re = regexp::compile_regex(&pattern, &flags)
+            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        return Ok(JsValue::String(regexp::replace_all(
+            &re,
+            &value,
+            &replacement,
+        )));
+    }
+    let search = arg_string(vm, context, arguments, 0)?;
     Ok(JsValue::String(string::replace_all(
         &value,
         &search,
@@ -1341,6 +1432,49 @@ fn string_match(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
+    let first_arg = arg(arguments, 0);
+    if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
+        let re = regexp::compile_regex(&pattern, &flags)
+            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        if regexp::is_global(&flags) {
+            // Global match: return array of all matches or null.
+            let matches = regexp::exec_global(&re, &value);
+            if matches.is_empty() {
+                return Ok(JsValue::Null);
+            }
+            let elements = matches.into_iter().map(JsValue::String).collect();
+            return context.create_array(elements);
+        }
+        // Non-global match: return first match array (like exec) or null.
+        let Some(caps) = regexp::exec_once(&re, &value) else {
+            return Ok(JsValue::Null);
+        };
+        let match_str = caps[0].clone().unwrap_or_default();
+        let index = value
+            .find(match_str.as_str())
+            .map(|b| value[..b].encode_utf16().count())
+            .unwrap_or(0);
+        let elements = caps
+            .into_iter()
+            .map(|c| c.map_or(JsValue::Undefined, JsValue::String))
+            .collect();
+        let result = context.create_array(elements)?;
+        if let JsValue::Object(object) = result {
+            context.define_own_property(
+                object,
+                "index".into(),
+                PropertyDescriptor::data_with(JsValue::Number(index as f64), true, true, true),
+            )?;
+            context.define_own_property(
+                object,
+                "input".into(),
+                PropertyDescriptor::data_with(JsValue::String(value), true, true, true),
+            )?;
+            return Ok(JsValue::Object(object));
+        }
+        return Ok(result);
+    }
+    // String fallback: coerce to string, find first occurrence.
     let search = arg_string(vm, context, arguments, 0)?;
     let Some(index) = string::index_of(&value, &search, 0) else {
         return Ok(JsValue::Null);
@@ -1971,4 +2105,178 @@ fn encode_uri_component(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     Ok(arguments.first().cloned().unwrap_or(JsValue::Undefined))
+}
+
+// ── RegExp ────────────────────────────────────────────────────────────────────
+
+fn install_regexp(context: &mut NativeContext) -> Result<(), VmError> {
+    let prototype = context
+        .regexp_prototype()
+        .ok_or_else(|| VmError::runtime("regexp prototype missing"))?;
+    let constructor = context.register_builtin("RegExp", 2, regexp_call, Some(regexp_construct))?;
+    let JsValue::BuiltinFunction(id) = &constructor else {
+        unreachable!()
+    };
+    let backing = context.builtin(*id).unwrap().object;
+
+    context.define_own_property(
+        backing,
+        "prototype".into(),
+        constant_descriptor(JsValue::Object(prototype)),
+    )?;
+    context.define_own_property(
+        prototype,
+        "constructor".into(),
+        method_descriptor(constructor.clone()),
+    )?;
+
+    define_method(context, prototype, "test", 1, regexp_test)?;
+    define_method(context, prototype, "exec", 1, regexp_exec)?;
+    define_method(context, prototype, "toString", 0, regexp_to_string)?;
+
+    context.declare_global("RegExp", constructor);
+    Ok(())
+}
+
+fn regexp_call(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    regexp_make(context, arguments)
+}
+
+fn regexp_construct(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    _new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    regexp_make(context, arguments)
+}
+
+fn regexp_make(context: &mut NativeContext, arguments: &[JsValue]) -> Result<JsValue, VmError> {
+    let first = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    // If the first argument is already a RegExp, copy it (with optional flags override).
+    if let Some((pattern, src_flags)) = regexp_data(context, &first) {
+        let flags = match arguments.get(1) {
+            None | Some(JsValue::Undefined) => src_flags,
+            Some(JsValue::String(f)) => f.clone(),
+            _ => {
+                return Err(VmError::type_error(
+                    "RegExp flags must be a string or undefined",
+                ));
+            }
+        };
+        return context.create_regexp(pattern, flags);
+    }
+    let pattern = match &first {
+        JsValue::Undefined => String::new(),
+        JsValue::String(s) => s.clone(),
+        _ => {
+            return Err(VmError::type_error(
+                "RegExp pattern must be a string or RegExp",
+            ));
+        }
+    };
+    let flags = match arguments.get(1) {
+        None | Some(JsValue::Undefined) => String::new(),
+        Some(JsValue::String(f)) => f.clone(),
+        _ => {
+            return Err(VmError::type_error(
+                "RegExp flags must be a string or undefined",
+            ));
+        }
+    };
+    context.create_regexp(pattern, flags)
+}
+
+fn regexp_test(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let Some((pattern, flags)) = regexp_data(context, &this) else {
+        return Err(VmError::type_error(
+            "RegExp.prototype.test called on non-RegExp",
+        ));
+    };
+    let text = match arguments.first() {
+        Some(JsValue::String(s)) => s.clone(),
+        _ => {
+            return Err(VmError::type_error(
+                "RegExp.prototype.test requires a string argument",
+            ));
+        }
+    };
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    Ok(JsValue::Boolean(re.is_match(&text)))
+}
+
+fn regexp_exec(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let Some((pattern, flags)) = regexp_data(context, &this) else {
+        return Err(VmError::type_error(
+            "RegExp.prototype.exec called on non-RegExp",
+        ));
+    };
+    let text = match arguments.first() {
+        Some(JsValue::String(s)) => s.clone(),
+        _ => {
+            return Err(VmError::type_error(
+                "RegExp.prototype.exec requires a string argument",
+            ));
+        }
+    };
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let Some(caps) = regexp::exec_once(&re, &text) else {
+        return Ok(JsValue::Null);
+    };
+    let match_str = caps[0].clone().unwrap_or_default();
+    let index = text
+        .find(match_str.as_str())
+        .map(|b| text[..b].encode_utf16().count())
+        .unwrap_or(0);
+    let elements: Vec<JsValue> = caps
+        .into_iter()
+        .map(|c| c.map_or(JsValue::Undefined, JsValue::String))
+        .collect();
+    let result = context.create_array(elements)?;
+    if let JsValue::Object(object) = result {
+        context.define_own_property(
+            object,
+            "index".into(),
+            PropertyDescriptor::data_with(JsValue::Number(index as f64), true, true, true),
+        )?;
+        context.define_own_property(
+            object,
+            "input".into(),
+            PropertyDescriptor::data_with(JsValue::String(text), true, true, true),
+        )?;
+        Ok(JsValue::Object(object))
+    } else {
+        Ok(result)
+    }
+}
+
+fn regexp_to_string(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let Some((pattern, flags)) = regexp_data(context, &this) else {
+        return Err(VmError::type_error(
+            "RegExp.prototype.toString called on non-RegExp",
+        ));
+    };
+    Ok(JsValue::String(format!("/{pattern}/{flags}")))
 }

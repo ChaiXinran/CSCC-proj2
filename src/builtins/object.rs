@@ -417,6 +417,7 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Boolean(_)) => "Boolean",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Number(_)) => "Number",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::String(_)) => "String",
+        ObjectKind::RegExp { .. } => "RegExp",
         ObjectKind::Ordinary if context.is_error_object(object) => "Error",
         ObjectKind::Ordinary => "Object",
     })

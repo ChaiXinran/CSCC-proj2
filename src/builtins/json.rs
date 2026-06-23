@@ -62,9 +62,9 @@ fn internalize_json_property(
                 ObjectKind::Array { elements, .. } => {
                     (0..elements.len()).map(|index| index.to_string()).collect()
                 }
-                ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) => {
-                    object_value.own_property_keys()
-                }
+                ObjectKind::Ordinary
+                | ObjectKind::PrimitiveWrapper(_)
+                | ObjectKind::RegExp { .. } => object_value.own_property_keys(),
             }
         };
         for property in keys {
@@ -667,7 +667,7 @@ fn stringify_object(
             }
             crate::runtime::PrimitiveValue::String(value) => quote_json_string(value),
         },
-        ObjectKind::Ordinary => {
+        ObjectKind::Ordinary | ObjectKind::RegExp { .. } => {
             let mut parts = Vec::new();
             for key in object_value.own_property_keys() {
                 let Some(descriptor) = object_value.own_property(&key) else {

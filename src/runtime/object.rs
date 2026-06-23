@@ -28,6 +28,9 @@ pub enum ObjectKind {
     /// Stores the internal [[PrimitiveValue]] slot. Wrapper objects still have normal `properties`
     /// and a `prototype` link; only the internal slot is special.
     PrimitiveWrapper(PrimitiveValue),
+    /// Regular expression object. The `pattern` and `flags` are the source strings.
+    /// Used by `String.prototype.match`, `search`, `replace`, `split`, etc. to detect regexp args.
+    RegExp { pattern: String, flags: String },
 }
 
 /// Ordinary object storage.
@@ -162,7 +165,9 @@ impl JsObject {
     pub fn array_length(&self) -> Option<usize> {
         match &self.kind {
             ObjectKind::Array { elements, .. } => Some(elements.len()),
-            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) => None,
+            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {
+                None
+            }
         }
     }
 
@@ -172,7 +177,9 @@ impl JsObject {
             ObjectKind::Array {
                 length_writable, ..
             } => Some(*length_writable),
-            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) => None,
+            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {
+                None
+            }
         }
     }
 

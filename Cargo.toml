@@ -24,6 +24,7 @@ boa_runtime = { path = "boa/core/runtime", default-features = false, features = 
     "annex-b",
     "test262",
 ] }
+regex = "1"
 
 [profile.release]
 codegen-units = 1

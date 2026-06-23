@@ -27,11 +27,17 @@ impl fmt::Display for LexError {
 
 impl std::error::Error for LexError {}
 
-/// Operators recognized by the V1 lexer, ordered so that maximal munch is a
+/// Operators recognized by the lexer, ordered so that maximal munch is a
 /// simple linear scan: longer operators precede their shorter prefixes.
+/// Includes bitwise/shift/exponentiation operators so that regex literal bodies
+/// containing `|`, `^`, `&`, `~`, `**`, `>>`, `<<` tokenize without lex errors.
 const OPERATORS: &[&str] = &[
-    "===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "*=", "/=",
-    "%=", "+", "-", "*", "/", "%", "!", "=", "<", ">",
+    // 4-char
+    ">>>=", // 3-char
+    "===", "!==", ">>=", ">>>", "<<=", "**=", // 2-char
+    "=>", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "**", "*=", "/=", "%=", "|=",
+    "^=", "&=", ">>", "<<", // 1-char
+    "+", "-", "*", "/", "%", "!", "=", "<", ">", "|", "^", "&", "~",
 ];
 
 /// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional
@@ -436,11 +442,115 @@ impl<'source> Lexer<'source> {
             ));
         }
 
-        Err(LexError {
-            span: Span::new(start, start + ch.len_utf8()),
-            message: format!("unexpected character {ch:?}"),
-        })
+        // Fallback: consume the unknown character (and for backslash, also the
+        // escaped character) as a placeholder operator token. This prevents lex
+        // errors for characters that appear inside regex literal bodies such as
+        // `\d`, `\s`, `|`, `^`, etc. The regex relexer reads from the original
+        // source bytes and ignores these placeholder tokens entirely.
+        self.cursor.bump();
+        if ch == '\\' && self.cursor.peek().is_some() {
+            self.cursor.bump();
+        }
+        Ok(Token::new(
+            TokenKind::Operator("\0".to_owned()),
+            Span::new(start, self.cursor.offset()),
+        ))
     }
+}
+
+/// Reads a regex literal from `source` starting at byte offset `start`.
+///
+/// `source[start]` must be the opening `/`. Returns `(pattern, flags, end_offset)`
+/// where `end_offset` is the byte position immediately after the closing flags.
+/// Call this from the parser when `/` appears in a primary-expression position.
+pub fn read_regex_literal_at(
+    source: &str,
+    start: usize,
+) -> Result<(String, String, usize), LexError> {
+    let bytes = source.as_bytes();
+    let mut i = start;
+
+    // Consume the opening '/'
+    debug_assert_eq!(bytes.get(i), Some(&b'/'));
+    i += 1;
+
+    // The very first char cannot be '/' (empty body would close immediately and
+    // re-open a comment) or '*' (would start a block comment).
+    match bytes.get(i) {
+        None => {
+            return Err(LexError {
+                span: Span::new(start, i),
+                message: "unterminated regex literal".into(),
+            });
+        }
+        Some(b'*') => {
+            return Err(LexError {
+                span: Span::new(start, i + 1),
+                message: "regex literal body cannot begin with `*`".into(),
+            });
+        }
+        _ => {}
+    }
+
+    let mut pattern = String::new();
+    let mut in_class = false;
+
+    loop {
+        let Some(&byte) = bytes.get(i) else {
+            return Err(LexError {
+                span: Span::new(start, i),
+                message: "unterminated regex literal".into(),
+            });
+        };
+        match byte {
+            b'\n' | b'\r' => {
+                return Err(LexError {
+                    span: Span::new(start, i),
+                    message: "unterminated regex literal".into(),
+                });
+            }
+            b'\\' => {
+                pattern.push('\\');
+                i += 1;
+                if let Some(ch) = source[i..].chars().next() {
+                    pattern.push(ch);
+                    i += ch.len_utf8();
+                }
+            }
+            b'[' => {
+                in_class = true;
+                pattern.push('[');
+                i += 1;
+            }
+            b']' => {
+                in_class = false;
+                pattern.push(']');
+                i += 1;
+            }
+            b'/' if !in_class => {
+                i += 1;
+                break;
+            }
+            _ => {
+                let ch = source[i..].chars().next().unwrap_or('\0');
+                pattern.push(ch);
+                i += ch.len_utf8().max(1);
+            }
+        }
+    }
+
+    // Read flags: identifier-like characters after the closing '/'.
+    let mut flags = String::new();
+    while let Some(ch) = source[i..].chars().next() {
+        if ch.is_alphabetic() || ch == '_' || ch == '$' {
+            flags.push(ch);
+            i += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+
+    Ok((pattern, flags, i))
 }
 
 /// ECMAScript line terminators.
@@ -646,9 +756,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unsupported_character() {
-        let error = Lexer::new("@").tokenize().unwrap_err();
-        assert_eq!(error.span, Span::new(0, 1));
+    fn unknown_character_produces_placeholder_not_lex_error() {
+        // Unknown characters (e.g. `@`) that can appear in regex literal bodies
+        // are now tokenized as placeholder Operator("\0") tokens instead of
+        // causing an immediate lex error. A parse error is raised later if the
+        // token appears outside a regex context.
+        let tokens = Lexer::new("@").tokenize().unwrap();
+        assert!(matches!(&tokens[0].kind, TokenKind::Operator(op) if op == "\0"));
     }
 
     #[test]

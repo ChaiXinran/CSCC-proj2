@@ -370,7 +370,36 @@ impl Parser {
             TokenKind::Punctuator('[') => self.parse_array_literal(),
             TokenKind::Punctuator('{') => self.parse_object_literal(),
             TokenKind::Keyword(Keyword::Function) => self.parse_function_expression(),
+            // In a primary-expression position, `/` and `/=` introduce a regex
+            // literal, not a division operator. Use the source text to re-read the
+            // full `/pattern/flags` sequence, then skip the tokens that the
+            // context-free lexer split it into.
+            TokenKind::Operator(ref op) if op == "/" || op == "/=" => self.parse_regex_literal(),
             other => Err(self.error(format!("unexpected {}", describe(&other)))),
+        }
+    }
+
+    fn parse_regex_literal(&mut self) -> Result<Expression, ParseError> {
+        let start = self.peek().span.start;
+        let Some(ref source) = self.source.clone() else {
+            return Err(self.error("unexpected `/`".into()));
+        };
+        match crate::lexer::read_regex_literal_at(source, start) {
+            Err(lex_err) => Err(ParseError {
+                span: lex_err.span,
+                message: lex_err.message,
+            }),
+            Ok((pattern, flags, end_offset)) => {
+                // Consume the leading '/' (or '/=') token.
+                self.advance();
+                // Skip all subsequent tokens whose span lies inside the regex body.
+                while !matches!(self.peek().kind, TokenKind::Eof)
+                    && self.peek().span.start < end_offset
+                {
+                    self.advance();
+                }
+                Ok(Expression::Literal(Literal::RegExp { pattern, flags }))
+            }
         }
     }
 
