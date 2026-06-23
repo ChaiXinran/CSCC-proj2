@@ -374,3 +374,32 @@ cargo run --release --no-default-features -- test262 --native-v6-scan --jobs 4 \
 - Error stack 的 Proxy/Realm/不可扩展对象边界依赖更完整对象模型。
 
 本轮结果保存在 `reports/native-v6-track-b-summary.json`。
+
+---
+
+# 轨道 A + B 合并验证（2026-06-23）
+
+轨道 A 的普通函数 `arguments` 对象与轨道 B 的 Error/JSON/Math 修复已合并。
+合并检查仅发现 `src/vm/interpreter.rs` 一处 rustfmt 差异，没有语义冲突。
+
+| 指标 | 轨道 B 完成时 | A+B 合并后 | 增量 |
+|---|---:|---:|---:|
+| 通过 | 1407 | 1489 | +82 |
+| 失败 | 791 | 709 | -82 |
+| 跳过 | 1 | 1 | 0 |
+| 通过率 | 63.98% | 67.71% | +3.73pp |
+
+合并后的目录结果：
+
+| 目录 | 通过 | 失败 | 跳过 | 通过率 |
+|---|---:|---:|---:|---:|
+| String | 784 | 438 | 1 | 64.10% |
+| Number | 262 | 78 | 0 | 77.06% |
+| Math | 240 | 87 | 0 | 73.39% |
+| Boolean | 37 | 14 | 0 | 72.55% |
+| Error | 59 | 34 | 0 | 63.44% |
+| JSON | 107 | 58 | 0 | 64.85% |
+
+V1–V6 固定门合计 `69/69`，零失败、零跳过。全量 Rust 测试、
+`cargo fmt` 和 Clippy 均通过。合并扫描结果保存在
+`reports/native-v6-merged-summary.json`。

@@ -32,8 +32,9 @@
 - The completed V5 diagnostic scan passes 191 of 593 selected try, switch,
   let, and const tests; unsupported and failed cases remain separately
   reported.
-- The Native V6 core builtin scan passes 769 of 2,199 selected String, Number,
-  Math, Boolean, Error, and JSON tests, with 463 explicitly skipped.
+- After merging the Track A `arguments` support and Track B builtin fixes, the
+  Native V6 core builtin scan passes 1,489 of 2,199 selected String, Number,
+  Math, Boolean, Error, and JSON tests, with 1 explicitly skipped.
 - A sharded Test262 run on revision `de8e621c` executed 47,516 non-staging
   tests and passed 45,310. Treating every unexecuted non-staging test as a
   failure gives a conservative full-suite lower bound of 87.31%. See
