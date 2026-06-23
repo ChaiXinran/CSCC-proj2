@@ -1600,9 +1600,9 @@ impl Vm {
                             },
                         }
                     }
-                    None => Ok(OperationResult::Throw(vm_error_to_value(VmError::type_error(
-                        format!("{} is not a constructor", def.name),
-                    )))),
+                    None => Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error(format!("{} is not a constructor", def.name)),
+                    ))),
                 }
             }
             other => Ok(OperationResult::Throw(vm_error_to_value(

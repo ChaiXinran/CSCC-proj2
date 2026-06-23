@@ -144,7 +144,10 @@ impl JsObject {
 
     #[must_use]
     pub fn get_own_property_value(&self, name: &str) -> Option<JsValue> {
-        if let ObjectKind::Array { elements, length, .. } = &self.kind {
+        if let ObjectKind::Array {
+            elements, length, ..
+        } = &self.kind
+        {
             if name == "length" {
                 return Some(JsValue::Number(*length as f64));
             }

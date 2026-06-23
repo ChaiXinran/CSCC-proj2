@@ -2890,8 +2890,7 @@ fn vm_to_string(
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
             // Call value.toString() via the VM so user-defined toString is respected.
             let to_string_fn = vm.get_property_value(value.clone(), "toString", context)?;
-            let result =
-                vm.call_value_from_builtin(to_string_fn, value, Vec::new(), context)?;
+            let result = vm.call_value_from_builtin(to_string_fn, value, Vec::new(), context)?;
             result
                 .to_js_string()
                 .ok_or_else(|| VmError::type_error("toString did not return a string"))

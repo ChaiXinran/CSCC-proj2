@@ -39,8 +39,8 @@ use std::{
 };
 
 use agentjs::{
-    test262::{run, CaseResult, RunnerOptions, Status},
     BackendKind,
+    test262::{CaseResult, RunnerOptions, Status, run},
 };
 
 const DEFAULT_JOBS: usize = 4;
