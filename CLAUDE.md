@@ -12,7 +12,7 @@ The contest release gate is the *native* engine reaching >60% Test262 conformanc
 
 - **Never edit `boa/`, `quickjs/`, or `test262/`.** They are pinned git submodules used as backend/reference/conformance. Keep all project code at the repo root. Record any submodule revision bump in [docs/dependencies.md](docs/dependencies.md).
 - **Both Boa and the native engine live in this same crate.** Boa is reached *only* through `src/backend/boa.rs`; `engine.rs` and `contracts.rs` must stay free of Boa imports. Don't leak Boa types past the backend boundary.
-- **`BackendKind::Native` executes the self-developed V1–V5 pipeline end-to-end.** The CLI uses `BackendKind::Boa` for production commands; `--native-vN` flags route Test262 through the native path. Don't silently fall back to Boa to make something "pass" — document unsupported behavior instead.
+- **`BackendKind::Native` executes the self-developed V1–V6 pipeline end-to-end.** The CLI uses `BackendKind::Boa` for production commands; `--native-vN` flags route Test262 through the native path. Don't silently fall back to Boa to make something "pass" — document unsupported behavior instead.
 - **`src/contracts.rs` is a reviewed cross-team boundary.** It re-exports the shared types (`Token`, `Program`, `Chunk`, `Instruction`, `JsValue`) and the `SourceParser` / `ProgramCompiler` / `ChunkExecutor` / `NativePipeline` traits. Changing these requires team review; keep implementation details inside their owning `src/<module>/` directory.
 - **Respect one-directional module flow:** `lexer → ast/parser → bytecode → vm → runtime/builtins`. `backend/native.rs` only *assembles* stages — it must contain no lexer/parser/VM/object-model logic.
 
@@ -22,11 +22,11 @@ The contest release gate is the *native* engine reaching >60% Test262 conformanc
 - `contracts.rs` — the stable native-engine collaboration boundary (see above).
 - `backend/mod.rs` — `BackendKind` and the internal `RuntimeBackend` trait used by CLI + Test262.
 - `backend/boa.rs` — the complete Boa compatibility implementation: context creation, host functions, limits, script caching, jobs, error conversion.
-- `backend/native.rs` — entry point for the self-developed engine; V1–V5 are live end-to-end without Boa fallback.
+- `backend/native.rs` — entry point for the self-developed engine; V1–V6 are live end-to-end without Boa fallback.
 - `lexer/`, `ast/`, `parser/` — native front end. `bytecode/` — compiler/chunk/opcodes. `vm/` — interpreter/frames. `runtime/` — values, objects, environments, heap, GC. `builtins/` — Object/Function/Array etc., no host APIs exposed.
 - `test262.rs` — parallel Test262 discovery/execution with strict+non-strict variants, harness includes, negative/async handling, `$262`, per-case panic isolation, JSON summaries.
 
-Current active development: V4 (object model, builtins) is live; V5 (exceptions, lexical scope) and V6 are in progress. Each version has a `docs/native-vN-scope.md` and `docs/native-vN-interface.md` — the interface files are read-only; changes require review before any implementation PR merges. The version development checklist lives in [docs/version-development-workflow.md](docs/version-development-workflow.md).
+Current state: V1–V5 (front end, bytecode, VM, object model, exceptions/lexical scope) are live and gated; V6 (core builtins — String, Number, Math, Boolean, Error, JSON) is live with fixed gates plus an ongoing diagnostic scan. The fixed Native V1–V6 gates pass 69 curated Test262 files with no failures or skips — these are regression checks, not a conformance percentage. Each version has a `docs/native-vN-scope.md` and `docs/native-vN-interface.md` — the interface files are read-only; changes require review before any implementation PR merges. The version development checklist lives in [docs/version-development-workflow.md](docs/version-development-workflow.md).
 
 Planning notes and test strategy rationale live in `thoughts/` (not authoritative, but useful context).
 
@@ -64,7 +64,7 @@ Test262 — start with the feature directory affected by a change, not the full 
 ```sh
 cargo run --release -- test262 --root test262 --suite test/language/expressions --limit 100 --jobs 8 --verbose
 # Scan native conformance for a directory (does not add to fixed gates):
-cargo run --release -- test262 --native-v4-scan --jobs 4 --progress
+cargo run --release -- test262 --native-v6-scan --jobs 4 --progress
 ```
 
 Windows focused run: `.\scripts\test262-sample.ps1 -Suite test/language/expressions -Limit 100`
@@ -98,6 +98,7 @@ cargo run --release -- test262 --native-v2 --jobs 1
 cargo run --release -- test262 --native-v3 --jobs 1
 cargo run --release -- test262 --native-v4 --jobs 1
 cargo run --release -- test262 --native-v5 --jobs 1
+cargo run --release -- test262 --native-v6 --jobs 1
 ```
 
 All versioned gates must stay at zero regressions and zero new skips.
