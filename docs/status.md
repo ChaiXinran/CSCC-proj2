@@ -40,6 +40,11 @@
   tests and passed 45,310. Treating every unexecuted non-staging test as a
   failure gives a conservative full-suite lower bound of 87.31%. See
   `reports/test262-report.md`.
+- Native V7 planning is frozen in `docs/native-v7-scope.md`,
+  `docs/native-v7-interface.md`, and `docs/native-v7-team-plan.md`. V7 targets
+  the remaining engineering gaps above: hard byte budgets, cooperative
+  deadlines, non-moving GC, crash-safe Test262 dashboards, native script
+  caching, and native benchmark evidence.
 
 ## Acceptance Gates
 
@@ -53,6 +58,11 @@ Before claiming contest readiness:
 4. Binary size, cold-start latency, peak RSS, and warm throughput are reported.
 5. The script cache and subsequent native optimizations are measured against
    an uncached baseline.
+
+V7 is the next planned milestone for items 2-5: it is considered complete only
+when broad native scans produce truthful crash-safe reports, resource
+exhaustion is categorized as `RuntimeLimit`, and benchmark reports use native
+release builds rather than Boa-backed baselines.
 
 CI is defined in `.github/workflows/ci.yml`. A local focused run is available
 through `scripts/test262-sample.ps1`.
