@@ -1193,6 +1193,9 @@ fn member(object: Expression, property: Expression, computed: bool) -> Expressio
 fn call(callee: Expression, arguments: Vec<Expression>) -> Expression {
     Expression::Call {
         callee: Box::new(callee),
-        arguments,
+        arguments: arguments
+            .into_iter()
+            .map(agentjs::ast::CallArgument::Expression)
+            .collect(),
     }
 }

@@ -1,6 +1,8 @@
 //! Program and statement nodes.
 
-use super::expression::{Expression, FunctionBody, FunctionParam};
+use super::expression::{
+    BindingPattern, ClassDeclaration, Expression, FunctionBody, FunctionParam,
+};
 
 /// Complete script AST.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -94,5 +96,13 @@ pub enum Statement {
         target: Expression,
         right: Expression,
         body: Box<Statement>,
+    },
+    /// `class Name [extends Super] { ... }` — class declaration.
+    ClassDeclaration(ClassDeclaration),
+    /// `var/let/const [a, b] = expr` or `var/let/const { x, y } = expr`.
+    DestructuringDeclaration {
+        kind: VariableKind,
+        pattern: BindingPattern,
+        initializer: Expression,
     },
 }

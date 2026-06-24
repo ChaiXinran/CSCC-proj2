@@ -290,8 +290,10 @@ fn compiler_emits_construct_callee_then_arguments_left_to_right() {
         body: vec![expression(Expression::Construct {
             callee: Box::new(Expression::Identifier("Test262Error".into())),
             arguments: vec![
-                Expression::Literal(Literal::String("message".into())),
-                number(2.0),
+                agentjs::ast::CallArgument::Expression(Expression::Literal(Literal::String(
+                    "message".into(),
+                ))),
+                agentjs::ast::CallArgument::Expression(number(2.0)),
             ],
         })],
     };

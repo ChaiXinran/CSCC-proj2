@@ -90,8 +90,8 @@ fn cache_metadata_recursively_summarizes_compiled_function_chunks() {
         body: vec![Statement::FunctionDeclaration {
             name: "add".into(),
             params: vec![
-                FunctionParam { name: "a".into() },
-                FunctionParam { name: "b".into() },
+                FunctionParam::Simple("a".into()),
+                FunctionParam::Simple("b".into()),
             ],
             body: FunctionBody {
                 statements: vec![Statement::Return(Some(Expression::Binary {
@@ -128,6 +128,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
         functions: vec![FunctionTemplate {
             name: Some("bad".into()),
             params: Vec::new(),
+            rest_param: None,
             chunk: invalid_child,
             is_strict: false,
             environment_policy: EnvironmentCapturePolicy::None,

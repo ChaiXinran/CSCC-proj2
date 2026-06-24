@@ -86,8 +86,20 @@ pub enum LogicalOperator {
 
 /// One formal parameter in a function definition.
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionParam {
-    pub name: String,
+pub enum FunctionParam {
+    /// A simple identifier parameter: `function f(x)`.
+    Simple(String),
+    /// A rest parameter collecting remaining arguments: `function f(...rest)`.
+    Rest(String),
+}
+
+impl FunctionParam {
+    /// Returns the binding name for this parameter.
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Simple(name) | Self::Rest(name) => name.as_str(),
+        }
+    }
 }
 
 /// The body of a function: a list of statements.
@@ -168,15 +180,76 @@ impl PropertyName {
 // V4 array element
 // ---------------------------------------------------------------------------
 
-/// One element slot in an array literal. V4 supports sparse arrays via holes.
-///
-/// Trailing comma rule: `[1,]` has length 1; `[1,,]` has length 2 (one hole).
+/// One element slot in an array literal.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ArrayElement {
     /// An elision (empty slot between commas): `[1, , 3]`.
     Hole,
     /// A concrete expression that evaluates to the element value.
     Expression(Expression),
+    /// A spread element that expands an iterable: `[a, ...b]`.
+    Spread(Expression),
+}
+
+// ---------------------------------------------------------------------------
+// V8 template literal
+// ---------------------------------------------------------------------------
+
+/// An untagged template literal with zero or more substitutions.
+///
+/// `quasis.len() == expressions.len() + 1` always holds.
+/// The cooked string text alternates with expressions:
+/// quasis[0] + toString(expressions[0]) + quasis[1] + ...
+#[derive(Debug, Clone, PartialEq)]
+pub struct TemplateLiteral {
+    pub quasis: Vec<String>,
+    pub expressions: Vec<Expression>,
+}
+
+// ---------------------------------------------------------------------------
+// V8 class nodes
+// ---------------------------------------------------------------------------
+
+/// One element of a class body.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassElement {
+    Constructor(FunctionLiteral),
+    Method {
+        name: PropertyName,
+        function: FunctionLiteral,
+        is_static: bool,
+    },
+}
+
+/// A class expression: `class [Name] [extends Super] { ... }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassExpression {
+    pub name: Option<String>,
+    pub super_class: Option<Box<Expression>>,
+    pub elements: Vec<ClassElement>,
+}
+
+/// A class declaration: `class Name [extends Super] { ... }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDeclaration {
+    pub name: String,
+    pub super_class: Option<Expression>,
+    pub elements: Vec<ClassElement>,
+}
+
+// ---------------------------------------------------------------------------
+// V8 binding patterns (destructuring)
+// ---------------------------------------------------------------------------
+
+/// A binding pattern used in variable declarations and parameter lists.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BindingPattern {
+    /// Plain identifier binding: `x`.
+    Identifier(String),
+    /// Array destructuring: `[a, b, , c]`. `None` entries are holes (elisions).
+    Array(Vec<Option<BindingPattern>>),
+    /// Object destructuring: `{ x, y: z }`. Each entry is (key, local_pattern).
+    Object(Vec<(PropertyName, BindingPattern)>),
 }
 
 // ---------------------------------------------------------------------------
@@ -219,16 +292,14 @@ pub enum Expression {
     },
     Call {
         callee: Box<Expression>,
-        arguments: Vec<Expression>,
+        arguments: Vec<CallArgument>,
     },
     Member {
         object: Box<Expression>,
         property: Box<Expression>,
         computed: bool,
     },
-    /// `test ? consequent : alternate`, right associative. Kept distinct from
-    /// [`Expression::Logical`] because the compiler lowers it to a balanced
-    /// branch that leaves exactly one value on every path.
+    /// `test ? consequent : alternate`, right associative.
     Conditional {
         test: Box<Expression>,
         consequent: Box<Expression>,
@@ -237,7 +308,7 @@ pub enum Expression {
     /// `new callee(arguments)`.
     Construct {
         callee: Box<Expression>,
-        arguments: Vec<Expression>,
+        arguments: Vec<CallArgument>,
     },
     /// `[element, ...]` array literal, potentially sparse.
     Array(Vec<ArrayElement>),
@@ -245,4 +316,23 @@ pub enum Expression {
     Object(Vec<ObjectProperty>),
     /// Function expression or named function expression.
     Function(FunctionLiteral),
+    /// Untagged template literal: `` `hello ${name}` ``.
+    TemplateLiteral(TemplateLiteral),
+    /// Spread expression used inside call arg lists: `...expr`.
+    Spread(Box<Expression>),
+    /// Class expression: `class [Name] { ... }`.
+    Class(ClassExpression),
+    /// `this` keyword.
+    This,
+    /// `super` keyword (as a base for property access in a method).
+    Super,
+}
+
+/// One argument in a call or construct expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CallArgument {
+    /// A regular expression argument.
+    Expression(Expression),
+    /// A spread argument: `...expr`.
+    Spread(Expression),
 }
