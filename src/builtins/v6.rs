@@ -1146,6 +1146,31 @@ fn is_regexp_value(context: &NativeContext, value: &JsValue) -> bool {
     )
 }
 
+/// Try dispatching to `value[@@symbol](string_this, ...rest_args)`.
+///
+/// Returns `Some(result)` when the symbol method exists and was called.
+/// Returns `None` when the value has no such symbol (caller should use its own logic).
+fn try_symbol_dispatch(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    sym: crate::runtime::SymbolId,
+    value: JsValue,
+    string_this: String,
+    rest_args: &[JsValue],
+) -> Option<Result<JsValue, VmError>> {
+    let JsValue::Object(oid) = &value else {
+        return None;
+    };
+    let method = context.get_symbol_property_value(*oid, sym)?;
+    if !is_callable_value(&method) {
+        return None;
+    }
+    let mut call_args = Vec::with_capacity(1 + rest_args.len());
+    call_args.push(JsValue::String(string_this));
+    call_args.extend_from_slice(rest_args);
+    Some(vm.call_value_from_builtin(method, value, call_args, context))
+}
+
 /// Extract (pattern, flags) from a value known to be a RegExp object.
 fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(String, String)> {
     let JsValue::Object(id) = value else {
@@ -1323,6 +1348,18 @@ fn string_split(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
+    // @@split dispatch: separator[Symbol.split](string, limit)
+    let sym = context.well_known_symbols().split;
+    if let Some(r) = try_symbol_dispatch(
+        vm,
+        context,
+        sym,
+        first_arg.clone(),
+        value.clone(),
+        arguments.get(1..).unwrap_or_default(),
+    ) {
+        return r;
+    }
     let limit = match arguments.get(1) {
         None | Some(JsValue::Undefined) => None,
         Some(_) => Some(to_uint32(arg_number(vm, context, arguments, 1)?) as usize),
@@ -1357,6 +1394,11 @@ fn string_search(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
+    // @@search dispatch
+    let sym = context.well_known_symbols().search;
+    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[]) {
+        return r;
+    }
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         let re = regexp::compile_regex(&pattern, &flags)
             .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
@@ -1376,6 +1418,18 @@ fn string_replace(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
+    // @@replace dispatch: searchValue[Symbol.replace](string, replaceValue)
+    let sym = context.well_known_symbols().replace;
+    if let Some(r) = try_symbol_dispatch(
+        vm,
+        context,
+        sym,
+        first_arg.clone(),
+        value.clone(),
+        arguments.get(1..).unwrap_or_default(),
+    ) {
+        return r;
+    }
     let replace_arg = arg(arguments, 1);
     let replace_is_fn = is_callable_value(&replace_arg);
 
@@ -1491,6 +1545,21 @@ fn string_replace_all(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
+    // @@replace dispatch (replaceAll also delegates to [Symbol.replace]).
+    // The spec requires the regexp to have the 'g' flag; the Symbol method
+    // implementation (regexp_symbol_replace) inherits the regexp's own flags,
+    // so the check below is enough for the non-Symbol path.
+    let sym = context.well_known_symbols().replace;
+    if let Some(r) = try_symbol_dispatch(
+        vm,
+        context,
+        sym,
+        first_arg.clone(),
+        value.clone(),
+        arguments.get(1..).unwrap_or_default(),
+    ) {
+        return r;
+    }
     let replace_arg = arg(arguments, 1);
     let replace_is_fn = is_callable_value(&replace_arg);
 
@@ -1565,6 +1634,11 @@ fn string_match(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
+    // @@match dispatch
+    let sym = context.well_known_symbols().match_;
+    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[]) {
+        return r;
+    }
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         let re = regexp::compile_regex(&pattern, &flags)
             .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
@@ -1644,6 +1718,11 @@ fn string_match_all(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
+    // @@matchAll dispatch
+    let sym = context.well_known_symbols().match_all;
+    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[]) {
+        return r;
+    }
     let (pattern, flags) = match regexp_data(context, &first_arg) {
         Some(pair) => pair,
         None => {
@@ -2332,6 +2411,26 @@ fn install_regexp(context: &mut NativeContext) -> Result<(), VmError> {
     define_method(context, prototype, "exec", 1, regexp_exec)?;
     define_method(context, prototype, "toString", 0, regexp_to_string)?;
 
+    // Install @@match / @@replace / @@split / @@matchAll / @@search on RegExp.prototype.
+    // These are the entry points String methods dispatch to.
+    let wk = *context.well_known_symbols();
+    let sym_methods: &[(&str, crate::runtime::SymbolId, u8, NativeCall)] = &[
+        ("[Symbol.match]", wk.match_, 1, regexp_symbol_match),
+        ("[Symbol.replace]", wk.replace, 2, regexp_symbol_replace),
+        ("[Symbol.split]", wk.split, 2, regexp_symbol_split),
+        (
+            "[Symbol.matchAll]",
+            wk.match_all,
+            1,
+            regexp_symbol_match_all,
+        ),
+        ("[Symbol.search]", wk.search, 1, regexp_symbol_search),
+    ];
+    for (name, sym, arity, f) in sym_methods {
+        let fn_val = context.register_builtin(name, *arity, *f, None)?;
+        context.define_symbol_own_property(prototype, *sym, method_descriptor(fn_val))?;
+    }
+
     context.declare_global("RegExp", constructor);
     Ok(())
 }
@@ -2477,6 +2576,169 @@ fn regexp_to_string(
         ));
     };
     Ok(JsValue::String(format!("/{pattern}/{flags}")))
+}
+
+// ── RegExp.prototype[@@symbol] methods ────────────────────────────────────────
+//
+// These are the dispatch targets for String.prototype.replace / match / split /
+// matchAll / search.  Each receives `this = regexp`, `arguments[0] = string`.
+
+fn require_regexp_this(
+    context: &NativeContext,
+    this: &JsValue,
+) -> Result<(String, String), VmError> {
+    regexp_data(context, this)
+        .ok_or_else(|| VmError::type_error("RegExp Symbol method called on non-RegExp"))
+}
+
+fn regexp_symbol_replace(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let (pattern, flags) = require_regexp_this(context, &this)?;
+    let string = vm.to_string_coerce(arg(arguments, 0), context)?;
+    let replace_arg = arg(arguments, 1);
+    let global = flags.contains('g');
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    if is_callable_value(&replace_arg) {
+        return apply_replace_fn(vm, context, &string, &re, global, replace_arg);
+    }
+    let replacement = vm.to_string_coerce(replace_arg, context)?;
+    Ok(JsValue::String(if global {
+        regexp::replace_all(&re, &string, &replacement)
+    } else {
+        regexp::replace_first(&re, &string, &replacement)
+    }))
+}
+
+fn regexp_symbol_match(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let (pattern, flags) = require_regexp_this(context, &this)?;
+    let string = vm.to_string_coerce(arg(arguments, 0), context)?;
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    if flags.contains('g') {
+        let matches = regexp::exec_global(&re, &string);
+        if matches.is_empty() {
+            return Ok(JsValue::Null);
+        }
+        let elements = matches.into_iter().map(JsValue::String).collect();
+        return context.create_array(elements);
+    }
+    let Some(caps) = regexp::exec_once(&re, &string) else {
+        return Ok(JsValue::Null);
+    };
+    let match_str = caps[0].clone().unwrap_or_default();
+    let index = string
+        .find(match_str.as_str())
+        .map(|b| string[..b].encode_utf16().count())
+        .unwrap_or(0);
+    let elements = caps
+        .into_iter()
+        .map(|c| c.map_or(JsValue::Undefined, JsValue::String))
+        .collect();
+    let result = context.create_array(elements)?;
+    if let JsValue::Object(oid) = result {
+        context.define_own_property(
+            oid,
+            "index".into(),
+            PropertyDescriptor::data_with(JsValue::Number(index as f64), true, true, true),
+        )?;
+        context.define_own_property(
+            oid,
+            "input".into(),
+            PropertyDescriptor::data_with(JsValue::String(string), true, true, true),
+        )?;
+        return Ok(JsValue::Object(oid));
+    }
+    Ok(result)
+}
+
+fn regexp_symbol_match_all(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let (pattern, flags) = require_regexp_this(context, &this)?;
+    if !flags.contains('g') && !flags.contains('y') {
+        return Err(VmError::type_error(
+            "String.prototype.matchAll called with a non-global RegExp",
+        ));
+    }
+    let string = vm.to_string_coerce(arg(arguments, 0), context)?;
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let mut entries = Vec::new();
+    for caps in re.captures_iter(&string) {
+        let m = caps.get(0).unwrap();
+        let index = string[..m.start()].encode_utf16().count();
+        let elements: Vec<JsValue> = (0..caps.len())
+            .map(|i| {
+                caps.get(i).map_or(JsValue::Undefined, |c| {
+                    JsValue::String(c.as_str().to_owned())
+                })
+            })
+            .collect();
+        let entry = context.create_array(elements)?;
+        if let JsValue::Object(oid) = entry {
+            context.define_own_property(
+                oid,
+                "index".into(),
+                PropertyDescriptor::data_with(JsValue::Number(index as f64), true, true, true),
+            )?;
+            context.define_own_property(
+                oid,
+                "input".into(),
+                PropertyDescriptor::data_with(JsValue::String(string.clone()), true, true, true),
+            )?;
+            entries.push(JsValue::Object(oid));
+        }
+    }
+    context.create_array(entries)
+}
+
+fn regexp_symbol_split(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let (pattern, flags) = require_regexp_this(context, &this)?;
+    let string = vm.to_string_coerce(arg(arguments, 0), context)?;
+    let limit = match arguments.get(1) {
+        None | Some(JsValue::Undefined) => None,
+        Some(_) => Some(to_uint32(arg_number(vm, context, arguments, 1)?) as usize),
+    };
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let parts = regexp::split(&re, &string, limit)
+        .into_iter()
+        .map(|v| v.map_or(JsValue::Undefined, JsValue::String))
+        .collect();
+    context.create_array(parts)
+}
+
+fn regexp_symbol_search(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let (pattern, flags) = require_regexp_this(context, &this)?;
+    let string = vm.to_string_coerce(arg(arguments, 0), context)?;
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    Ok(JsValue::Number(
+        regexp::search(&re, &string).map_or(-1.0, |i| i as f64),
+    ))
 }
 
 // ── Symbol ──────────────────────────────────────────────────────────────────
@@ -2913,6 +3175,11 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
         ("hasInstance", wk.has_instance),
         ("isConcatSpreadable", wk.is_concat_spreadable),
         ("species", wk.species),
+        ("match", wk.match_),
+        ("replace", wk.replace),
+        ("split", wk.split),
+        ("matchAll", wk.match_all),
+        ("search", wk.search),
     ];
     for (name, sym_id) in well_known {
         context.define_own_property(

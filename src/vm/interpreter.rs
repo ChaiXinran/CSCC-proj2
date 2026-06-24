@@ -181,6 +181,43 @@ impl Vm {
         }
     }
 
+    /// Execute a chunk nested inside an already-running VM (i.e. from `eval()`).
+    ///
+    /// Unlike `execute_with_context`, this does NOT clear the operand stack —
+    /// the eval'd code runs on top of the current stack and the stack is
+    /// restored to its pre-eval depth when execution finishes.
+    pub(crate) fn eval_execute(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        chunk
+            .cache_metadata()
+            .map_err(|e| VmError::runtime(format!("invalid bytecode chunk: {e}")))?;
+        chunk
+            .validate()
+            .map_err(|e| VmError::runtime(format!("invalid bytecode chunk: {e}")))?;
+
+        let saved_depth = self.stack.len();
+        let result = self.run_completion(chunk, context);
+        // Restore stack to pre-eval depth regardless of how execution ended.
+        // The return value travels via Result, not via the operand stack.
+        self.stack.truncate(saved_depth);
+
+        match result? {
+            Completion::Normal(value) | Completion::Return(value) => Ok(value),
+            Completion::Throw(value) => Err(throw_value(value)),
+            Completion::Break(label) => Err(VmError::runtime(format!(
+                "break completion in eval context{}",
+                label_suffix(label.as_deref())
+            ))),
+            Completion::Continue(label) => Err(VmError::runtime(format!(
+                "continue completion in eval context{}",
+                label_suffix(label.as_deref())
+            ))),
+        }
+    }
+
     fn run_completion(
         &mut self,
         chunk: &Chunk,

@@ -10,7 +10,7 @@ pub struct Symbol {
     pub description: Option<String>,
 }
 
-/// Well-known symbol ids assigned at registry construction time (ids 0–5).
+/// Well-known symbol ids assigned at registry construction time (ids 0–10).
 #[derive(Debug, Clone, Copy)]
 pub struct WellKnownSymbols {
     pub to_primitive: SymbolId,
@@ -19,6 +19,12 @@ pub struct WellKnownSymbols {
     pub has_instance: SymbolId,
     pub is_concat_spreadable: SymbolId,
     pub species: SymbolId,
+    // String / RegExp interop symbols (ES2015+)
+    pub match_: SymbolId,
+    pub replace: SymbolId,
+    pub split: SymbolId,
+    pub match_all: SymbolId,
+    pub search: SymbolId,
 }
 
 /// Global symbol store shared by one NativeContext isolate.
@@ -32,14 +38,19 @@ impl SymbolRegistry {
     pub fn new() -> Self {
         let mut symbols: Vec<Symbol> = Vec::new();
 
-        // Well-known symbols occupy fixed ids 0–5.
+        // Well-known symbols occupy fixed ids 0–10.
         for desc in [
-            "Symbol.toPrimitive",
-            "Symbol.toStringTag",
-            "Symbol.iterator",
-            "Symbol.hasInstance",
-            "Symbol.isConcatSpreadable",
-            "Symbol.species",
+            "Symbol.toPrimitive",        // 0
+            "Symbol.toStringTag",        // 1
+            "Symbol.iterator",           // 2
+            "Symbol.hasInstance",        // 3
+            "Symbol.isConcatSpreadable", // 4
+            "Symbol.species",            // 5
+            "Symbol.match",              // 6
+            "Symbol.replace",            // 7
+            "Symbol.split",              // 8
+            "Symbol.matchAll",           // 9
+            "Symbol.search",             // 10
         ] {
             symbols.push(Symbol {
                 description: Some(desc.into()),
@@ -54,6 +65,11 @@ impl SymbolRegistry {
                 has_instance: SymbolId(3),
                 is_concat_spreadable: SymbolId(4),
                 species: SymbolId(5),
+                match_: SymbolId(6),
+                replace: SymbolId(7),
+                split: SymbolId(8),
+                match_all: SymbolId(9),
+                search: SymbolId(10),
             },
             symbols,
         }

@@ -88,9 +88,9 @@ Coordination notes:
 Latest local V7 results:
 
 - V7 pinned gate: 69/69 passed, 0 failed, 0 skipped.
-- V7 diagnostic scan: 2,035/3,034 passed, 999 failed, 0 skipped,
-  67.07% conformance.
-- Net gain over the referenced B-line baseline: +49 passing Test262 cases.
+- V7 diagnostic scan: 2,229/3,034 passed, 805 failed, 0 skipped,
+  73.47% conformance.
+- Net gain over the referenced B-line baseline: +243 passing Test262 cases.
 
 ## Commit & Pull Request Guidelines
 
@@ -262,6 +262,58 @@ as an array of exec-style arrays (each with `index` and `input` properties).
 **Result**: V7 scan improved from 65.46% → 66.71% (+38 newly passing cases,
 3034 total, 2024 passed, 1010 failed).
 
+### A4 – Symbol dispatch (follow-up session)
+
+**A4 – Symbol dispatch** (`src/runtime/symbol.rs`, `src/builtins/v6.rs`):
+Added `Symbol.match`, `Symbol.replace`, `Symbol.split`, `Symbol.matchAll`, `Symbol.search`
+as well-known symbols (IDs 6–10). `RegExp.prototype` now has `[Symbol.match]`,
+`[Symbol.replace]`, `[Symbol.split]`, `[Symbol.matchAll]`, `[Symbol.search]` methods
+installed via symbol-keyed property descriptors. `String.prototype.match/replace/split/
+matchAll/search/replaceAll` each check `@@Symbol` dispatch on the first argument before
+falling back to direct logic via a shared `try_symbol_dispatch()` helper.
+
+**Result**: V7 scan improved from 66.71% → 68.69% (+98 additional cases, 2084 passed).
+
+### A1 – RegExp body validation (second follow-up session)
+
+**A1 – Regex body early errors** (`src/lexer/mod.rs`):
+Added `validate_regex_body(body, flags, lex_start)` called after the body is lexed.
+Detects and reports lex-time `SyntaxError` for:
+
+- **U+2028 / U+2029** in regex body (ES line terminators — forbidden unescaped): +13 tests.
+- **Arithmetic modifier groups** `(?add-remove:...)` — always unsupported, always rejected
+  at parse phase: +58 tests.
+- **Inline modifier groups** `(?flags:...)` where flags contain anything other than `i`, `m`, `s`,
+  or contain duplicate flag letters (including case-folded variants and non-ASCII chars): +25 tests.
+- **Named capture group** `(?<name>...)` validation: empty name, invalid identifier characters
+  (non-letter start, punctuators, digits at start), unterminated `(?<name` without `>`,
+  duplicate group names: +20 tests.
+- **Named backreferences** `\k<name>` with no corresponding capture group (dangling reference),
+  unterminated `\k<name` without `>`: +11 tests.
+- **Bare `\k`** (without `<name>`) in Unicode mode (`/u` or `/v`) or when named groups exist: +2 tests.
+
+**Result**: V7 scan improved from 68.69% → 73.20% (+137 additional cases,
+3034 total, 2221 passed, 813 failed).
+
+### A2 – eval() operand stack underflow (third follow-up session)
+
+**A2 – eval stack isolation** (`src/vm/interpreter.rs`, `src/builtins/function.rs`):
+
+Root cause: `execute_with_context` called `self.stack.clear()` before running a chunk.
+When `eval()` was called mid-expression (e.g. as a function argument), this wiped the
+outer program's in-progress operand stack; the outer expression then found an empty
+stack and threw "operand stack underflow".
+
+Fix: Added `Vm::eval_execute()` — like `execute_with_context` but does NOT clear the stack.
+It records `saved_depth = self.stack.len()` before calling `run_completion`, then
+`self.stack.truncate(saved_depth)` after (whether success or error). The eval'd code
+runs on top of the existing stack and the return value travels via `Result`, not via
+the stack. `eval_call` in `function.rs` now calls `vm.eval_execute()` instead of
+`vm.execute_with_context()`.
+
+**Result**: V7 scan improved from 73.20% → 73.47% (+8 additional cases,
+3034 total, 2229 passed, 805 failed).
+
 ### Known remaining gaps (not A-line scope)
 
 - Postfix computed-member update (`obj[key]++`) requires a `Rotate`/`Tuck` VM
@@ -269,7 +321,12 @@ as an array of exec-style arrays (each with `index` and `input` properties).
 - Class fields, optional chaining (`?.`), nullish coalescing (`??`), `async`/
   `await`, `for…of`, destructuring assignment, and spread/rest remain outside
   the V7 scope.
-- RegExp sticky (`y`) flag semantics and named capture groups (`(?<name>…)`) are
-  not handled by the Rust `regex` crate — future work.
-- Further improvement depends on B-line (Symbol/ToPrimitive) and C-line
-  (Number/JSON/Error/Math) fixes landing.
+- RegExp named capture groups (`(?<name>…)`) parse correctly but do not execute
+  via Rust `regex` crate (which uses `(?P<name>...)` syntax) — runtime support
+  is a future milestone.
+- `\k` without `<name>` in non-Unicode sloppy mode (no named groups) is not
+  flagged (intentional — ES spec allows it in non-Unicode mode).
+- `(?<a>\a)/u` invalid identity escape inside Unicode named group: not detected.
+- Duplicate named groups in different `|` alternatives (ES2025 `regexp-duplicate-named-groups`)
+  are incorrectly rejected; the `CanBothParticipate` rule is not implemented.
+- Further improvement depends on C-line (Number/JSON/Error/Math) fixes landing.

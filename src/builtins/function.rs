@@ -91,7 +91,7 @@ pub fn eval_call(
     let chunk = Compiler::new()
         .compile_program(&program)
         .map_err(dynamic_function_syntax_error)?;
-    vm.execute_with_context(&chunk, context)
+    vm.eval_execute(&chunk, context)
 }
 
 pub fn function_call(

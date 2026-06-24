@@ -323,10 +323,7 @@ impl<'source> Lexer<'source> {
     ) -> Result<String, LexError> {
         let mut digits = String::new();
         let mut previous_was_digit = false;
-        loop {
-            let Some(character) = self.cursor.peek() else {
-                break;
-            };
+        while let Some(character) = self.cursor.peek() {
             if character.is_digit(radix) {
                 digits.push(character);
                 previous_was_digit = true;
@@ -627,6 +624,244 @@ impl<'source> Lexer<'source> {
     }
 }
 
+/// Validates the body of a regex literal for ES early errors:
+///  - inline modifier groups `(?flags:...)` — flags must be subset of {i,m,s}, no dups
+///  - arithmetic modifier groups `(?add-remove:...)` — always rejected (ES2025 unsupported)
+///  - named capture groups `(?<name>...)` — name must be valid identifier, no duplicates
+///  - named backreferences `\k<name>` — must reference a defined capture group
+///
+/// The body is the raw pattern string (between `/` delimiters) already collected by the
+/// lexer. `lex_start` is the source offset of the opening `/` for error spans.
+fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), LexError> {
+    let unicode_mode = flags.contains('u') || flags.contains('v');
+    use std::collections::HashSet;
+
+    let make_err = |msg: &str| LexError {
+        span: Span::new(lex_start, lex_start + body.len()),
+        message: msg.into(),
+    };
+
+    let chars: Vec<char> = body.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+    let mut in_class = false;
+
+    let mut capture_names: HashSet<String> = HashSet::new();
+    let mut backref_names: Vec<String> = Vec::new();
+    // \k without <name> when named groups exist → error deferred to after full scan
+    let mut bare_k_escape = false;
+
+    while i < len {
+        if in_class {
+            if chars[i] == '\\' {
+                i += 2;
+                continue;
+            }
+            if chars[i] == ']' {
+                in_class = false;
+            }
+            i += 1;
+            continue;
+        }
+        match chars[i] {
+            '\\' => {
+                i += 1; // skip '\'
+                if i < len {
+                    let esc = chars[i];
+                    i += 1;
+                    if esc == 'k' {
+                        if chars.get(i) == Some(&'<') {
+                            i += 1; // skip '<'
+                            let ref_start = i;
+                            while i < len && chars[i] != '>' {
+                                i += 1;
+                            }
+                            if chars.get(i) != Some(&'>') {
+                                return Err(make_err(
+                                    "unterminated named backreference in regular expression",
+                                ));
+                            }
+                            let ref_name: String = chars[ref_start..i].iter().collect();
+                            i += 1; // skip '>'
+                            backref_names.push(ref_name);
+                        } else {
+                            // \k not followed by '<': may be invalid if named groups exist
+                            bare_k_escape = true;
+                        }
+                    }
+                }
+            }
+            '[' => {
+                in_class = true;
+                i += 1;
+            }
+            '(' if i + 1 < len && chars[i + 1] == '?' => {
+                i += 2; // skip (?
+                match chars.get(i) {
+                    Some(&'=') | Some(&'!') | Some(&':') => {
+                        i += 1;
+                    }
+                    Some(&'<') => {
+                        i += 1; // skip '<'
+                        match chars.get(i) {
+                            Some(&'=') | Some(&'!') => {
+                                i += 1;
+                            } // lookbehind — skip
+                            _ => {
+                                // Named capture group (?<name>...)
+                                let name_start = i;
+                                while i < len && chars[i] != '>' {
+                                    i += 1;
+                                }
+                                if chars.get(i) != Some(&'>') {
+                                    return Err(make_err(
+                                        "unterminated named capture group in regular expression",
+                                    ));
+                                }
+                                let name: String = chars[name_start..i].iter().collect();
+                                i += 1; // skip '>'
+                                // Empty name
+                                if name.is_empty() {
+                                    return Err(make_err(
+                                        "empty named capture group specifier in regular expression",
+                                    ));
+                                }
+                                // Name must be a valid IdentifierName:
+                                //   start char: letter, $, _, or Unicode letter (not digit/punct)
+                                //   continue chars: letter, digit, $, _, Unicode letter/digit
+                                let mut name_chars = name.chars();
+                                let first = name_chars.next().unwrap();
+                                if first.is_ascii_digit()
+                                    || (!first.is_alphabetic() && first != '_' && first != '$')
+                                {
+                                    return Err(make_err(
+                                        "invalid character at start of named capture group specifier",
+                                    ));
+                                }
+                                for c in name_chars {
+                                    if !c.is_alphanumeric() && c != '_' && c != '$' {
+                                        return Err(make_err(
+                                            "invalid character in named capture group specifier",
+                                        ));
+                                    }
+                                }
+                                // Duplicate name
+                                if !capture_names.insert(name.clone()) {
+                                    return Err(make_err(
+                                        "duplicate named capture group in regular expression",
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Potential modifier group: collect flag-like chars.
+                        // Any non-ims char, non-ASCII letter, or first char '-' → error.
+                        let mut add_flags: Vec<char> = Vec::new();
+                        while i < len {
+                            let c = chars[i];
+                            if c == ':' || c == '-' || c == ')' || c == '(' {
+                                break;
+                            }
+                            if c.is_alphanumeric() || c == '_' || c == '$' {
+                                add_flags.push(c);
+                                i += 1;
+                            } else {
+                                return Err(make_err(
+                                    "invalid character in regular expression modifier flags",
+                                ));
+                            }
+                        }
+                        match chars.get(i) {
+                            Some(&'-') => {
+                                // Arithmetic modifier — always a parse-phase error.
+                                for &c in &add_flags {
+                                    if !matches!(c, 'i' | 'm' | 's') {
+                                        return Err(make_err(
+                                            "invalid modifier flag in regular expression",
+                                        ));
+                                    }
+                                }
+                                let mut seen = [false; 3];
+                                for &c in &add_flags {
+                                    let j = match c {
+                                        'i' => 0,
+                                        'm' => 1,
+                                        _ => 2,
+                                    };
+                                    if seen[j] {
+                                        return Err(make_err(
+                                            "duplicate modifier flag in regular expression",
+                                        ));
+                                    }
+                                    seen[j] = true;
+                                }
+                                return Err(make_err(
+                                    "arithmetic modifier groups (?flags-flags:...) are not supported",
+                                ));
+                            }
+                            Some(&':') => {
+                                // Inline modifier: flags must be subset of {i,m,s}, no dups.
+                                for &c in &add_flags {
+                                    if !matches!(c, 'i' | 'm' | 's') {
+                                        return Err(make_err(
+                                            "invalid modifier flag in regular expression",
+                                        ));
+                                    }
+                                }
+                                let mut seen = [false; 3];
+                                for &c in &add_flags {
+                                    let j = match c {
+                                        'i' => 0,
+                                        'm' => 1,
+                                        _ => 2,
+                                    };
+                                    if seen[j] {
+                                        return Err(make_err(
+                                            "duplicate modifier flag in regular expression",
+                                        ));
+                                    }
+                                    seen[j] = true;
+                                }
+                                i += 1; // skip ':'
+                            }
+                            Some(&_c) if !add_flags.is_empty() => {
+                                // Unexpected char after flags (e.g. space in `(?s :a)`)
+                                return Err(make_err(
+                                    "unexpected character in regular expression modifier group",
+                                ));
+                            }
+                            Some(&_c) => {}
+                            None => {}
+                        }
+                    }
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    // Validate named backreferences: each \k<name> must reference a defined group.
+    for ref_name in &backref_names {
+        if !capture_names.contains(ref_name.as_str()) {
+            return Err(make_err(
+                "named backreference refers to undefined capture group in regular expression",
+            ));
+        }
+    }
+
+    // \k without <name> is invalid: (a) in Unicode mode always, (b) when named groups exist.
+    if bare_k_escape && (unicode_mode || !capture_names.is_empty()) {
+        return Err(make_err(
+            "\\k escape must be followed by <name> in regular expression",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Reads a regex literal from `source` starting at byte offset `start`.
 ///
 /// `source[start]` must be the opening `/`. Returns `(pattern, flags, end_offset)`
@@ -702,6 +937,14 @@ pub fn read_regex_literal_at(
             }
             _ => {
                 let ch = source[i..].chars().next().unwrap_or('\0');
+                // U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR are ES line
+                // terminators and are forbidden unescaped in regex body.
+                if matches!(ch, '\u{2028}' | '\u{2029}') {
+                    return Err(LexError {
+                        span: Span::new(start, i),
+                        message: "unterminated regex literal".into(),
+                    });
+                }
                 pattern.push(ch);
                 i += ch.len_utf8().max(1);
             }
@@ -740,6 +983,9 @@ pub fn read_regex_literal_at(
             break;
         }
     }
+
+    // Validate regex body for ES-specific early errors. Needs flags (e.g. /u mode).
+    validate_regex_body(&pattern, &flags, start)?;
 
     Ok((pattern, flags, i))
 }
