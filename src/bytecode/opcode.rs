@@ -219,6 +219,49 @@ pub enum Instruction {
     /// `new` constructor call with a single trailing spread argument.
     /// Stack: [callee, arg0…argN-1, spread_iterable] → [result]
     SpreadConstruct(u16),
+
+    // -----------------------------------------------------------------------
+    // V9-A: iterator protocol (runtime provided by V9-B)
+    // -----------------------------------------------------------------------
+    /// Calls `iterable[Symbol.iterator]()` and pushes the resulting iterator.
+    /// Stack: [iterable] → [iterator]
+    GetIterator,
+
+    /// Calls `iterator.next()`, pushes `is_done` flag on top and `value` below.
+    /// Stack: [iterator] → [value, is_done]
+    IteratorNext,
+
+    /// Calls `iterator.return()` if present, then discards the iterator.
+    /// Stack: [iterator] → []
+    IteratorClose,
+
+    // -----------------------------------------------------------------------
+    // V9-A: generator support (runtime provided by V9-B)
+    // -----------------------------------------------------------------------
+    /// Creates a suspended generator object from a function template.
+    /// Operand is a function-table index (same as CreateFunction).
+    /// Stack: [] → [generator]
+    CreateGenerator(u16),
+
+    /// Suspends the current generator frame, yielding a value to the caller.
+    /// Stack: [value] → [sent_value]
+    YieldValue,
+
+    /// `yield*` — delegates to another iterable and resumes with its return.
+    /// Stack: [iterable] → [delegate_return_value]
+    YieldDelegate,
+
+    // -----------------------------------------------------------------------
+    // V9-A: async support (runtime provided by V9-B)
+    // -----------------------------------------------------------------------
+    /// Creates an async function wrapper from a function template.
+    /// Operand is a function-table index.
+    /// Stack: [] → [async_fn]
+    CreateAsyncFunction(u16),
+
+    /// Suspends the async function, awaiting a Promise resolution.
+    /// Stack: [value] → [resolved_value]
+    AwaitValue,
 }
 
 impl Instruction {
@@ -336,6 +379,15 @@ impl Instruction {
                 // callee + this + n regular args + 1 spread = n+3 consumed, 1 produced
                 StackEffect::new(n as u32 + 3, 1)
             }
+
+            // V9-A iterator protocol
+            Self::GetIterator => StackEffect::new(1, 1),
+            Self::IteratorNext => StackEffect::new(1, 2),
+            Self::IteratorClose => StackEffect::new(1, 0),
+
+            // V9-A generator / async
+            Self::CreateGenerator(_) | Self::CreateAsyncFunction(_) => StackEffect::new(0, 1),
+            Self::YieldValue | Self::AwaitValue | Self::YieldDelegate => StackEffect::new(1, 1),
         }
     }
 

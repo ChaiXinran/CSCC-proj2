@@ -118,6 +118,10 @@ pub struct FunctionLiteral {
     pub name: Option<String>,
     pub params: Vec<FunctionParam>,
     pub body: FunctionBody,
+    /// `async function` — body may contain `await` expressions.
+    pub is_async: bool,
+    /// `function*` — body may contain `yield` expressions.
+    pub is_generator: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +330,14 @@ pub enum Expression {
     This,
     /// `super` keyword (as a base for property access in a method).
     Super,
+    /// `yield [*] [expr]` inside a generator function.
+    Yield {
+        argument: Option<Box<Expression>>,
+        /// `true` for `yield*` (delegate to another iterable).
+        delegate: bool,
+    },
+    /// `await expr` inside an async function.
+    Await(Box<Expression>),
 }
 
 /// One argument in a call or construct expression.

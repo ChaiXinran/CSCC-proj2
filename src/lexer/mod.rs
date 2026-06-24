@@ -248,6 +248,8 @@ impl<'source> Lexer<'source> {
                 "static" => TokenKind::Keyword(Keyword::Static),
                 "super" => TokenKind::Keyword(Keyword::Super),
                 "this" => TokenKind::Keyword(Keyword::This),
+                "yield" => TokenKind::Keyword(Keyword::Yield),
+                "await" => TokenKind::Keyword(Keyword::Await),
                 _ => TokenKind::Identifier(text),
             }
         };

@@ -101,6 +101,8 @@ fn cache_metadata_recursively_summarizes_compiled_function_chunks() {
                 }))],
                 is_strict: false,
             },
+            is_async: false,
+            is_generator: false,
         }],
     };
 

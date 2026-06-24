@@ -10,5 +10,5 @@ pub use expression::{
     UnaryOperator, UpdateOperator,
 };
 pub use statement::{
-    CatchClause, Program, Statement, SwitchCase, VariableDeclarator, VariableKind,
+    CatchClause, ForBinding, Program, Statement, SwitchCase, VariableDeclarator, VariableKind,
 };
