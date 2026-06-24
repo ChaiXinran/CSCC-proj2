@@ -74,14 +74,19 @@ tests/native_v10_runtime.rs
 
 Tasks:
 
-- shared ArrayBuffer byte storage;
-- typed-array view records;
-- DataView shared storage helpers;
-- bounds checks and minimal detach flag;
-- numeric conversion helpers for element load/store.
+- shared ArrayBuffer byte storage; ✅ first runtime substrate implemented
+- typed-array view records; ✅ `TypedArrayViewId` registry implemented
+- DataView shared storage helpers; ✅ shared `ArrayBufferRecord` storage
+- bounds checks and minimal detach flag; ✅ range and detached checks in runtime APIs
+- numeric conversion helpers for element load/store. ✅ Number-backed non-BigInt
+  paths implemented
 
 B must not install JS-visible typed-array constructors directly; C owns builtin
 installation and descriptor shape.
+
+Current B status: first runtime substrate pass is complete. JS-visible
+ArrayBuffer/TypedArray/DataView constructor migration remains C-owned; BigInt
+typed-array element semantics remain future A/C integration work.
 
 Independent validation:
 

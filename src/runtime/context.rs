@@ -6,12 +6,13 @@ use std::{
 };
 
 use super::{
-    BoundFunction, BuiltinFunction, BuiltinId, CollectionStats, Collector, Environment,
-    EnvironmentId, FunctionId, Heap, HeapStats, IteratorRecord, Job, JobQueue, JsFunction,
-    JsObject, JsValue, NativeCall, NativeConstruct, NativeErrorKind, NativeJob, ObjectId,
-    ObjectKind, PrimitiveValue, PromiseId, PromiseJob, PromiseReaction, PromiseRecord,
-    PromiseState, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, RootSet, SymbolId,
-    SymbolRegistry, WellKnownSymbols, iterator::IteratorKind, object::array_index,
+    ArrayBufferId, ArrayBufferRecord, BoundFunction, BuiltinFunction, BuiltinId, CollectionStats,
+    Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId, Heap, HeapStats,
+    IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue, NativeCall, NativeConstruct,
+    NativeErrorKind, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PromiseId, PromiseJob,
+    PromiseReaction, PromiseRecord, PromiseState, PropertyDescriptor, PropertyDescriptorUpdate,
+    PropertyKind, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
+    TypedArrayViewId, WellKnownSymbols, iterator::IteratorKind, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 
@@ -37,6 +38,7 @@ pub struct Intrinsics {
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
 pub const MAX_ARRAY_LENGTH: usize = 1_000_000;
+pub const MAX_ARRAY_BUFFER_BYTE_LENGTH: usize = 1 << 26;
 const MAX_UTF16_ALLOCATION_UNITS: usize = 1 << 23;
 /// Cooperative per-evaluation execution limits shared by VM and builtins.
 #[derive(Debug, Clone)]
@@ -118,6 +120,9 @@ pub struct NativeContext {
     symbol_for_registry: HashMap<String, SymbolId>,
     job_queue: JobQueue,
     promises: Vec<PromiseRecord>,
+    array_buffers: Vec<ArrayBufferRecord>,
+    typed_array_views: Vec<TypedArrayView>,
+    data_views: Vec<DataViewRecord>,
     strict: bool,
     top_level_this: JsValue,
     output: Vec<String>,
@@ -170,6 +175,9 @@ impl NativeContext {
             symbol_for_registry: HashMap::new(),
             job_queue: JobQueue::default(),
             promises: Vec::new(),
+            array_buffers: Vec::new(),
+            typed_array_views: Vec::new(),
+            data_views: Vec::new(),
             strict: false,
             top_level_this: JsValue::Object(global_object),
             output: Vec::new(),
@@ -1971,6 +1979,281 @@ impl NativeContext {
         self.job_queue.len()
     }
 
+    pub fn create_array_buffer(&mut self, byte_length: usize) -> Result<ArrayBufferId, VmError> {
+        if byte_length > MAX_ARRAY_BUFFER_BYTE_LENGTH {
+            return Err(VmError::runtime_limit(
+                "ArrayBuffer allocation limit exceeded",
+            ));
+        }
+        self.ensure_heap_capacity(byte_length)?;
+        let index = u32::try_from(self.array_buffers.len())
+            .map_err(|_| VmError::runtime("ArrayBuffer registry full"))?;
+        self.array_buffers.push(ArrayBufferRecord::new(byte_length));
+        Ok(ArrayBufferId(index))
+    }
+
+    pub fn array_buffer_record(&self, buffer: ArrayBufferId) -> Option<&ArrayBufferRecord> {
+        self.array_buffers.get(buffer.0 as usize)
+    }
+
+    pub fn array_buffer_byte_length(&self, buffer: ArrayBufferId) -> Result<usize, VmError> {
+        Ok(self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?
+            .byte_length())
+    }
+
+    pub fn is_array_buffer_detached(&self, buffer: ArrayBufferId) -> Result<bool, VmError> {
+        Ok(self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?
+            .detached)
+    }
+
+    pub fn detach_array_buffer(&mut self, buffer: ArrayBufferId) -> Result<(), VmError> {
+        let record = self
+            .array_buffers
+            .get_mut(buffer.0 as usize)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        record.bytes.clear();
+        record.detached = true;
+        Ok(())
+    }
+
+    pub fn create_typed_array_view(
+        &mut self,
+        buffer: ArrayBufferId,
+        element_kind: TypedArrayElementKind,
+        byte_offset: usize,
+        length: usize,
+    ) -> Result<TypedArrayViewId, VmError> {
+        let byte_length = checked_view_byte_length(length, element_kind.bytes_per_element())?;
+        if byte_offset % element_kind.bytes_per_element() != 0 {
+            return Err(VmError::range(
+                "TypedArray byteOffset is not element-aligned",
+            ));
+        }
+        self.validate_buffer_range(buffer, byte_offset, byte_length)?;
+        let index = u32::try_from(self.typed_array_views.len())
+            .map_err(|_| VmError::runtime("TypedArray view registry full"))?;
+        self.typed_array_views.push(TypedArrayView {
+            buffer,
+            byte_offset,
+            length,
+            element_kind,
+        });
+        Ok(TypedArrayViewId(index))
+    }
+
+    pub fn typed_array_view(&self, view: TypedArrayViewId) -> Option<&TypedArrayView> {
+        self.typed_array_views.get(view.0 as usize)
+    }
+
+    pub fn typed_array_byte_length(&self, view: TypedArrayViewId) -> Result<usize, VmError> {
+        self.typed_array_view(view)
+            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
+            .byte_length()
+            .ok_or_else(|| VmError::runtime_limit("TypedArray byteLength overflow"))
+    }
+
+    pub fn typed_array_load_element(
+        &self,
+        view: TypedArrayViewId,
+        index: usize,
+    ) -> Result<JsValue, VmError> {
+        let view = self
+            .typed_array_view(view)
+            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?;
+        if index >= view.length {
+            return Err(VmError::range("TypedArray index is out of range"));
+        }
+        let byte_offset = typed_array_element_offset(view, index)?;
+        let bytes = self.read_buffer_bytes(
+            view.buffer,
+            byte_offset,
+            view.element_kind.bytes_per_element(),
+        )?;
+        Ok(JsValue::Number(decode_typed_array_number(
+            view.element_kind,
+            bytes,
+            true,
+        )?))
+    }
+
+    pub fn typed_array_store_element(
+        &mut self,
+        view: TypedArrayViewId,
+        index: usize,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        let view = self
+            .typed_array_view(view)
+            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
+            .clone();
+        if index >= view.length {
+            return Err(VmError::range("TypedArray index is out of range"));
+        }
+        let byte_offset = typed_array_element_offset(&view, index)?;
+        let bytes = encode_typed_array_number(view.element_kind, value)?;
+        self.write_buffer_bytes(view.buffer, byte_offset, &bytes)
+    }
+
+    pub fn create_data_view(
+        &mut self,
+        buffer: ArrayBufferId,
+        byte_offset: usize,
+        byte_length: usize,
+    ) -> Result<DataViewId, VmError> {
+        self.validate_buffer_range(buffer, byte_offset, byte_length)?;
+        let index = u32::try_from(self.data_views.len())
+            .map_err(|_| VmError::runtime("DataView registry full"))?;
+        self.data_views.push(DataViewRecord {
+            buffer,
+            byte_offset,
+            byte_length,
+        });
+        Ok(DataViewId(index))
+    }
+
+    pub fn data_view_record(&self, view: DataViewId) -> Option<&DataViewRecord> {
+        self.data_views.get(view.0 as usize)
+    }
+
+    pub fn data_view_get(
+        &self,
+        view: DataViewId,
+        request_index: usize,
+        element_kind: TypedArrayElementKind,
+        little_endian: bool,
+    ) -> Result<JsValue, VmError> {
+        let view = self
+            .data_view_record(view)
+            .ok_or_else(|| VmError::runtime("invalid DataView id"))?;
+        if element_kind.is_bigint() {
+            return Err(VmError::type_error(
+                "BigInt DataView elements are not implemented",
+            ));
+        }
+        let width = element_kind.bytes_per_element();
+        if request_index
+            .checked_add(width)
+            .is_none_or(|end| end > view.byte_length)
+        {
+            return Err(VmError::range("DataView byteOffset is out of range"));
+        }
+        let byte_offset = view
+            .byte_offset
+            .checked_add(request_index)
+            .ok_or_else(|| VmError::runtime_limit("DataView byteOffset overflow"))?;
+        let bytes = self.read_buffer_bytes(view.buffer, byte_offset, width)?;
+        Ok(JsValue::Number(decode_typed_array_number(
+            element_kind,
+            bytes,
+            little_endian,
+        )?))
+    }
+
+    pub fn data_view_set(
+        &mut self,
+        view: DataViewId,
+        request_index: usize,
+        element_kind: TypedArrayElementKind,
+        value: JsValue,
+        little_endian: bool,
+    ) -> Result<(), VmError> {
+        let view = self
+            .data_view_record(view)
+            .ok_or_else(|| VmError::runtime("invalid DataView id"))?
+            .clone();
+        if element_kind.is_bigint() {
+            return Err(VmError::type_error(
+                "BigInt DataView elements are not implemented",
+            ));
+        }
+        let width = element_kind.bytes_per_element();
+        if request_index
+            .checked_add(width)
+            .is_none_or(|end| end > view.byte_length)
+        {
+            return Err(VmError::range("DataView byteOffset is out of range"));
+        }
+        let byte_offset = view
+            .byte_offset
+            .checked_add(request_index)
+            .ok_or_else(|| VmError::runtime_limit("DataView byteOffset overflow"))?;
+        let mut bytes = encode_typed_array_number(element_kind, value)?;
+        if !little_endian && width > 1 {
+            bytes.reverse();
+        }
+        self.write_buffer_bytes(view.buffer, byte_offset, &bytes)
+    }
+
+    fn validate_buffer_range(
+        &self,
+        buffer: ArrayBufferId,
+        byte_offset: usize,
+        byte_length: usize,
+    ) -> Result<(), VmError> {
+        let record = self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        if byte_offset
+            .checked_add(byte_length)
+            .is_none_or(|end| end > record.bytes.len())
+        {
+            return Err(VmError::range("ArrayBuffer view is out of range"));
+        }
+        Ok(())
+    }
+
+    fn read_buffer_bytes(
+        &self,
+        buffer: ArrayBufferId,
+        byte_offset: usize,
+        byte_length: usize,
+    ) -> Result<&[u8], VmError> {
+        let record = self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        let end = byte_offset
+            .checked_add(byte_length)
+            .ok_or_else(|| VmError::runtime_limit("ArrayBuffer byte range overflow"))?;
+        record
+            .bytes
+            .get(byte_offset..end)
+            .ok_or_else(|| VmError::range("ArrayBuffer byte range is out of range"))
+    }
+
+    fn write_buffer_bytes(
+        &mut self,
+        buffer: ArrayBufferId,
+        byte_offset: usize,
+        bytes: &[u8],
+    ) -> Result<(), VmError> {
+        let record = self
+            .array_buffers
+            .get_mut(buffer.0 as usize)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        let end = byte_offset
+            .checked_add(bytes.len())
+            .ok_or_else(|| VmError::runtime_limit("ArrayBuffer byte range overflow"))?;
+        let target = record
+            .bytes
+            .get_mut(byte_offset..end)
+            .ok_or_else(|| VmError::range("ArrayBuffer byte range is out of range"))?;
+        target.copy_from_slice(bytes);
+        Ok(())
+    }
+
     pub fn clear_output(&mut self) {
         self.output.clear();
     }
@@ -1997,6 +2280,122 @@ pub fn checked_array_length(length: f64) -> Result<usize, VmError> {
         return Err(VmError::runtime_limit("array allocation limit exceeded"));
     }
     Ok(length)
+}
+
+fn checked_view_byte_length(length: usize, bytes_per_element: usize) -> Result<usize, VmError> {
+    length
+        .checked_mul(bytes_per_element)
+        .ok_or_else(|| VmError::runtime_limit("typed array byteLength overflow"))
+}
+
+fn typed_array_element_offset(view: &TypedArrayView, index: usize) -> Result<usize, VmError> {
+    let element_offset = checked_view_byte_length(index, view.element_kind.bytes_per_element())?;
+    view.byte_offset
+        .checked_add(element_offset)
+        .ok_or_else(|| VmError::runtime_limit("typed array byteOffset overflow"))
+}
+
+fn encode_typed_array_number(
+    kind: TypedArrayElementKind,
+    value: JsValue,
+) -> Result<Vec<u8>, VmError> {
+    if kind.is_bigint() {
+        return Err(VmError::type_error(
+            "BigInt typed array elements are not implemented",
+        ));
+    }
+    let number = value
+        .to_number()
+        .ok_or_else(|| VmError::type_error("typed array element value must be numeric"))?;
+    let bytes = match kind {
+        TypedArrayElementKind::Int8 => vec![(to_uint_n(number, 8) as u8) as i8 as u8],
+        TypedArrayElementKind::Uint8 => vec![to_uint_n(number, 8) as u8],
+        TypedArrayElementKind::Uint8Clamped => vec![to_uint8_clamp(number)],
+        TypedArrayElementKind::Int16 => {
+            (to_uint_n(number, 16) as u16 as i16).to_le_bytes().to_vec()
+        }
+        TypedArrayElementKind::Uint16 => (to_uint_n(number, 16) as u16).to_le_bytes().to_vec(),
+        TypedArrayElementKind::Int32 => {
+            (to_uint_n(number, 32) as u32 as i32).to_le_bytes().to_vec()
+        }
+        TypedArrayElementKind::Uint32 => (to_uint_n(number, 32) as u32).to_le_bytes().to_vec(),
+        TypedArrayElementKind::Float32 => (number as f32).to_le_bytes().to_vec(),
+        TypedArrayElementKind::Float64 => number.to_le_bytes().to_vec(),
+        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64 => unreachable!(),
+    };
+    Ok(bytes)
+}
+
+fn decode_typed_array_number(
+    kind: TypedArrayElementKind,
+    bytes: &[u8],
+    little_endian: bool,
+) -> Result<f64, VmError> {
+    if kind.is_bigint() {
+        return Err(VmError::type_error(
+            "BigInt typed array elements are not implemented",
+        ));
+    }
+    let mut data = bytes.to_vec();
+    if !little_endian && data.len() > 1 {
+        data.reverse();
+    }
+    let number = match kind {
+        TypedArrayElementKind::Int8 => i8::from_le_bytes([data[0]]) as f64,
+        TypedArrayElementKind::Uint8 | TypedArrayElementKind::Uint8Clamped => data[0] as f64,
+        TypedArrayElementKind::Int16 => i16::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid Int16 byte length"))?,
+        ) as f64,
+        TypedArrayElementKind::Uint16 => u16::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid Uint16 byte length"))?,
+        ) as f64,
+        TypedArrayElementKind::Int32 => i32::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid Int32 byte length"))?,
+        ) as f64,
+        TypedArrayElementKind::Uint32 => u32::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid Uint32 byte length"))?,
+        ) as f64,
+        TypedArrayElementKind::Float32 => f32::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid Float32 byte length"))?,
+        ) as f64,
+        TypedArrayElementKind::Float64 => f64::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid Float64 byte length"))?,
+        ),
+        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64 => unreachable!(),
+    };
+    Ok(number)
+}
+
+fn to_uint_n(number: f64, bits: u32) -> u64 {
+    if !number.is_finite() || number == 0.0 {
+        return 0;
+    }
+    let modulo = 2_f64.powi(bits as i32);
+    number.trunc().rem_euclid(modulo) as u64
+}
+
+fn to_uint8_clamp(number: f64) -> u8 {
+    if number.is_nan() || number <= 0.0 {
+        return 0;
+    }
+    if number >= 255.0 {
+        return 255;
+    }
+    let floor = number.floor();
+    let fraction = number - floor;
+    if fraction < 0.5 {
+        floor as u8
+    } else if fraction > 0.5 || floor as u64 % 2 == 1 {
+        floor as u8 + 1
+    } else {
+        floor as u8
+    }
 }
 
 pub fn checked_utf16_allocation(units: usize) -> Result<(), VmError> {

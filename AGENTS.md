@@ -321,6 +321,17 @@ hotspots. Initial baseline: 645/5,000 passed, 4,355 failed, 0 skipped. AI
 agents working on V10 should run this after relevant focused tests and update
 the corresponding `reports/v10-part*-report.md`.
 
+Current V10-B status (2026-06-24): first runtime substrate pass is implemented.
+Available pieces are `src/runtime/buffer.rs`, `ArrayBufferId` /
+`ArrayBufferRecord`, `TypedArrayViewId` / `TypedArrayView`, `DataViewId` /
+`DataViewRecord`, detached-buffer checks, bounds/alignment checks, Number-backed
+typed-array load/store, `Uint8Clamped` half-even rounding, and endian-aware
+DataView get/set helpers. Focused B tests are in `tests/native_v10_runtime.rs`
+and currently pass 6/6; `native_test262` passes 14/14. B agents should not
+install JS-visible `ArrayBuffer`, `TypedArray`, or `DataView` constructors in
+this track; C owns builtin installation and should migrate the V8-C hidden-slot
+skeletons to this runtime substrate during V10-C/integration.
+
 ## Commit & Pull Request Guidelines
 
 History varies by subtree: Boa commonly uses scoped Conventional Commit subjects such as `fix(vm): ...`, while QuickJS and Test262 favor concise imperative summaries. Use an imperative subject, add a scope when helpful, and avoid mixing unrelated upstream changes. Pull requests should identify the affected subtree, explain behavior and specification impact, list commands run, link relevant issues, and include benchmark or Test262 results when performance or compatibility changes.

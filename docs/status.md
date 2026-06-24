@@ -128,6 +128,11 @@
   `reports/v10-partB-report.md`, `reports/v10-partC-report.md`, and
   `reports/native-v10-scan-failures.txt`. Initial V10 scan:
   645/5,000 passed, 4,355 failed, 0 skipped.
+- V10-B first runtime substrate pass is implemented: shared ArrayBuffer byte
+  storage, typed-array view records, DataView records, detach/range checks, and
+  Number-backed element load/store helpers. Focused `tests/native_v10_runtime.rs`
+  passes 6/6; JS-visible TypedArray/ArrayBuffer/DataView constructor migration
+  is still future V10-C/integration work.
 
 ## Acceptance Gates
 

@@ -1,5 +1,6 @@
 //! Native runtime data model.
 
+mod buffer;
 mod coercion;
 mod context;
 mod environment;
@@ -15,6 +16,10 @@ mod property_map;
 mod symbol;
 mod value;
 
+pub use buffer::{
+    ArrayBufferId, ArrayBufferRecord, DataViewId, DataViewRecord, TypedArrayElementKind,
+    TypedArrayView, TypedArrayViewId,
+};
 pub use coercion::PreferredType;
 pub use context::{
     ExecutionBudget, Intrinsics, NativeContext, checked_array_length, checked_string_repeat_len,

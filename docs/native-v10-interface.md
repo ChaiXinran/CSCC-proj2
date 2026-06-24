@@ -45,6 +45,9 @@ Target runtime API shape:
 
 ```rust
 pub struct ArrayBufferId(pub u32);
+pub struct TypedArrayViewId(pub u32);
+pub struct DataViewId(pub u32);
+
 pub struct ArrayBufferRecord {
     pub bytes: Vec<u8>,
     pub detached: bool,
@@ -70,6 +73,61 @@ pub struct TypedArrayView {
     pub length: usize,
     pub element_kind: TypedArrayElementKind,
 }
+
+pub struct DataViewRecord {
+    pub buffer: ArrayBufferId,
+    pub byte_offset: usize,
+    pub byte_length: usize,
+}
+
+impl NativeContext {
+    pub fn create_array_buffer(&mut self, byte_length: usize) -> Result<ArrayBufferId, VmError>;
+    pub fn array_buffer_byte_length(&self, buffer: ArrayBufferId) -> Result<usize, VmError>;
+    pub fn is_array_buffer_detached(&self, buffer: ArrayBufferId) -> Result<bool, VmError>;
+    pub fn detach_array_buffer(&mut self, buffer: ArrayBufferId) -> Result<(), VmError>;
+
+    pub fn create_typed_array_view(
+        &mut self,
+        buffer: ArrayBufferId,
+        element_kind: TypedArrayElementKind,
+        byte_offset: usize,
+        length: usize,
+    ) -> Result<TypedArrayViewId, VmError>;
+    pub fn typed_array_byte_length(&self, view: TypedArrayViewId) -> Result<usize, VmError>;
+    pub fn typed_array_load_element(
+        &self,
+        view: TypedArrayViewId,
+        index: usize,
+    ) -> Result<JsValue, VmError>;
+    pub fn typed_array_store_element(
+        &mut self,
+        view: TypedArrayViewId,
+        index: usize,
+        value: JsValue,
+    ) -> Result<(), VmError>;
+
+    pub fn create_data_view(
+        &mut self,
+        buffer: ArrayBufferId,
+        byte_offset: usize,
+        byte_length: usize,
+    ) -> Result<DataViewId, VmError>;
+    pub fn data_view_get(
+        &self,
+        view: DataViewId,
+        request_index: usize,
+        element_kind: TypedArrayElementKind,
+        little_endian: bool,
+    ) -> Result<JsValue, VmError>;
+    pub fn data_view_set(
+        &mut self,
+        view: DataViewId,
+        request_index: usize,
+        element_kind: TypedArrayElementKind,
+        value: JsValue,
+        little_endian: bool,
+    ) -> Result<(), VmError>;
+}
 ```
 
 Rules:
@@ -80,6 +138,8 @@ Rules:
 - DataView and TypedArray must share the same `ArrayBufferRecord` storage;
 - BigInt element kinds may initially throw explicit unsupported errors if BigInt
   values are not fully implemented.
+- the first B implementation supports Number-backed element load/store and
+  returns explicit `TypeError` for `BigInt64` / `BigUint64` paths.
 
 ## 3. Date / Intl / Temporal Builtin Contract
 

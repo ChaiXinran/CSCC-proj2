@@ -368,11 +368,20 @@ V10 三组并行开发不同功能：
 
 任务：
 
-- buffer storage。
-- element type conversion。
-- bounds check。
-- detach 最小可观测模型。
-- DataView 共用底层 helper。
+- buffer storage。（第一阶段已完成：`ArrayBufferId` / `ArrayBufferRecord`
+  共享 byte storage）
+- element type conversion。（第一阶段已完成：Number-backed Int/Uint/Float
+  load/store；BigInt element kind 显式 TypeError）
+- bounds check。（第一阶段已完成：view range、element index、DataView offset
+  检查）
+- detach 最小可观测模型。（第一阶段已完成：detached flag + 拒绝 view access）
+- DataView 共用底层 helper。（第一阶段已完成：与 TypedArray 共享
+  `ArrayBufferRecord`，支持 endian-aware get/set）
+
+当前 B 组边界提醒：不要在 B 组直接安装 JS-visible `ArrayBuffer`、
+`TypedArray` 或 `DataView` 构造器；这些属于 C 组 builtin/integration。
+V10-C 后续应将 V8-C skeleton 的 hidden-property 临时槽迁移到 B 组 runtime
+substrate。
 
 ### V10-C：Temporal / Intl / Date semantics
 

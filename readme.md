@@ -244,6 +244,14 @@ It runs the locked 5,000-case manifest in
 `reports/native-v10-scan-failures.txt`. Initial result: 645/5,000 passed,
 4,355 failed, and 0 skipped.
 
+V10-B first runtime substrate is now available: shared `ArrayBuffer` byte
+storage, typed-array view metadata, DataView metadata, detach/range checks,
+Number-backed element load/store, `Uint8Clamped` rounding, and endian-aware
+DataView helpers. Focused runtime coverage is
+`cargo test --no-default-features --test native_v10_runtime` (6/6 passed).
+JS-visible TypedArray/ArrayBuffer/DataView constructor migration is still owned
+by the V10-C builtin track.
+
 Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
 The active post-V8 roadmap is `thoughts/newplan.md`.
 
