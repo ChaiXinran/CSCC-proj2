@@ -206,7 +206,9 @@ impl Default for RunnerOptions {
             skip_unsupported: false,
             runtime: RuntimeConfig {
                 loop_limit: 100_000_000,
-                recursion_limit: 512,
+                // Kept at 256 (half the old 512) to leave headroom on the 32 MB
+                // worker stack; each JS call adds ~5 Rust frames of non-trivial size.
+                recursion_limit: 256,
                 stack_limit: 128 * 1024,
                 backtrace_limit: 20,
                 script_cache_capacity: 0,
@@ -455,7 +457,15 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
         let harness = Arc::clone(&harness);
         let config = options.runtime;
         let backend = options.backend;
-        workers.push(thread::spawn(move || {
+        workers.push(
+            thread::Builder::new()
+                // Default Rust thread stack is 2 MB. With recursion_limit=256 each JS
+                // call chain adds ~5 Rust frames; deep harness call chains plus the VM
+                // dispatch loop can exhaust 2 MB, triggering SIGSEGV in the signal
+                // handler itself and aborting the whole process. 32 MB gives comfortable
+                // headroom for any realistic test case without per-test subprocess cost.
+                .stack_size(32 * 1024 * 1024)
+                .spawn(move || {
             loop {
                 let path = match queue.lock() {
                     Ok(mut queue) => queue.pop_front(),
@@ -487,7 +497,9 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
                     break;
                 }
             }
-        }));
+        })
+        .expect("failed to spawn test262 worker thread"),
+        );
     }
     drop(sender);
 
