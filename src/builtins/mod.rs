@@ -22,6 +22,7 @@ pub(crate) mod regexp;
 #[allow(dead_code)]
 mod string;
 mod v6;
+mod v8;
 
 use crate::{
     runtime::{
@@ -207,6 +208,7 @@ pub fn install_test262_harness(context: &mut NativeContext) {
         )
         .expect("install Test262Error");
     context.declare_global("Test262Error", test262_error);
+    v8::install_test262_host_object(context);
 }
 
 fn test262_error_call(
@@ -244,7 +246,8 @@ fn test262_error_construct(
 /// Installs the standard-library globals by delegating to the V6 adapter layer,
 /// which bridges the pure C1/C2 algorithm modules into the runtime.
 fn install_std_globals(context: &mut NativeContext) -> Result<(), VmError> {
-    v6::install(context)
+    v6::install(context)?;
+    v8::install(context)
 }
 
 #[cfg(test)]

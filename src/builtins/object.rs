@@ -243,11 +243,28 @@ fn object_get_own_property_descriptor(
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let object = context.require_object(&target, "get own property descriptor")?;
-    let key = to_property_key(arguments.get(1).unwrap_or(&JsValue::Undefined))?;
-    let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
+    let descriptor = own_descriptor_for_key(
+        context,
+        object,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let Some(descriptor) = descriptor else {
         return Ok(JsValue::Undefined);
     };
     descriptor_to_object(context, descriptor)
+}
+
+fn own_descriptor_for_key(
+    context: &NativeContext,
+    object: ObjectId,
+    key_arg: JsValue,
+) -> Result<Option<PropertyDescriptor>, VmError> {
+    if let JsValue::Symbol(symbol) = key_arg {
+        Ok(context.get_own_symbol_property_descriptor(object, symbol))
+    } else {
+        let key = to_property_key(&key_arg)?;
+        Ok(context.get_own_property_descriptor(object, &key))
+    }
 }
 
 fn object_get_prototype_of(
@@ -404,11 +421,13 @@ fn object_has_own_property(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let key = to_property_key(arguments.first().unwrap_or(&JsValue::Undefined))?;
     let object = context.require_object(&this_value, "hasOwnProperty")?;
-    Ok(JsValue::Boolean(
-        context.get_own_property(object, &key).is_some(),
-    ))
+    let descriptor = own_descriptor_for_key(
+        context,
+        object,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    Ok(JsValue::Boolean(descriptor.is_some()))
 }
 
 fn object_to_string(
@@ -502,16 +521,17 @@ fn object_property_is_enumerable(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let key = to_property_key(arguments.first().unwrap_or(&JsValue::Undefined))?;
     let object = match context.require_object(&this_value, "propertyIsEnumerable") {
         Ok(id) => id,
         Err(_) => return Ok(JsValue::Boolean(false)),
     };
+    let descriptor = own_descriptor_for_key(
+        context,
+        object,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
     Ok(JsValue::Boolean(
-        context
-            .get_own_property(object, &key)
-            .map(|d| d.enumerable)
-            .unwrap_or(false),
+        descriptor.map(|d| d.enumerable).unwrap_or(false),
     ))
 }
 

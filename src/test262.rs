@@ -185,6 +185,14 @@ pub const NATIVE_V7_SCAN_SUITES: [&str; 9] = [
 pub const NATIVE_V8_SCAN_TESTS: &str = include_str!("../reports/native-v8-scan-failures.txt");
 pub const NATIVE_V8_SCAN_TEST_COUNT: usize = 5_000;
 
+/// Fixed Native V9 lightweight diagnostic scan.
+///
+/// This manifest contains 5,000 non-passing V9-area cases sampled from the
+/// locked full direct Test262 output. It focuses on async/generator/for-of,
+/// Promise/job queue, iterator runtime, and Map/Set/Iterator builtin work.
+pub const NATIVE_V9_SCAN_TESTS: &str = include_str!("../reports/native-v9-scan-failures.txt");
+pub const NATIVE_V9_SCAN_TEST_COUNT: usize = 5_000;
+
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
     pub test262_root: PathBuf,
@@ -334,6 +342,20 @@ impl RunnerOptions {
             .map(PathBuf::from)
             .collect();
         debug_assert_eq!(self.files.len(), NATIVE_V8_SCAN_TEST_COUNT);
+        self.suites.clear();
+        self.skip_unsupported = false;
+    }
+
+    /// Selects the Native V9 lightweight scan: 5,000 previously non-passing
+    /// Test262 cases from the V9 async/iterator/collection feature areas.
+    pub fn select_native_v9_scan(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files = NATIVE_V9_SCAN_TESTS
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(PathBuf::from)
+            .collect();
+        debug_assert_eq!(self.files.len(), NATIVE_V9_SCAN_TEST_COUNT);
         self.suites.clear();
         self.skip_unsupported = false;
     }

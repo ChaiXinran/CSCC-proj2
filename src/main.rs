@@ -181,6 +181,7 @@ fn command_test262(args: &[String]) -> Result<(), String> {
             "--native-v7" => options.select_native_v7(),
             "--native-v7-scan" => options.select_native_v7_scan(),
             "--native-v8-scan" => options.select_native_v8_scan(),
+            "--native-v9-scan" => options.select_native_v9_scan(),
             "--json" => {
                 index += 1;
                 json_path = Some(PathBuf::from(required_value(args, index, "--json")?));
@@ -472,7 +473,7 @@ USAGE:
   agentjs repl [--backend boa|native]
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend boa|native] [--limit N] [--jobs N]
-                  [--native-v1|--native-v2|--native-v3|--native-v4|--native-v4-scan|--native-v5|--native-v5-scan|--native-v6|--native-v6-scan|--native-v7|--native-v7-scan|--native-v8-scan]
+                  [--native-v1|--native-v2|--native-v3|--native-v4|--native-v4-scan|--native-v5|--native-v5-scan|--native-v6|--native-v6-scan|--native-v7|--native-v7-scan|--native-v8-scan|--native-v9-scan]
                   [--progress] [--json result.json] [-v]
   agentjs bench [iterations]"
     );

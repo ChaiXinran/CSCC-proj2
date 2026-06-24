@@ -245,6 +245,38 @@ This procedure is now part of
 `docs/version-development-workflow.md`. Do not wait for the user to explicitly
 request report updates or scan command documentation when doing versioned work.
 
+## Native V9 Collaboration Start
+
+V9 has entered workflow setup. Scope, interface, and team ownership docs are:
+
+- `docs/native-v9-scope.md`
+- `docs/native-v9-interface.md`
+- `docs/native-v9-team-plan.md`
+
+V9 is a three-track parallel batch:
+
+- A group: async/generator/for-of frontend lowering.
+- B group: Promise/job queue/iterator runtime.
+- C group: Map/Set/WeakMap/WeakSet/Iterator builtins.
+
+Required V9 report files:
+
+- `reports/v9-partA-report.md`
+- `reports/v9-partB-report.md`
+- `reports/v9-partC-report.md`
+
+Standard V9 lightweight scan command:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/native-v9-scan-summary.json
+```
+
+`--native-v9-scan` runs the locked 5,000-case manifest in
+`reports/native-v9-scan-failures.txt`, sampled from prior non-passing V9
+hotspots. Initial baseline: 0/5,000 passed, 5,000 failed, 0 skipped. AI agents
+working on V9 should run this after relevant focused tests and update the
+corresponding `reports/v9-part*-report.md`.
+
 ## Commit & Pull Request Guidelines
 
 History varies by subtree: Boa commonly uses scoped Conventional Commit subjects such as `fix(vm): ...`, while QuickJS and Test262 favor concise imperative summaries. Use an imperative subject, add a scope when helpful, and avoid mixing unrelated upstream changes. Pull requests should identify the affected subtree, explain behavior and specification impact, list commands run, link relevant issues, and include benchmark or Test262 results when performance or compatibility changes.
