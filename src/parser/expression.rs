@@ -117,6 +117,7 @@ impl Parser {
             let value = self.parse_assignment()?;
             crate::ast::FunctionBody {
                 statements: vec![Statement::Return(Some(value))],
+                is_strict: self.is_strict,
             }
         };
         Ok(Some(Expression::Function(FunctionLiteral {

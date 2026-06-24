@@ -228,6 +228,12 @@ fn string_construct_creates_primitive_wrapper_with_value() {
     );
 }
 
+#[test]
+fn string_construct_distinguishes_missing_from_undefined_argument() {
+    assert_eq!(native_eval("new String().valueOf()"), "");
+    assert_eq!(native_eval("new String(undefined).valueOf()"), "undefined");
+}
+
 // ── valueOf on wrapper objects ────────────────────────────────────────────────
 
 /// Build a chunk: `new <ctor>(arg).valueOf()`.

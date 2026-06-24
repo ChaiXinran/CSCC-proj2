@@ -215,6 +215,7 @@ fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
         name: Some("Point".into()),
         params: Vec::new(),
         chunk: function_chunk,
+        is_strict: false,
         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
     };
     let function = chunk.add_function(template).unwrap();

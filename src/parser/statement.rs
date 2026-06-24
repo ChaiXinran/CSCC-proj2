@@ -97,9 +97,11 @@ impl Parser {
         self.switch_depth = 0;
         self.function_depth += 1;
         let mut statements = Vec::new();
+        let mut function_is_strict = outer_strict;
         let result = (|| {
             // Scan for a "use strict" directive prologue before parsing statements.
             self.consume_directive_prologue()?;
+            function_is_strict = self.is_strict;
             while !self.check_punctuator('}') && !self.at_eof() {
                 statements.push(self.parse_statement()?);
             }
@@ -111,7 +113,10 @@ impl Parser {
         self.is_strict = outer_strict;
         result?;
         self.validate_lexical_declarations(&statements)?;
-        Ok(FunctionBody { statements })
+        Ok(FunctionBody {
+            statements,
+            is_strict: function_is_strict,
+        })
     }
 
     /// Scans for ECMAScript directive prologues (`"use strict";`) at the start
@@ -713,7 +718,10 @@ mod tests {
     }
 
     fn body(statements: Vec<Statement>) -> FunctionBody {
-        FunctionBody { statements }
+        FunctionBody {
+            statements,
+            is_strict: false,
+        }
     }
 
     #[test]

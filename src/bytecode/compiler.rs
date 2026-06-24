@@ -1083,6 +1083,7 @@ impl Compiler {
             name: Some(name.to_string()),
             params: fn_chunk.params,
             chunk: fn_chunk.chunk,
+            is_strict: fn_chunk.is_strict,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -1147,6 +1148,7 @@ impl Compiler {
         Ok(CompiledFunction {
             params: param_names,
             chunk: fn_chunk,
+            is_strict: body.is_strict,
         })
     }
 
@@ -1809,6 +1811,7 @@ impl Compiler {
             name: None,
             params: compiled.params,
             chunk: compiled.chunk,
+            is_strict: compiled.is_strict,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let index = chunk
@@ -1833,6 +1836,7 @@ impl Compiler {
             name: literal.name.clone(),
             params: fn_chunk.params,
             chunk: fn_chunk.chunk,
+            is_strict: fn_chunk.is_strict,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -1847,6 +1851,7 @@ impl Compiler {
 struct CompiledFunction {
     params: Vec<String>,
     chunk: Chunk,
+    is_strict: bool,
 }
 
 fn property_key(key: &PropertyName) -> String {

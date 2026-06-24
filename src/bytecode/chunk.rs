@@ -224,6 +224,7 @@ pub struct FunctionTemplate {
     pub params: Vec<String>,
     /// Bytecode for the function body.
     pub chunk: Chunk,
+    pub is_strict: bool,
     pub environment_policy: EnvironmentCapturePolicy,
 }
 

@@ -942,6 +942,9 @@ impl Vm {
             chunk: template.chunk,
             environment,
         })?;
+        if template.is_strict {
+            context.mark_strict_function(id);
+        }
         Ok(JsValue::Function(id))
     }
 
@@ -1549,7 +1552,18 @@ impl Vm {
         value: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        let object = context.require_object(&receiver, "write property")?;
+        let object = match context.require_object(&receiver, "write property") {
+            Ok(object) => object,
+            Err(error)
+                if matches!(
+                    error.kind,
+                    VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
+                ) =>
+            {
+                return Ok(OperationResult::Throw(vm_error_to_value(error)));
+            }
+            Err(error) => return Err(error),
+        };
         if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
             match descriptor.kind {
                 PropertyKind::Accessor {
@@ -1592,16 +1606,17 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        let this_value =
-            if !context.strict() && matches!(this_value, JsValue::Undefined | JsValue::Null) {
-                context.global_this_value()
-            } else {
-                this_value
-            };
         let function = context
             .function(function_id)
             .cloned()
             .ok_or_else(|| VmError::runtime("missing function value"))?;
+        let this_value = if !(context.strict() || context.is_strict_function(function_id))
+            && matches!(this_value, JsValue::Undefined | JsValue::Null)
+        {
+            context.global_this_value()
+        } else {
+            this_value
+        };
         let stack_base = self.stack.len();
         let caller_environment_depth = context.environment_depth();
         let environment = context.push_environment(function.environment)?;

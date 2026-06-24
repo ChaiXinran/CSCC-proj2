@@ -1045,10 +1045,10 @@ fn string_construct(
     arguments: &[JsValue],
     new_target: JsValue,
 ) -> Result<JsValue, VmError> {
-    let value = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
-        JsValue::String(value) => value,
-        JsValue::Undefined => String::new(),
-        other => vm.to_string_coerce(other, context)?,
+    let value = match arguments.first().cloned() {
+        None => String::new(),
+        Some(JsValue::String(value)) => value,
+        Some(other) => vm.to_string_coerce(other, context)?,
     };
     let prototype = context
         .constructor_prototype(&new_target)?
@@ -2792,6 +2792,7 @@ fn install_to_string_tags(
     }
 
     push_proto!(object_prototype, "Object");
+    push_proto!(function_prototype_object, "Function");
     push_proto!(array_prototype, "Array");
     push_proto!(string_prototype, "String");
     push_proto!(number_prototype, "Number");
