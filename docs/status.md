@@ -133,6 +133,14 @@
   Number-backed element load/store helpers. Focused `tests/native_v10_runtime.rs`
   passes 6/6; JS-visible TypedArray/ArrayBuffer/DataView constructor migration
   is still future V10-C/integration work.
+- Native V11 setup is complete. Scope, interface, team plan, per-track reports,
+  and the locked V11 lightweight scan are recorded in
+  `docs/native-v11-scope.md`, `docs/native-v11-interface.md`,
+  `docs/native-v11-team-plan.md`, `reports/v11-partA-report.md`,
+  `reports/v11-partB-report.md`, `reports/v11-partC-report.md`, and
+  `reports/native-v11-scan-failures.txt`. The selector is installed and
+  `tests/native_test262.rs` passes 15/15. The first local V11 scan attempt
+  exceeded the 300s tool timeout and did not produce a JSON summary.
 
 ## Acceptance Gates
 

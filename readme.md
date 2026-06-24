@@ -252,6 +252,27 @@ DataView helpers. Focused runtime coverage is
 JS-visible TypedArray/ArrayBuffer/DataView constructor migration is still owned
 by the V10-C builtin track.
 
+Native V11 setup is also available while V10-A may continue. V11 covers RegExp
+parser/static errors, object-model/descriptor precision, and RegExp/Annex B/
+descriptor builtin sweeps. Planning and ownership live in
+[Native V11 scope](docs/native-v11-scope.md),
+[shared interface](docs/native-v11-interface.md), and
+[team plan](docs/native-v11-team-plan.md). Worker progress is tracked in
+`reports/v11-partA-report.md`, `reports/v11-partB-report.md`, and
+`reports/v11-partC-report.md`.
+
+The standard V11 lightweight scan is:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
+```
+
+It runs the locked 5,000-case manifest in
+`reports/native-v11-scan-failures.txt`. The selector is installed, but the first
+local scan attempt exceeded the 300s tool timeout and did not produce
+`reports/native-v11-scan-summary.json`; rerun with a longer timeout or refresh
+long-running samples before recording a baseline.
+
 Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
 The active post-V8 roadmap is `thoughts/newplan.md`.
 

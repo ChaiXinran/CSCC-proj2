@@ -332,6 +332,41 @@ install JS-visible `ArrayBuffer`, `TypedArray`, or `DataView` constructors in
 this track; C owns builtin installation and should migrate the V8-C hidden-slot
 skeletons to this runtime substrate during V10-C/integration.
 
+## Native V11 Collaboration Start
+
+V11 setup is complete while V10-A may still be in progress. V11 scope,
+interface, and team ownership docs are:
+
+- `docs/native-v11-scope.md`
+- `docs/native-v11-interface.md`
+- `docs/native-v11-team-plan.md`
+
+V11 is a three-track parallel batch:
+
+- A group: RegExp parser / static errors.
+- B group: object model / descriptor precision.
+- C group: RegExp builtins / Annex B / descriptor sweep.
+
+Required V11 report files:
+
+- `reports/v11-partA-report.md`
+- `reports/v11-partB-report.md`
+- `reports/v11-partC-report.md`
+
+Standard V11 lightweight scan command:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
+```
+
+`--native-v11-scan` runs the locked 5,000-case manifest in
+`reports/native-v11-scan-failures.txt`, sampled from prior non-passing RegExp,
+Annex B, descriptor, and object-model hotspots. The selector is installed and
+`native_test262` passes 15/15. The first local scan attempt exceeded the 300s
+tool timeout and did not produce `reports/native-v11-scan-summary.json`; future
+V11 workers should rerun it with a longer timeout or replace long-running
+samples before claiming scan deltas.
+
 ## Commit & Pull Request Guidelines
 
 History varies by subtree: Boa commonly uses scoped Conventional Commit subjects such as `fix(vm): ...`, while QuickJS and Test262 favor concise imperative summaries. Use an imperative subject, add a scope when helpful, and avoid mixing unrelated upstream changes. Pull requests should identify the affected subtree, explain behavior and specification impact, list commands run, link relevant issues, and include benchmark or Test262 results when performance or compatibility changes.

@@ -408,6 +408,21 @@ V10 完成后再启动 V11。
 
 目标：清理已经能执行但行为不符合 spec 的测试。
 
+状态：V11 第一阶段 setup 已完成。已创建 `docs/native-v11-scope.md`、
+`docs/native-v11-interface.md`、`docs/native-v11-team-plan.md`、
+`reports/v11-partA-report.md`、`reports/v11-partB-report.md`、
+`reports/v11-partC-report.md`，并锁定 `reports/native-v11-scan-failures.txt`。
+标准命令：
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
+```
+
+当前状态：selector 已接入，`native_test262` 15/15 passed；
+第一次本地 `--native-v11-scan` 在 300s 工具超时内未完成，未生成
+`reports/native-v11-scan-summary.json`。后续 V11 工作者需要用更长外部
+timeout 重跑，或先替换 manifest 中疑似长耗时样本，再记录正式 baseline。
+
 V11 三组并行开发不同功能：
 
 | 组别 | 功能线 | 主要收益 |
@@ -448,6 +463,7 @@ V11 三组并行开发不同功能：
 ### V11 集成测试
 
 ```sh
+cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/RegExp --jobs 4 --progress --json reports/native-v11-regexp-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --progress --json reports/native-v11-object-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/annexB --jobs 4 --progress --json reports/native-v11-annexb-summary.json
