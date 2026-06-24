@@ -208,6 +208,13 @@ ownership live in [Native V9 scope](docs/native-v9-scope.md),
 `reports/v9-partA-report.md`, `reports/v9-partB-report.md`, and
 `reports/v9-partC-report.md`.
 
+V9-B first runtime substrate is now available: minimal Promise records,
+single-settle Promise state helpers, deterministic FIFO native job queue,
+native backend job draining, and array/string iterator fallback helpers.
+Focused runtime coverage is `cargo test --no-default-features --test
+native_v9_runtime` (5/5 passed). JS-visible Promise and collection builtins are
+still owned by the V9-C builtin track.
+
 The standard V9 lightweight scan is:
 
 ```sh

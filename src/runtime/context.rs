@@ -7,10 +7,11 @@ use std::{
 
 use super::{
     BoundFunction, BuiltinFunction, BuiltinId, CollectionStats, Collector, Environment,
-    EnvironmentId, FunctionId, Heap, HeapStats, JsFunction, JsObject, JsValue, NativeCall,
-    NativeConstruct, NativeErrorKind, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-    PropertyDescriptorUpdate, PropertyKind, RootSet, SymbolId, SymbolRegistry, WellKnownSymbols,
-    object::array_index,
+    EnvironmentId, FunctionId, Heap, HeapStats, IteratorRecord, Job, JobQueue, JsFunction,
+    JsObject, JsValue, NativeCall, NativeConstruct, NativeErrorKind, NativeJob, ObjectId,
+    ObjectKind, PrimitiveValue, PromiseId, PromiseJob, PromiseReaction, PromiseRecord,
+    PromiseState, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, RootSet, SymbolId,
+    SymbolRegistry, WellKnownSymbols, iterator::IteratorKind, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 
@@ -115,6 +116,8 @@ pub struct NativeContext {
     function_prototype_apply: Option<BuiltinId>,
     symbol_registry: SymbolRegistry,
     symbol_for_registry: HashMap<String, SymbolId>,
+    job_queue: JobQueue,
+    promises: Vec<PromiseRecord>,
     strict: bool,
     top_level_this: JsValue,
     output: Vec<String>,
@@ -165,6 +168,8 @@ impl NativeContext {
             function_prototype_apply: None,
             symbol_registry: SymbolRegistry::new(),
             symbol_for_registry: HashMap::new(),
+            job_queue: JobQueue::default(),
+            promises: Vec::new(),
             strict: false,
             top_level_this: JsValue::Object(global_object),
             output: Vec::new(),
@@ -278,6 +283,19 @@ impl NativeContext {
                 roots.value_roots.push(bound.target.clone());
                 roots.value_roots.push(bound.this_value.clone());
                 roots.value_roots.extend(bound.args.iter().cloned());
+            }
+        }
+        for promise in &self.promises {
+            match &promise.state {
+                PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => {
+                    roots.value_roots.push(value.clone());
+                }
+                PromiseState::Pending => {}
+            }
+        }
+        for job in self.job_queue.iter() {
+            if let Job::PromiseReaction(job) = job {
+                roots.value_roots.push(job.value.clone());
             }
         }
     }
@@ -1520,6 +1538,63 @@ impl NativeContext {
         self.get_property(object, &key)
     }
 
+    pub fn get_iterator(&mut self, value: JsValue) -> Result<IteratorRecord, VmError> {
+        match value {
+            JsValue::String(string) => Ok(IteratorRecord::string(string)),
+            value => {
+                let object = self.require_object(&value, "iterate")?;
+                if self.is_array_object(object)? {
+                    let length = self
+                        .heap
+                        .object(object)
+                        .and_then(JsObject::array_length)
+                        .ok_or_else(|| VmError::runtime("missing array object"))?;
+                    Ok(IteratorRecord::array(value, length))
+                } else {
+                    Err(VmError::type_error("value is not iterable"))
+                }
+            }
+        }
+    }
+
+    pub fn iterator_next(
+        &mut self,
+        iterator: &mut IteratorRecord,
+    ) -> Result<Option<JsValue>, VmError> {
+        if iterator.done {
+            return Ok(None);
+        }
+        match &mut iterator.kind {
+            IteratorKind::Array {
+                object,
+                index,
+                length,
+            } => {
+                if *index >= *length {
+                    iterator.done = true;
+                    return Ok(None);
+                }
+                let key = JsValue::Number(*index as f64);
+                *index += 1;
+                self.get_element(object.clone(), key).map(Some)
+            }
+            IteratorKind::String { chars, index } => {
+                if *index >= chars.len() {
+                    iterator.done = true;
+                    return Ok(None);
+                }
+                let value = JsValue::String(chars[*index].clone());
+                *index += 1;
+                Ok(Some(value))
+            }
+        }
+    }
+
+    pub fn iterator_close(&mut self, iterator: &mut IteratorRecord) -> Result<(), VmError> {
+        iterator.done = true;
+        Ok(())
+    }
+
     pub fn set_element(
         &mut self,
         object: JsValue,
@@ -1822,6 +1897,78 @@ impl NativeContext {
 
     pub fn push_output(&mut self, line: impl Into<String>) {
         self.output.push(line.into());
+    }
+
+    pub fn create_promise(&mut self) -> Result<PromiseId, VmError> {
+        let index = u32::try_from(self.promises.len())
+            .map_err(|_| VmError::runtime("promise registry full"))?;
+        self.promises.push(PromiseRecord::default());
+        Ok(PromiseId(index))
+    }
+
+    #[must_use]
+    pub fn promise_state(&self, promise: PromiseId) -> Option<PromiseState> {
+        self.promises
+            .get(promise.0 as usize)
+            .map(|record| record.state.clone())
+    }
+
+    pub fn fulfill_promise(&mut self, promise: PromiseId, value: JsValue) -> Result<bool, VmError> {
+        self.settle_promise(promise, PromiseState::Fulfilled(value))
+    }
+
+    pub fn reject_promise(&mut self, promise: PromiseId, value: JsValue) -> Result<bool, VmError> {
+        self.settle_promise(promise, PromiseState::Rejected(value))
+    }
+
+    fn settle_promise(&mut self, promise: PromiseId, state: PromiseState) -> Result<bool, VmError> {
+        let record = self
+            .promises
+            .get_mut(promise.0 as usize)
+            .ok_or_else(|| VmError::runtime("invalid promise id"))?;
+        if !matches!(record.state, PromiseState::Pending) {
+            return Ok(false);
+        }
+        record.state = state;
+        Ok(true)
+    }
+
+    pub fn enqueue_job(&mut self, job: Job) -> Result<(), VmError> {
+        self.job_queue.push(job);
+        Ok(())
+    }
+
+    pub fn drain_jobs(&mut self) -> Result<(), VmError> {
+        while let Some(job) = self.job_queue.pop() {
+            self.run_job(job)?;
+        }
+        Ok(())
+    }
+
+    fn run_job(&mut self, job: Job) -> Result<(), VmError> {
+        match job {
+            Job::PromiseReaction(PromiseJob {
+                promise,
+                reaction: PromiseReaction::Fulfill,
+                value,
+            }) => {
+                self.fulfill_promise(promise, value)?;
+            }
+            Job::PromiseReaction(PromiseJob {
+                promise,
+                reaction: PromiseReaction::Reject,
+                value,
+            }) => {
+                self.reject_promise(promise, value)?;
+            }
+            Job::HostCallback(NativeJob::PushOutput(line)) => self.push_output(line),
+        }
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn pending_job_count(&self) -> usize {
+        self.job_queue.len()
     }
 
     pub fn clear_output(&mut self) {

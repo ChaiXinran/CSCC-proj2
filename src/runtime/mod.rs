@@ -6,6 +6,8 @@ mod environment;
 mod function;
 mod gc;
 mod heap;
+mod iterator;
+mod job;
 mod module;
 mod object;
 mod property;
@@ -24,6 +26,10 @@ pub use function::{
 };
 pub use gc::{CallFrameRoots, CollectionStats, Collector, HeapStats, RootSet, Trace, Tracer};
 pub use heap::Heap;
+pub use iterator::IteratorRecord;
+pub use job::{
+    Job, JobQueue, NativeJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
+};
 pub use module::{
     ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus,
     normalize_module_path, resolve_module_specifier,

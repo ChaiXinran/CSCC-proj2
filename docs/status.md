@@ -116,6 +116,11 @@
   `reports/v9-partB-report.md`, `reports/v9-partC-report.md`, and
   `reports/native-v9-scan-failures.txt`. Initial V9 scan:
   0/5,000 passed, 5,000 failed, 0 skipped.
+- V9-B first runtime substrate pass is implemented: minimal Promise records,
+  FIFO native job queue, native `run_jobs()` draining, and array/string iterator
+  fallback helpers. Focused `tests/native_v9_runtime.rs` passes 5/5; JS-visible
+  Promise/collection builtin installation is still future V9-C/integration
+  work.
 
 ## Acceptance Gates
 

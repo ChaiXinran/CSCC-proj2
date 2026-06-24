@@ -207,6 +207,9 @@ impl RuntimeBackend for NativeRuntime {
                 self.context.global_this_value()
             });
         let value = self.evaluate(source)?;
+        if options.drain_jobs {
+            self.run_jobs()?;
+        }
         Ok(BackendExecution {
             value: value.to_string(),
             output: self.context.take_output(),
@@ -269,7 +272,9 @@ impl RuntimeBackend for NativeRuntime {
             Ok(value) => {
                 self.module_registry
                     .set_status(module_id, ModuleStatus::Evaluated);
-                let _ = drain_jobs;
+                if drain_jobs {
+                    self.run_jobs()?;
+                }
                 Ok(BackendExecution {
                     value: value.to_string(),
                     output: self.context.take_output(),
@@ -284,7 +289,9 @@ impl RuntimeBackend for NativeRuntime {
     }
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure> {
-        Ok(())
+        self.context
+            .drain_jobs()
+            .map_err(|error| classify_native_error(NativeError::Execute(error)))
     }
 
     fn set_strict(&mut self, strict: bool) {

@@ -288,11 +288,19 @@ V9 三组并行开发不同功能：
 
 任务：
 
-- Promise runtime substrate。
-- microtask/job queue 最小模型。
-- iterator protocol runtime 完整化。
-- iterator close。
+- Promise runtime substrate。（第一阶段已完成：`PromiseId` / `PromiseState` /
+  单次 settle helper）
+- microtask/job queue 最小模型。（第一阶段已完成：FIFO `JobQueue` +
+  native backend `run_jobs()`）
+- iterator protocol runtime 完整化。（第一阶段已完成：数组/字符串 fallback；
+  generic `Symbol.iterator` dispatch 待后续 connector）
+- iterator close。（第一阶段已完成：`iterator_close` 标记 done）
 - async harness completion 支撑。
+
+当前 B 组边界提醒：不要在 B 组直接安装 JS-visible `Promise`、`Map`、`Set`
+或 `Iterator` 全局；这些属于 C 组 builtin/integration。B 组后续更适合继续
+补 Promise reaction list / thenable resolution / async completion 与 iterator
+runtime connector。
 
 ### V9-C：Map / Set / Iterator builtins
 

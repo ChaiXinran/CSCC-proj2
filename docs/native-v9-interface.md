@@ -60,6 +60,10 @@ pub enum Job {
 }
 
 impl NativeContext {
+    pub fn create_promise(&mut self) -> Result<PromiseId, VmError>;
+    pub fn promise_state(&self, promise: PromiseId) -> Option<PromiseState>;
+    pub fn fulfill_promise(&mut self, promise: PromiseId, value: JsValue) -> Result<bool, VmError>;
+    pub fn reject_promise(&mut self, promise: PromiseId, value: JsValue) -> Result<bool, VmError>;
     pub fn enqueue_job(&mut self, job: Job) -> Result<(), VmError>;
     pub fn drain_jobs(&mut self) -> Result<(), VmError>;
 }
@@ -81,6 +85,12 @@ Rules:
 - async tests must not be marked complete before queued jobs drain;
 - unimplemented Promise algorithms should throw explicit errors, not silently
   report success.
+- `fulfill_promise` / `reject_promise` return `Ok(true)` only for the first
+  successful transition out of `Pending`; later settle attempts return
+  `Ok(false)`.
+- `NativeRuntime::eval` and native module evaluation must honor
+  `ExecutionOptions::drain_jobs` by draining the native queue before returning
+  captured output when requested.
 
 ## 3. Iterator Runtime Contract
 
@@ -89,15 +99,19 @@ V9-B exposes shared iterator helpers for A and C:
 ```rust
 impl NativeContext {
     pub fn get_iterator(&mut self, value: JsValue) -> Result<IteratorRecord, VmError>;
-    pub fn iterator_next(&mut self, iterator: &IteratorRecord) -> Result<JsValue, VmError>;
-    pub fn iterator_close(&mut self, iterator: &IteratorRecord) -> Result<(), VmError>;
+    pub fn iterator_next(
+        &mut self,
+        iterator: &mut IteratorRecord,
+    ) -> Result<Option<JsValue>, VmError>;
+    pub fn iterator_close(&mut self, iterator: &mut IteratorRecord) -> Result<(), VmError>;
 }
 ```
 
 Rules:
 
 - helpers should use `Symbol.iterator` where available;
-- array/string fallback may be implemented first if clearly documented;
+- array/string fallback is the first implemented step; generic
+  `Symbol.iterator` dispatch remains future work for the A/B/C connector pass;
 - iterator close must run on abrupt completion once the helper exists.
 
 ## 4. Collection Builtin Contract

@@ -144,7 +144,7 @@ Current forward plan is in `thoughts/newplan.md`:
 
 - V8: frontend unlockers.
 - V8-B: module runner infrastructure first-stage is in place.
-- V9: Promise/job queue/iterator runtime.
+- V9: Promise/job queue/iterator runtime first substrate is in place.
 - V10: builtin/global family skeletons and core behavior.
 - V11: semantic precision and RegExp专项.
 
@@ -276,6 +276,17 @@ cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 -
 hotspots. Initial baseline: 0/5,000 passed, 5,000 failed, 0 skipped. AI agents
 working on V9 should run this after relevant focused tests and update the
 corresponding `reports/v9-part*-report.md`.
+
+Current V9-B status (2026-06-24): first runtime substrate pass is implemented.
+Available pieces are `src/runtime/job.rs`, `src/runtime/iterator.rs`,
+`NativeContext` Promise state helpers, FIFO job queue helpers, native backend
+`run_jobs()` draining, and array/string iterator fallback helpers. Focused B
+tests are in `tests/native_v9_runtime.rs` and currently pass 5/5; the
+`native_test262` gate passes 13/13. B agents should not install JS-visible
+`Promise`, `Map`, `Set`, or `Iterator` globals in this track; C owns builtin
+installation, and A owns frontend lowering that calls these runtime helpers.
+Generic `Symbol.iterator` dispatch and Promise algorithms remain follow-up
+integration work.
 
 ## Commit & Pull Request Guidelines
 

@@ -77,12 +77,17 @@ tests/native_v9_runtime.rs
 
 Tasks:
 
-- minimal Promise state model;
-- deterministic microtask/job queue;
-- native job draining connected to `ExecutionOptions::drain_jobs`;
-- iterator runtime helpers;
-- iterator close on abrupt completion;
+- minimal Promise state model; ✅ first runtime substrate implemented
+- deterministic microtask/job queue; ✅ FIFO queue implemented
+- native job draining connected to `ExecutionOptions::drain_jobs`; ✅ native
+  backend now drains when requested
+- iterator runtime helpers; ✅ array/string fallback helpers implemented
+- iterator close on abrupt completion; ✅ manual close helper marks iterator done
 - async Test262 completion support.
+
+Current B status: first runtime substrate pass is complete. JS-visible
+`Promise` constructor/methods and generic `Symbol.iterator` dispatch are not
+installed by B; C owns builtins, and A owns lowering that calls these helpers.
 
 B must not install collection builtin skeletons directly; C owns those globals.
 
