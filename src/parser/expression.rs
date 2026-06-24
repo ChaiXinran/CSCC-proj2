@@ -36,7 +36,7 @@ impl Parser {
     /// Runs `parse` with the relational `in` operator re-enabled, restoring the
     /// previous `no_in` state afterwards. Used at bracketed sub-expression
     /// boundaries inside a `for` header (where `in` is otherwise suppressed).
-    fn allowing_in<T>(
+    pub(super) fn allowing_in<T>(
         &mut self,
         parse: impl FnOnce(&mut Self) -> Result<T, ParseError>,
     ) -> Result<T, ParseError> {
@@ -49,6 +49,36 @@ impl Parser {
     /// Parses `target = value` and compound assignments `+= -= *= /= %=`.
     /// Assignment is right associative and binds looser than every binary operator.
     pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
+        // V9-A: `yield [*] [expr]` — only valid inside a generator function.
+        if self.check_keyword(Keyword::Yield) {
+            self.advance();
+            let delegate = self.eat_operator("*");
+            // `yield` can be followed by a line terminator, in which case the
+            // argument is absent.
+            let argument = if !self.peek().line_terminator_before
+                && !matches!(
+                    self.peek().kind,
+                    TokenKind::Punctuator(';')
+                        | TokenKind::Punctuator(')')
+                        | TokenKind::Punctuator(']')
+                        | TokenKind::Punctuator('}')
+                )
+                && !self.at_eof()
+            {
+                Some(Box::new(self.parse_assignment()?))
+            } else {
+                None
+            };
+            return Ok(Expression::Yield { argument, delegate });
+        }
+
+        // V9-A: `await expr` — only valid inside an async function.
+        if self.check_keyword(Keyword::Await) {
+            self.advance();
+            let value = self.parse_unary()?;
+            return Ok(Expression::Await(Box::new(value)));
+        }
+
         if let Some(arrow) = self.try_parse_arrow_function()? {
             return Ok(arrow);
         }
@@ -124,6 +154,8 @@ impl Parser {
             name: None,
             params,
             body,
+            is_async: false,
+            is_generator: false,
         })))
     }
 
@@ -379,7 +411,27 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Literal(Literal::String(value)))
             }
-            TokenKind::Identifier(name) => {
+            TokenKind::Identifier(ref name) => {
+                // V9-A: `async` is a contextual keyword when followed (on the same line)
+                // by `function`, `(`, or a simple identifier — in that case try to parse
+                // an async function expression or async arrow.
+                if name == "async" {
+                    let next_on_same_line = self
+                        .tokens
+                        .get(self.cursor + 1)
+                        .is_some_and(|t| !t.line_terminator_before);
+                    if next_on_same_line
+                        && matches!(
+                            self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                            Some(TokenKind::Keyword(Keyword::Function))
+                                | Some(TokenKind::Punctuator('('))
+                                | Some(TokenKind::Identifier(_))
+                        )
+                    {
+                        return self.parse_async_expression();
+                    }
+                }
+                let name = name.clone();
                 self.advance();
                 Ok(Expression::Identifier(name))
             }
@@ -531,6 +583,8 @@ impl Parser {
                         name: None,
                         params,
                         body,
+                        is_async: false,
+                        is_generator: false,
                     }),
                 });
             }
@@ -621,6 +675,8 @@ impl Parser {
                     name: Some(name),
                     params,
                     body,
+                    is_async: false,
+                    is_generator: false,
                 }),
             });
         }
@@ -655,23 +711,113 @@ impl Parser {
         }
     }
 
-    /// Parses `function(params) { body }` or `function name(params) { body }`
-    /// as an expression.
+    /// Parses `function [*] [name] (params) { body }` as an expression.
     fn parse_function_expression(&mut self) -> Result<Expression, ParseError> {
         self.advance(); // `function`
-        // Optional name for named function expressions
-        let name = if matches!(self.peek().kind, TokenKind::Identifier(_)) {
-            if let TokenKind::Identifier(name) = self.advance().kind {
-                Some(name)
-            } else {
-                unreachable!()
+        let is_generator = self.eat_operator("*");
+        // Optional name for named function expressions (also accept keywords as names)
+        let name = match self.peek().kind.clone() {
+            TokenKind::Identifier(n) => {
+                self.advance();
+                Some(n)
             }
-        } else {
-            None
+            TokenKind::Keyword(kw) if !matches!(kw, Keyword::Function) => {
+                self.advance();
+                Some(kw.as_str().to_owned())
+            }
+            _ => None,
         };
         let params = self.parse_param_list()?;
         let body = self.parse_function_body()?;
-        Ok(Expression::Function(FunctionLiteral { name, params, body }))
+        Ok(Expression::Function(FunctionLiteral {
+            name,
+            params,
+            body,
+            is_async: false,
+            is_generator,
+        }))
+    }
+
+    /// Parses `async function [*] [name] (params) { body }` or
+    /// `async (params) => body` as an expression.
+    pub(super) fn parse_async_expression(&mut self) -> Result<Expression, ParseError> {
+        // consume `async` (which was peeked as Identifier("async"))
+        self.advance();
+
+        // `async function` → async function expression
+        if self.check_keyword(Keyword::Function) {
+            self.advance(); // `function`
+            let is_generator = self.eat_operator("*");
+            let name = match self.peek().kind.clone() {
+                TokenKind::Identifier(n) => {
+                    self.advance();
+                    Some(n)
+                }
+                _ => None,
+            };
+            let params = self.parse_param_list()?;
+            let body = self.parse_function_body()?;
+            return Ok(Expression::Function(FunctionLiteral {
+                name,
+                params,
+                body,
+                is_async: true,
+                is_generator,
+            }));
+        }
+
+        // `async (params) =>` or `async param =>` — async arrow function.
+        // We need lookahead to distinguish from a call expression like `async(x)`.
+        let saved = self.cursor;
+        let params = match self.peek().kind.clone() {
+            TokenKind::Identifier(p)
+                if matches!(
+                    self.tokens.get(self.cursor + 1),
+                    Some(crate::lexer::Token {
+                        kind: TokenKind::Operator(op),
+                        line_terminator_before: false,
+                        ..
+                    }) if op == "=>"
+                ) =>
+            {
+                self.advance(); // param name
+                vec![FunctionParam::Simple(p)]
+            }
+            TokenKind::Punctuator('(') => {
+                let Ok(p) = self.parse_param_list() else {
+                    self.cursor = saved;
+                    // Not an async arrow: treat `async` as a regular identifier
+                    return Ok(Expression::Identifier("async".into()));
+                };
+                p
+            }
+            _ => {
+                self.cursor = saved;
+                return Ok(Expression::Identifier("async".into()));
+            }
+        };
+
+        if self.peek().line_terminator_before || !self.eat_operator("=>") {
+            self.cursor = saved;
+            return Ok(Expression::Identifier("async".into()));
+        }
+
+        let body = if self.check_punctuator('{') {
+            self.parse_function_body()?
+        } else {
+            let value = self.parse_assignment()?;
+            crate::ast::FunctionBody {
+                statements: vec![Statement::Return(Some(value))],
+                is_strict: self.is_strict,
+            }
+        };
+        Ok(Expression::Function(FunctionLiteral {
+            name: None,
+            params,
+            body,
+            is_async: true,
+            is_generator: false,
+        }))
     }
 
     // -----------------------------------------------------------------------
@@ -757,11 +903,15 @@ impl Parser {
             // Optional `static` keyword.
             let is_static = self.eat_keyword(Keyword::Static);
 
+            // Optional `*` for generator methods.
+            let is_generator_method = self.eat_operator("*");
+
             // Property name
             let prop_name = self.parse_property_name()?;
 
             // Check for `constructor` special case.
             let is_ctor = !is_static
+                && !is_generator_method
                 && matches!(&prop_name, PropertyName::Identifier(n) if n == "constructor");
 
             // Parse method params + body.
@@ -775,6 +925,8 @@ impl Parser {
                 },
                 params,
                 body,
+                is_async: false,
+                is_generator: is_generator_method,
             };
 
             if is_ctor {
@@ -1231,7 +1383,10 @@ mod tests {
     #[test]
     fn parses_anonymous_function_expression() {
         let expr = parse_expression("(function() { })");
-        let Expression::Function(FunctionLiteral { name, params, body }) = expr else {
+        let Expression::Function(FunctionLiteral {
+            name, params, body, ..
+        }) = expr
+        else {
             panic!("expected function expression");
         };
         assert!(name.is_none());

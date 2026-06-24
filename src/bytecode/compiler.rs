@@ -89,7 +89,10 @@ impl Compiler {
 
         // Hoist function declarations to the top of the program scope.
         for statement in &program.body {
-            if let Statement::FunctionDeclaration { name, params, body } = statement {
+            if let Statement::FunctionDeclaration {
+                name, params, body, ..
+            } = statement
+            {
                 self.compile_function_declaration(name, params, body, &mut chunk, &mut context)?;
             }
         }
@@ -178,9 +181,9 @@ impl Compiler {
                 Ok(())
             }
             Statement::Return(value) => self.compile_return(value.as_ref(), chunk, context),
-            Statement::FunctionDeclaration { name, params, body } => {
-                self.compile_function_declaration(name, params, body, chunk, context)
-            }
+            Statement::FunctionDeclaration {
+                name, params, body, ..
+            } => self.compile_function_declaration(name, params, body, chunk, context),
             Statement::Try {
                 block,
                 handler,
@@ -206,6 +209,12 @@ impl Compiler {
             } => {
                 self.compile_destructuring_declaration(*kind, pattern, initializer, chunk, context)
             }
+            Statement::ForOf {
+                left,
+                right,
+                body,
+                is_await,
+            } => self.compile_for_of(left, right, body, *is_await, chunk, context),
         }
     }
 
@@ -240,7 +249,10 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         // Hoist function declarations to the top of the current scope.
         for statement in statements {
-            if let Statement::FunctionDeclaration { name, params, body } = statement {
+            if let Statement::FunctionDeclaration {
+                name, params, body, ..
+            } = statement
+            {
                 self.compile_function_declaration(name, params, body, chunk, context)?;
             }
         }
@@ -1152,6 +1164,7 @@ impl Compiler {
                 name,
                 params,
                 body: inner_body,
+                ..
             } = statement
             {
                 self.compile_function_declaration(
@@ -1252,6 +1265,27 @@ impl Compiler {
                 // We push `this` here; super-property lookup handled by the
                 // prototype chain at runtime.
                 chunk.emit(Instruction::LoadThis);
+                Ok(())
+            }
+            Expression::Yield { argument, delegate } => {
+                if let Some(arg) = argument {
+                    self.compile_expression(arg, chunk, context)?;
+                } else {
+                    let undef = chunk
+                        .add_constant(Constant::Undefined)
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Constant(undef));
+                }
+                if *delegate {
+                    chunk.emit(Instruction::YieldDelegate);
+                } else {
+                    chunk.emit(Instruction::YieldValue);
+                }
+                Ok(())
+            }
+            Expression::Await(value) => {
+                self.compile_expression(value, chunk, context)?;
+                chunk.emit(Instruction::AwaitValue);
                 Ok(())
             }
         }
@@ -2124,6 +2158,8 @@ impl Compiler {
                     statements: vec![],
                     is_strict: false,
                 },
+                is_async: false,
+                is_generator: false,
             }
         };
         let ctor_fn = self.compile_function_body(&ctor_body.params, &ctor_body.body, context)?;
@@ -2310,7 +2346,141 @@ impl Compiler {
         let function_index = chunk
             .add_function(template)
             .map_err(CompileError::from_chunk)?;
-        chunk.emit(Instruction::CreateFunction(function_index));
+        if literal.is_generator {
+            chunk.emit(Instruction::CreateGenerator(function_index));
+        } else if literal.is_async {
+            chunk.emit(Instruction::CreateAsyncFunction(function_index));
+        } else {
+            chunk.emit(Instruction::CreateFunction(function_index));
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // V9-A: for-of lowering
+    // -----------------------------------------------------------------------
+
+    fn compile_for_of(
+        &mut self,
+        left: &crate::ast::ForBinding,
+        right: &Expression,
+        body: &Statement,
+        is_await: bool,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        if is_await {
+            return Err(CompileError::unsupported(
+                "for-await-of requires V9-B async iterator support",
+            ));
+        }
+
+        const ITER: &str = "\u{0}forof_iter";
+
+        chunk.emit(Instruction::CreateLexicalEnvironment);
+        context.environment_depth += 1;
+        let mut scope = std::collections::HashSet::new();
+
+        let iter_idx = self.add_name(ITER, chunk)?;
+        chunk.emit(Instruction::CreateMutableBinding(iter_idx));
+        scope.insert(ITER.to_string());
+
+        // Declare loop variable if it's a new binding.
+        match left {
+            crate::ast::ForBinding::Declaration { kind, pattern } => {
+                let names = binding_pattern_names(pattern);
+                for name in &names {
+                    let idx = self.add_name(name, chunk)?;
+                    match kind {
+                        VariableKind::Const => {
+                            chunk.emit(Instruction::CreateImmutableBinding(idx));
+                        }
+                        _ => {
+                            chunk.emit(Instruction::CreateMutableBinding(idx));
+                        }
+                    }
+                    scope.insert(name.clone());
+                }
+            }
+            crate::ast::ForBinding::Target(_) => {}
+        }
+
+        context.lexical_scopes.push(scope);
+
+        // Evaluate iterable and obtain the iterator.
+        self.compile_expression(right, chunk, context)?;
+        chunk.emit(Instruction::GetIterator);
+        chunk.emit(Instruction::InitializeBinding(iter_idx));
+
+        // Loop header.
+        let loop_start = chunk.current_offset();
+        chunk.emit(Instruction::LoadName(iter_idx));
+        chunk.emit(Instruction::IteratorNext); // [value, is_done]
+
+        // if is_done (top), jump to exit.
+        let exit_jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX));
+        chunk.emit(Instruction::Pop); // pop is_done=false
+
+        // Assign value to the loop variable.
+        match left {
+            crate::ast::ForBinding::Declaration { kind, pattern } => {
+                self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+            }
+            crate::ast::ForBinding::Target(target) => {
+                if let Expression::Identifier(name) = target {
+                    self.emit_store_identifier(name, chunk, context)?;
+                    chunk.emit(Instruction::Pop);
+                } else {
+                    return Err(CompileError::unsupported(
+                        "for-of target must be a simple identifier or declaration",
+                    ));
+                }
+            }
+        }
+
+        context.loops.push(LoopContext {
+            continue_target: Some(loop_start),
+            continue_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+        context.breakables.push(BreakContext {
+            break_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+
+        if let Err(e) = self.compile_statement(body, chunk, context, false) {
+            context.loops.pop();
+            context.breakables.pop();
+            return Err(e);
+        }
+
+        chunk.emit(Instruction::Jump(loop_start));
+
+        let exit_target = chunk.current_offset();
+        chunk
+            .patch_jump(exit_jump, exit_target)
+            .map_err(CompileError::from_chunk)?;
+        // stack at exit: [value=undefined, is_done=true]; pop both.
+        chunk.emit(Instruction::Pop); // pop is_done=true
+        chunk.emit(Instruction::Pop); // pop value=undefined
+
+        let break_jumps = context
+            .breakables
+            .last()
+            .expect("for-of break context")
+            .break_jumps
+            .clone();
+        for jump in break_jumps {
+            chunk
+                .patch_jump(jump, exit_target)
+                .map_err(CompileError::from_chunk)?;
+        }
+        context.loops.pop();
+        context.breakables.pop();
+
+        context.lexical_scopes.pop();
+        context.environment_depth -= 1;
+        chunk.emit(Instruction::PopEnvironment);
         Ok(())
     }
 }

@@ -4,6 +4,22 @@ use super::expression::{
     BindingPattern, ClassDeclaration, Expression, FunctionBody, FunctionParam,
 };
 
+// ---------------------------------------------------------------------------
+// V9-A for-of binding
+// ---------------------------------------------------------------------------
+
+/// The left-hand side of a `for...of` or `for await...of` loop.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForBinding {
+    /// `for (x of ...)` — assigns into an existing target expression.
+    Target(Expression),
+    /// `for (let/const/var x of ...)` / `for (let [a,b] of ...)` etc.
+    Declaration {
+        kind: VariableKind,
+        pattern: BindingPattern,
+    },
+}
+
 /// Complete script AST.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Program {
@@ -53,10 +69,13 @@ pub enum Statement {
         declarations: Vec<VariableDeclarator>,
     },
     /// `function name(params) { body }` — hoisted function declaration.
+    /// V9-A: also covers `async function` and `function*` declarations.
     FunctionDeclaration {
         name: String,
         params: Vec<FunctionParam>,
         body: FunctionBody,
+        is_async: bool,
+        is_generator: bool,
     },
     Return(Option<Expression>),
     If {
@@ -104,5 +123,12 @@ pub enum Statement {
         kind: VariableKind,
         pattern: BindingPattern,
         initializer: Expression,
+    },
+    /// `for (left of right) body` / `for await (left of right) body`.
+    ForOf {
+        left: ForBinding,
+        right: Expression,
+        body: Box<Statement>,
+        is_await: bool,
     },
 }

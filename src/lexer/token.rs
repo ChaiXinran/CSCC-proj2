@@ -49,6 +49,9 @@ pub enum Keyword {
     Static,
     Super,
     This,
+    // V9-A: generator / async
+    Yield,
+    Await,
 }
 
 impl Keyword {
@@ -88,6 +91,8 @@ impl Keyword {
             Self::Static => "static",
             Self::Super => "super",
             Self::This => "this",
+            Self::Yield => "yield",
+            Self::Await => "await",
         }
     }
 }

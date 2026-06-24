@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use crate::{
     ast::{
-        BindingPattern, CatchClause, Expression, FunctionBody, FunctionParam, PropertyName,
-        Statement, SwitchCase, VariableDeclarator, VariableKind,
+        BindingPattern, CatchClause, Expression, ForBinding, FunctionBody, FunctionParam,
+        PropertyName, Statement, SwitchCase, VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -24,6 +24,20 @@ impl Parser {
                 self.parse_variable_declaration()
             }
             TokenKind::Keyword(Keyword::Function) => self.parse_function_declaration(),
+            // V9-A: `async function` declaration (contextual: `async` is an Identifier)
+            TokenKind::Identifier(name)
+                if name == "async"
+                    && matches!(
+                        self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                        Some(TokenKind::Keyword(Keyword::Function))
+                    )
+                    && !self
+                        .tokens
+                        .get(self.cursor + 1)
+                        .is_some_and(|t| t.line_terminator_before) =>
+            {
+                self.parse_async_function_declaration()
+            }
             TokenKind::Keyword(Keyword::Return) => self.parse_return(),
             TokenKind::Keyword(Keyword::If) => self.parse_if(),
             TokenKind::Keyword(Keyword::While) => self.parse_while(),
@@ -57,17 +71,42 @@ impl Parser {
         Ok(body)
     }
 
-    /// Parses `function name(params) { body }`.
+    /// Parses `[async] function [*] name(params) { body }`.
     ///
+    /// V9-A: handles `async function` and `function*` declarations.
     /// Function declarations are not allowed at statement level inside other
     /// functions in strict mode, but V3 permits them anywhere a statement is
     /// allowed.
     fn parse_function_declaration(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `function`
+        let is_generator = self.eat_operator("*");
         let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
         let body = self.parse_function_body()?;
-        Ok(Statement::FunctionDeclaration { name, params, body })
+        Ok(Statement::FunctionDeclaration {
+            name,
+            params,
+            body,
+            is_async: false,
+            is_generator,
+        })
+    }
+
+    /// Parses `async function [*] name(params) { body }` at statement level.
+    fn parse_async_function_declaration(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `async` (Identifier)
+        self.advance(); // `function`
+        let is_generator = self.eat_operator("*");
+        let name = self.expect_identifier()?;
+        let params = self.parse_param_list()?;
+        let body = self.parse_function_body()?;
+        Ok(Statement::FunctionDeclaration {
+            name,
+            params,
+            body,
+            is_async: true,
+            is_generator,
+        })
     }
 
     /// Parses a parameter list `(name, name, ..., ...rest)`.
@@ -363,11 +402,24 @@ impl Parser {
         })
     }
 
-    /// Parses both `for (init; test; update) body` and `for (left in right)
-    /// body`. The relational `in` operator is suppressed while reading the
-    /// header so the two forms can be told apart.
+    /// Returns `true` if the current token is the contextual keyword `of`.
+    fn check_contextual_of(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "of")
+    }
+
+    /// Parses both `for (init; test; update) body`, `for (left in right) body`,
+    /// and V9-A `for [await] (left of right) body`.
     fn parse_for(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `for`
+
+        // V9-A: `for await (left of right)` — the `await` must immediately follow `for`
+        // without a line terminator. We accept it syntactically but it only makes
+        // sense inside an async function; runtime will surface the error otherwise.
+        let is_await = matches!(&self.peek().kind, TokenKind::Keyword(Keyword::Await));
+        if is_await {
+            self.advance(); // `await`
+        }
+
         self.expect_punctuator('(')?;
 
         // Empty init: `for (; test; update)`.
@@ -386,6 +438,28 @@ impl Parser {
                 _ => unreachable!(),
             };
             self.advance(); // declaration keyword
+
+            // `for (let/const/var [a,b] of right)` — destructuring for-of
+            if self.check_punctuator('[') || self.check_punctuator('{') {
+                let pattern = self.parse_binding_pattern()?;
+                if self.check_contextual_of() {
+                    self.advance(); // `of`
+                    let right = self.allowing_in(|p| p.parse_assignment())?;
+                    self.expect_punctuator(')')?;
+                    let body = self.parse_loop_body()?;
+                    return Ok(Statement::ForOf {
+                        left: ForBinding::Declaration { kind, pattern },
+                        right,
+                        body,
+                        is_await,
+                    });
+                }
+                // Not for-of — error, destructuring init needs `=`
+                return Err(
+                    self.error("expected `of` after destructuring pattern in for head".into())
+                );
+            }
+
             let name = self.expect_identifier()?;
 
             if self.check_keyword(Keyword::In) {
@@ -401,11 +475,28 @@ impl Parser {
                 });
             }
 
+            // V9-A: `for (let x of right)`
+            if self.check_contextual_of() {
+                self.advance(); // `of`
+                let right = self.allowing_in(|p| p.parse_assignment())?;
+                self.expect_punctuator(')')?;
+                let body = self.parse_loop_body()?;
+                return Ok(Statement::ForOf {
+                    left: ForBinding::Declaration {
+                        kind,
+                        pattern: crate::ast::BindingPattern::Identifier(name),
+                    },
+                    right,
+                    body,
+                    is_await,
+                });
+            }
+
             let init = self.parse_for_declaration_tail(kind, name)?;
             return self.parse_for_classic_rest(Some(Box::new(init)));
         }
 
-        // Expression head: either a for-in target or a C-style init expression.
+        // Expression head: either a for-in/for-of target or a C-style init expression.
         // `in` is suppressed at the top level so `x in obj` stops at `in`.
         self.no_in = true;
         let expression = self.parse_expression();
@@ -428,6 +519,26 @@ impl Parser {
                 target: expression,
                 right,
                 body,
+            });
+        }
+
+        // V9-A: `for (expr of right)`
+        if self.check_contextual_of() {
+            if !matches!(
+                expression,
+                Expression::Identifier(_) | Expression::Member { .. }
+            ) {
+                return Err(self.error("invalid left-hand side in for-of loop".into()));
+            }
+            self.advance(); // `of`
+            let right = self.allowing_in(|p| p.parse_assignment())?;
+            self.expect_punctuator(')')?;
+            let body = self.parse_loop_body()?;
+            return Ok(Statement::ForOf {
+                left: ForBinding::Target(expression),
+                right,
+                body,
+                is_await,
             });
         }
 
@@ -772,6 +883,20 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
             collect_var_declared_names(body, names);
         }
         Statement::ForIn { body, .. } => collect_var_declared_names(body, names),
+        // V9-A: for-of with a `var` binding declares the name.
+        Statement::ForOf {
+            left:
+                ForBinding::Declaration {
+                    kind: VariableKind::Var,
+                    pattern: crate::ast::BindingPattern::Identifier(name),
+                },
+            body,
+            ..
+        } => {
+            names.push(name.as_str());
+            collect_var_declared_names(body, names);
+        }
+        Statement::ForOf { body, .. } => collect_var_declared_names(body, names),
         Statement::FunctionDeclaration { .. }
         | Statement::Empty
         | Statement::Expression(_)
@@ -969,6 +1094,8 @@ mod tests {
                 name: "f".into(),
                 params: vec![],
                 body: body(vec![]),
+                is_async: false,
+                is_generator: false,
             }]
         );
     }
@@ -980,6 +1107,7 @@ mod tests {
             name,
             params,
             body: fn_body,
+            ..
         } = &stmts[0]
         else {
             panic!("expected FunctionDeclaration");

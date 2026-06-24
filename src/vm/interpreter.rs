@@ -695,6 +695,65 @@ impl Vm {
                     }
                 }
 
+                // V9-A stubs: iterator protocol (B group provides full implementation)
+                Instruction::GetIterator => {
+                    let _iterable = self.pop_value()?;
+                    return Err(VmError::runtime(
+                        "for-of / GetIterator not yet implemented (V9-B pending)",
+                    ));
+                }
+                Instruction::IteratorNext => {
+                    let _iterator = self.pop_value()?;
+                    return Err(VmError::runtime(
+                        "IteratorNext not yet implemented (V9-B pending)",
+                    ));
+                }
+                Instruction::IteratorClose => {
+                    let _iterator = self.pop_value()?;
+                    return Err(VmError::runtime(
+                        "IteratorClose not yet implemented (V9-B pending)",
+                    ));
+                }
+
+                // V9-A stubs: generator support (B group provides full implementation)
+                Instruction::CreateGenerator(function) => {
+                    // Validate the function index so B can implement the body later.
+                    let _ = chunk.functions.get(function as usize).ok_or_else(|| {
+                        VmError::runtime(format!(
+                            "CreateGenerator: function index {function} out of range"
+                        ))
+                    })?;
+                    return Err(VmError::runtime(
+                        "generators not yet implemented (V9-B pending)",
+                    ));
+                }
+                Instruction::YieldValue => {
+                    let _value = self.pop_value()?;
+                    return Err(VmError::runtime("yield not yet implemented (V9-B pending)"));
+                }
+                Instruction::YieldDelegate => {
+                    let _iterable = self.pop_value()?;
+                    return Err(VmError::runtime(
+                        "yield* not yet implemented (V9-B pending)",
+                    ));
+                }
+
+                // V9-A stubs: async support (B group provides full implementation)
+                Instruction::CreateAsyncFunction(function) => {
+                    let _ = chunk.functions.get(function as usize).ok_or_else(|| {
+                        VmError::runtime(format!(
+                            "CreateAsyncFunction: function index {function} out of range"
+                        ))
+                    })?;
+                    return Err(VmError::runtime(
+                        "async functions not yet implemented (V9-B pending)",
+                    ));
+                }
+                Instruction::AwaitValue => {
+                    let _value = self.pop_value()?;
+                    return Err(VmError::runtime("await not yet implemented (V9-B pending)"));
+                }
+
                 Instruction::ForInKeys => {
                     let value = self.pop_value()?;
                     let keys: Vec<String> = match &value {
