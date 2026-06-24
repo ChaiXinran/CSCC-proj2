@@ -228,9 +228,9 @@ impl Parser {
         self.expect_punctuator('(')?;
         let test = self.parse_expression()?;
         self.expect_punctuator(')')?;
-        let consequent = Box::new(self.parse_statement()?);
+        let consequent = Box::new(self.parse_substatement("if")?);
         let alternate = if self.eat_keyword(Keyword::Else) {
-            Some(Box::new(self.parse_statement()?))
+            Some(Box::new(self.parse_substatement("else")?))
         } else {
             None
         };
@@ -249,13 +249,9 @@ impl Parser {
         let test = self.parse_expression()?;
         self.expect_punctuator(')')?;
 
-        self.loop_depth += 1;
-        let body = self.parse_statement();
-        self.loop_depth -= 1;
-
         Ok(Statement::While {
             test,
-            body: Box::new(body?),
+            body: self.parse_loop_body()?,
         })
     }
 
@@ -392,9 +388,18 @@ impl Parser {
     /// Parses a loop body, tracking loop depth so `break`/`continue` are valid.
     fn parse_loop_body(&mut self) -> Result<Box<Statement>, ParseError> {
         self.loop_depth += 1;
-        let body = self.parse_statement();
+        let body = self.parse_substatement("loop");
         self.loop_depth -= 1;
         Ok(Box::new(body?))
+    }
+
+    fn parse_substatement(&mut self, context: &str) -> Result<Statement, ParseError> {
+        if self.is_strict && self.check_keyword(Keyword::Function) {
+            return Err(self.error(format!(
+                "function declarations are not allowed as {context} single-statement bodies in strict mode"
+            )));
+        }
+        self.parse_statement()
     }
 
     /// Parses `break;`, rejecting it outside any loop or switch.
@@ -449,7 +454,9 @@ impl Parser {
             };
             let body = self.parse_block_statements()?;
             if let Some(parameter) = &parameter
-                && direct_lexical_names(&body).any(|name| name == parameter)
+                && direct_lexical_names(&body)
+                    .into_iter()
+                    .any(|name| name == parameter)
             {
                 return Err(self.error(format!(
                     "catch parameter `{parameter}` conflicts with a lexical declaration"
@@ -545,10 +552,17 @@ impl Parser {
         &self,
         statements: &[Statement],
     ) -> Result<(), ParseError> {
-        let mut names = HashSet::new();
+        let mut lexical_names = HashSet::new();
         for name in direct_lexical_names(statements) {
-            if !names.insert(name) {
+            if !lexical_names.insert(name) {
                 return Err(self.error(format!("duplicate lexical declaration `{name}`")));
+            }
+        }
+        for name in var_declared_names(statements) {
+            if lexical_names.contains(name) {
+                return Err(self.error(format!(
+                    "var declaration `{name}` conflicts with a lexical declaration"
+                )));
             }
         }
         Ok(())
@@ -567,17 +581,98 @@ impl Parser {
     }
 }
 
-fn direct_lexical_names(statements: &[Statement]) -> impl Iterator<Item = &str> {
-    statements.iter().flat_map(|statement| match statement {
+fn direct_lexical_names(statements: &[Statement]) -> Vec<&str> {
+    statements
+        .iter()
+        .flat_map(|statement| match statement {
+            Statement::VariableDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                declarations,
+            } => declarations
+                .iter()
+                .map(|declaration| declaration.name.as_str())
+                .collect::<Vec<_>>(),
+            Statement::FunctionDeclaration { name, .. } => vec![name.as_str()],
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn var_declared_names(statements: &[Statement]) -> Vec<&str> {
+    let mut names = Vec::new();
+    for statement in statements {
+        collect_var_declared_names(statement, &mut names);
+    }
+    names
+}
+
+fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a str>) {
+    match statement {
         Statement::VariableDeclaration {
-            kind: VariableKind::Let | VariableKind::Const,
+            kind: VariableKind::Var,
             declarations,
-        } => declarations
-            .iter()
-            .map(|declaration| declaration.name.as_str())
-            .collect::<Vec<_>>(),
-        _ => Vec::new(),
-    })
+        } => names.extend(
+            declarations
+                .iter()
+                .map(|declaration| declaration.name.as_str()),
+        ),
+        Statement::Block(statements) => {
+            names.extend(var_declared_names(statements));
+        }
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_var_declared_names(consequent, names);
+            if let Some(alternate) = alternate {
+                collect_var_declared_names(alternate, names);
+            }
+        }
+        Statement::While { body, .. } => collect_var_declared_names(body, names),
+        Statement::Try {
+            block,
+            handler,
+            finalizer,
+        } => {
+            names.extend(var_declared_names(block));
+            if let Some(handler) = handler {
+                names.extend(var_declared_names(&handler.body));
+            }
+            if let Some(finalizer) = finalizer {
+                names.extend(var_declared_names(finalizer));
+            }
+        }
+        Statement::Switch { cases, .. } => {
+            for case in cases {
+                names.extend(var_declared_names(&case.consequent));
+            }
+        }
+        Statement::For { init, body, .. } => {
+            if let Some(init) = init {
+                collect_var_declared_names(init, names);
+            }
+            collect_var_declared_names(body, names);
+        }
+        Statement::ForIn {
+            declaration: Some(VariableKind::Var),
+            target: Expression::Identifier(name),
+            body,
+            ..
+        } => {
+            names.push(name.as_str());
+            collect_var_declared_names(body, names);
+        }
+        Statement::ForIn { body, .. } => collect_var_declared_names(body, names),
+        Statement::FunctionDeclaration { .. }
+        | Statement::Empty
+        | Statement::Expression(_)
+        | Statement::Return(_)
+        | Statement::Break
+        | Statement::Continue
+        | Statement::Throw(_)
+        | Statement::VariableDeclaration { .. } => {}
+    }
 }
 
 #[cfg(test)]
@@ -837,6 +932,62 @@ mod tests {
                 .message
                 .contains("default")
         );
+    }
+
+    #[test]
+    fn rejects_duplicate_lexical_declarations_in_same_scope() {
+        assert!(parse_error("let x; let x;").message.contains("duplicate"));
+        assert!(
+            parse_error("{ const f = 0; function f() {} }")
+                .message
+                .contains("duplicate")
+        );
+        assert!(
+            parse_error("function f() {} function f() {}")
+                .message
+                .contains("duplicate")
+        );
+    }
+
+    #[test]
+    fn rejects_var_declarations_conflicting_with_lexical_names() {
+        assert!(
+            parse_error("const x = 1; var x;")
+                .message
+                .contains("conflicts")
+        );
+        assert!(
+            parse_error("{ let x; { var x; } }")
+                .message
+                .contains("conflicts")
+        );
+        assert!(
+            parse_error("let item; for (var item in object) { ; }")
+                .message
+                .contains("conflicts")
+        );
+    }
+
+    #[test]
+    fn strict_mode_rejects_function_declaration_as_single_statement_body() {
+        for source in [
+            r#""use strict"; if (x) function f() {}"#,
+            r#""use strict"; if (x) ; else function f() {}"#,
+            r#""use strict"; while (x) function f() {}"#,
+            r#""use strict"; for (;;) function f() {}"#,
+        ] {
+            assert!(
+                parse_error(source).message.contains("single-statement"),
+                "{source} should reject function declarations in strict substatements"
+            );
+        }
+    }
+
+    #[test]
+    fn sloppy_mode_and_strict_blocks_allow_function_declaration_bodies() {
+        parse("if (x) function f() {}");
+        parse(r#""use strict"; if (x) { function f() {} }"#);
+        parse(r#""use strict"; for (;;) { function f() {} break; }"#);
     }
 
     #[test]

@@ -384,10 +384,7 @@ fn sloppy_mode_delete_identifier_is_allowed() {
 
 #[test]
 fn delete_member_expression_compiles() {
-    use agentjs::{
-        bytecode::Compiler,
-        contracts::SourceParser,
-    };
+    use agentjs::{bytecode::Compiler, contracts::SourceParser};
     let prog = NativeFrontend.parse_source("delete obj.x;").unwrap();
     assert!(Compiler::new().compile_program(&prog).is_ok());
 }
