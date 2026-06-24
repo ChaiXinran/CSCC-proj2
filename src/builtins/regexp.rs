@@ -19,7 +19,7 @@ pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, String> {
             's' => {
                 builder.dot_matches_new_line(true);
             }
-            'u' | 'g' | 'y' | 'd' => {}
+            'u' | 'v' | 'g' | 'y' | 'd' => {}
             other => return Err(format!("invalid flag `{other}`")),
         }
     }
@@ -58,23 +58,189 @@ pub fn exec_global(regex: &Regex, text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Replaces the first match of `regex` in `text` with `replacement`.
-/// `$1`, `$2`, … back-references are not expanded (basic implementation).
-pub fn replace_first(regex: &Regex, text: &str, replacement: &str) -> String {
-    regex.replacen(text, 1, replacement).into_owned()
-}
-
-/// Replaces all matches of `regex` in `text` with `replacement`.
-pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> String {
-    regex.replace_all(text, replacement).into_owned()
-}
-
-/// Splits `text` by every match of `regex`.
-pub fn split(regex: &Regex, text: &str, limit: Option<usize>) -> Vec<String> {
-    let parts: Vec<String> = regex.split(text).map(str::to_owned).collect();
-    if let Some(limit) = limit {
-        parts.into_iter().take(limit).collect()
-    } else {
-        parts
+/// Expands ES replacement patterns inside `template`:
+///   `$&`  → the entire matched substring
+///   `$``  → the portion of the string before the match
+///   `$'`  → the portion after the match
+///   `$n`  → the n-th capture group (1-indexed; `$0` is ignored)
+///   `$$`  → a literal `$`
+fn expand_replacement(
+    template: &str,
+    full_match: &str,
+    captures: &[Option<&str>],
+    before: &str,
+    after: &str,
+) -> String {
+    let mut result = String::with_capacity(template.len());
+    let bytes = template.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'$' && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'$' => {
+                    result.push('$');
+                    i += 2;
+                }
+                b'&' => {
+                    result.push_str(full_match);
+                    i += 2;
+                }
+                b'`' => {
+                    result.push_str(before);
+                    i += 2;
+                }
+                b'\'' => {
+                    result.push_str(after);
+                    i += 2;
+                }
+                d if d.is_ascii_digit() && d != b'0' => {
+                    // Try two-digit first ($nn), then one-digit ($n).
+                    let mut group_num = (d - b'0') as usize;
+                    let mut advance = 2;
+                    if i + 2 < bytes.len() {
+                        let d2 = bytes[i + 2];
+                        if d2.is_ascii_digit() {
+                            let two = group_num * 10 + (d2 - b'0') as usize;
+                            if two < captures.len() {
+                                group_num = two;
+                                advance = 3;
+                            }
+                        }
+                    }
+                    if group_num < captures.len() {
+                        if let Some(cap) = captures[group_num] {
+                            result.push_str(cap);
+                        }
+                        // unmatched group → empty string (omit)
+                    } else {
+                        // No such group — keep literal text.
+                        result.push_str(&template[i..i + advance]);
+                    }
+                    i += advance;
+                }
+                _ => {
+                    result.push('$');
+                    i += 1;
+                }
+            }
+        } else {
+            let ch = template[i..].chars().next().unwrap_or('\0');
+            result.push(ch);
+            i += ch.len_utf8().max(1);
+        }
     }
+    result
+}
+
+/// Replaces the first match of `regex` in `text` with `replacement`, expanding
+/// ES replacement patterns (`$&`, `$1`, etc.).
+pub fn replace_first(regex: &Regex, text: &str, replacement: &str) -> String {
+    let Some(caps) = regex.captures(text) else {
+        return text.to_owned();
+    };
+    let m = caps.get(0).unwrap();
+    let (before, full_match, after) = (&text[..m.start()], m.as_str(), &text[m.end()..]);
+    let groups: Vec<Option<&str>> = (0..caps.len())
+        .map(|i| caps.get(i).map(|c| c.as_str()))
+        .collect();
+    let repl = expand_replacement(replacement, full_match, &groups, before, after);
+    format!("{before}{repl}{after}")
+}
+
+/// Replaces all matches of `regex` in `text` with `replacement`, expanding ES
+/// replacement patterns.
+pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> String {
+    let mut result = String::new();
+    let mut last_end = 0;
+    for caps in regex.captures_iter(text) {
+        let m = caps.get(0).unwrap();
+        let before = &text[last_end..m.start()];
+        let full_match = m.as_str();
+        let after = &text[m.end()..]; // everything after this match
+        let groups: Vec<Option<&str>> = (0..caps.len())
+            .map(|i| caps.get(i).map(|c| c.as_str()))
+            .collect();
+        let repl = expand_replacement(replacement, full_match, &groups, before, after);
+        result.push_str(before);
+        result.push_str(&repl);
+        last_end = m.end();
+        // Zero-length match guard: advance by at least one char to avoid infinite loop.
+        if m.start() == m.end() && m.end() < text.len() {
+            let ch = text[m.end()..].chars().next().unwrap_or('\0');
+            result.push(ch);
+            last_end = m.end() + ch.len_utf8();
+        }
+    }
+    result.push_str(&text[last_end..]);
+    result
+}
+
+/// Detailed match info for a single match, used by function-replacement callers.
+pub struct MatchDetail {
+    pub full_match: String,
+    /// Capture groups: index 1…n (index 0 is the full match, kept for symmetry).
+    pub captures: Vec<Option<String>>,
+    /// UTF-16 start index of the match in the original string.
+    pub index: usize,
+}
+
+/// Iterates all (non-overlapping) matches of `regex` in `text`, returning
+/// [`MatchDetail`] entries. Used by builtin replace with function callback.
+pub fn matches_with_detail(regex: &Regex, text: &str, global: bool) -> Vec<MatchDetail> {
+    let mut out = Vec::new();
+    for caps in regex.captures_iter(text) {
+        let m = caps.get(0).unwrap();
+        let index = text[..m.start()].encode_utf16().count();
+        let full_match = m.as_str().to_owned();
+        let captures = (0..caps.len())
+            .map(|i| caps.get(i).map(|c| c.as_str().to_owned()))
+            .collect();
+        out.push(MatchDetail {
+            full_match,
+            captures,
+            index,
+        });
+        if !global {
+            break;
+        }
+    }
+    out
+}
+
+/// Splits `text` by every match of `regex`, **including** capture groups in the
+/// result as specified by ECMAScript `String.prototype.split`.
+pub fn split(regex: &Regex, text: &str, limit: Option<usize>) -> Vec<Option<String>> {
+    let limit = limit.unwrap_or(usize::MAX);
+    if limit == 0 {
+        return vec![];
+    }
+
+    let mut result: Vec<Option<String>> = Vec::new();
+    let mut last_end = 0;
+
+    for caps in regex.captures_iter(text) {
+        let m = caps.get(0).unwrap();
+        if result.len() >= limit {
+            break;
+        }
+        // Push the substring before this match.
+        result.push(Some(text[last_end..m.start()].to_owned()));
+        if result.len() >= limit {
+            break;
+        }
+        // Push capture groups (indices 1…).
+        for i in 1..caps.len() {
+            if result.len() >= limit {
+                break;
+            }
+            result.push(caps.get(i).map(|c| c.as_str().to_owned()));
+        }
+        last_end = m.end();
+    }
+
+    if result.len() < limit {
+        result.push(Some(text[last_end..].to_owned()));
+    }
+
+    result
 }

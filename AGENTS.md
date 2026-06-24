@@ -228,6 +228,40 @@ Twelve new tests cover:
 lexer into the parser and does NOT cross the `contracts.rs` stable boundary (it
 stays within `src/lexer/token.rs`, which is internal to the A-group).
 
+### A-line regexp additions (same session, follow-up)
+
+After the compiler/parser work, four additional regexp sub-tasks were completed:
+
+**A1 – RegExp flag validation** (`src/lexer/mod.rs`):
+`read_regex_literal_at()` now validates that each flag is in `[dgimsuy]`,
+rejects duplicates, and rejects `u`+`v` combination — all per ES2023.
+
+**A3 – RegExp instance properties** (`src/runtime/context.rs`):
+`create_regexp()` now writes 11 data properties on every new RegExp object:
+`source`, `flags` (sorted: d g i m s u v y), `global`, `ignoreCase`, `multiline`,
+`dotAll`, `sticky`, `unicode`, `unicodeSets`, `hasIndices`, plus `lastIndex` (writable,
+non-enumerable, non-configurable, initially 0). Helper `sort_regexp_flags()` added.
+
+**A4a – JS replacement patterns** (`src/builtins/regexp.rs`):
+Rewrote `replace_first()` and `replace_all()` to expand `$&`, `` $` ``, `$'`, `$$`,
+and `$1`–`$99` via a new `expand_replacement()` helper (pure Rust, no external crate).
+
+**A4b – Function replacement callback** (`src/builtins/v6.rs`):
+`string_replace()` and `string_replace_all()` now detect a callable second argument
+and invoke it per match via `vm.call_value_from_builtin()` with args
+`(match, p1, …, offset, inputString)`.
+
+**A4c – String.split capture groups** (`src/builtins/v6.rs`, `src/builtins/regexp.rs`):
+`regexp::split()` now uses `captures_iter()` instead of `regex.split()` and
+interleaves capture groups between substrings as required by the ES spec.
+
+**A4d – String.prototype.matchAll** (`src/builtins/v6.rs`):
+Basic eager implementation: requires `g` or `y` flag, materialises all matches
+as an array of exec-style arrays (each with `index` and `input` properties).
+
+**Result**: V7 scan improved from 65.46% → 66.71% (+38 newly passing cases,
+3034 total, 2024 passed, 1010 failed).
+
 ### Known remaining gaps (not A-line scope)
 
 - Postfix computed-member update (`obj[key]++`) requires a `Rotate`/`Tuck` VM
@@ -235,5 +269,7 @@ stays within `src/lexer/token.rs`, which is internal to the A-group).
 - Class fields, optional chaining (`?.`), nullish coalescing (`??`), `async`/
   `await`, `for…of`, destructuring assignment, and spread/rest remain outside
   the V7 scope.
-- The `--native-v7-scan` diagnostic baseline (58.37%) may improve further as
-  B-line and C-line fixes land.
+- RegExp sticky (`y`) flag semantics and named capture groups (`(?<name>…)`) are
+  not handled by the Rust `regex` crate — future work.
+- Further improvement depends on B-line (Symbol/ToPrimitive) and C-line
+  (Number/JSON/Error/Math) fixes landing.

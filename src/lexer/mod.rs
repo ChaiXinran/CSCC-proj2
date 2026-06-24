@@ -708,10 +708,32 @@ pub fn read_regex_literal_at(
         }
     }
 
-    // Read flags: identifier-like characters after the closing '/'.
+    // Read flags: only ECMAScript-recognized flag letters are valid.
+    // Valid set (ES2023+): d g i m s u v y  — no duplicates allowed.
     let mut flags = String::new();
     while let Some(ch) = source[i..].chars().next() {
         if ch.is_alphabetic() || ch == '_' || ch == '$' {
+            // Reject unknown flag characters immediately.
+            if !matches!(ch, 'd' | 'g' | 'i' | 'm' | 's' | 'u' | 'v' | 'y') {
+                return Err(LexError {
+                    span: Span::new(start, i + ch.len_utf8()),
+                    message: format!("invalid regular expression flag `{ch}`"),
+                });
+            }
+            // Reject duplicate flags.
+            if flags.contains(ch) {
+                return Err(LexError {
+                    span: Span::new(start, i + ch.len_utf8()),
+                    message: format!("duplicate regular expression flag `{ch}`"),
+                });
+            }
+            // `u` and `v` are mutually exclusive.
+            if (ch == 'u' && flags.contains('v')) || (ch == 'v' && flags.contains('u')) {
+                return Err(LexError {
+                    span: Span::new(start, i + ch.len_utf8()),
+                    message: "flags `u` and `v` cannot be combined".into(),
+                });
+            }
             flags.push(ch);
             i += ch.len_utf8();
         } else {

@@ -88,7 +88,7 @@ pub fn eval_call(
     let program = Parser::with_source(tokens, &source)
         .parse_program()
         .map_err(dynamic_function_syntax_error)?;
-    let chunk = Compiler::default()
+    let chunk = Compiler::new()
         .compile_program(&program)
         .map_err(dynamic_function_syntax_error)?;
     vm.execute_with_context(&chunk, context)
@@ -125,7 +125,7 @@ fn create_dynamic_function(
     let program = Parser::with_source(tokens, &source)
         .parse_program()
         .map_err(dynamic_function_syntax_error)?;
-    let chunk = Compiler::default()
+    let chunk = Compiler::new()
         .compile_program(&program)
         .map_err(dynamic_function_syntax_error)?;
     let template =
