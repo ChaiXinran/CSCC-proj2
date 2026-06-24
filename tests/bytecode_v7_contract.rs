@@ -99,6 +99,7 @@ fn cache_metadata_recursively_summarizes_compiled_function_chunks() {
                     left: Box::new(Expression::Identifier("a".into())),
                     right: Box::new(Expression::Identifier("b".into())),
                 }))],
+                is_strict: false,
             },
         }],
     };
@@ -128,6 +129,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
             name: Some("bad".into()),
             params: Vec::new(),
             chunk: invalid_child,
+            is_strict: false,
             environment_policy: EnvironmentCapturePolicy::None,
         }],
         handlers: Vec::new(),

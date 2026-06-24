@@ -231,6 +231,45 @@ fn reflect_object_exposes_common_static_methods() {
 }
 
 #[test]
+fn object_to_string_reports_function_values() {
+    assert_eq!(
+        native_eval("Object.prototype.toString.call(function () {})"),
+        "[object Function]"
+    );
+    assert_eq!(
+        native_eval("Object.prototype.toString.call(Object)"),
+        "[object Function]"
+    );
+}
+
+#[test]
+fn strict_function_this_is_not_replaced_with_global_object() {
+    assert_eq!(
+        native_eval("function f() { 'use strict'; return this === null; } f.call(null);"),
+        "true"
+    );
+    assert_eq!(
+        native_eval(
+            "function f() { 'use strict'; return this === undefined; } f.apply(undefined, []);"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn strict_function_null_this_property_write_throws() {
+    assert_eq!(
+        native_eval(
+            "function f() { 'use strict'; this.y = 1; } \
+             var caught = false; \
+             try { f.call(null); } catch (e) { caught = true; } \
+             caught;"
+        ),
+        "true"
+    );
+}
+
+#[test]
 fn reflect_define_property_and_own_keys_work() {
     assert_eq!(
         native_eval(

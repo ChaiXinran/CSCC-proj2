@@ -105,6 +105,7 @@ pub struct NativeContext {
     call_frames: Vec<CallFrame>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
     function_objects: HashMap<FunctionId, ObjectId>,
+    strict_functions: HashSet<FunctionId>,
     object_values: HashMap<ObjectId, JsValue>,
     error_objects: HashSet<ObjectId>,
     raw_json_objects: HashMap<ObjectId, String>,
@@ -153,6 +154,7 @@ impl NativeContext {
             call_frames: Vec::new(),
             function_prototypes: HashMap::new(),
             function_objects: HashMap::new(),
+            strict_functions: HashSet::new(),
             object_values: HashMap::new(),
             error_objects: HashSet::new(),
             raw_json_objects: HashMap::new(),
@@ -284,6 +286,8 @@ impl NativeContext {
         self.function_objects.retain(|function, object| {
             self.heap.contains_function(*function) && self.heap.contains_object(*object)
         });
+        self.strict_functions
+            .retain(|function| self.heap.contains_function(*function));
         self.object_values.retain(|object, value| {
             self.heap.contains_object(*object) && value_references_live_heap(value, &self.heap)
         });
@@ -513,6 +517,15 @@ impl NativeContext {
         self.function_objects.insert(function, object);
         self.object_values
             .insert(object, JsValue::Function(function));
+    }
+
+    pub fn mark_strict_function(&mut self, function: FunctionId) {
+        self.strict_functions.insert(function);
+    }
+
+    #[must_use]
+    pub fn is_strict_function(&self, function: FunctionId) -> bool {
+        self.strict_functions.contains(&function)
     }
 
     #[must_use]

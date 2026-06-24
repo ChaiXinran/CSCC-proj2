@@ -442,6 +442,12 @@ fn object_to_string(
 }
 
 fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'static str, VmError> {
+    if matches!(
+        context.object_value(object),
+        JsValue::Function(_) | JsValue::BuiltinFunction(_)
+    ) {
+        return Ok("Function");
+    }
     let value = context
         .heap()
         .object(object)

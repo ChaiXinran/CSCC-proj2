@@ -94,6 +94,7 @@ pub struct FunctionParam {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionBody {
     pub statements: Vec<Statement>,
+    pub is_strict: bool,
 }
 
 /// A function value: either a declaration or an expression.

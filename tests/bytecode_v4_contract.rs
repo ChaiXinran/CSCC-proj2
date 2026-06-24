@@ -416,6 +416,7 @@ fn compiler_lowers_v4_object_property_kinds_in_source_order() {
                 statements: vec![Statement::Return(Some(Expression::Literal(
                     Literal::Number(2.0),
                 )))],
+                is_strict: false,
             },
         },
         ObjectProperty::Setter {
@@ -423,6 +424,7 @@ fn compiler_lowers_v4_object_property_kinds_in_source_order() {
             parameter: FunctionParam { name: "v".into() },
             body: FunctionBody {
                 statements: Vec::new(),
+                is_strict: false,
             },
         },
         ObjectProperty::PrototypeSetter {
