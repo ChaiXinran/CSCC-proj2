@@ -176,6 +176,15 @@ pub const NATIVE_V7_SCAN_SUITES: [&str; 9] = [
     "test/built-ins/Reflect",
 ];
 
+/// Fixed Native V8 lightweight diagnostic scan.
+///
+/// This manifest contains 5,000 non-passing cases sampled from the locked
+/// 2026-06-24 full direct run recorded in `reports/test262-analysis.md`. It is
+/// intentionally file-based instead of directory-based so every collaborator
+/// runs the same lightweight V8 regression workload.
+pub const NATIVE_V8_SCAN_TESTS: &str = include_str!("../reports/native-v8-scan-failures.txt");
+pub const NATIVE_V8_SCAN_TEST_COUNT: usize = 5_000;
+
 #[derive(Debug, Clone)]
 pub struct RunnerOptions {
     pub test262_root: PathBuf,
@@ -313,6 +322,20 @@ impl RunnerOptions {
         self.files.clear();
         self.suites = NATIVE_V7_SCAN_SUITES.iter().map(PathBuf::from).collect();
         self.skip_unsupported = true;
+    }
+
+    /// Selects the Native V8 lightweight scan: 5,000 previously non-passing
+    /// Test262 cases sampled from the locked 2026-06-24 full-run baseline.
+    pub fn select_native_v8_scan(&mut self) {
+        self.backend = BackendKind::Native;
+        self.files = NATIVE_V8_SCAN_TESTS
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(PathBuf::from)
+            .collect();
+        debug_assert_eq!(self.files.len(), NATIVE_V8_SCAN_TEST_COUNT);
+        self.suites.clear();
+        self.skip_unsupported = false;
     }
 }
 
@@ -469,39 +492,43 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
                 // headroom for any realistic test case without per-test subprocess cost.
                 .stack_size(32 * 1024 * 1024)
                 .spawn(move || {
-            loop {
-                let path = match queue.lock() {
-                    Ok(mut queue) => queue.pop_front(),
-                    Err(_) => {
-                        let _ = sender.send(CaseResult {
-                            path: PathBuf::new(),
-                            status: Status::Failed,
-                            detail: "test queue lock was poisoned".into(),
-                            elapsed: Duration::ZERO,
-                        });
-                        break;
+                    loop {
+                        let path = match queue.lock() {
+                            Ok(mut queue) => queue.pop_front(),
+                            Err(_) => {
+                                let _ = sender.send(CaseResult {
+                                    path: PathBuf::new(),
+                                    status: Status::Failed,
+                                    detail: "test queue lock was poisoned".into(),
+                                    elapsed: Duration::ZERO,
+                                });
+                                break;
+                            }
+                        };
+                        let Some(path) = path else {
+                            break;
+                        };
+                        let result =
+                            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                run_case(&path, &harness, backend, config, skip_unsupported)
+                            })) {
+                                Ok(result) => result,
+                                Err(payload) => CaseResult {
+                                    path,
+                                    status: Status::Failed,
+                                    detail: format!(
+                                        "engine panic: {}",
+                                        panic_message(payload.as_ref())
+                                    ),
+                                    elapsed: Duration::ZERO,
+                                },
+                            };
+                        if sender.send(result).is_err() {
+                            break;
+                        }
                     }
-                };
-                let Some(path) = path else {
-                    break;
-                };
-                let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_case(&path, &harness, backend, config, skip_unsupported)
-                })) {
-                    Ok(result) => result,
-                    Err(payload) => CaseResult {
-                        path,
-                        status: Status::Failed,
-                        detail: format!("engine panic: {}", panic_message(payload.as_ref())),
-                        elapsed: Duration::ZERO,
-                    },
-                };
-                if sender.send(result).is_err() {
-                    break;
-                }
-            }
-        })
-        .expect("failed to spawn test262 worker thread"),
+                })
+                .expect("failed to spawn test262 worker thread"),
         );
     }
     drop(sender);

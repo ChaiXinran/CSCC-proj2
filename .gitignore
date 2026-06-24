@@ -7,6 +7,17 @@
 /reports/*
 !/reports/test262-summary.json
 !/reports/test262-report.md
+!/reports/test262-analysis.md
+!/reports/v8-partA-report.md
+!/reports/v8-partB-report.md
+!/reports/v8-partC-report.md
+!/reports/native-v8-scan-failures.txt
+!/reports/native-v8-scan-summary.json
+!/reports/v*-partA-report.md
+!/reports/v*-partB-report.md
+!/reports/v*-partC-report.md
+!/reports/native-v*-scan-failures.txt
+!/reports/native-v*-scan-summary.json
 !/reports/native-v4-test262-report.md
 !/reports/native-v5-test262-report.md
 !/reports/native-v6-test262-report.md

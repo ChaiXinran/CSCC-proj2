@@ -92,6 +92,144 @@ Latest local V7 results:
   73.47% conformance.
 - Net gain over the referenced B-line baseline: +243 passing Test262 cases.
 
+## Native Full Test262 Status
+
+Latest direct full scan, including `test/staging`, was run on 2026-06-24:
+
+```sh
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-full-test262-summary.json
+```
+
+Result:
+
+- Total: 53,379
+- Passed: 14,035
+- Failed: 38,507
+- Skipped: 837
+- Pass rate: 26.29%
+
+Reports:
+
+- `reports/test262-report.md`
+- `reports/test262-analysis.md`
+
+`reports/test262-analysis.md` is locked as the 2026-06-24 full-run baseline.
+Do not edit it for later analysis work. If a new full run or post-V8 analysis is
+needed, create a new dated report such as
+`reports/test262-analysis-YYYY-MM-DD.md` or a versioned report such as
+`reports/native-v8-test262-analysis.md`, then update the current-status docs.
+This preserves the project audit trail.
+
+Planning files:
+
+- `thoughts/plan.md` records the pre-V8 planning context.
+- `thoughts/newplan.md` is the active post-V8 feature roadmap.
+
+Main remaining feature gaps from the full scan:
+
+- Parser / modern syntax: class, async/generator, `for-of`, `for-await-of`,
+  dynamic import, object literal edge forms.
+- Template literal substitutions: `` `${...}` `` currently blocks many helpers.
+- Missing builtin/global families: TypedArray/ArrayBuffer, Temporal, Intl,
+  Date, Promise, Proxy, Map/Set/Iterator, BigInt, Atomics/SharedArrayBuffer,
+  WeakRef/FinalizationRegistry, DisposableStack.
+- Module runner: 821 skips are `module runner not implemented yet`.
+- RegExp: property escapes, backreferences, Annex B legacy behavior, and error
+  kind mapping.
+
+Current forward plan is in `thoughts/newplan.md`:
+
+- V8: frontend unlockers.
+- V9: module runner and Test262 host support.
+- V10: builtin/global family skeletons and core behavior.
+- V11: semantic precision and RegExp专项.
+
+## Native V8 Collaboration Start
+
+V8 has entered the workflow setup phase. Scope, interface, and team ownership
+docs are:
+
+- `docs/native-v8-scope.md`
+- `docs/native-v8-interface.md`
+- `docs/native-v8-team-plan.md`
+
+V8 is a three-track parallel batch:
+
+- A group: frontend unlockers (`src/lexer/`, `src/parser/`, `src/ast/`,
+  `src/bytecode/compiler.rs`).
+- B group: module runner infrastructure (`src/runtime/`, `src/vm/`,
+  module execution entry points, module registry).
+- C group: builtin skeletons and Test262 host support (`src/builtins/`,
+  `$262`, reports).
+
+Shared contracts in `docs/native-v8-interface.md` should merge before feature
+branches make broad changes to shared files.
+
+Standard V8 lightweight scan command:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
+```
+
+`--native-v8-scan` runs the locked 5,000-case manifest in
+`reports/native-v8-scan-failures.txt`, sampled from cases that did not pass in
+the 2026-06-24 full direct run. Its initial baseline is recorded in
+`reports/native-v8-scan-summary.json`: 0/5,000 passed, 4,504 failed, 496
+skipped. AI agents working on V8 should use this command as the default
+lightweight integration check after relevant focused tests, unless the user
+explicitly asks for a different test scope.
+
+## Native V8 Worker Reports
+
+Each V8 worker track has a required report file:
+
+- A group: `reports/v8-partA-report.md`
+- B group: `reports/v8-partB-report.md`
+- C group: `reports/v8-partC-report.md`
+
+Mandatory AI-agent rule: when implementing or modifying V8 work for a track,
+update that track's report in the same change, even if the user does not
+explicitly ask. This applies to code, tests, docs, and integration changes.
+
+Each report update must include:
+
+- what changed;
+- what functionality was added or fixed;
+- files touched at a useful level of detail;
+- commands/tests run;
+- result deltas against the locked 2026-06-24 baseline in
+  `reports/test262-analysis.md`;
+- newly exposed failures or regressions;
+- coordination notes for other groups.
+
+Do not rewrite `reports/test262-analysis.md` for these updates. It is locked as
+the baseline. Future full-suite analysis must go into a new dated or versioned
+analysis file.
+
+When a V8 change runs `--native-v8-scan`, record the command and result delta in
+the relevant `reports/v8-part*-report.md` file.
+
+## Future Native Version Workflow
+
+For V9 and later, repeat the V8 collaboration pattern automatically:
+
+- create `reports/vN-partA-report.md`, `reports/vN-partB-report.md`, and
+  `reports/vN-partC-report.md` before implementation starts;
+- create `reports/native-vN-scan-failures.txt` containing 5,000 prior
+  non-passing Test262 cases relevant to that version;
+- add `--native-vN-scan` in `src/test262.rs` and `src/main.rs`;
+- add selector coverage in `tests/native_test262.rs`;
+- run the scan once and save `reports/native-vN-scan-summary.json`;
+- document the command in `AGENTS.md`, `readme.md`,
+  `docs/native-vN-scope.md`, `docs/native-vN-team-plan.md`, and the active
+  roadmap;
+- require AI agents to update the relevant `reports/vN-part*-report.md` file
+  whenever they change that version's track.
+
+This procedure is now part of
+`docs/version-development-workflow.md`. Do not wait for the user to explicitly
+request report updates or scan command documentation when doing versioned work.
+
 ## Commit & Pull Request Guidelines
 
 History varies by subtree: Boa commonly uses scoped Conventional Commit subjects such as `fix(vm): ...`, while QuickJS and Test262 favor concise imperative summaries. Use an imperative subject, add a scope when helpful, and avoid mixing unrelated upstream changes. Pull requests should identify the affected subtree, explain behavior and specification impact, list commands run, link relevant issues, and include benchmark or Test262 results when performance or compatibility changes.

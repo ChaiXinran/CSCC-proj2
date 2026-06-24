@@ -74,6 +74,29 @@
   --jobs 4 --json reports/native-v7-frontend-summary.json`.
   Current V7 scan results and failure classification are recorded in
   `reports/native-v7-test262-report.md`.
+- A direct full `test/` scan, including `test/staging`, now completes and writes
+  `reports/native-full-test262-summary.json`. The 2026-06-24 run passed 14,035
+  of 53,379 tests, failed 38,507, skipped 837, and reported 26.29%
+  conformance for that exact stress command. Failure classification is recorded
+  in `reports/test262-analysis.md`; the short summary is in
+  `reports/test262-report.md`.
+- The dominant remaining gaps are parser/modern syntax, template literal
+  substitutions, missing builtin/global families, module execution, and RegExp
+  feature coverage.
+- Native V8 workflow setup has started. The V8 scope, shared interface, and team
+  plan are recorded in `docs/native-v8-scope.md`,
+  `docs/native-v8-interface.md`, and `docs/native-v8-team-plan.md`.
+- V8 worker progress is tracked in `reports/v8-partA-report.md`,
+  `reports/v8-partB-report.md`, and `reports/v8-partC-report.md`. Workers and
+  AI agents should update the relevant report whenever they change that track.
+- The standard V8 lightweight integration command is
+  `cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4
+  --json reports/native-v8-scan-summary.json`. It runs the locked 5,000-case
+  manifest in `reports/native-v8-scan-failures.txt`. The initial summary is
+  0/5,000 passed, 4,504 failed, and 496 skipped.
+- The version workflow now requires every future version to create per-track
+  worker reports and a `--native-vN-scan` 5,000-case prior-failure manifest
+  before implementation starts. See `docs/version-development-workflow.md`.
 
 ## Acceptance Gates
 
@@ -91,9 +114,10 @@ Before claiming contest readiness:
 5. The script cache is measured against an uncached baseline. Cache hit/miss
    counts are reported by `bench --native`.
 
-V7 engineering milestone is complete. The remaining gap before contest readiness
-is item 2: a full-suite, crash-safe, wall-clock-bounded Test262 run that
-produces a truthful JSON report with crashed-suite counts.
+V7 engineering milestone is complete. The full direct Test262 command now
+produces a truthful JSON report. The next work is feature development guided by
+`reports/test262-analysis.md`: frontend unlockers, module runner, builtin/global
+families, and semantic precision.
 
 CI is defined in `.github/workflows/ci.yml`. It includes default-feature
 quality checks, no-default-features native checks, V7 focused contracts, the

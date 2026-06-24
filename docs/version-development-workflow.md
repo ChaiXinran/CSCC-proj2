@@ -112,3 +112,113 @@ cargo test --test native_test262
 [ ] 更新 README、报告和 CI
 [ ] 全量 fmt/check/test/clippy 通过
 ```
+
+## 9. Per-worker reports for AI-assisted collaboration
+
+From V8 onward, every Native version must create one report per active worker
+track before feature implementation starts:
+
+```text
+reports/vN-partA-report.md
+reports/vN-partB-report.md
+reports/vN-partC-report.md
+```
+
+If a future version changes the number or name of tracks, use the same pattern
+with the actual track labels and document the mapping in
+`docs/native-vN-team-plan.md`.
+
+Each report must contain:
+
+- owner and scope;
+- locked baseline source;
+- baseline totals and relevant failure classes;
+- change log, newest first;
+- implemented functionality;
+- tests run;
+- result deltas against the locked baseline;
+- newly exposed failures and regressions;
+- cross-group coordination notes.
+
+Mandatory AI-agent rule: when an AI agent or human contributor changes a track,
+the corresponding `reports/vN-part*-report.md` file must be updated in the same
+change. The user does not need to explicitly ask for this. If no test was run,
+the report must say so and explain why.
+
+Do not overwrite locked baseline analysis files. For later analysis, create a
+new dated or versioned report such as:
+
+```text
+reports/test262-analysis-YYYY-MM-DD.md
+reports/native-vN-test262-analysis.md
+```
+
+## 10. Lightweight failed-case scan for each version
+
+From V8 onward, every Native version must provide a lightweight scan command
+before implementation starts:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-vN-scan --jobs 4 --json reports/native-vN-scan-summary.json
+```
+
+The scan must run a locked manifest of 5,000 Test262 cases that did not pass in
+the previous full or version baseline:
+
+```text
+reports/native-vN-scan-failures.txt
+```
+
+The manifest is a planning and regression artifact, not a formal conformance
+number. It should be sampled from the locked baseline analysis/output and should
+cover the version's parallel tracks. For example, V8 samples frontend,
+module-runner, and builtin-skeleton hotspots.
+
+Required implementation steps for each new version:
+
+1. Generate `reports/native-vN-scan-failures.txt` with exactly 5,000 normalized
+   `test/.../*.js` paths from previously non-passing cases.
+2. Add allow-list entries to `.gitignore` for:
+   - `reports/vN-part*-report.md`;
+   - `reports/native-vN-scan-failures.txt`;
+   - `reports/native-vN-scan-summary.json`.
+3. Add constants in `src/test262.rs`:
+   - `NATIVE_VN_SCAN_TESTS`;
+   - `NATIVE_VN_SCAN_TEST_COUNT`;
+   - `RunnerOptions::select_native_vN_scan()`.
+4. Add `--native-vN-scan` handling in `src/main.rs`.
+5. Add a selector test in `tests/native_test262.rs`.
+6. Run the command once and record the initial
+   `reports/native-vN-scan-summary.json`.
+7. Document the command in:
+   - `AGENTS.md`;
+   - `readme.md`;
+   - `docs/native-vN-scope.md`;
+   - `docs/native-vN-team-plan.md`;
+   - the active roadmap under `thoughts/`.
+8. Record the baseline command and result in every `reports/vN-part*-report.md`.
+
+Mandatory AI-agent rule: while working on version N, after focused tests the
+agent should run `--native-vN-scan` when the change is likely to affect that
+version's scan, unless the user explicitly asks for a narrower check. The
+result delta must be recorded in the relevant worker report.
+
+## 11. Updated new-version checklist
+
+Use this checklist in addition to the legacy checklist above:
+
+```text
+[ ] Create docs/native-vN-scope.md
+[ ] Create docs/native-vN-interface.md
+[ ] Create docs/native-vN-team-plan.md
+[ ] Create reports/vN-partA-report.md
+[ ] Create reports/vN-partB-report.md
+[ ] Create reports/vN-partC-report.md
+[ ] Lock the baseline analysis; do not overwrite it later
+[ ] Generate reports/native-vN-scan-failures.txt with 5,000 prior non-passing cases
+[ ] Add --native-vN-scan in src/test262.rs and src/main.rs
+[ ] Add selector coverage in tests/native_test262.rs
+[ ] Run --native-vN-scan once and save reports/native-vN-scan-summary.json
+[ ] Document the scan command in AGENTS.md, readme.md, scope, team plan, and roadmap
+[ ] Require AI agents to update the corresponding part report on every track change
+```

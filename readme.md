@@ -187,6 +187,35 @@ crash-safe Test262 dashboards, and benchmark reporting. See the
 [shared interface](docs/native-v7-interface.md), and
 [team plan](docs/native-v7-team-plan.md).
 
+Native V8 development has started as a three-track parallel feature batch:
+[Native V8 scope](docs/native-v8-scope.md),
+[shared interface](docs/native-v8-interface.md), and
+[team plan](docs/native-v8-team-plan.md). V8 focuses on frontend unlockers,
+module runner infrastructure, and first-batch builtin skeletons.
+
+Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
+The active post-V8 roadmap is `thoughts/newplan.md`.
+
+V8 worker progress is tracked in per-part report files. AI agents and human
+contributors should update the relevant report in the same change as their
+implementation, without waiting for a separate reminder:
+
+- `reports/v8-partA-report.md` for frontend unlockers.
+- `reports/v8-partB-report.md` for module runner infrastructure.
+- `reports/v8-partC-report.md` for builtin skeletons and Test262 host work.
+
+The standard V8 lightweight scan is:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
+```
+
+It runs the locked 5,000-case manifest in
+`reports/native-v8-scan-failures.txt`, selected from cases that did not pass in
+the 2026-06-24 full direct run. The initial summary is
+`reports/native-v8-scan-summary.json`: 0/5,000 passed, 4,504 failed, and 496
+skipped.
+
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),
 [`tests/frontend_bytecode_v3.rs`](tests/frontend_bytecode_v3.rs), and
@@ -200,6 +229,9 @@ Runnable integration coverage lives in
 The repeatable milestone workflow, merge order, Test262 selection rules, and
 completion checklist are documented in
 [Native version development workflow](docs/version-development-workflow.md).
+From V8 onward, that workflow requires per-track worker reports and a
+version-specific 5,000-case failed-Test262 lightweight scan, exposed as
+`--native-vN-scan`.
 
 Suggested ownership:
 
@@ -273,6 +305,7 @@ cargo run -- test262 --native-v6 --jobs 1 --verbose
 cargo run -- test262 --native-v6-scan --jobs 4 --progress
 cargo run --release --no-default-features -- test262 --native-v7 --jobs 1 --verbose
 cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
+cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
 cargo test --test native_test262
 ```
 
@@ -308,6 +341,11 @@ a few thousand representative Test262 files. It covers selected language
 literal/type/scope/function/global-code directories plus Function, String,
 Symbol, and Reflect builtin directories. It is intentionally diagnostic:
 skipped and failed tests are reported separately and never count as passes.
+
+`--native-v8-scan` is the standard V8 lightweight integration scan. It runs
+5,000 concrete Test262 files from `reports/native-v8-scan-failures.txt`, sampled
+from cases that did not pass in the locked 2026-06-24 full direct run. Use it
+after focused V8-A/B/C tests and record deltas in the relevant V8 part report.
 
 V7 dashboard tests are reporting tools rather than ordinary pass/fail gates.
 They run child suites separately so parent reporting survives child OOM, stack
@@ -349,9 +387,16 @@ Do not count skipped tests as passes. Pull requests that affect language
 behavior should report newly passed, newly failed, skipped, and regressed
 cases. Run the full suite only after focused suites pass.
 
-The existing Test262 report is a **Boa-backed baseline**: 45,310 of 47,516
-executed non-staging tests passed. It does not measure native engine
-conformance. See [reports/test262-report.md](reports/test262-report.md).
+The current full Test262 stress report is a native-backend direct run over all
+of `test/`, including `test/staging`: 14,035 of 53,379 tests passed, 38,507
+failed, and 837 were skipped. It is useful for feature planning, not directly
+comparable with older non-staging sharded reports. See
+[reports/test262-report.md](reports/test262-report.md) and
+[reports/test262-analysis.md](reports/test262-analysis.md).
+
+`reports/test262-analysis.md` is locked as the 2026-06-24 baseline analysis.
+Do not rewrite it for later runs; create a new dated or versioned analysis file
+for future full-suite analysis so the project keeps a clean audit trail.
 
 ## Benchmarking
 
