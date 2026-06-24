@@ -588,6 +588,113 @@ impl Vm {
                     let regexp = context.create_regexp(pattern, flags)?;
                     self.stack.push(regexp);
                 }
+
+                // V8-A: spread / array-push / rest
+                Instruction::ArrayPush => {
+                    let value = self.pop_value()?;
+                    let array_val = self.peek_value()?.clone();
+                    let array_id = context.require_object(&array_val, "ArrayPush")?;
+                    let length = self.get_property_value(array_val, "length", context)?;
+                    let index = match length {
+                        JsValue::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
+                        _ => 0,
+                    };
+                    context.define_own_property(
+                        array_id,
+                        index.to_string(),
+                        crate::runtime::PropertyDescriptor::data(value),
+                    )?;
+                    let new_len = JsValue::Number((index + 1) as f64);
+                    context.define_own_property(
+                        array_id,
+                        "length".to_string(),
+                        crate::runtime::PropertyDescriptor::data_with(new_len, true, false, true),
+                    )?;
+                }
+                Instruction::SpreadIntoArray => {
+                    let iterable = self.pop_value()?;
+                    let array_val = self.peek_value()?.clone();
+                    let array_id = context.require_object(&array_val, "SpreadIntoArray")?;
+                    let elements = self.function_apply_arguments(iterable, context)?;
+                    let start_len = {
+                        let len_val = self.get_property_value(
+                            context.object_value(array_id),
+                            "length",
+                            context,
+                        )?;
+                        match len_val {
+                            JsValue::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
+                            _ => 0,
+                        }
+                    };
+                    let n_added = elements.len();
+                    for (i, elem) in elements.into_iter().enumerate() {
+                        context.define_own_property(
+                            array_id,
+                            (start_len + i).to_string(),
+                            crate::runtime::PropertyDescriptor::data(elem),
+                        )?;
+                    }
+                    context.define_own_property(
+                        array_id,
+                        "length".to_string(),
+                        crate::runtime::PropertyDescriptor::data_with(
+                            JsValue::Number((start_len + n_added) as f64),
+                            true,
+                            false,
+                            true,
+                        ),
+                    )?;
+                }
+                Instruction::SpreadCall(n_regular) => {
+                    let spread_val = self.pop_value()?;
+                    let spread_args = self.function_apply_arguments(spread_val, context)?;
+                    let n = n_regular as usize;
+                    let regular_args = self.pop_arguments(n_regular)?;
+                    let callee = self.pop_value()?;
+                    let mut all_args = regular_args;
+                    all_args.extend(spread_args);
+                    match self.call_value(callee, JsValue::Undefined, all_args, context)? {
+                        OperationResult::Value(v) => self.stack.push(v),
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                    }
+                    let _ = n; // suppress unused warning
+                }
+                Instruction::SpreadCallWithThis(n_regular) => {
+                    let spread_val = self.pop_value()?;
+                    let spread_args = self.function_apply_arguments(spread_val, context)?;
+                    let regular_args = self.pop_arguments(n_regular)?;
+                    let this_value = self.pop_value()?;
+                    let callee = self.pop_value()?;
+                    let mut all_args = regular_args;
+                    all_args.extend(spread_args);
+                    match self.call_value(callee, this_value, all_args, context)? {
+                        OperationResult::Value(v) => self.stack.push(v),
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::SpreadConstruct(n_regular) => {
+                    let spread_val = self.pop_value()?;
+                    let spread_args = self.function_apply_arguments(spread_val, context)?;
+                    let regular_args = self.pop_arguments(n_regular)?;
+                    let callee = self.pop_value()?;
+                    let mut all_args = regular_args;
+                    all_args.extend(spread_args);
+                    match self.construct_value(callee, all_args, context)? {
+                        OperationResult::Value(v) => self.stack.push(v),
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+
                 Instruction::ForInKeys => {
                     let value = self.pop_value()?;
                     let keys: Vec<String> = match &value {
@@ -976,6 +1083,7 @@ impl Vm {
         let id = context.allocate_function(JsFunction {
             name: template.name,
             params: template.params,
+            rest_param: template.rest_param,
             chunk: template.chunk,
             environment,
         })?;
@@ -1667,6 +1775,27 @@ impl Vm {
             }
         }
 
+        // Bind rest parameter: collect remaining arguments into an Array.
+        if let Some(rest_name) = &function.rest_param {
+            let rest_values = arguments
+                .get(function.params.len()..)
+                .unwrap_or(&[])
+                .to_vec();
+            let rest_array = match context.create_array(rest_values) {
+                Ok(v) => v,
+                Err(e) => {
+                    let _ = context.restore_environment_depth(caller_environment_depth);
+                    return Err(e);
+                }
+            };
+            if let Err(error) =
+                context.declare_binding(environment, rest_name.clone(), rest_array, true)
+            {
+                let _ = context.restore_environment_depth(caller_environment_depth);
+                return Err(error);
+            }
+        }
+
         if let Some(name) = &function.name
             && let Err(error) = context.declare_binding(
                 environment,
@@ -1683,6 +1812,7 @@ impl Vm {
         // already declare an explicit `arguments` parameter (ES5 §10.6: if the
         // function has a formal parameter named "arguments" that binding wins).
         let has_explicit_arguments = function.params.iter().any(|p| p == "arguments")
+            || function.rest_param.as_deref() == Some("arguments")
             || function.name.as_deref() == Some("arguments");
 
         if !has_explicit_arguments {

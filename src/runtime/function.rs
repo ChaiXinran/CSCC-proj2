@@ -16,6 +16,8 @@ pub struct FunctionId(pub u32);
 pub struct JsFunction {
     pub name: Option<String>,
     pub params: Vec<String>,
+    /// If present, collects remaining arguments into an array with this name.
+    pub rest_param: Option<String>,
     pub chunk: Chunk,
     pub environment: Option<EnvironmentId>,
 }

@@ -71,6 +71,11 @@ impl<'source> Lexer<'source> {
     /// milestone. Unsupported input produces a [`LexError`] carrying its span.
     pub fn tokenize(mut self) -> Result<Vec<Token>, LexError> {
         let mut tokens = Vec::new();
+        // Tracks brace depth inside each open template substitution expression.
+        // One entry per nesting level; entry = how many unmatched '{' we've seen
+        // inside that substitution (so we know when the matching '}' closes it).
+        let mut tpl_stack: Vec<u32> = Vec::new();
+
         loop {
             let line_terminator_before = self.skip_trivia()?;
             let start = self.cursor.offset();
@@ -83,7 +88,17 @@ impl<'source> Lexer<'source> {
                 return Ok(tokens);
             };
 
-            let mut token = if is_identifier_start(ch) || self.cursor.rest().starts_with("\\u") {
+            let mut token = if ch == '}' && !tpl_stack.is_empty() {
+                if *tpl_stack.last().expect("checked non-empty") == 0 {
+                    // This `}` closes the innermost template substitution.
+                    tpl_stack.pop();
+                    self.read_template_middle_or_tail()?
+                } else {
+                    // A `}` that matches an earlier `{` inside the expression.
+                    *tpl_stack.last_mut().expect("checked non-empty") -= 1;
+                    self.read_operator_or_punctuator()?
+                }
+            } else if is_identifier_start(ch) || self.cursor.rest().starts_with("\\u") {
                 self.read_identifier_or_keyword()?
             } else if ch.is_ascii_digit()
                 || (ch == '.' && self.cursor.second().is_some_and(|c| c.is_ascii_digit()))
@@ -96,6 +111,21 @@ impl<'source> Lexer<'source> {
             } else {
                 self.read_operator_or_punctuator()?
             };
+
+            // Track `{` depth inside template substitution expressions.
+            if !tpl_stack.is_empty()
+                && let TokenKind::Punctuator('{') = &token.kind
+            {
+                *tpl_stack.last_mut().expect("checked non-empty") += 1;
+            }
+            // A TemplateHead or TemplateMiddle opens a new substitution scope.
+            if matches!(
+                token.kind,
+                TokenKind::TemplateHead(_) | TokenKind::TemplateMiddle(_)
+            ) {
+                tpl_stack.push(0);
+            }
+
             token.line_terminator_before = line_terminator_before;
             tokens.push(token);
         }
@@ -213,6 +243,11 @@ impl<'source> Lexer<'source> {
                 "true" => TokenKind::Keyword(Keyword::True),
                 "false" => TokenKind::Keyword(Keyword::False),
                 "null" => TokenKind::Keyword(Keyword::Null),
+                "class" => TokenKind::Keyword(Keyword::Class),
+                "extends" => TokenKind::Keyword(Keyword::Extends),
+                "static" => TokenKind::Keyword(Keyword::Static),
+                "super" => TokenKind::Keyword(Keyword::Super),
+                "this" => TokenKind::Keyword(Keyword::This),
                 _ => TokenKind::Identifier(text),
             }
         };
@@ -352,6 +387,9 @@ impl<'source> Lexer<'source> {
             message: "numeric separators may only appear between digits".into(),
         }
     }
+    /// Reads a template literal starting at the opening backtick.
+    /// Returns `TemplateLiteral` for no-substitution templates, or `TemplateHead`
+    /// when the first `${` is encountered.
     fn read_template_literal(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
         self.cursor
@@ -375,10 +413,49 @@ impl<'source> Lexer<'source> {
                 }
                 Some('\\') => self.read_string_escape(start, &mut value)?,
                 Some('$') if self.cursor.peek() == Some('{') => {
+                    self.cursor.bump(); // consume '{'
+                    let end = self.cursor.offset();
+                    return Ok(Token::new(
+                        TokenKind::TemplateHead(value),
+                        Span::new(start, end),
+                    ));
+                }
+                Some(ch) => value.push(ch),
+            }
+        }
+    }
+
+    /// Reads the text after a `}` that closes a template substitution, up to
+    /// the next `${` (returning `TemplateMiddle`) or closing backtick
+    /// (returning `TemplateTail`). The `}` itself has already been detected
+    /// (peeked) by `tokenize`; this method consumes it.
+    fn read_template_middle_or_tail(&mut self) -> Result<Token, LexError> {
+        let start = self.cursor.offset();
+        self.cursor.bump().expect("} was peeked");
+        let mut value = String::new();
+        loop {
+            match self.cursor.bump() {
+                None => {
                     return Err(LexError {
                         span: Span::new(start, self.cursor.offset()),
-                        message: "template substitutions are not supported".into(),
+                        message: "unterminated template literal".into(),
                     });
+                }
+                Some('`') => {
+                    let end = self.cursor.offset();
+                    return Ok(Token::new(
+                        TokenKind::TemplateTail(value),
+                        Span::new(start, end),
+                    ));
+                }
+                Some('\\') => self.read_string_escape(start, &mut value)?,
+                Some('$') if self.cursor.peek() == Some('{') => {
+                    self.cursor.bump(); // consume '{'
+                    let end = self.cursor.offset();
+                    return Ok(Token::new(
+                        TokenKind::TemplateMiddle(value),
+                        Span::new(start, end),
+                    ));
                 }
                 Some(ch) => value.push(ch),
             }
@@ -587,6 +664,17 @@ impl<'source> Lexer<'source> {
     fn read_operator_or_punctuator(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
         let ch = self.cursor.peek().expect("peeked character exists");
+
+        // Handle `...` (spread / rest) before the single-`.` punctuator check.
+        if ch == '.' && self.cursor.rest().starts_with("...") {
+            self.cursor.bump();
+            self.cursor.bump();
+            self.cursor.bump();
+            return Ok(Token::new(
+                TokenKind::Operator("...".to_owned()),
+                Span::new(start, self.cursor.offset()),
+            ));
+        }
 
         if PUNCTUATORS.contains(&ch) {
             self.cursor.bump();
@@ -1158,9 +1246,16 @@ mod tests {
     }
 
     #[test]
-    fn reports_template_substitutions_as_unsupported() {
-        let error = Lexer::new("`a${b}`").tokenize().unwrap_err();
-        assert_eq!(error.message, "template substitutions are not supported");
+    fn tokenizes_template_substitution_as_head_expr_tail() {
+        assert_eq!(
+            kinds("`a${b}`"),
+            [
+                TokenKind::TemplateHead("a".into()),
+                TokenKind::Identifier("b".into()),
+                TokenKind::TemplateTail("".into()),
+                TokenKind::Eof,
+            ]
+        );
     }
     #[test]
     fn tokenizes_hexadecimal_and_unicode_string_escapes() {

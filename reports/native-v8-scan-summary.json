@@ -5,4 +5,9 @@
   "skipped": 0,
   "conformance_percent": 4.1000,
   "elapsed_ms": 20489
+  "passed": 13,
+  "failed": 4491,
+  "skipped": 496,
+  "conformance_percent": 0.2600,
+  "elapsed_ms": 32375
 }

@@ -44,6 +44,11 @@ pub enum Keyword {
     True,
     False,
     Null,
+    Class,
+    Extends,
+    Static,
+    Super,
+    This,
 }
 
 impl Keyword {
@@ -78,6 +83,11 @@ impl Keyword {
             Self::True => "true",
             Self::False => "false",
             Self::Null => "null",
+            Self::Class => "class",
+            Self::Extends => "extends",
+            Self::Static => "static",
+            Self::Super => "super",
+            Self::This => "this",
         }
     }
 }
@@ -90,7 +100,14 @@ pub enum TokenKind {
     Number(f64),
     BigInt(f64),
     String(String),
+    /// No-substitution template literal: `` `text` ``.
     TemplateLiteral(String),
+    /// Start of a template with substitutions: `` `text${ ``.
+    TemplateHead(String),
+    /// Middle part between two substitutions: `}text${`.
+    TemplateMiddle(String),
+    /// End of a template with substitutions: `}text`` `.
+    TemplateTail(String),
     Keyword(Keyword),
     Punctuator(char),
     Operator(String),

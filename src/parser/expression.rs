@@ -19,9 +19,9 @@
 
 use crate::{
     ast::{
-        ArrayElement, AssignmentOperator, BinaryOperator, Expression, FunctionLiteral,
-        FunctionParam, Literal, LogicalOperator, ObjectProperty, PropertyName, Statement,
-        UnaryOperator, UpdateOperator,
+        ArrayElement, AssignmentOperator, BinaryOperator, CallArgument, ClassElement,
+        ClassExpression, Expression, FunctionLiteral, FunctionParam, Literal, LogicalOperator,
+        ObjectProperty, PropertyName, Statement, TemplateLiteral, UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -94,7 +94,7 @@ impl Parser {
                 ) =>
             {
                 self.advance();
-                vec![FunctionParam { name }]
+                vec![FunctionParam::Simple(name)]
             }
             TokenKind::Punctuator('(') => {
                 let Ok(params) = self.parse_param_list() else {
@@ -331,12 +331,19 @@ impl Parser {
     }
 
     /// Parses a parenthesized, comma-separated argument list.
-    fn parse_arguments(&mut self) -> Result<Vec<Expression>, ParseError> {
+    fn parse_arguments(&mut self) -> Result<Vec<CallArgument>, ParseError> {
         self.expect_punctuator('(')?;
         let mut arguments = Vec::new();
         if !self.check_punctuator(')') {
             loop {
-                arguments.push(self.allowing_in(|parser| parser.parse_assignment())?);
+                if self.check_spread() {
+                    self.advance(); // consume `...`
+                    let expr = self.allowing_in(|p| p.parse_assignment())?;
+                    arguments.push(CallArgument::Spread(expr));
+                } else {
+                    let expr = self.allowing_in(|p| p.parse_assignment())?;
+                    arguments.push(CallArgument::Expression(expr));
+                }
                 if !self.eat_punctuator(',') {
                     break;
                 }
@@ -358,7 +365,7 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Literal(Literal::Number(value)))
             }
-            TokenKind::String(value) | TokenKind::TemplateLiteral(value) => {
+            TokenKind::String(value) => {
                 // Strict-mode early error: legacy octal/non-octal decimal
                 // escapes are forbidden inside strict-mode string literals.
                 if self.is_strict && token.has_legacy_escape {
@@ -404,6 +411,27 @@ impl Parser {
             // full `/pattern/flags` sequence, then skip the tokens that the
             // context-free lexer split it into.
             TokenKind::Operator(ref op) if op == "/" || op == "/=" => self.parse_regex_literal(),
+            // V8-A: template literals
+            TokenKind::TemplateLiteral(value) => {
+                self.advance();
+                // No-substitution template: `...text...`
+                Ok(Expression::TemplateLiteral(TemplateLiteral {
+                    quasis: vec![value],
+                    expressions: vec![],
+                }))
+            }
+            TokenKind::TemplateHead(_) => self.parse_template_literal(),
+            // V8-A: class expressions
+            TokenKind::Keyword(Keyword::Class) => self.parse_class_expression(),
+            // `this` / `super`
+            TokenKind::Keyword(Keyword::This) => {
+                self.advance();
+                Ok(Expression::This)
+            }
+            TokenKind::Keyword(Keyword::Super) => {
+                self.advance();
+                Ok(Expression::Super)
+            }
             other => Err(self.error(format!("unexpected {}", describe(&other)))),
         }
     }
@@ -432,7 +460,7 @@ impl Parser {
         }
     }
 
-    /// Parses `[element, element, ...]`, including sparse holes.
+    /// Parses `[element, element, ...]`, including sparse holes and spread elements.
     ///
     /// Trailing comma rule: `[1,]` → length 1; `[1,,]` → length 2 (one hole).
     fn parse_array_literal(&mut self) -> Result<Expression, ParseError> {
@@ -443,6 +471,16 @@ impl Parser {
                 // Elision: a leading or consecutive comma introduces a hole.
                 elements.push(ArrayElement::Hole);
                 self.advance(); // consume `,`
+            } else if self.check_spread() {
+                self.advance(); // consume `...`
+                let expr = self.parse_assignment()?;
+                elements.push(ArrayElement::Spread(expr));
+                if !self.eat_punctuator(',') {
+                    break;
+                }
+                if self.check_punctuator(']') {
+                    break;
+                }
             } else {
                 elements.push(ArrayElement::Expression(self.parse_assignment()?));
                 // After an element, consume the separator comma if present.
@@ -546,7 +584,7 @@ impl Parser {
                     let body = self.parse_function_body()?;
                     return Ok(ObjectProperty::Setter {
                         key,
-                        parameter: FunctionParam { name: param_name },
+                        parameter: FunctionParam::Simple(param_name),
                         body,
                     });
                 }
@@ -634,6 +672,125 @@ impl Parser {
         let params = self.parse_param_list()?;
         let body = self.parse_function_body()?;
         Ok(Expression::Function(FunctionLiteral { name, params, body }))
+    }
+
+    // -----------------------------------------------------------------------
+    // V8-A: template literals
+    // -----------------------------------------------------------------------
+
+    /// Parses a template literal that starts with a `TemplateHead` token.
+    fn parse_template_literal(&mut self) -> Result<Expression, ParseError> {
+        let mut quasis = Vec::new();
+        let mut expressions = Vec::new();
+
+        // Consume the TemplateHead token.
+        let head_text = match self.advance().kind {
+            TokenKind::TemplateHead(text) => text,
+            _ => unreachable!("parse_template_literal called on non-TemplateHead"),
+        };
+        quasis.push(head_text);
+
+        loop {
+            // Parse the substitution expression.
+            let expr = self.parse_expression()?;
+            expressions.push(expr);
+
+            // Next must be TemplateMiddle or TemplateTail.
+            match self.peek().kind.clone() {
+                TokenKind::TemplateMiddle(text) => {
+                    self.advance();
+                    quasis.push(text);
+                }
+                TokenKind::TemplateTail(text) => {
+                    self.advance();
+                    quasis.push(text);
+                    break;
+                }
+                other => {
+                    return Err(self.error(format!(
+                        "expected template continuation but found {}",
+                        crate::parser::describe(&other)
+                    )));
+                }
+            }
+        }
+
+        Ok(Expression::TemplateLiteral(TemplateLiteral {
+            quasis,
+            expressions,
+        }))
+    }
+
+    // -----------------------------------------------------------------------
+    // V8-A: class expressions
+    // -----------------------------------------------------------------------
+
+    fn parse_class_expression(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // `class`
+        let name = if matches!(self.peek().kind, TokenKind::Identifier(_)) {
+            if let TokenKind::Identifier(n) = self.advance().kind {
+                Some(n)
+            } else {
+                unreachable!()
+            }
+        } else {
+            None
+        };
+        let super_class = if self.eat_keyword(Keyword::Extends) {
+            Some(Box::new(self.parse_assignment()?))
+        } else {
+            None
+        };
+        let elements = self.parse_class_body()?;
+        Ok(Expression::Class(ClassExpression {
+            name,
+            super_class,
+            elements,
+        }))
+    }
+
+    /// Parses `{ constructor() {...} method() {...} static foo() {...} }`.
+    pub(super) fn parse_class_body(&mut self) -> Result<Vec<ClassElement>, ParseError> {
+        self.expect_punctuator('{')?;
+        let mut elements = Vec::new();
+        while !self.check_punctuator('}') && !self.at_eof() {
+            // Optional `static` keyword.
+            let is_static = self.eat_keyword(Keyword::Static);
+
+            // Property name
+            let prop_name = self.parse_property_name()?;
+
+            // Check for `constructor` special case.
+            let is_ctor = !is_static
+                && matches!(&prop_name, PropertyName::Identifier(n) if n == "constructor");
+
+            // Parse method params + body.
+            let params = self.parse_param_list()?;
+            let body = self.parse_function_body()?;
+            let function = FunctionLiteral {
+                name: if is_ctor {
+                    Some("constructor".into())
+                } else {
+                    Some(prop_name.to_key_string())
+                },
+                params,
+                body,
+            };
+
+            if is_ctor {
+                elements.push(ClassElement::Constructor(function));
+            } else {
+                elements.push(ClassElement::Method {
+                    name: prop_name,
+                    function,
+                    is_static,
+                });
+            }
+            // Optional semicolons between class elements.
+            while self.eat_punctuator(';') {}
+        }
+        self.expect_punctuator('}')?;
+        Ok(elements)
     }
 }
 
@@ -731,9 +888,9 @@ fn update_operator(operator: &str) -> Option<UpdateOperator> {
 mod tests {
     use crate::{
         ast::{
-            ArrayElement, AssignmentOperator, BinaryOperator, Expression, FunctionLiteral,
-            FunctionParam, Literal, LogicalOperator, ObjectProperty, PropertyName, Statement,
-            UnaryOperator,
+            ArrayElement, AssignmentOperator, BinaryOperator, CallArgument, Expression,
+            FunctionLiteral, FunctionParam, Literal, LogicalOperator, ObjectProperty, PropertyName,
+            Statement, UnaryOperator,
         },
         lexer::Lexer,
         parser::Parser,
@@ -764,7 +921,7 @@ mod tests {
     }
 
     fn param(name: &str) -> FunctionParam {
-        FunctionParam { name: name.into() }
+        FunctionParam::Simple(name.into())
     }
 
     #[test]
@@ -963,7 +1120,9 @@ mod tests {
         assert_eq!(*callee, Expression::Identifier("Test262Error".into()));
         assert_eq!(
             arguments,
-            [Expression::Literal(Literal::String("boom".into()))]
+            [CallArgument::Expression(Expression::Literal(
+                Literal::String("boom".into())
+            ))]
         );
     }
 
@@ -1260,7 +1419,7 @@ mod tests {
         let ObjectProperty::Setter { parameter, .. } = &props[0] else {
             panic!("expected setter");
         };
-        assert_eq!(parameter.name, "v");
+        assert_eq!(parameter.name(), "v");
     }
 
     #[test]

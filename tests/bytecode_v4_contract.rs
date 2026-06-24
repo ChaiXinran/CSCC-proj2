@@ -184,7 +184,10 @@ fn construct_evaluates_callee_then_arguments_left_to_right() {
     let program = Program {
         body: vec![Statement::Expression(Expression::Construct {
             callee: Box::new(call("makeConstructor")),
-            arguments: vec![call("firstArgument"), call("secondArgument")],
+            arguments: vec![
+                agentjs::ast::CallArgument::Expression(call("firstArgument")),
+                agentjs::ast::CallArgument::Expression(call("secondArgument")),
+            ],
         })],
     };
 
@@ -214,7 +217,11 @@ fn construct_evaluates_callee_then_arguments_left_to_right() {
 
 #[test]
 fn construct_rejects_argument_counts_outside_u16() {
-    let arguments = vec![Expression::Literal(Literal::Undefined); usize::from(u16::MAX) + 1];
+    let arguments =
+        vec![
+            agentjs::ast::CallArgument::Expression(Expression::Literal(Literal::Undefined));
+            usize::from(u16::MAX) + 1
+        ];
     let program = Program {
         body: vec![Statement::Expression(Expression::Construct {
             callee: Box::new(Expression::Identifier("Constructor".into())),
@@ -286,8 +293,8 @@ fn compiler_uses_generic_calls_for_builtin_identifiers() {
     let program = expression(Expression::Call {
         callee: Box::new(identifier("Array")),
         arguments: vec![
-            Expression::Literal(Literal::Number(1.0)),
-            Expression::Literal(Literal::Number(2.0)),
+            agentjs::ast::CallArgument::Expression(Expression::Literal(Literal::Number(1.0))),
+            agentjs::ast::CallArgument::Expression(Expression::Literal(Literal::Number(2.0))),
         ],
     });
 
@@ -309,7 +316,9 @@ fn compiler_uses_generic_calls_for_builtin_identifiers() {
 fn compiler_uses_generic_construct_for_builtin_identifiers() {
     let program = expression(Expression::Construct {
         callee: Box::new(identifier("Array")),
-        arguments: vec![Expression::Literal(Literal::Number(3.0))],
+        arguments: vec![agentjs::ast::CallArgument::Expression(Expression::Literal(
+            Literal::Number(3.0),
+        ))],
     });
 
     let chunk = Compiler::new().compile_program(&program).unwrap();
@@ -333,7 +342,7 @@ fn compiler_preserves_receiver_for_builtin_style_method_calls() {
             property: Box::new(identifier("create")),
             computed: false,
         }),
-        arguments: vec![identifier("base")],
+        arguments: vec![agentjs::ast::CallArgument::Expression(identifier("base"))],
     });
 
     let chunk = Compiler::new().compile_program(&program).unwrap();
@@ -421,7 +430,7 @@ fn compiler_lowers_v4_object_property_kinds_in_source_order() {
         },
         ObjectProperty::Setter {
             key: PropertyName::Identifier("x".into()),
-            parameter: FunctionParam { name: "v".into() },
+            parameter: FunctionParam::Simple("v".into()),
             body: FunctionBody {
                 statements: Vec::new(),
                 is_strict: false,

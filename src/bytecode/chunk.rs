@@ -220,8 +220,10 @@ pub enum EnvironmentCapturePolicy {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionTemplate {
     pub name: Option<String>,
-    /// Formal parameter names, in declaration order.
+    /// Formal parameter names in declaration order (excludes any rest parameter).
     pub params: Vec<String>,
+    /// If the function has a rest parameter `...name`, its binding name.
+    pub rest_param: Option<String>,
     /// Bytecode for the function body.
     pub chunk: Chunk,
     pub is_strict: bool,

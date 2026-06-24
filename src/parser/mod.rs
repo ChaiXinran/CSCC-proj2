@@ -183,6 +183,11 @@ impl Parser {
         }
     }
 
+    /// Returns `true` if the next token is `...` (spread / rest operator).
+    pub(super) fn check_spread(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Operator(v) if v == "...")
+    }
+
     fn check_keyword(&self, keyword: Keyword) -> bool {
         matches!(&self.peek().kind, TokenKind::Keyword(value) if *value == keyword)
     }
@@ -261,6 +266,9 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Keyword(keyword) => format!("keyword `{keyword:?}`"),
         TokenKind::Punctuator(ch) => format!("`{ch}`"),
         TokenKind::Operator(op) => format!("`{op}`"),
+        TokenKind::TemplateHead(_) => "template literal head".into(),
+        TokenKind::TemplateMiddle(_) => "template literal middle".into(),
+        TokenKind::TemplateTail(_) => "template literal tail".into(),
     }
 }
 

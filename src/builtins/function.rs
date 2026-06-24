@@ -135,6 +135,7 @@ fn create_dynamic_function(
     let id = context.allocate_function(JsFunction {
         name: template.name.or_else(|| Some("anonymous".into())),
         params: template.params,
+        rest_param: template.rest_param,
         chunk: template.chunk,
         // Dynamic Function is created in the global scope; it must not capture
         // the caller's local lexical environment.

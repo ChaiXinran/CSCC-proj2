@@ -654,7 +654,9 @@ fn new_builds_construct_node() {
         parse_expr(tokens),
         Expression::Construct {
             callee: Box::new(Expression::Identifier("E".into())),
-            arguments: vec![Expression::Literal(Literal::Number(1.0))],
+            arguments: vec![crate::ast::CallArgument::Expression(Expression::Literal(
+                Literal::Number(1.0)
+            ))],
         }
     );
 }

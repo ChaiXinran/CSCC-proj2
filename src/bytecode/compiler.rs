@@ -196,6 +196,16 @@ impl Compiler {
                 discriminant,
                 cases,
             } => self.compile_switch(discriminant, cases, chunk, context),
+            Statement::ClassDeclaration(decl) => {
+                self.compile_class_declaration(decl, chunk, context)
+            }
+            Statement::DestructuringDeclaration {
+                kind,
+                pattern,
+                initializer,
+            } => {
+                self.compile_destructuring_declaration(*kind, pattern, initializer, chunk, context)
+            }
         }
     }
 
@@ -1077,11 +1087,11 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let fn_chunk =
-            self.compile_function_body(params.iter().map(|p| p.name.as_str()), body, context)?;
+        let fn_chunk = self.compile_function_body(params, body, context)?;
         let template = FunctionTemplate {
             name: Some(name.to_string()),
             params: fn_chunk.params,
+            rest_param: fn_chunk.rest_param,
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
@@ -1100,14 +1110,32 @@ impl Compiler {
     }
 
     /// Compiles the body of a function literal or declaration into a
-    /// `FunctionTemplate` and returns it with parameter names.
-    fn compile_function_body<'a>(
+    /// `FunctionTemplate` and returns it with parameter names and rest info.
+    fn compile_function_body(
         &mut self,
-        params: impl Iterator<Item = &'a str>,
+        params: &[crate::ast::FunctionParam],
         body: &FunctionBody,
         outer_context: &mut CompileContext,
     ) -> Result<CompiledFunction, CompileError> {
-        let param_names: Vec<String> = params.map(|s| s.to_string()).collect();
+        // Split simple params from the optional trailing rest parameter.
+        let rest_param = params.iter().find_map(|p| {
+            if let crate::ast::FunctionParam::Rest(name) = p {
+                Some(name.clone())
+            } else {
+                None
+            }
+        });
+        let param_names: Vec<String> = params
+            .iter()
+            .filter_map(|p| {
+                if let crate::ast::FunctionParam::Simple(name) = p {
+                    Some(name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         let mut fn_chunk = Chunk::default();
         let mut fn_context = CompileContext {
             loops: Vec::new(),
@@ -1147,6 +1175,7 @@ impl Compiler {
         fn_chunk.validate().map_err(CompileError::from_chunk)?;
         Ok(CompiledFunction {
             params: param_names,
+            rest_param,
             chunk: fn_chunk,
             is_strict: body.is_strict,
         })
@@ -1207,6 +1236,23 @@ impl Compiler {
             Expression::Object(properties) => self.compile_object(properties, chunk, context),
             Expression::Function(literal) => {
                 self.compile_function_expression(literal, chunk, context)
+            }
+            Expression::TemplateLiteral(tl) => self.compile_template_literal(tl, chunk, context),
+            Expression::Spread(_) => Err(CompileError {
+                message: "spread expression is only valid inside call arguments or array literals"
+                    .into(),
+            }),
+            Expression::Class(cls) => self.compile_class_expression(cls, chunk, context),
+            Expression::This => {
+                chunk.emit(Instruction::LoadThis);
+                Ok(())
+            }
+            Expression::Super => {
+                // In a method body, `super` as a property-access base.
+                // We push `this` here; super-property lookup handled by the
+                // prototype chain at runtime.
+                chunk.emit(Instruction::LoadThis);
+                Ok(())
             }
         }
     }
@@ -1572,17 +1618,16 @@ impl Compiler {
     fn compile_call(
         &mut self,
         callee: &Expression,
-        arguments: &[Expression],
+        arguments: &[crate::ast::CallArgument],
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
-            message: "call argument count exceeds the u16 bytecode range".into(),
-        })?;
+        use crate::ast::CallArgument;
+        let has_spread = arguments
+            .iter()
+            .any(|a| matches!(a, CallArgument::Spread(_)));
 
-        // Static member calls preserve their receiver as `this`. Native
-        // functions ignore the receiver, so this also remains compatible with
-        // calls such as `assert.sameValue(...)`.
+        // Static member calls preserve their receiver as `this`.
         if let Expression::Member {
             object,
             property,
@@ -1596,40 +1641,138 @@ impl Compiler {
             };
             self.compile_expression(object, chunk, context)?;
             let method_index = self.add_name(method_name, chunk)?;
-            // Stack after: [method_value, object]
             chunk.emit(Instruction::GetMethod(method_index));
-            for argument in arguments {
-                self.compile_expression(argument, chunk, context)?;
+
+            if has_spread {
+                let (n_regular, spread_expr) =
+                    self.split_trailing_spread(arguments, "method call")?;
+                let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                    message: "too many call arguments".into(),
+                })?;
+                for arg in &arguments[..n_regular] {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                self.compile_expression(spread_expr, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(n));
+            } else {
+                let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    message: "call argument count exceeds the u16 bytecode range".into(),
+                })?;
+                for arg in arguments {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                chunk.emit(Instruction::CallWithThis(argument_count));
             }
-            chunk.emit(Instruction::CallWithThis(argument_count));
             return Ok(());
         }
 
         self.compile_expression(callee, chunk, context)?;
-        for argument in arguments {
-            self.compile_expression(argument, chunk, context)?;
+        if has_spread {
+            let (n_regular, spread_expr) =
+                self.split_trailing_spread(arguments, "function call")?;
+            let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                message: "too many call arguments".into(),
+            })?;
+            for arg in &arguments[..n_regular] {
+                let CallArgument::Expression(e) = arg else {
+                    unreachable!()
+                };
+                self.compile_expression(e, chunk, context)?;
+            }
+            self.compile_expression(spread_expr, chunk, context)?;
+            chunk.emit(Instruction::SpreadCall(n));
+        } else {
+            let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                message: "call argument count exceeds the u16 bytecode range".into(),
+            })?;
+            for arg in arguments {
+                let CallArgument::Expression(e) = arg else {
+                    unreachable!()
+                };
+                self.compile_expression(e, chunk, context)?;
+            }
+            chunk.emit(Instruction::Call(argument_count));
         }
-        chunk.emit(Instruction::Call(argument_count));
         Ok(())
     }
 
     fn compile_construct(
         &mut self,
         callee: &Expression,
-        arguments: &[Expression],
+        arguments: &[crate::ast::CallArgument],
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
-            message: "construct argument count exceeds the u16 bytecode range".into(),
-        })?;
+        use crate::ast::CallArgument;
+        let has_spread = arguments
+            .iter()
+            .any(|a| matches!(a, CallArgument::Spread(_)));
 
         self.compile_expression(callee, chunk, context)?;
-        for argument in arguments {
-            self.compile_expression(argument, chunk, context)?;
+        if has_spread {
+            let (n_regular, spread_expr) =
+                self.split_trailing_spread(arguments, "new expression")?;
+            let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                message: "too many construct arguments".into(),
+            })?;
+            for arg in &arguments[..n_regular] {
+                let CallArgument::Expression(e) = arg else {
+                    unreachable!()
+                };
+                self.compile_expression(e, chunk, context)?;
+            }
+            self.compile_expression(spread_expr, chunk, context)?;
+            chunk.emit(Instruction::SpreadConstruct(n));
+        } else {
+            let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                message: "construct argument count exceeds the u16 bytecode range".into(),
+            })?;
+            for arg in arguments {
+                let CallArgument::Expression(e) = arg else {
+                    unreachable!()
+                };
+                self.compile_expression(e, chunk, context)?;
+            }
+            chunk.emit(Instruction::Construct(argument_count));
         }
-        chunk.emit(Instruction::Construct(argument_count));
         Ok(())
+    }
+
+    /// Returns `(n_regular, spread_expr)` when the argument list has exactly
+    /// one trailing spread and all preceding args are plain expressions.
+    /// Returns `CompileError` if there are multiple spreads or non-trailing spread.
+    fn split_trailing_spread<'a>(
+        &self,
+        arguments: &'a [crate::ast::CallArgument],
+        ctx: &str,
+    ) -> Result<(usize, &'a Expression), CompileError> {
+        use crate::ast::CallArgument;
+        let spread_count = arguments
+            .iter()
+            .filter(|a| matches!(a, CallArgument::Spread(_)))
+            .count();
+        if spread_count != 1 {
+            return Err(CompileError {
+                message: format!(
+                    "{ctx}: only a single trailing spread argument is supported in V8"
+                ),
+            });
+        }
+        let last = arguments.last().expect("at least one spread");
+        let CallArgument::Spread(spread_expr) = last else {
+            return Err(CompileError {
+                message: format!(
+                    "{ctx}: spread must be the last argument in V8 (non-trailing spread unsupported)"
+                ),
+            });
+        };
+        Ok((arguments.len() - 1, spread_expr))
     }
 
     fn compile_array(
@@ -1638,10 +1781,12 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        if elements
+        let has_spread_or_hole = elements
             .iter()
-            .all(|element| matches!(element, ArrayElement::Expression(_)))
-        {
+            .any(|e| !matches!(e, ArrayElement::Expression(_)));
+
+        // Fast path: dense all-expression array with no spreads.
+        if !has_spread_or_hole {
             let count = u16::try_from(elements.len()).map_err(|_| CompileError {
                 message: "dense array literal element count exceeds the u16 bytecode range".into(),
             })?;
@@ -1655,6 +1800,37 @@ impl Compiler {
             return Ok(());
         }
 
+        // General path: may contain holes or spread elements.
+        // Build an empty array and push/spread each element dynamically.
+        let has_spread = elements
+            .iter()
+            .any(|e| matches!(e, ArrayElement::Spread(_)));
+        if has_spread {
+            chunk.emit(Instruction::ArrayCreateSparse(0));
+            for element in elements {
+                match element {
+                    ArrayElement::Hole => {
+                        // Holes in spread arrays: push undefined then ArrayPush.
+                        let undef = chunk
+                            .add_constant(Constant::Undefined)
+                            .map_err(CompileError::from_chunk)?;
+                        chunk.emit(Instruction::Constant(undef));
+                        chunk.emit(Instruction::ArrayPush);
+                    }
+                    ArrayElement::Expression(expr) => {
+                        self.compile_expression(expr, chunk, context)?;
+                        chunk.emit(Instruction::ArrayPush);
+                    }
+                    ArrayElement::Spread(expr) => {
+                        self.compile_expression(expr, chunk, context)?;
+                        chunk.emit(Instruction::SpreadIntoArray);
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        // Sparse path (holes but no spread).
         let length = u32::try_from(elements.len()).map_err(|_| CompileError {
             message: "sparse array literal length exceeds the u32 bytecode range".into(),
         })?;
@@ -1715,7 +1891,7 @@ impl Compiler {
                     chunk.emit(Instruction::Pop);
                 }
                 ObjectProperty::Getter { key, body } => {
-                    self.compile_accessor_function(std::iter::empty(), body, chunk, context)?;
+                    self.compile_accessor_function(&[], body, chunk, context)?;
                     let key = self.add_name(&property_key(key), chunk)?;
                     chunk.emit(Instruction::DefineGetter(key));
                 }
@@ -1725,7 +1901,7 @@ impl Compiler {
                     body,
                 } => {
                     self.compile_accessor_function(
-                        std::iter::once(parameter.name.as_str()),
+                        std::slice::from_ref(parameter),
                         body,
                         chunk,
                         context,
@@ -1799,9 +1975,9 @@ impl Compiler {
         }
     }
 
-    fn compile_accessor_function<'a>(
+    fn compile_accessor_function(
         &mut self,
-        params: impl Iterator<Item = &'a str>,
+        params: &[crate::ast::FunctionParam],
         body: &FunctionBody,
         chunk: &mut Chunk,
         context: &mut CompileContext,
@@ -1810,6 +1986,7 @@ impl Compiler {
         let template = FunctionTemplate {
             name: None,
             params: compiled.params,
+            rest_param: compiled.rest_param,
             chunk: compiled.chunk,
             is_strict: compiled.is_strict,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
@@ -1821,20 +1998,311 @@ impl Compiler {
         Ok(())
     }
 
+    // -----------------------------------------------------------------------
+    // V8-A: template literals
+    // -----------------------------------------------------------------------
+
+    fn compile_template_literal(
+        &mut self,
+        tl: &crate::ast::TemplateLiteral,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        // quasis.len() == expressions.len() + 1.
+        // Compile as: quasis[0] + toString(expr[0]) + quasis[1] + ...
+        // The initial string quasi makes Add treat subsequent values as strings.
+        let first_idx = chunk
+            .add_constant(Constant::String(tl.quasis[0].clone()))
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Constant(first_idx));
+        for (expr, quasi) in tl.expressions.iter().zip(tl.quasis[1..].iter()) {
+            self.compile_expression(expr, chunk, context)?;
+            chunk.emit(Instruction::Add); // string + expr → string (coerces expr)
+            let q_idx = chunk
+                .add_constant(Constant::String(quasi.clone()))
+                .map_err(CompileError::from_chunk)?;
+            chunk.emit(Instruction::Constant(q_idx));
+            chunk.emit(Instruction::Add); // prev_string + quasi → string
+        }
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // V8-A: class declarations and expressions
+    // -----------------------------------------------------------------------
+
+    /// Emits bytecode for a class expression. Leaves the constructor on the stack.
+    fn compile_class_expression(
+        &mut self,
+        cls: &crate::ast::ClassExpression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        self.compile_class_body(
+            cls.name.as_deref(),
+            cls.super_class.as_deref(),
+            &cls.elements,
+            chunk,
+            context,
+        )
+    }
+
+    /// Emits bytecode for a class declaration, binding the constructor to the class name.
+    fn compile_class_declaration(
+        &mut self,
+        decl: &crate::ast::ClassDeclaration,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        self.compile_class_body(
+            Some(&decl.name),
+            decl.super_class.as_ref(),
+            &decl.elements,
+            chunk,
+            context,
+        )?;
+        // Bind the constructor function to the class name in the current scope.
+        let name_idx = self.add_name(&decl.name, chunk)?;
+        if context.inside_function() || context.is_lexical(&decl.name) {
+            chunk.emit(Instruction::StoreName(name_idx));
+        } else {
+            chunk.emit(Instruction::StoreGlobal(name_idx));
+        }
+        chunk.emit(Instruction::Pop);
+        Ok(())
+    }
+
+    /// Core class-body compiler. Emits bytecode that leaves the constructor
+    /// function on the stack.
+    ///
+    /// Stack contract:
+    /// ```text
+    /// CreateFunction(ctor)         // [ctor]
+    /// Duplicate                    // [ctor, ctor_copy]
+    /// [for each static method:]
+    ///   CreateFunction(method)     // [ctor, ctor_copy, fn]
+    ///   DefineDataProperty(name)   // [ctor, ctor_copy]
+    /// ObjectCreateEmpty            // [ctor, ctor_copy, proto]
+    /// [if extends:]
+    ///   compile(super_class)       // [ctor, ctor_copy, proto, super]
+    ///   GetProperty("prototype")   // [ctor, ctor_copy, proto, super_proto]
+    ///   SetObjectPrototype         // [ctor, ctor_copy, proto]
+    /// [for each instance method:]
+    ///   CreateFunction(method)     // [ctor, ctor_copy, proto, fn]
+    ///   DefineDataProperty(name)   // [ctor, ctor_copy, proto]
+    /// DefineDataProperty("prototype") // [ctor, ctor_copy]
+    /// Pop                          // [ctor]
+    /// ```
+    fn compile_class_body(
+        &mut self,
+        name: Option<&str>,
+        super_class: Option<&Expression>,
+        elements: &[crate::ast::ClassElement],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        use crate::ast::ClassElement;
+
+        // Find the constructor element, if any.
+        let ctor_literal = elements.iter().find_map(|e| {
+            if let ClassElement::Constructor(lit) = e {
+                Some(lit)
+            } else {
+                None
+            }
+        });
+
+        // Emit constructor function.
+        let ctor_body = if let Some(lit) = ctor_literal {
+            lit.clone()
+        } else {
+            // Synthesize an empty default constructor.
+            FunctionLiteral {
+                name: name.map(String::from),
+                params: vec![],
+                body: FunctionBody {
+                    statements: vec![],
+                    is_strict: false,
+                },
+            }
+        };
+        let ctor_fn = self.compile_function_body(&ctor_body.params, &ctor_body.body, context)?;
+        let ctor_template = FunctionTemplate {
+            name: name.map(String::from),
+            params: ctor_fn.params,
+            rest_param: ctor_fn.rest_param,
+            chunk: ctor_fn.chunk,
+            is_strict: ctor_fn.is_strict,
+            environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+        };
+        let ctor_idx = chunk
+            .add_function(ctor_template)
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::CreateFunction(ctor_idx)); // [ctor]
+        chunk.emit(Instruction::Duplicate); // [ctor, ctor_copy]
+
+        // Static methods — defined on the constructor itself.
+        for element in elements {
+            if let ClassElement::Method {
+                name: prop_name,
+                function,
+                is_static: true,
+            } = element
+            {
+                let fn_compiled =
+                    self.compile_function_body(&function.params, &function.body, context)?;
+                let fn_template = FunctionTemplate {
+                    name: Some(prop_name.to_key_string()),
+                    params: fn_compiled.params,
+                    rest_param: fn_compiled.rest_param,
+                    chunk: fn_compiled.chunk,
+                    is_strict: fn_compiled.is_strict,
+                    environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+                };
+                let fn_idx = chunk
+                    .add_function(fn_template)
+                    .map_err(CompileError::from_chunk)?;
+                chunk.emit(Instruction::CreateFunction(fn_idx));
+                let key = self.add_name(&prop_name.to_key_string(), chunk)?;
+                chunk.emit(Instruction::DefineDataProperty(key)); // [ctor, ctor_copy]
+            }
+        }
+
+        // Create the prototype object.
+        chunk.emit(Instruction::ObjectCreateEmpty); // [ctor, ctor_copy, proto]
+
+        // Set up prototype inheritance if there is a super class.
+        if let Some(super_expr) = super_class {
+            self.compile_expression(super_expr, chunk, context)?; // [.., proto, super]
+            let proto_key = self.add_name("prototype", chunk)?;
+            chunk.emit(Instruction::GetProperty(proto_key)); // [.., proto, super.prototype]
+            chunk.emit(Instruction::SetObjectPrototype); // [.., proto]
+        }
+
+        // Instance methods — defined on the prototype.
+        for element in elements {
+            if let ClassElement::Method {
+                name: prop_name,
+                function,
+                is_static: false,
+            } = element
+            {
+                let fn_compiled =
+                    self.compile_function_body(&function.params, &function.body, context)?;
+                let fn_template = FunctionTemplate {
+                    name: Some(prop_name.to_key_string()),
+                    params: fn_compiled.params,
+                    rest_param: fn_compiled.rest_param,
+                    chunk: fn_compiled.chunk,
+                    is_strict: fn_compiled.is_strict,
+                    environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+                };
+                let fn_idx = chunk
+                    .add_function(fn_template)
+                    .map_err(CompileError::from_chunk)?;
+                chunk.emit(Instruction::CreateFunction(fn_idx));
+                let key = self.add_name(&prop_name.to_key_string(), chunk)?;
+                chunk.emit(Instruction::DefineDataProperty(key)); // [.., proto]
+            }
+        }
+
+        // Attach prototype to constructor: ctor.prototype = proto.
+        // Stack: [ctor, ctor_copy, proto]
+        // DefineDataProperty peeks ctor_copy (below proto), pops proto as value.
+        let proto_key = self.add_name("prototype", chunk)?;
+        chunk.emit(Instruction::DefineDataProperty(proto_key)); // [ctor, ctor_copy]
+        chunk.emit(Instruction::Pop); // [ctor]
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
+    // V8-A: destructuring variable declarations
+    // -----------------------------------------------------------------------
+
+    fn compile_destructuring_declaration(
+        &mut self,
+        kind: VariableKind,
+        pattern: &crate::ast::BindingPattern,
+        initializer: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        self.compile_expression(initializer, chunk, context)?;
+        self.compile_binding_pattern(kind, pattern, chunk, context)
+    }
+
+    /// Emits bytecode to bind the TOP of stack to the given pattern,
+    /// consuming the value from the stack.
+    fn compile_binding_pattern(
+        &mut self,
+        kind: VariableKind,
+        pattern: &crate::ast::BindingPattern,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        use crate::ast::BindingPattern;
+        match pattern {
+            BindingPattern::Identifier(name) => {
+                // The value is already on top of the stack; bind it to `name`.
+                let idx = self.add_name(name, chunk)?;
+                match kind {
+                    VariableKind::Var if context.inside_function() => {
+                        chunk.emit(Instruction::DeclareLocal(idx));
+                    }
+                    VariableKind::Var => {
+                        chunk.emit(Instruction::DeclareGlobal(idx));
+                    }
+                    VariableKind::Let | VariableKind::Const => {
+                        chunk.emit(Instruction::InitializeBinding(idx));
+                    }
+                }
+                Ok(())
+            }
+            BindingPattern::Array(elements) => {
+                // Stack: [rhs]
+                // For each element index i, get rhs[i] and bind.
+                for (i, maybe_pat) in elements.iter().enumerate() {
+                    let Some(pat) = maybe_pat else {
+                        continue; // hole — skip
+                    };
+                    chunk.emit(Instruction::Duplicate); // [rhs, rhs]
+                    let idx_str = i.to_string();
+                    let idx_key = chunk
+                        .add_constant(Constant::String(idx_str.clone()))
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Constant(idx_key)); // [rhs, rhs, "i"]
+                    chunk.emit(Instruction::GetElement); // [rhs, rhs[i]]
+                    self.compile_binding_pattern(kind, pat, chunk, context)?; // [rhs]
+                }
+                chunk.emit(Instruction::Pop); // []
+                Ok(())
+            }
+            BindingPattern::Object(props) => {
+                // Stack: [rhs]
+                for (key, pat) in props {
+                    chunk.emit(Instruction::Duplicate); // [rhs, rhs]
+                    let key_str = key.to_key_string();
+                    let key_idx = self.add_name(&key_str, chunk)?;
+                    chunk.emit(Instruction::GetProperty(key_idx)); // [rhs, rhs.key]
+                    self.compile_binding_pattern(kind, pat, chunk, context)?; // [rhs]
+                }
+                chunk.emit(Instruction::Pop); // []
+                Ok(())
+            }
+        }
+    }
+
     fn compile_function_expression(
         &mut self,
         literal: &FunctionLiteral,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let fn_chunk = self.compile_function_body(
-            literal.params.iter().map(|p| p.name.as_str()),
-            &literal.body,
-            context,
-        )?;
+        let fn_chunk = self.compile_function_body(&literal.params, &literal.body, context)?;
         let template = FunctionTemplate {
             name: literal.name.clone(),
             params: fn_chunk.params,
+            rest_param: fn_chunk.rest_param,
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
@@ -1850,6 +2318,7 @@ impl Compiler {
 /// Intermediate result returned from `compile_function_body`.
 struct CompiledFunction {
     params: Vec<String>,
+    rest_param: Option<String>,
     chunk: Chunk,
     is_strict: bool,
 }
@@ -1879,9 +2348,30 @@ fn lexical_names(statements: &[Statement]) -> Vec<String> {
                 .iter()
                 .map(|declaration| declaration.name.clone())
                 .collect(),
+            Statement::DestructuringDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                pattern,
+                ..
+            } => binding_pattern_names(pattern),
             _ => Vec::new(),
         })
         .collect()
+}
+
+fn binding_pattern_names(pattern: &crate::ast::BindingPattern) -> Vec<String> {
+    use crate::ast::BindingPattern;
+    match pattern {
+        BindingPattern::Identifier(name) => vec![name.clone()],
+        BindingPattern::Array(elements) => elements
+            .iter()
+            .flatten()
+            .flat_map(binding_pattern_names)
+            .collect(),
+        BindingPattern::Object(props) => props
+            .iter()
+            .flat_map(|(_, pat)| binding_pattern_names(pat))
+            .collect(),
+    }
 }
 
 fn lexical_kind(statements: &[Statement], name: &str) -> Option<VariableKind> {
@@ -1891,6 +2381,12 @@ fn lexical_kind(statements: &[Statement], name: &str) -> Option<VariableKind> {
                 && declarations
                     .iter()
                     .any(|declaration| declaration.name == name) =>
+        {
+            Some(*kind)
+        }
+        Statement::DestructuringDeclaration { kind, pattern, .. }
+            if matches!(kind, VariableKind::Let | VariableKind::Const)
+                && binding_pattern_names(pattern).contains(&name.to_string()) =>
         {
             Some(*kind)
         }

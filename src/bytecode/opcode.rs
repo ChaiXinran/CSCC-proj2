@@ -196,6 +196,29 @@ pub enum Instruction {
     /// new RegExp object with those values. Emitted for `/pattern/flags` literals.
     /// Stack: [pattern, flags] → [regexp_object]
     CreateRegExp,
+
+    // V8-A spread / rest / array-push instructions.
+    /// Appends one value to the end of an array without removing the array.
+    /// Stack: [array, value] → [array]
+    ArrayPush,
+
+    /// Iterates an array-like iterable and appends every element to the array
+    /// sitting just below it on the stack.
+    /// Stack: [array, iterable] → [array]
+    SpreadIntoArray,
+
+    /// Calls a function using a single trailing spread argument.
+    /// `n` = number of regular arguments already pushed before the spread.
+    /// Stack: [callee, arg0…argN-1, spread_iterable] → [result]
+    SpreadCall(u16),
+
+    /// Like `SpreadCall` but passes an explicit `this`.
+    /// Stack: [callee, this, arg0…argN-1, spread_iterable] → [result]
+    SpreadCallWithThis(u16),
+
+    /// `new` constructor call with a single trailing spread argument.
+    /// Stack: [callee, arg0…argN-1, spread_iterable] → [result]
+    SpreadConstruct(u16),
 }
 
 impl Instruction {
@@ -300,6 +323,19 @@ impl Instruction {
             | Self::DefineElement(_) => StackEffect::with_required(2, 1, 0),
 
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
+
+            // ArrayPush: [array, value] → [array]
+            Self::ArrayPush | Self::SpreadIntoArray => StackEffect::with_required(2, 1, 0),
+
+            // SpreadCall/SpreadConstruct: variable pops, push 1
+            Self::SpreadCall(n) | Self::SpreadConstruct(n) => {
+                // callee + n regular args + 1 spread = n+2 consumed, 1 produced
+                StackEffect::new(n as u32 + 2, 1)
+            }
+            Self::SpreadCallWithThis(n) => {
+                // callee + this + n regular args + 1 spread = n+3 consumed, 1 produced
+                StackEffect::new(n as u32 + 3, 1)
+            }
         }
     }
 

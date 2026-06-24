@@ -214,6 +214,7 @@ fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
     let template = FunctionTemplate {
         name: Some("Point".into()),
         params: Vec::new(),
+        rest_param: None,
         chunk: function_chunk,
         is_strict: false,
         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,

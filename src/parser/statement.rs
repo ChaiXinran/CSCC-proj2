@@ -4,8 +4,8 @@ use std::collections::HashSet;
 
 use crate::{
     ast::{
-        CatchClause, Expression, FunctionBody, FunctionParam, Statement, SwitchCase,
-        VariableDeclarator, VariableKind,
+        BindingPattern, CatchClause, Expression, FunctionBody, FunctionParam, PropertyName,
+        Statement, SwitchCase, VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -33,6 +33,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Throw) => self.parse_throw(),
             TokenKind::Keyword(Keyword::Try) => self.parse_try(),
             TokenKind::Keyword(Keyword::Switch) => self.parse_switch(),
+            TokenKind::Keyword(Keyword::Class) => self.parse_class_declaration(),
             _ => self.parse_expression_statement(),
         }
     }
@@ -69,15 +70,28 @@ impl Parser {
         Ok(Statement::FunctionDeclaration { name, params, body })
     }
 
-    /// Parses a parameter list `(name, name, ...)`.
+    /// Parses a parameter list `(name, name, ..., ...rest)`.
     pub(super) fn parse_param_list(&mut self) -> Result<Vec<FunctionParam>, ParseError> {
         self.expect_punctuator('(')?;
         let mut params = Vec::new();
         if !self.check_punctuator(')') {
             loop {
+                if self.check_spread() {
+                    // rest parameter: `...name`
+                    self.advance(); // consume `...`
+                    let rest_name = self.expect_identifier()?;
+                    params.push(FunctionParam::Rest(rest_name));
+                    // rest must be last; consume optional trailing comma
+                    self.eat_punctuator(',');
+                    break;
+                }
                 let name = self.expect_identifier()?;
-                params.push(FunctionParam { name });
+                params.push(FunctionParam::Simple(name));
                 if !self.eat_punctuator(',') {
+                    break;
+                }
+                // trailing comma before `)` is valid
+                if self.check_punctuator(')') {
                     break;
                 }
             }
@@ -207,6 +221,22 @@ impl Parser {
             TokenKind::Keyword(Keyword::Const) => VariableKind::Const,
             _ => unreachable!("variable declaration starts with a declaration keyword"),
         };
+
+        // Destructuring: `let [a, b] = ...` or `const { x } = ...`
+        if self.check_punctuator('[') || self.check_punctuator('{') {
+            let pattern = self.parse_binding_pattern()?;
+            if !self.eat_operator("=") {
+                return Err(self.error("destructuring declaration requires an initializer".into()));
+            }
+            let initializer = self.parse_assignment()?;
+            self.expect_semicolon()?;
+            return Ok(Statement::DestructuringDeclaration {
+                kind,
+                pattern,
+                initializer,
+            });
+        }
+
         let mut declarations = Vec::new();
         loop {
             let name = self.expect_identifier()?;
@@ -225,6 +255,79 @@ impl Parser {
         }
         self.expect_semicolon()?;
         Ok(Statement::VariableDeclaration { kind, declarations })
+    }
+
+    /// Parses a binding pattern: `name`, `[a, b, c]`, or `{ x, y: z }`.
+    pub(super) fn parse_binding_pattern(&mut self) -> Result<BindingPattern, ParseError> {
+        if self.check_punctuator('[') {
+            return self.parse_array_binding_pattern();
+        }
+        if self.check_punctuator('{') {
+            return self.parse_object_binding_pattern();
+        }
+        let name = self.expect_identifier()?;
+        Ok(BindingPattern::Identifier(name))
+    }
+
+    fn parse_array_binding_pattern(&mut self) -> Result<BindingPattern, ParseError> {
+        self.expect_punctuator('[')?;
+        let mut elements = Vec::new();
+        while !self.check_punctuator(']') && !self.at_eof() {
+            if self.eat_punctuator(',') {
+                elements.push(None); // hole
+                continue;
+            }
+            let pat = self.parse_binding_pattern()?;
+            elements.push(Some(pat));
+            if !self.eat_punctuator(',') {
+                break;
+            }
+        }
+        self.expect_punctuator(']')?;
+        Ok(BindingPattern::Array(elements))
+    }
+
+    fn parse_object_binding_pattern(&mut self) -> Result<BindingPattern, ParseError> {
+        self.expect_punctuator('{')?;
+        let mut props = Vec::new();
+        while !self.check_punctuator('}') && !self.at_eof() {
+            // `{ name }` shorthand or `{ key: pattern }`
+            let key_name = self.expect_identifier()?;
+            let (key, value_pat) = if self.eat_punctuator(':') {
+                // `{ key: pattern }`
+                let pat = self.parse_binding_pattern()?;
+                (PropertyName::Identifier(key_name), pat)
+            } else {
+                // `{ name }` shorthand — binds to same identifier
+                (
+                    PropertyName::Identifier(key_name.clone()),
+                    BindingPattern::Identifier(key_name),
+                )
+            };
+            props.push((key, value_pat));
+            if !self.eat_punctuator(',') {
+                break;
+            }
+        }
+        self.expect_punctuator('}')?;
+        Ok(BindingPattern::Object(props))
+    }
+
+    /// Parses a class declaration: `class Name { ... }`.
+    fn parse_class_declaration(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `class`
+        let name = self.expect_identifier()?;
+        let super_class = if self.eat_keyword(Keyword::Extends) {
+            Some(self.parse_assignment()?)
+        } else {
+            None
+        };
+        let elements = self.parse_class_body()?;
+        Ok(Statement::ClassDeclaration(crate::ast::ClassDeclaration {
+            name,
+            super_class,
+            elements,
+        }))
     }
 
     /// Parses `if (test) consequent` with an optional `else`.
@@ -676,7 +779,9 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
         | Statement::Break
         | Statement::Continue
         | Statement::Throw(_)
-        | Statement::VariableDeclaration { .. } => {}
+        | Statement::VariableDeclaration { .. }
+        | Statement::ClassDeclaration(_)
+        | Statement::DestructuringDeclaration { .. } => {}
     }
 }
 
@@ -714,7 +819,7 @@ mod tests {
     }
 
     fn param(name: &str) -> FunctionParam {
-        FunctionParam { name: name.into() }
+        FunctionParam::Simple(name.into())
     }
 
     fn body(statements: Vec<Statement>) -> FunctionBody {
