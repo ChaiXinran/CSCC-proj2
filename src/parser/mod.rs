@@ -203,6 +203,9 @@ impl Parser {
 
     fn expect_identifier(&mut self) -> Result<String, ParseError> {
         if let TokenKind::Identifier(name) = &self.peek().kind {
+            if is_reserved_identifier_name(name) {
+                return Err(self.error(format!("reserved word `{name}` cannot be an identifier")));
+            }
             let name = name.clone();
             self.advance();
             Ok(name)
@@ -261,7 +264,8 @@ fn describe(kind: &TokenKind) -> String {
     match kind {
         TokenKind::Eof => "end of input".into(),
         TokenKind::Identifier(name) => format!("identifier `{name}`"),
-        TokenKind::Number(_) | TokenKind::BigInt(_) => "number".into(),
+        TokenKind::Number(_) => "number".into(),
+        TokenKind::BigInt(_) => "bigint".into(),
         TokenKind::String(_) | TokenKind::TemplateLiteral(_) => "string".into(),
         TokenKind::Keyword(keyword) => format!("keyword `{keyword:?}`"),
         TokenKind::Punctuator(ch) => format!("`{ch}`"),
@@ -270,6 +274,48 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::TemplateMiddle(_) => "template literal middle".into(),
         TokenKind::TemplateTail(_) => "template literal tail".into(),
     }
+}
+
+pub(super) fn is_reserved_identifier_name(name: &str) -> bool {
+    matches!(
+        name,
+        "break"
+            | "case"
+            | "catch"
+            | "class"
+            | "const"
+            | "continue"
+            | "debugger"
+            | "default"
+            | "delete"
+            | "do"
+            | "else"
+            | "enum"
+            | "export"
+            | "extends"
+            | "false"
+            | "finally"
+            | "for"
+            | "function"
+            | "if"
+            | "import"
+            | "in"
+            | "instanceof"
+            | "new"
+            | "null"
+            | "return"
+            | "super"
+            | "switch"
+            | "this"
+            | "throw"
+            | "true"
+            | "try"
+            | "typeof"
+            | "var"
+            | "void"
+            | "while"
+            | "with"
+    )
 }
 
 #[cfg(test)]

@@ -223,10 +223,12 @@ impl<'source> Lexer<'source> {
                 "return" => TokenKind::Keyword(Keyword::Return),
                 "if" => TokenKind::Keyword(Keyword::If),
                 "else" => TokenKind::Keyword(Keyword::Else),
+                "do" => TokenKind::Keyword(Keyword::Do),
                 "while" => TokenKind::Keyword(Keyword::While),
                 "for" => TokenKind::Keyword(Keyword::For),
                 "break" => TokenKind::Keyword(Keyword::Break),
                 "continue" => TokenKind::Keyword(Keyword::Continue),
+                "debugger" => TokenKind::Keyword(Keyword::Debugger),
                 "throw" => TokenKind::Keyword(Keyword::Throw),
                 "try" => TokenKind::Keyword(Keyword::Try),
                 "catch" => TokenKind::Keyword(Keyword::Catch),
@@ -248,6 +250,10 @@ impl<'source> Lexer<'source> {
                 "static" => TokenKind::Keyword(Keyword::Static),
                 "super" => TokenKind::Keyword(Keyword::Super),
                 "this" => TokenKind::Keyword(Keyword::This),
+                "with" => TokenKind::Keyword(Keyword::With),
+                "import" => TokenKind::Keyword(Keyword::Import),
+                "export" => TokenKind::Keyword(Keyword::Export),
+                "enum" => TokenKind::Keyword(Keyword::Enum),
                 "yield" => TokenKind::Keyword(Keyword::Yield),
                 "await" => TokenKind::Keyword(Keyword::Await),
                 _ => TokenKind::Identifier(text),
@@ -276,17 +282,18 @@ impl<'source> Lexer<'source> {
                         message: format!("missing base-{radix} digits in number literal"),
                     });
                 }
+                if self.cursor.peek() == Some('n') {
+                    self.cursor.bump();
+                    let raw = self.cursor.slice(Span::new(start, self.cursor.offset()));
+                    return Ok(Token::new(
+                        TokenKind::BigInt(raw.into()),
+                        Span::new(start, self.cursor.offset()),
+                    ));
+                }
                 let value = u64::from_str_radix(&digits, radix).map_err(|_| LexError {
                     span: Span::new(start, digits_end),
                     message: format!("invalid base-{radix} number literal"),
                 })? as f64;
-                if self.cursor.peek() == Some('n') {
-                    self.cursor.bump();
-                    return Ok(Token::new(
-                        TokenKind::BigInt(value),
-                        Span::new(start, self.cursor.offset()),
-                    ));
-                }
                 return Ok(Token::new(
                     TokenKind::Number(value),
                     Span::new(start, self.cursor.offset()),
@@ -298,6 +305,12 @@ impl<'source> Lexer<'source> {
         } else {
             self.read_number_digits(10, start)?
         };
+        let integer_end = self.cursor.offset();
+        let integer_raw = self.cursor.slice(Span::new(start, integer_end));
+        let leading_zero_with_separator = integer_raw.starts_with('0') && integer_raw.contains('_');
+        if leading_zero_with_separator {
+            return Err(self.invalid_numeric_separator(start));
+        }
         let mut is_integer_literal = true;
         if self.cursor.peek() == Some('.') {
             is_integer_literal = false;
@@ -333,9 +346,16 @@ impl<'source> Lexer<'source> {
             message: format!("invalid number literal `{text}`"),
         })?;
         if is_integer_literal && self.cursor.peek() == Some('n') {
+            if integer_raw.starts_with('0') && text.len() > 1 {
+                return Err(LexError {
+                    span: Span::new(start, self.cursor.offset() + 1),
+                    message: "BigInt literals cannot use legacy octal-like decimal syntax".into(),
+                });
+            }
             self.cursor.bump();
+            let raw = self.cursor.slice(Span::new(start, self.cursor.offset()));
             return Ok(Token::new(
-                TokenKind::BigInt(value),
+                TokenKind::BigInt(raw.into()),
                 Span::new(start, self.cursor.offset()),
             ));
         }
@@ -1097,12 +1117,29 @@ fn is_whitespace(ch: char) -> bool {
 
 /// Unicode identifier start characters (`$` and `_` are permitted by ECMAScript).
 fn is_identifier_start(ch: char) -> bool {
-    ch.is_alphabetic() || ch == '_' || ch == '$'
+    ch.is_alphabetic() || matches!(ch, '_' | '$') || is_other_identifier_start(ch)
 }
 
 /// Unicode identifier continuation characters.
 fn is_identifier_part(ch: char) -> bool {
-    ch.is_alphanumeric() || matches!(ch, '_' | '$' | '\u{200C}' | '\u{200D}')
+    ch.is_alphanumeric()
+        || matches!(ch, '_' | '$' | '\u{200C}' | '\u{200D}')
+        || is_other_identifier_start(ch)
+        || is_other_identifier_continue(ch)
+}
+
+fn is_other_identifier_start(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{1885}' | '\u{1886}' | '\u{2118}' | '\u{212E}' | '\u{309B}' | '\u{309C}'
+    )
+}
+
+fn is_other_identifier_continue(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{00B7}' | '\u{0387}' | '\u{1369}'..='\u{1371}' | '\u{19DA}'
+    )
 }
 
 #[cfg(test)]
@@ -1211,14 +1248,14 @@ mod tests {
         assert_eq!(
             kinds("1n 1_000n 0xfn 0xf_fn 0b101n 0b1_01n 0o7n 0o7_7n"),
             [
-                TokenKind::BigInt(1.0),
-                TokenKind::BigInt(1000.0),
-                TokenKind::BigInt(15.0),
-                TokenKind::BigInt(255.0),
-                TokenKind::BigInt(5.0),
-                TokenKind::BigInt(5.0),
-                TokenKind::BigInt(7.0),
-                TokenKind::BigInt(63.0),
+                TokenKind::BigInt("1n".into()),
+                TokenKind::BigInt("1_000n".into()),
+                TokenKind::BigInt("0xfn".into()),
+                TokenKind::BigInt("0xf_fn".into()),
+                TokenKind::BigInt("0b101n".into()),
+                TokenKind::BigInt("0b1_01n".into()),
+                TokenKind::BigInt("0o7n".into()),
+                TokenKind::BigInt("0o7_7n".into()),
                 TokenKind::Eof,
             ]
         );
@@ -1363,13 +1400,15 @@ mod tests {
     #[test]
     fn tokenizes_v2_keywords_and_conditional_punctuators() {
         assert_eq!(
-            kinds("if else while break continue throw new typeof void ? :"),
+            kinds("if else do while break continue debugger throw new typeof void ? :"),
             [
                 TokenKind::Keyword(Keyword::If),
                 TokenKind::Keyword(Keyword::Else),
+                TokenKind::Keyword(Keyword::Do),
                 TokenKind::Keyword(Keyword::While),
                 TokenKind::Keyword(Keyword::Break),
                 TokenKind::Keyword(Keyword::Continue),
+                TokenKind::Keyword(Keyword::Debugger),
                 TokenKind::Keyword(Keyword::Throw),
                 TokenKind::Keyword(Keyword::New),
                 TokenKind::Keyword(Keyword::TypeOf),

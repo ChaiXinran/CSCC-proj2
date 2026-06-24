@@ -1314,6 +1314,11 @@ impl Compiler {
             Literal::Null => Constant::Null,
             Literal::Boolean(value) => Constant::Boolean(*value),
             Literal::Number(value) => Constant::Number(*value),
+            Literal::BigInt(raw) => {
+                return Err(CompileError::unsupported(format_args!(
+                    "BigInt literal `{raw}` until V10-C installs BigInt runtime semantics"
+                )));
+            }
             Literal::String(value) => Constant::String(value.clone()),
             Literal::RegExp { .. } => unreachable!(),
         };

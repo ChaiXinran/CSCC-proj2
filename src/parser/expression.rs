@@ -24,7 +24,7 @@ use crate::{
         ObjectProperty, PropertyName, Statement, TemplateLiteral, UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
-    parser::{ParseError, Parser, describe},
+    parser::{ParseError, Parser, describe, is_reserved_identifier_name},
 };
 
 impl Parser {
@@ -393,9 +393,13 @@ impl Parser {
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
         let token = self.peek().clone();
         match token.kind {
-            TokenKind::Number(value) | TokenKind::BigInt(value) => {
+            TokenKind::Number(value) => {
                 self.advance();
                 Ok(Expression::Literal(Literal::Number(value)))
+            }
+            TokenKind::BigInt(raw) => {
+                self.advance();
+                Ok(Expression::Literal(Literal::BigInt(raw)))
             }
             TokenKind::String(value) => {
                 // Strict-mode early error: legacy octal/non-octal decimal
@@ -412,6 +416,11 @@ impl Parser {
                 Ok(Expression::Literal(Literal::String(value)))
             }
             TokenKind::Identifier(ref name) => {
+                if is_reserved_identifier_name(name) {
+                    return Err(
+                        self.error(format!("reserved word `{name}` cannot be an identifier"))
+                    );
+                }
                 // V9-A: `async` is a contextual keyword when followed (on the same line)
                 // by `function`, `(`, or a simple identifier — in that case try to parse
                 // an async function expression or async arrow.
@@ -698,7 +707,7 @@ impl Parser {
                 self.advance();
                 Ok(PropertyName::String(s))
             }
-            TokenKind::Number(n) | TokenKind::BigInt(n) => {
+            TokenKind::Number(n) => {
                 self.advance();
                 Ok(PropertyName::Number(n))
             }
