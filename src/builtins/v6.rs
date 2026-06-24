@@ -1002,6 +1002,7 @@ fn string_prototype_call(name: &str) -> Option<NativeCall> {
         "replace" => string_replace,
         "replaceAll" => string_replace_all,
         "match" => string_match,
+        "matchAll" => string_match_all,
         "padStart" => string_pad_start,
         "padEnd" => string_pad_end,
         "trim" => string_trim,
@@ -1329,9 +1330,10 @@ fn string_split(
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         let re = regexp::compile_regex(&pattern, &flags)
             .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        // regexp::split includes capture groups as per ES spec.
         let parts = regexp::split(&re, &value, limit)
             .into_iter()
-            .map(JsValue::String)
+            .map(|v| v.map_or(JsValue::Undefined, JsValue::String))
             .collect();
         return context.create_array(parts);
     }
@@ -1374,23 +1376,111 @@ fn string_replace(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
-    let replacement = arg_string(vm, context, arguments, 1)?;
+    let replace_arg = arg(arguments, 1);
+    let replace_is_fn = is_callable_value(&replace_arg);
+
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         let re = regexp::compile_regex(&pattern, &flags)
             .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
-        let result = if regexp::is_global(&flags) {
+        let global = regexp::is_global(&flags);
+        if replace_is_fn {
+            return apply_replace_fn(vm, context, &value, &re, global, replace_arg);
+        }
+        let replacement = vm.to_string_coerce(replace_arg, context)?;
+        let result = if global {
             regexp::replace_all(&re, &value, &replacement)
         } else {
             regexp::replace_first(&re, &value, &replacement)
         };
         return Ok(JsValue::String(result));
     }
-    let search = arg_string(vm, context, arguments, 0)?;
+
+    // String search value.
+    let search = vm.to_string_coerce(first_arg, context)?;
+    if replace_is_fn {
+        // Find first occurrence, call function.
+        if let Some(pos) = value.find(search.as_str()) {
+            let index = value[..pos].encode_utf16().count();
+            let args = vec![
+                JsValue::String(search.clone()),
+                JsValue::Number(index as f64),
+                JsValue::String(value.clone()),
+            ];
+            let repl_val =
+                vm.call_value_from_builtin(replace_arg, JsValue::Undefined, args, context)?;
+            let repl = vm.to_string_coerce(repl_val, context)?;
+            return Ok(JsValue::String(format!(
+                "{}{}{}",
+                &value[..pos],
+                repl,
+                &value[pos + search.len()..]
+            )));
+        }
+        return Ok(JsValue::String(value));
+    }
+    let replacement = vm.to_string_coerce(replace_arg, context)?;
     Ok(JsValue::String(string::replace(
         &value,
         &search,
         &replacement,
     )))
+}
+
+/// Calls `replace_fn` for every match of `re` in `text` and builds the result.
+fn apply_replace_fn(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    text: &str,
+    re: &regex::Regex,
+    global: bool,
+    replace_fn: JsValue,
+) -> Result<JsValue, VmError> {
+    let details = regexp::matches_with_detail(re, text, global);
+    if details.is_empty() {
+        return Ok(JsValue::String(text.to_owned()));
+    }
+
+    let mut result = String::new();
+    let mut last_end_utf8 = 0;
+
+    // We need byte positions too: re-iterate to track them.
+    let mut byte_matches: Vec<(usize, usize)> = Vec::new();
+    {
+        let mut iter = re.find_iter(text);
+        for _ in &details {
+            if let Some(m) = iter.next() {
+                byte_matches.push((m.start(), m.end()));
+            }
+        }
+        if !global {
+            // Only first match.
+            byte_matches.truncate(1);
+        }
+    }
+
+    for (detail, (byte_start, byte_end)) in details.iter().zip(byte_matches.iter()) {
+        result.push_str(&text[last_end_utf8..*byte_start]);
+
+        // Build args: (match, p1, p2, ..., offset, inputString)
+        let mut args = vec![JsValue::String(detail.full_match.clone())];
+        // Capture groups (skip index 0 = full match)
+        for cap in detail.captures.iter().skip(1) {
+            args.push(
+                cap.as_deref()
+                    .map_or(JsValue::Undefined, |s| JsValue::String(s.to_owned())),
+            );
+        }
+        args.push(JsValue::Number(detail.index as f64));
+        args.push(JsValue::String(text.to_owned()));
+
+        let repl_val =
+            vm.call_value_from_builtin(replace_fn.clone(), JsValue::Undefined, args, context)?;
+        let repl = vm.to_string_coerce(repl_val, context)?;
+        result.push_str(&repl);
+        last_end_utf8 = *byte_end;
+    }
+    result.push_str(&text[last_end_utf8..]);
+    Ok(JsValue::String(result))
 }
 
 fn string_replace_all(
@@ -1401,7 +1491,9 @@ fn string_replace_all(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
-    let replacement = arg_string(vm, context, arguments, 1)?;
+    let replace_arg = arg(arguments, 1);
+    let replace_is_fn = is_callable_value(&replace_arg);
+
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         if !regexp::is_global(&flags) {
             return Err(VmError::type_error(
@@ -1410,13 +1502,54 @@ fn string_replace_all(
         }
         let re = regexp::compile_regex(&pattern, &flags)
             .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        if replace_is_fn {
+            return apply_replace_fn(vm, context, &value, &re, true, replace_arg);
+        }
+        let replacement = vm.to_string_coerce(replace_arg, context)?;
         return Ok(JsValue::String(regexp::replace_all(
             &re,
             &value,
             &replacement,
         )));
     }
-    let search = arg_string(vm, context, arguments, 0)?;
+
+    let search = vm.to_string_coerce(first_arg, context)?;
+    if replace_is_fn {
+        // Replace all literal occurrences with function callback.
+        let mut result = String::new();
+        let mut rest = value.as_str();
+        let mut char_offset = 0usize;
+        loop {
+            match rest.find(search.as_str()) {
+                None => {
+                    result.push_str(rest);
+                    break;
+                }
+                Some(pos) => {
+                    result.push_str(&rest[..pos]);
+                    let index = char_offset + rest[..pos].encode_utf16().count();
+                    let args = vec![
+                        JsValue::String(search.clone()),
+                        JsValue::Number(index as f64),
+                        JsValue::String(value.clone()),
+                    ];
+                    let repl_val = vm.call_value_from_builtin(
+                        replace_arg.clone(),
+                        JsValue::Undefined,
+                        args,
+                        context,
+                    )?;
+                    let repl = vm.to_string_coerce(repl_val, context)?;
+                    result.push_str(&repl);
+                    let skip = pos + search.len().max(1);
+                    char_offset += rest[..skip].encode_utf16().count();
+                    rest = &rest[skip..];
+                }
+            }
+        }
+        return Ok(JsValue::String(result));
+    }
+    let replacement = vm.to_string_coerce(replace_arg, context)?;
     Ok(JsValue::String(string::replace_all(
         &value,
         &search,
@@ -1494,6 +1627,69 @@ fn string_match(
     } else {
         Ok(result)
     }
+}
+
+/// `String.prototype.matchAll(regexp)` — ES2020.
+///
+/// Requires a global or sticky RegExp (`g` or `y` flag). Returns an array of
+/// exec-style arrays (each with `index` and `input` properties) containing all
+/// non-overlapping matches. Our engine has no lazy-iterator infrastructure so
+/// we materialise all results eagerly into a plain Array — the spec requires a
+/// RegExpStringIterator, but this approximation passes most basic tests.
+fn string_match_all(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let first_arg = arg(arguments, 0);
+    let (pattern, flags) = match regexp_data(context, &first_arg) {
+        Some(pair) => pair,
+        None => {
+            // Coerce to string, treat as literal pattern with no flags.
+            let s = vm.to_string_coerce(first_arg, context)?;
+            (s, String::new())
+        }
+    };
+    // matchAll requires the `g` or `y` flag on a regexp argument.
+    if !flags.is_empty() && !flags.contains('g') && !flags.contains('y') {
+        return Err(VmError::type_error(
+            "String.prototype.matchAll called with a non-global RegExp",
+        ));
+    }
+    let re = regexp::compile_regex(&pattern, &flags)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+
+    let mut entries = Vec::new();
+    for caps in re.captures_iter(&value) {
+        let m = caps.get(0).unwrap();
+        let index = value[..m.start()].encode_utf16().count();
+        let elements: Vec<JsValue> = (0..caps.len())
+            .map(|i| {
+                caps.get(i).map_or(JsValue::Undefined, |c| {
+                    JsValue::String(c.as_str().to_owned())
+                })
+            })
+            .collect();
+        let entry = context.create_array(elements)?;
+        if let JsValue::Object(oid) = entry {
+            context.define_own_property(
+                oid,
+                "index".into(),
+                PropertyDescriptor::data_with(JsValue::Number(index as f64), true, true, true),
+            )?;
+            context.define_own_property(
+                oid,
+                "input".into(),
+                PropertyDescriptor::data_with(JsValue::String(value.clone()), true, true, true),
+            )?;
+            entries.push(JsValue::Object(oid));
+        }
+    }
+
+    // Return a plain array (not a lazy iterator).
+    context.create_array(entries)
 }
 
 fn string_pad_start(
