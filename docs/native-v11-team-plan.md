@@ -75,7 +75,8 @@ Tasks:
 - descriptor exactness;
 - receiver handling;
 - getter/setter order;
-- property lookup and own-key order;
+- property lookup and own-key order; ✅ first boundary fix landed for
+  `4294967295` ordinary string-key ordering
 - expected error ordering in shared object/runtime paths.
 
 B must not implement RegExp builtin algorithms or Annex B globals directly; C

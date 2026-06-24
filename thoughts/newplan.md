@@ -447,7 +447,8 @@ V11 三组并行开发不同功能：
 - descriptor exactness。
 - receiver handling。
 - getter/setter。
-- property lookup order。
+- property lookup order。（第一阶段已完成：`4294967295` 按普通字符串 key
+  排序，不再误判为 array index）
 - expected error ordering。
 
 ### V11-C：RegExp builtins and descriptor sweep

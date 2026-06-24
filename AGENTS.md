@@ -367,6 +367,14 @@ tool timeout and did not produce `reports/native-v11-scan-summary.json`; future
 V11 workers should rerun it with a longer timeout or replace long-running
 samples before claiming scan deltas.
 
+Current V11-B status (2026-06-24): first object-key ordering precision fix is
+implemented. `src/runtime/object.rs` and `src/runtime/property_map.rs` now treat
+`4294967295` (`2^32 - 1`) as an ordinary string key, not an array index, which
+feeds `Object.keys`, `Object.getOwnPropertyNames`, and `Reflect.ownKeys`.
+Focused B tests are in `tests/native_v11_runtime.rs` and currently pass 3/3;
+`native_test262` passes 15/15. C descriptor sweeps should reuse this shared
+runtime ordering instead of adding local sorting.
+
 ## Commit & Pull Request Guidelines
 
 History varies by subtree: Boa commonly uses scoped Conventional Commit subjects such as `fix(vm): ...`, while QuickJS and Test262 favor concise imperative summaries. Use an imperative subject, add a scope when helpful, and avoid mixing unrelated upstream changes. Pull requests should identify the affected subtree, explain behavior and specification impact, list commands run, link relevant issues, and include benchmark or Test262 results when performance or compatibility changes.

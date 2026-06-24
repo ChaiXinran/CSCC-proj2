@@ -120,6 +120,9 @@ fn array_index(key: &str) -> Option<usize> {
     if key.is_empty() || !key.chars().all(|ch| ch.is_ascii_digit()) {
         return None;
     }
-    let index = key.parse::<usize>().ok()?;
-    (index.to_string() == key).then_some(index)
+    let index = key.parse::<u32>().ok()?;
+    if index == u32::MAX {
+        return None;
+    }
+    (index.to_string() == key).then_some(index as usize)
 }

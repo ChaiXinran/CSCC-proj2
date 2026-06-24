@@ -273,6 +273,12 @@ local scan attempt exceeded the 300s tool timeout and did not produce
 `reports/native-v11-scan-summary.json`; rerun with a longer timeout or refresh
 long-running samples before recording a baseline.
 
+V11-B first object-key ordering precision fix is now available: the runtime now
+treats `4294967295` as an ordinary string key rather than an array index, so
+Object/Reflect own-key helpers preserve spec-aligned ordering at that boundary.
+Focused runtime coverage is `cargo test --no-default-features --test
+native_v11_runtime` (3/3 passed).
+
 Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
 The active post-V8 roadmap is `thoughts/newplan.md`.
 

@@ -141,6 +141,10 @@
   `reports/native-v11-scan-failures.txt`. The selector is installed and
   `tests/native_test262.rs` passes 15/15. The first local V11 scan attempt
   exceeded the 300s tool timeout and did not produce a JSON summary.
+- V11-B first object-key ordering precision fix is implemented:
+  `4294967295` is now treated as an ordinary string key instead of an array
+  index in shared runtime key ordering. Focused `tests/native_v11_runtime.rs`
+  passes 3/3.
 
 ## Acceptance Gates
 
