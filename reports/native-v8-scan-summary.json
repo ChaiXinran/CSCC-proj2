@@ -1,13 +1,8 @@
 {
   "total": 5000,
-  "passed": 205,
-  "failed": 4795,
+  "passed": 612,
+  "failed": 4388,
   "skipped": 0,
-  "conformance_percent": 4.1000,
-  "elapsed_ms": 20489
-  "passed": 13,
-  "failed": 4491,
-  "skipped": 496,
-  "conformance_percent": 0.2600,
-  "elapsed_ms": 32375
+  "conformance_percent": 12.2400,
+  "elapsed_ms": 41560
 }
