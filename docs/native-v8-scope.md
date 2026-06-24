@@ -82,6 +82,15 @@ Expected effect:
 - prepare the system to reduce `module runner not implemented yet` skips;
 - make module failures independently classifiable.
 
+Current status (2026-06-24): first-stage V8-B infrastructure is implemented.
+The native Test262 runner now executes module-flagged cases through `module
+mode`; module source is strict by default; module top-level `this` is
+`undefined`; relative dependency loading and duplicate path registry guards are
+available. The focused `test/language/module-code` run reports 201/599 passed,
+398 failed, and 0 skipped. The standard V8 lightweight scan now reports
+205/5,000 passed, 4,795 failed, and 0 skipped. Remaining failures mostly need
+import/export parser and linking connector work.
+
 ### V8-C — Builtin Skeletons First Batch
 
 Owner: C group.
@@ -155,8 +164,9 @@ cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 -
 This command runs the locked 5,000-case manifest in
 `reports/native-v8-scan-failures.txt`, sampled from cases that did not pass in
 the 2026-06-24 full direct run. The initial summary is
-`reports/native-v8-scan-summary.json`: 0/5,000 passed, 4,504 failed, and 496
-skipped.
+`reports/native-v8-scan-summary.json`: initially 0/5,000 passed, 4,504 failed,
+and 496 skipped; after the first V8-B module runner pass it is 205/5,000
+passed, 4,795 failed, and 0 skipped.
 
 Full direct run:
 

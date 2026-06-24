@@ -38,7 +38,10 @@
 
 ## Known Gaps
 
-- Test262 module tests are currently skipped.
+- Test262 module tests now have a first-stage native module path. The focused
+  `test/language/module-code` run reports 201/599 passed, 398 failed, and 0
+  skipped; the standard V8 scan reports 205/5,000 passed, 4,795 failed, and 0
+  skipped. Remaining failures are mostly import/export parser and linking gaps.
 - YAML frontmatter parsing supports only the Test262 fields consumed by the
   runner, not a general YAML parser.
 - Boa remains the compatibility baseline for the `eval`/`run`/`repl` CLI
@@ -86,14 +89,23 @@
 - Native V8 workflow setup has started. The V8 scope, shared interface, and team
   plan are recorded in `docs/native-v8-scope.md`,
   `docs/native-v8-interface.md`, and `docs/native-v8-team-plan.md`.
+- V8-B module runner infrastructure has a first-stage implementation:
+  `SourceKind::Module`, native module eval, strict module execution, module
+  top-level `this === undefined`, module registry/status records, relative
+  dependency loading, duplicate evaluation guard, and module-mode Test262
+  labels. Focused command:
+  `cargo run --release --no-default-features -- test262 --backend native --root
+  test262 --suite test/language/module-code --jobs 4 --progress --json
+  reports/native-v8-b-module-summary.json`.
 - V8 worker progress is tracked in `reports/v8-partA-report.md`,
   `reports/v8-partB-report.md`, and `reports/v8-partC-report.md`. Workers and
   AI agents should update the relevant report whenever they change that track.
 - The standard V8 lightweight integration command is
   `cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4
   --json reports/native-v8-scan-summary.json`. It runs the locked 5,000-case
-  manifest in `reports/native-v8-scan-failures.txt`. The initial summary is
-  0/5,000 passed, 4,504 failed, and 496 skipped.
+  manifest in `reports/native-v8-scan-failures.txt`. The initial summary was
+  0/5,000 passed, 4,504 failed, and 496 skipped; after V8-B first-stage module
+  runner work it is 205/5,000 passed, 4,795 failed, and 0 skipped.
 - The version workflow now requires every future version to create per-track
   worker reports and a `--native-vN-scan` 5,000-case prior-failure manifest
   before implementation starts. See `docs/version-development-workflow.md`.

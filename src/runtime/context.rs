@@ -116,6 +116,7 @@ pub struct NativeContext {
     symbol_registry: SymbolRegistry,
     symbol_for_registry: HashMap<String, SymbolId>,
     strict: bool,
+    top_level_this: JsValue,
     output: Vec<String>,
     budget: ExecutionBudget,
     call_depth: u64,
@@ -165,6 +166,7 @@ impl NativeContext {
             symbol_registry: SymbolRegistry::new(),
             symbol_for_registry: HashMap::new(),
             strict: false,
+            top_level_this: JsValue::Object(global_object),
             output: Vec::new(),
             budget: ExecutionBudget::default(),
             call_depth: 0,
@@ -246,6 +248,7 @@ impl NativeContext {
 
     fn add_internal_roots(&self, roots: &mut RootSet) {
         roots.object_roots.push(self.global_object);
+        roots.value_roots.push(self.top_level_this.clone());
         if let Some(intrinsics) = &self.intrinsics {
             roots.object_roots.extend([
                 intrinsics.object_prototype,
@@ -983,11 +986,10 @@ impl NativeContext {
 
     #[must_use]
     pub fn current_or_global_this(&self) -> JsValue {
-        self.call_frames
-            .last()
-            .map_or(JsValue::Object(self.global_object), |frame| {
-                frame.this_value.clone()
-            })
+        self.call_frames.last().map_or_else(
+            || self.top_level_this.clone(),
+            |frame| frame.this_value.clone(),
+        )
     }
 
     #[must_use]
@@ -998,6 +1000,10 @@ impl NativeContext {
     #[must_use]
     pub const fn global_this_value(&self) -> JsValue {
         JsValue::Object(self.global_object)
+    }
+
+    pub fn set_top_level_this(&mut self, value: JsValue) {
+        self.top_level_this = value;
     }
 
     pub fn create_object(

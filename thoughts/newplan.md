@@ -176,17 +176,18 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 任务：
 
 1. Runner / runtime 基础设施
-   - 在 Test262 执行路径中区分 script 和 module。
-   - module 顶层默认 strict。
-   - module 独立错误分类。
+   - 在 Test262 执行路径中区分 script 和 module。（已完成第一阶段）
+   - module 顶层默认 strict。（已完成第一阶段）
+   - module 顶层 `this === undefined`。（已完成第一阶段）
+   - module 独立错误分类。（已完成第一阶段，runner 使用 `module mode` 标签）
 2. Module environment
-   - module scope。
+   - module scope。（基础执行入口已完成；完整 import/export binding 待 A 组 AST）
    - import/export binding 的 runtime 数据结构。
-   - module registry，避免重复执行。
+   - module registry，避免重复执行。（已完成第一阶段）
 3. Loader 最小路径
-   - 相对路径解析。
-   - 依赖图加载。
-   - 先支持 acyclic graph；循环依赖后置。
+   - 相对路径解析。（已完成第一阶段，支持 `./` / `../`）
+   - 依赖图加载。（Rust-side loader helper 已完成；AST 接线待 A/B connector）
+   - 先支持 acyclic graph；循环依赖后置。（循环依赖目前明确 Unsupported）
 
 需要和 A 组对齐的接口：
 
@@ -196,8 +197,10 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 验收：
 
-- module runner 相关代码可以独立编译和单测。
-- 等 A 组 import/export parser 接上后，`module runner not implemented yet` 能从 821 开始下降。
+- module runner 相关代码可以独立编译和单测。（`native_v8_module` 5/5 passed）
+- focused `test/language/module-code`：201/599 passed，398 failed，0 skipped。
+- standard `--native-v8-scan`：205/5000 passed，4795 failed，0 skipped。
+- 后续等 A 组 import/export parser 接上后，继续把剩余 parse/linking failure 转为真实 module semantic coverage。
 
 推荐命令：
 

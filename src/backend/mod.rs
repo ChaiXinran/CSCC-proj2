@@ -8,6 +8,8 @@
 mod boa;
 mod native;
 
+use std::path::Path;
+
 use crate::engine::{EvalFailure, ExecutionOptions, RuntimeConfig};
 
 #[cfg(feature = "boa-backend")]
@@ -52,6 +54,13 @@ pub(crate) trait RuntimeBackend {
     fn parse_only(&mut self, source: &str, options: ExecutionOptions) -> Result<(), EvalFailure>;
 
     fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure>;
+
+    fn eval_module_source(
+        &mut self,
+        source: &str,
+        path: &Path,
+        drain_jobs: bool,
+    ) -> Result<BackendExecution, EvalFailure>;
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure>;
 
