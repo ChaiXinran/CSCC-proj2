@@ -6,7 +6,7 @@ use agentjs::test262::{
     NATIVE_V1_TESTS, NATIVE_V2_TESTS, NATIVE_V3_TESTS, NATIVE_V4_SCAN_SUITES, NATIVE_V4_TESTS,
     NATIVE_V5_SCAN_SUITES, NATIVE_V5_TESTS, NATIVE_V6_SCAN_SUITES, NATIVE_V6_TESTS,
     NATIVE_V7_SCAN_SUITES, NATIVE_V7_TEST_COUNT, NATIVE_V8_SCAN_TEST_COUNT,
-    NATIVE_V9_SCAN_TEST_COUNT, RunnerOptions, Status, run,
+    NATIVE_V9_SCAN_TEST_COUNT, NATIVE_V10_SCAN_TEST_COUNT, RunnerOptions, Status, run,
 };
 
 fn assert_native_gate(options: RunnerOptions, expected_count: usize, milestone: &str) {
@@ -171,6 +171,17 @@ fn native_v9_scan_selects_the_locked_failed_case_manifest() {
     options.select_native_v9_scan();
 
     assert_eq!(options.files.len(), NATIVE_V9_SCAN_TEST_COUNT);
+    assert!(options.suites.is_empty());
+    assert!(!options.skip_unsupported);
+    assert!(options.files.iter().all(|path| path.starts_with("test")));
+}
+
+#[test]
+fn native_v10_scan_selects_the_locked_failed_case_manifest() {
+    let mut options = RunnerOptions::default();
+    options.select_native_v10_scan();
+
+    assert_eq!(options.files.len(), NATIVE_V10_SCAN_TEST_COUNT);
     assert!(options.suites.is_empty());
     assert!(!options.skip_unsupported);
     assert!(options.files.iter().all(|path| path.starts_with("test")));

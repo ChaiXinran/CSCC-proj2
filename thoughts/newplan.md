@@ -333,6 +333,20 @@ V9 完成后再启动 V10。
 
 目标：从 skeleton 进入主要算法实现。
 
+状态：V10 第一阶段 setup 已完成。已创建 `docs/native-v10-scope.md`、
+`docs/native-v10-interface.md`、`docs/native-v10-team-plan.md`、
+`reports/v10-partA-report.md`、`reports/v10-partB-report.md`、
+`reports/v10-partC-report.md`，并锁定 `reports/native-v10-scan-failures.txt`。
+标准命令：
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v10-scan --jobs 4 --json reports/native-v10-scan-summary.json
+```
+
+初始结果：645/5,000 passed，4,355 failed，0 skipped。V9-A 仍在进行时，
+V10-A 不要覆盖 V9-A 热区改动；如需修改 parser/AST/bytecode，应先确认
+当前分支是否已经合入 V9-A。
+
 V10 三组并行开发不同功能：
 
 | 组别 | 功能线 | 主要收益 |

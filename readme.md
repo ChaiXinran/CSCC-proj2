@@ -225,6 +225,25 @@ It runs the locked 5,000-case manifest in
 `reports/native-v9-scan-failures.txt`. Initial result: 0/5,000 passed, 5,000
 failed, and 0 skipped.
 
+Native V10 setup is also available while V9-A continues. V10 covers
+BigInt/numeric/unicode syntax tail work, TypedArray/ArrayBuffer/DataView runtime
+substrate, and Date/Intl/Temporal builtin semantics. Planning and ownership
+live in [Native V10 scope](docs/native-v10-scope.md),
+[shared interface](docs/native-v10-interface.md), and
+[team plan](docs/native-v10-team-plan.md). Worker progress is tracked in
+`reports/v10-partA-report.md`, `reports/v10-partB-report.md`, and
+`reports/v10-partC-report.md`.
+
+The standard V10 lightweight scan is:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v10-scan --jobs 4 --json reports/native-v10-scan-summary.json
+```
+
+It runs the locked 5,000-case manifest in
+`reports/native-v10-scan-failures.txt`. Initial result: 645/5,000 passed,
+4,355 failed, and 0 skipped.
+
 Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
 The active post-V8 roadmap is `thoughts/newplan.md`.
 

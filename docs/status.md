@@ -121,6 +121,13 @@
   fallback helpers. Focused `tests/native_v9_runtime.rs` passes 5/5; JS-visible
   Promise/collection builtin installation is still future V9-C/integration
   work.
+- Native V10 setup is complete. Scope, interface, team plan, per-track reports,
+  and the locked V10 lightweight scan are recorded in
+  `docs/native-v10-scope.md`, `docs/native-v10-interface.md`,
+  `docs/native-v10-team-plan.md`, `reports/v10-partA-report.md`,
+  `reports/v10-partB-report.md`, `reports/v10-partC-report.md`, and
+  `reports/native-v10-scan-failures.txt`. Initial V10 scan:
+  645/5,000 passed, 4,355 failed, 0 skipped.
 
 ## Acceptance Gates
 

@@ -288,6 +288,39 @@ installation, and A owns frontend lowering that calls these runtime helpers.
 Generic `Symbol.iterator` dispatch and Promise algorithms remain follow-up
 integration work.
 
+## Native V10 Collaboration Start
+
+V10 setup is complete while V9-A remains in progress. V10 scope, interface, and
+team ownership docs are:
+
+- `docs/native-v10-scope.md`
+- `docs/native-v10-interface.md`
+- `docs/native-v10-team-plan.md`
+
+V10 is a three-track parallel batch:
+
+- A group: BigInt / numeric / unicode syntax tail.
+- B group: TypedArray / ArrayBuffer / DataView runtime substrate.
+- C group: Date / Intl / Temporal builtin semantics.
+
+Required V10 report files:
+
+- `reports/v10-partA-report.md`
+- `reports/v10-partB-report.md`
+- `reports/v10-partC-report.md`
+
+Standard V10 lightweight scan command:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v10-scan --jobs 4 --json reports/native-v10-scan-summary.json
+```
+
+`--native-v10-scan` runs the locked 5,000-case manifest in
+`reports/native-v10-scan-failures.txt`, sampled from prior non-passing V10
+hotspots. Initial baseline: 645/5,000 passed, 4,355 failed, 0 skipped. AI
+agents working on V10 should run this after relevant focused tests and update
+the corresponding `reports/v10-part*-report.md`.
+
 ## Commit & Pull Request Guidelines
 
 History varies by subtree: Boa commonly uses scoped Conventional Commit subjects such as `fix(vm): ...`, while QuickJS and Test262 favor concise imperative summaries. Use an imperative subject, add a scope when helpful, and avoid mixing unrelated upstream changes. Pull requests should identify the affected subtree, explain behavior and specification impact, list commands run, link relevant issues, and include benchmark or Test262 results when performance or compatibility changes.
