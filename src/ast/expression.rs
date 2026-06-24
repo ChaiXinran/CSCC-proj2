@@ -9,6 +9,7 @@ pub enum Literal {
     Null,
     Boolean(bool),
     Number(f64),
+    BigInt(String),
     String(String),
     /// `/pattern/flags` regex literal.
     RegExp {
