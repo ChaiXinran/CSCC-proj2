@@ -231,18 +231,15 @@ impl<'source> Lexer<'source> {
             if let Some(radix) = radix {
                 self.cursor.bump();
                 self.cursor.bump();
-                let digits_start = self.cursor.offset();
-                self.cursor
-                    .skip_while(|character| character.is_digit(radix));
+                let digits = self.read_number_digits(radix, start)?;
                 let digits_end = self.cursor.offset();
-                if digits_end == digits_start {
+                if digits.is_empty() {
                     return Err(LexError {
                         span: Span::new(start, digits_end),
                         message: format!("missing base-{radix} digits in number literal"),
                     });
                 }
-                let digits = self.cursor.slice(Span::new(digits_start, digits_end));
-                let value = u64::from_str_radix(digits, radix).map_err(|_| LexError {
+                let value = u64::from_str_radix(&digits, radix).map_err(|_| LexError {
                     span: Span::new(start, digits_end),
                     message: format!("invalid base-{radix} number literal"),
                 })? as f64;
@@ -255,25 +252,34 @@ impl<'source> Lexer<'source> {
                 }
                 return Ok(Token::new(
                     TokenKind::Number(value),
-                    Span::new(start, digits_end),
+                    Span::new(start, self.cursor.offset()),
                 ));
             }
         }
-        self.cursor.skip_while(|c| c.is_ascii_digit());
+        let mut text = if self.cursor.peek() == Some('.') {
+            "0".into()
+        } else {
+            self.read_number_digits(10, start)?
+        };
         let mut is_integer_literal = true;
         if self.cursor.peek() == Some('.') {
             is_integer_literal = false;
+            text.push('.');
             self.cursor.bump();
-            self.cursor.skip_while(|c| c.is_ascii_digit());
+            if self.cursor.peek() == Some('_') {
+                return Err(self.invalid_numeric_separator(start));
+            }
+            text.push_str(&self.read_optional_number_digits(10, start)?);
         }
         if matches!(self.cursor.peek(), Some('e' | 'E')) {
             is_integer_literal = false;
+            text.push('e');
             self.cursor.bump();
             if matches!(self.cursor.peek(), Some('+' | '-')) {
-                self.cursor.bump();
+                text.push(self.cursor.bump().expect("exponent sign exists"));
             }
             let exponent_start = self.cursor.offset();
-            self.cursor.skip_while(|c| c.is_ascii_digit());
+            let exponent_digits = self.read_number_digits(10, start)?;
             if self.cursor.offset() == exponent_start {
                 let end = self.cursor.offset();
                 return Err(LexError {
@@ -281,10 +287,10 @@ impl<'source> Lexer<'source> {
                     message: "missing exponent digits in number literal".into(),
                 });
             }
+            text.push_str(&exponent_digits);
         }
 
         let end = self.cursor.offset();
-        let text = self.cursor.slice(Span::new(start, end));
         let value = text.parse::<f64>().map_err(|_| LexError {
             span: Span::new(start, end),
             message: format!("invalid number literal `{text}`"),
@@ -297,6 +303,57 @@ impl<'source> Lexer<'source> {
             ));
         }
         Ok(Token::new(TokenKind::Number(value), Span::new(start, end)))
+    }
+
+    fn read_number_digits(&mut self, radix: u32, literal_start: usize) -> Result<String, LexError> {
+        let digits = self.read_optional_number_digits(radix, literal_start)?;
+        if digits.is_empty() {
+            return Err(LexError {
+                span: Span::new(literal_start, self.cursor.offset()),
+                message: format!("missing base-{radix} digits in number literal"),
+            });
+        }
+        Ok(digits)
+    }
+
+    fn read_optional_number_digits(
+        &mut self,
+        radix: u32,
+        literal_start: usize,
+    ) -> Result<String, LexError> {
+        let mut digits = String::new();
+        let mut previous_was_digit = false;
+        loop {
+            let Some(character) = self.cursor.peek() else {
+                break;
+            };
+            if character.is_digit(radix) {
+                digits.push(character);
+                previous_was_digit = true;
+                self.cursor.bump();
+            } else if character == '_' {
+                if !previous_was_digit
+                    || !self
+                        .cursor
+                        .second()
+                        .is_some_and(|next| next.is_digit(radix))
+                {
+                    return Err(self.invalid_numeric_separator(literal_start));
+                }
+                previous_was_digit = false;
+                self.cursor.bump();
+            } else {
+                break;
+            }
+        }
+        Ok(digits)
+    }
+
+    fn invalid_numeric_separator(&self, literal_start: usize) -> LexError {
+        LexError {
+            span: Span::new(literal_start, self.cursor.offset()),
+            message: "numeric separators may only appear between digits".into(),
+        }
     }
     fn read_template_literal(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
@@ -786,14 +843,46 @@ mod tests {
     }
 
     #[test]
+    fn tokenizes_numeric_separators() {
+        assert_eq!(
+            kinds("1_000 12_34.5_6 1_2e3_4 0xFF_FF 0b1010_0101 0o7_7"),
+            [
+                TokenKind::Number(1000.0),
+                TokenKind::Number(1234.56),
+                TokenKind::Number(12e34),
+                TokenKind::Number(65535.0),
+                TokenKind::Number(165.0),
+                TokenKind::Number(63.0),
+                TokenKind::Eof,
+            ]
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_numeric_separators() {
+        for source in [
+            "1__0", "1_", "1_.0", "1._0", "1e_1", "1e1_", "0x_FF", "0xFF_", "0b1__0", "0o7_",
+        ] {
+            assert!(
+                Lexer::new(source).tokenize().is_err(),
+                "{source} should reject misplaced numeric separators"
+            );
+        }
+    }
+
+    #[test]
     fn tokenizes_bigint_literals_as_temporary_numeric_payloads() {
         assert_eq!(
-            kinds("1n 0xfn 0b101n 0o7n"),
+            kinds("1n 1_000n 0xfn 0xf_fn 0b101n 0b1_01n 0o7n 0o7_7n"),
             [
                 TokenKind::BigInt(1.0),
+                TokenKind::BigInt(1000.0),
                 TokenKind::BigInt(15.0),
+                TokenKind::BigInt(255.0),
+                TokenKind::BigInt(5.0),
                 TokenKind::BigInt(5.0),
                 TokenKind::BigInt(7.0),
+                TokenKind::BigInt(63.0),
                 TokenKind::Eof,
             ]
         );

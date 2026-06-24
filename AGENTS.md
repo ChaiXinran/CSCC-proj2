@@ -59,41 +59,38 @@ Add unit tests beside private modules and public behavior tests under `tests/`. 
 
 ## Native V7 Collaboration Status
 
-B-line Function/runtime integration is complete as of the current V7 merge pass.
-Implemented items include:
+B-line parser/lexer early-error integration is complete as of the current V7
+merge pass. Implemented items include:
 
-- `Function.prototype.apply` with array and array-like argument spreading.
-- Dynamic `Function(...)` and `new Function(...)` through the native
-  lexer/parser/compiler/VM path.
-- Global `eval` for string source, plus unchanged pass-through for non-string
-  inputs.
-- Catchable TypeErrors for invalid call targets and invalid `instanceof`
-  paths.
-- Top-level `this`, `globalThis`, and sloppy/strict function receiver handling.
-- `Function.prototype[Symbol.hasInstance]` and bound-function `instanceof`.
+- Numeric separators in number literals across decimal, fractional, exponent,
+  binary, octal, hexadecimal, and the current temporary BigInt token path.
+- Lexical redeclaration early errors for same-scope `let` / `const` /
+  `function` names.
+- `var` redeclaration conflicts against same-scope lexical names, including
+  nested block `var` and `for (var ... in ...)` cases.
+- Strict-mode rejection of function declarations in single-statement
+  `if` / `else` / `while` / `for` bodies while still allowing braced block
+  bodies.
 
-Current B-line hot files are `src/builtins/function.rs`,
-`src/builtins/mod.rs`, `src/bytecode/compiler.rs`,
-`src/runtime/context.rs`, `src/vm/interpreter.rs`, and
-`tests/native_function_bind.rs`.
+Current B-line hot files are `src/lexer/mod.rs` and
+`src/parser/statement.rs`. Focused coverage lives in their inline unit tests.
 
 Coordination notes:
 
-- A-line frontend work should coordinate before changing
-  `src/bytecode/compiler.rs` handling for `this`, `instanceof`, or operand
-  lowering.
-- C-line builtin/object-model work should coordinate before changing
-  `src/runtime/context.rs`, Function dispatch, bound-function dispatch, or
-  symbol-keyed Function behavior.
-- Do not reimplement dynamic Function or eval independently; reuse the B-line
-  entry points in `src/builtins/function.rs`.
+- A-line regexp work should coordinate before changing shared lexer scanning
+  helpers in `src/lexer/mod.rs`.
+- C-line work should avoid folding Unicode identifier escape, strict `this`,
+  `Object.prototype.toString`, or String builtin changes into the B-line parser
+  patch; those remain C-line/runtime responsibilities.
+- Do not broaden B-line early-error validation into runtime or builtin files
+  unless the V7 owners explicitly rescope the work.
 
 Latest local V7 results:
 
 - V7 pinned gate: 69/69 passed, 0 failed, 0 skipped.
-- V7 diagnostic scan: 1,977/3,034 passed, 1,045 failed, 12 skipped,
-  65.16% conformance.
-- Net gain over the prior V7 diagnostic baseline: +206 passing Test262 cases.
+- V7 diagnostic scan: 2,035/3,034 passed, 999 failed, 0 skipped,
+  67.07% conformance.
+- Net gain over the referenced B-line baseline: +49 passing Test262 cases.
 
 ## Commit & Pull Request Guidelines
 
