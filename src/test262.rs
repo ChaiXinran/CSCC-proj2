@@ -215,7 +215,10 @@ impl Default for RunnerOptions {
                 install_test262_host: true,
                 heap_object_limit: 500_000,
                 heap_byte_limit: 512 * 1024 * 1024,
-                wall_clock_limit: None,
+                // 10 s per test case: kills infinite loops before they hang the whole
+                // run. check_deadline() is called every VM instruction, so the limit
+                // takes effect without any additional polling.
+                wall_clock_limit: Some(Duration::from_secs(10)),
                 gc_allocation_threshold: 25_000,
             },
         }
