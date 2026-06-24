@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     backend::BackendKind,
-    engine::{EvalFailure, ExecutionOptions, FailureKind, Runtime, RuntimeConfig},
+    engine::{EvalFailure, ExecutionOptions, FailureKind, Runtime, RuntimeConfig, SourceKind},
 };
 
 /// Official Test262 files used as the Native V1 end-to-end acceptance gate.
@@ -616,16 +616,20 @@ fn run_case(
         let source = fs::read_to_string(path).map_err(|error| error.to_string())?;
         let metadata = parse_metadata(&source)?;
 
-        if metadata.flags.contains("module") {
-            return Ok((Status::Skipped, "module runner not implemented yet".into()));
-        }
         if metadata.flags.contains("CanBlockIsFalse") {
             return Ok((
                 Status::Skipped,
                 "non-blocking agent tests are not enabled".into(),
             ));
         }
-        let strict_modes: &[bool] = if metadata.flags.contains("raw") {
+        let source_kind = if metadata.flags.contains("module") {
+            SourceKind::Module
+        } else {
+            SourceKind::Script
+        };
+        let strict_modes: &[bool] = if source_kind == SourceKind::Module {
+            &[true]
+        } else if metadata.flags.contains("raw") {
             &[false]
         } else if metadata.flags.contains("onlyStrict") {
             &[true]
@@ -643,6 +647,7 @@ fn run_case(
                 harness,
                 backend,
                 config,
+                source_kind,
                 strict: *strict,
                 skip_unsupported,
             }) {
@@ -650,16 +655,13 @@ fn run_case(
                 Err(VariantFailure::Skipped(detail)) => {
                     return Ok((
                         Status::Skipped,
-                        format!(
-                            "{} mode: {detail}",
-                            if *strict { "strict" } else { "default" }
-                        ),
+                        format!("{} mode: {detail}", variant_label(source_kind, *strict)),
                     ));
                 }
                 Err(VariantFailure::Failed(detail)) => {
                     return Err(format!(
                         "{} mode: {detail}",
-                        if *strict { "strict" } else { "default" }
+                        variant_label(source_kind, *strict)
                     ));
                 }
             }
@@ -679,6 +681,16 @@ fn run_case(
     }
 }
 
+fn variant_label(source_kind: SourceKind, strict: bool) -> &'static str {
+    if source_kind == SourceKind::Module {
+        "module"
+    } else if strict {
+        "strict"
+    } else {
+        "default"
+    }
+}
+
 struct VariantRun<'a> {
     path: &'a Path,
     source: &'a str,
@@ -686,6 +698,7 @@ struct VariantRun<'a> {
     harness: &'a Harness,
     backend: BackendKind,
     config: RuntimeConfig,
+    source_kind: SourceKind,
     strict: bool,
     skip_unsupported: bool,
 }
@@ -698,6 +711,7 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
         harness,
         backend,
         config,
+        source_kind,
         strict,
         skip_unsupported,
     } = run;
@@ -712,6 +726,7 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                 path,
                 source,
                 metadata,
+                source_kind,
                 strict,
                 skip_unsupported,
             },
@@ -775,13 +790,19 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
 
     runtime.set_strict(strict);
 
-    let outcome = runtime.eval(
-        source,
-        ExecutionOptions {
-            strict,
-            drain_jobs: !metadata.flags.contains("async"),
-        },
-    );
+    let drain_jobs = !metadata.flags.contains("async");
+    let outcome = if source_kind == SourceKind::Module {
+        runtime.eval_module_source(source, path, drain_jobs)
+    } else {
+        runtime.eval(
+            source,
+            ExecutionOptions {
+                strict,
+                drain_jobs,
+                source_kind,
+            },
+        )
+    };
 
     match (&metadata.negative_type, outcome) {
         (None, Ok(_)) => {}
@@ -844,6 +865,7 @@ struct StaticNegativeRun<'a> {
     path: &'a Path,
     source: &'a str,
     metadata: &'a Metadata,
+    source_kind: SourceKind,
     strict: bool,
     skip_unsupported: bool,
 }
@@ -856,6 +878,7 @@ fn run_static_negative_variant(
         path,
         source,
         metadata,
+        source_kind,
         strict,
         skip_unsupported,
     } = run;
@@ -875,6 +898,7 @@ fn run_static_negative_variant(
         ExecutionOptions {
             strict,
             drain_jobs: false,
+            source_kind,
         },
     );
 
@@ -1108,6 +1132,7 @@ mod tests {
             harness: &Harness::minimal_native(),
             backend: BackendKind::Native,
             config: test_config(),
+            source_kind: SourceKind::Script,
             strict: false,
             skip_unsupported: false,
         });
@@ -1135,6 +1160,7 @@ mod tests {
             harness: &Harness::minimal_native(),
             backend: BackendKind::Native,
             config: test_config(),
+            source_kind: SourceKind::Script,
             strict: false,
             skip_unsupported: false,
         })

@@ -1,19 +1,23 @@
 use std::{
     collections::{VecDeque, hash_map::DefaultHasher},
+    fs,
     hash::{Hash, Hasher},
+    path::Path,
 };
 
 use crate::{
     backend::{BackendExecution, RuntimeBackend},
     builtins,
     contracts::{Chunk, NativeContext, NativeError, NativePipeline, Program, VmErrorKind},
-    engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig},
+    engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig, SourceKind},
+    runtime::{JsValue, ModuleRegistry, ModuleStatus, resolve_module_specifier},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct NativeScriptCacheKey {
     source_hash: u64,
     strict: bool,
+    source_kind: SourceKind,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +51,8 @@ pub struct NativeRuntime {
     pipeline: NativePipeline,
     script_cache: VecDeque<NativeScriptCacheEntry>,
     cache_stats: NativeScriptCacheStats,
+    module_registry: ModuleRegistry,
+    current_source_kind: SourceKind,
 }
 
 impl NativeRuntime {
@@ -65,6 +71,8 @@ impl NativeRuntime {
             pipeline: NativePipeline::default(),
             script_cache: VecDeque::new(),
             cache_stats: NativeScriptCacheStats::default(),
+            module_registry: ModuleRegistry::default(),
+            current_source_kind: SourceKind::Script,
         }
     }
 
@@ -93,6 +101,7 @@ impl NativeRuntime {
         let key = NativeScriptCacheKey {
             source_hash: hash_source(source),
             strict: self.context.strict(),
+            source_kind: self.current_source_kind,
         };
         if let Some(index) = self.script_cache.iter().position(|entry| entry.key == key) {
             let entry = self
@@ -140,6 +149,45 @@ impl NativeRuntime {
     pub fn cache_stats(&self) -> NativeScriptCacheStats {
         self.cache_stats
     }
+
+    pub fn module_registry_len(&self) -> usize {
+        self.module_registry.len()
+    }
+
+    pub fn module_status_for_path(&self, path: &Path) -> Option<ModuleStatus> {
+        self.module_registry.status_for_path(path)
+    }
+
+    pub fn module_record_for_path(&self, path: &Path) -> Option<&crate::runtime::ModuleRecord> {
+        self.module_registry.record_for_path(path)
+    }
+
+    pub fn eval_module_source(
+        &mut self,
+        source: &str,
+        path: &Path,
+        drain_jobs: bool,
+    ) -> Result<String, EvalFailure> {
+        RuntimeBackend::eval_module_source(self, source, path, drain_jobs)
+            .map(|execution| execution.value)
+    }
+
+    pub fn load_module_dependency(
+        &mut self,
+        importer_path: &Path,
+        specifier: &str,
+        drain_jobs: bool,
+    ) -> Result<String, EvalFailure> {
+        let path = resolve_module_specifier(importer_path, specifier)
+            .map_err(|message| EvalFailure::new(FailureKind::Unsupported, message))?;
+        let source = fs::read_to_string(&path).map_err(|error| {
+            EvalFailure::new(
+                FailureKind::Reference,
+                format!("cannot load module `{}`: {error}", path.display()),
+            )
+        })?;
+        self.eval_module_source(&source, &path, drain_jobs)
+    }
 }
 
 impl RuntimeBackend for NativeRuntime {
@@ -149,7 +197,15 @@ impl RuntimeBackend for NativeRuntime {
         options: ExecutionOptions,
     ) -> Result<BackendExecution, EvalFailure> {
         self.context.clear_output();
-        self.context.set_strict(options.strict);
+        self.current_source_kind = options.source_kind;
+        self.context
+            .set_strict(options.strict || options.source_kind == SourceKind::Module);
+        self.context
+            .set_top_level_this(if options.source_kind == SourceKind::Module {
+                JsValue::Undefined
+            } else {
+                self.context.global_this_value()
+            });
         let value = self.evaluate(source)?;
         Ok(BackendExecution {
             value: value.to_string(),
@@ -158,13 +214,73 @@ impl RuntimeBackend for NativeRuntime {
     }
 
     fn parse_only(&mut self, source: &str, options: ExecutionOptions) -> Result<(), EvalFailure> {
-        self.context.set_strict(options.strict);
+        self.current_source_kind = options.source_kind;
+        self.context
+            .set_strict(options.strict || options.source_kind == SourceKind::Module);
+        self.context
+            .set_top_level_this(if options.source_kind == SourceKind::Module {
+                JsValue::Undefined
+            } else {
+                self.context.global_this_value()
+            });
         let _ = self.prepare_chunk(source).map_err(classify_native_error)?;
         Ok(())
     }
 
     fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure> {
         self.evaluate(source).map(|_| ())
+    }
+
+    fn eval_module_source(
+        &mut self,
+        source: &str,
+        path: &Path,
+        drain_jobs: bool,
+    ) -> Result<BackendExecution, EvalFailure> {
+        self.context.clear_output();
+        self.current_source_kind = SourceKind::Module;
+        self.context.set_strict(true);
+        self.context.set_top_level_this(JsValue::Undefined);
+
+        let module_id = self.module_registry.ensure_record(path);
+        match self.module_registry.status_for_path(path) {
+            Some(ModuleStatus::Evaluated) => {
+                return Ok(BackendExecution {
+                    value: JsValue::Undefined.to_string(),
+                    output: self.context.take_output(),
+                });
+            }
+            Some(ModuleStatus::Linked) => {
+                return Err(EvalFailure::new(
+                    FailureKind::Unsupported,
+                    format!(
+                        "cyclic module graph is not supported yet at `{}`",
+                        path.display()
+                    ),
+                ));
+            }
+            _ => {}
+        }
+
+        self.module_registry
+            .set_status(module_id, ModuleStatus::Linked);
+        let outcome = self.evaluate(source);
+        match outcome {
+            Ok(value) => {
+                self.module_registry
+                    .set_status(module_id, ModuleStatus::Evaluated);
+                let _ = drain_jobs;
+                Ok(BackendExecution {
+                    value: value.to_string(),
+                    output: self.context.take_output(),
+                })
+            }
+            Err(error) => {
+                self.module_registry
+                    .set_status(module_id, ModuleStatus::Failed);
+                Err(error)
+            }
+        }
     }
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure> {

@@ -1,5 +1,6 @@
 use std::{
     fmt,
+    path::Path,
     time::{Duration, Instant},
 };
 
@@ -42,11 +43,20 @@ impl Default for RuntimeConfig {
     }
 }
 
+/// Source grammar selected for one evaluation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum SourceKind {
+    #[default]
+    Script,
+    Module,
+}
+
 /// Options that can vary between evaluations in the same isolate.
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionOptions {
     pub strict: bool,
     pub drain_jobs: bool,
+    pub source_kind: SourceKind,
 }
 
 impl Default for ExecutionOptions {
@@ -54,6 +64,7 @@ impl Default for ExecutionOptions {
         Self {
             strict: false,
             drain_jobs: true,
+            source_kind: SourceKind::Script,
         }
     }
 }
@@ -154,6 +165,22 @@ impl Runtime {
     /// Evaluates setup code without clearing captured output. Used by Test262.
     pub(crate) fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure> {
         self.backend.eval_fragment(source)
+    }
+
+    pub(crate) fn eval_module_source(
+        &mut self,
+        source: &str,
+        path: &Path,
+        drain_jobs: bool,
+    ) -> Result<ExecutionReport, EvalFailure> {
+        let started = Instant::now();
+        let result = self.backend.eval_module_source(source, path, drain_jobs)?;
+
+        Ok(ExecutionReport {
+            value: result.value,
+            output: result.output,
+            elapsed: started.elapsed(),
+        })
     }
 
     pub(crate) fn parse_only(

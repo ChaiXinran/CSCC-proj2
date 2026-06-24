@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::VecDeque};
+use std::{cell::RefCell, collections::VecDeque, path::Path};
 
 use boa_engine::{
     Context, JsError, JsNativeErrorKind, JsResult, JsValue, Source, js_string,
@@ -169,6 +169,22 @@ impl RuntimeBackend for BoaRuntime {
 
     fn eval_fragment(&mut self, source: &str) -> Result<(), EvalFailure> {
         self.evaluate_script(source).map(|_| ())
+    }
+
+    fn eval_module_source(
+        &mut self,
+        source: &str,
+        _path: &Path,
+        drain_jobs: bool,
+    ) -> Result<BackendExecution, EvalFailure> {
+        self.eval(
+            source,
+            ExecutionOptions {
+                strict: true,
+                drain_jobs,
+                ..ExecutionOptions::default()
+            },
+        )
     }
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure> {

@@ -127,6 +127,20 @@ pub struct ModuleRecord {
     pub specifier: String,
     pub source_path: std::path::PathBuf,
     pub dependencies: Vec<String>,
+    pub imports: Vec<ModuleImportBinding>,
+    pub exports: Vec<ModuleExportBinding>,
+}
+
+pub struct ModuleImportBinding {
+    pub source: String,
+    pub imported_name: String,
+    pub local_name: String,
+}
+
+pub struct ModuleExportBinding {
+    pub export_name: String,
+    pub local_name: Option<String>,
+    pub source: Option<String>,
 }
 
 pub enum ModuleStatus {
@@ -139,10 +153,14 @@ pub enum ModuleStatus {
 
 Required behavior:
 
-- Test262 `flags: [module]` enters the native module path;
-- module code is strict by default;
-- module diagnostics are reported separately from script diagnostics;
-- relative specifiers are resolved from the importing file;
+- Test262 `flags: [module]` enters the native module path; implemented in the
+  first V8-B pass;
+- module code is strict by default; implemented in the first V8-B pass;
+- module top-level `this` is `undefined`; implemented in the first V8-B pass;
+- module diagnostics are reported separately from script diagnostics via
+  `module mode` Test262 labels;
+- relative specifiers are resolved from the importing file; implemented for
+  `./` and `../` specifiers;
 - the module registry prevents duplicate evaluation of the same normalized path;
 - acyclic dependency graphs are the V8 target; cyclic execution may return a
   clear unsupported/runtime error until V9+.
@@ -161,6 +179,10 @@ impl NativeContext {
 
 The exact API may be adjusted to match the current backend entry points, but
 the source kind must be explicit. Do not infer module mode from source text.
+
+Current first-stage implementation lives in `src/runtime/module.rs` and
+`src/backend/native.rs`. Import/export binding storage is intentionally still a
+connector task until A-group import/export AST forms are available.
 
 ## 4. Builtin Skeleton Contract
 

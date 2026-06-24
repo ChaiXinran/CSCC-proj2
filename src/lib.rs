@@ -17,4 +17,5 @@ pub use backend::BackendKind;
 pub use contracts::{ChunkExecutor, NativeError, NativePipeline, ProgramCompiler, SourceParser};
 pub use engine::{
     Engine, EvalFailure, ExecutionOptions, ExecutionReport, FailureKind, Runtime, RuntimeConfig,
+    SourceKind,
 };

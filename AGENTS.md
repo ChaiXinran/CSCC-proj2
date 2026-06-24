@@ -133,14 +133,18 @@ Main remaining feature gaps from the full scan:
 - Missing builtin/global families: TypedArray/ArrayBuffer, Temporal, Intl,
   Date, Promise, Proxy, Map/Set/Iterator, BigInt, Atomics/SharedArrayBuffer,
   WeakRef/FinalizationRegistry, DisposableStack.
-- Module runner: 821 skips are `module runner not implemented yet`.
+- Module runner: V8-B first-stage infrastructure is implemented. The focused
+  `test/language/module-code` run is 201/599 passed, 398 failed, 0 skipped.
+  The standard V8 scan is 205/5,000 passed, 4,795 failed, 0 skipped. Remaining
+  module work is mostly import/export parser/linking connector work.
 - RegExp: property escapes, backreferences, Annex B legacy behavior, and error
   kind mapping.
 
 Current forward plan is in `thoughts/newplan.md`:
 
 - V8: frontend unlockers.
-- V9: module runner and Test262 host support.
+- V8-B: module runner infrastructure first-stage is in place.
+- V9: Promise/job queue/iterator runtime.
 - V10: builtin/global family skeletons and core behavior.
 - V11: semantic precision and RegExp专项.
 
@@ -165,6 +169,16 @@ V8 is a three-track parallel batch:
 Shared contracts in `docs/native-v8-interface.md` should merge before feature
 branches make broad changes to shared files.
 
+Current V8-B status (2026-06-24): first-stage module infrastructure is in
+place. Implemented pieces include `SourceKind::Module`, native module eval,
+strict module execution, module top-level `this === undefined`, `ModuleRecord`
+/ `ModuleStatus` / `ModuleRegistry`, relative dependency loading, duplicate
+evaluation guards, and `module mode` Test262 labels. B focused tests are 5/5
+passed; native Test262 gate is 12/12 passed; module-code focused scan is
+201/599 passed; V8 lightweight scan is 205/5,000 passed with 0 skipped. B
+agents should not add large builtin skeletons; wait for A-group import/export
+AST before wiring full import/export bindings.
+
 Standard V8 lightweight scan command:
 
 ```sh
@@ -174,8 +188,9 @@ cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 -
 `--native-v8-scan` runs the locked 5,000-case manifest in
 `reports/native-v8-scan-failures.txt`, sampled from cases that did not pass in
 the 2026-06-24 full direct run. Its initial baseline is recorded in
-`reports/native-v8-scan-summary.json`: 0/5,000 passed, 4,504 failed, 496
-skipped. AI agents working on V8 should use this command as the default
+`reports/native-v8-scan-summary.json`: initially 0/5,000 passed, 4,504 failed,
+496 skipped; after V8-B first-stage module runner work, 205/5,000 passed,
+4,795 failed, 0 skipped. AI agents working on V8 should use this command as the default
 lightweight integration check after relevant focused tests, unless the user
 explicitly asks for a different test scope.
 

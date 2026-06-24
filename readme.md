@@ -193,6 +193,13 @@ Native V8 development has started as a three-track parallel feature batch:
 [team plan](docs/native-v8-team-plan.md). V8 focuses on frontend unlockers,
 module runner infrastructure, and first-batch builtin skeletons.
 
+V8-B first-stage module runner infrastructure is now available: module-flagged
+Test262 cases enter native `module mode`, module code is strict by default,
+module top-level `this` is `undefined`, relative dependency loading and module
+registry deduplication are implemented, and focused module-code coverage is
+201/599 passed with 0 skipped. The standard V8 lightweight scan is now
+205/5,000 passed, 4,795 failed, and 0 skipped.
+
 Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
 The active post-V8 roadmap is `thoughts/newplan.md`.
 
@@ -213,8 +220,9 @@ cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 -
 It runs the locked 5,000-case manifest in
 `reports/native-v8-scan-failures.txt`, selected from cases that did not pass in
 the 2026-06-24 full direct run. The initial summary is
-`reports/native-v8-scan-summary.json`: 0/5,000 passed, 4,504 failed, and 496
-skipped.
+`reports/native-v8-scan-summary.json`: initially 0/5,000 passed, 4,504 failed,
+and 496 skipped; after the first V8-B module runner pass it is 205/5,000
+passed, 4,795 failed, and 0 skipped.
 
 Runnable integration coverage lives in
 [`tests/native_v2.rs`](tests/native_v2.rs),

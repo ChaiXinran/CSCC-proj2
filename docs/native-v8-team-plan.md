@@ -83,11 +83,13 @@ tests/native_v8_module.rs
 
 Tasks:
 
-- add explicit script/module source-kind handling;
-- add module strict-mode execution entry;
-- add module record, registry, and acyclic dependency loading;
+- add explicit script/module source-kind handling; **done first-stage**;
+- add module strict-mode execution entry; **done first-stage**;
+- add module record, registry, and acyclic dependency loading; **registry and
+  relative loader done, AST graph wiring pending A-group import/export support**;
 - define module environment and import/export binding storage;
-- classify module failures separately in runner output.
+- classify module failures separately in runner output; **module-mode labels
+  done**.
 
 B must not implement large builtin skeletons or rewrite A-owned parser behavior.
 If parser support is missing, B may land runtime scaffolding with unit tests and
@@ -107,6 +109,15 @@ Required report:
 Every B-track implementation change must update this report with the change
 summary, touched files, tests run, module skip delta, and open coordination
 notes.
+
+Current B status (2026-06-24): first-stage module infrastructure is in place.
+`cargo test --no-default-features --test native_v8_module` passes 5/5, and
+`cargo test --no-default-features --test native_test262` passes 12/12. The
+focused module-code command reports 201/599 passed, 398 failed, 0 skipped
+(`reports/native-v8-b-module-summary.json`). The standard V8 scan reports
+205/5,000 passed, 4,795 failed, 0 skipped
+(`reports/native-v8-scan-summary.json`). Remaining failures are dominated by
+import/export parser and linking semantics that require A/B connector work.
 
 ## 4. C Group — Builtin Skeletons and Test262 Host
 
@@ -178,8 +189,9 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 `--native-v8-scan` is the standard lightweight V8 integration check. It runs
 the locked 5,000-case manifest in `reports/native-v8-scan-failures.txt`, sampled
 from cases that did not pass in the 2026-06-24 full direct run. The initial
-summary is `reports/native-v8-scan-summary.json`: 0/5,000 passed, 4,504 failed,
-and 496 skipped.
+initial summary was `reports/native-v8-scan-summary.json`: 0/5,000 passed,
+4,504 failed, and 496 skipped. After the first V8-B module runner pass, the
+current summary is 205/5,000 passed, 4,795 failed, and 0 skipped.
 
 Reports and docs to update after the integration run:
 

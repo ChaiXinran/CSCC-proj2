@@ -6,6 +6,7 @@ mod environment;
 mod function;
 mod gc;
 mod heap;
+mod module;
 mod object;
 mod property;
 mod property_map;
@@ -23,6 +24,10 @@ pub use function::{
 };
 pub use gc::{CallFrameRoots, CollectionStats, Collector, HeapStats, RootSet, Trace, Tracer};
 pub use heap::Heap;
+pub use module::{
+    ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus,
+    normalize_module_path, resolve_module_specifier,
+};
 pub use object::{JsObject, ObjectId, ObjectKind, PrimitiveValue};
 pub use property::{PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind};
 pub use property_map::{PropertyEntry, PropertyMap};

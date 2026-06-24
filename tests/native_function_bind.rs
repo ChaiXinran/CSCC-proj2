@@ -16,6 +16,7 @@ fn native_eval_strict(source: &str) -> String {
             ExecutionOptions {
                 strict: true,
                 drain_jobs: true,
+                ..ExecutionOptions::default()
             },
         )
         .unwrap_or_else(|error| panic!("native strict eval failed for `{source}`: {error}"))
