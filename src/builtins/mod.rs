@@ -25,6 +25,7 @@ mod v6;
 mod v8;
 mod v9;
 mod v10;
+mod v11;
 
 use crate::{
     runtime::{
@@ -251,7 +252,8 @@ fn install_std_globals(context: &mut NativeContext) -> Result<(), VmError> {
     v6::install(context)?;
     v8::install(context)?;
     v9::install(context)?;
-    v10::install(context)
+    v10::install(context)?;
+    v11::install(context)
 }
 
 #[cfg(test)]
