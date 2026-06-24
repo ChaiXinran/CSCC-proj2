@@ -23,6 +23,7 @@ pub(crate) mod regexp;
 mod string;
 mod v6;
 mod v8;
+mod v9;
 
 use crate::{
     runtime::{
@@ -247,7 +248,8 @@ fn test262_error_construct(
 /// which bridges the pure C1/C2 algorithm modules into the runtime.
 fn install_std_globals(context: &mut NativeContext) -> Result<(), VmError> {
     v6::install(context)?;
-    v8::install(context)
+    v8::install(context)?;
+    v9::install(context)
 }
 
 #[cfg(test)]
