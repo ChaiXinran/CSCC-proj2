@@ -200,6 +200,24 @@ registry deduplication are implemented, and focused module-code coverage is
 201/599 passed with 0 skipped. The standard V8 lightweight scan is now
 205/5,000 passed, 4,795 failed, and 0 skipped.
 
+Native V9 development has started. V9 covers async/generator/for-of lowering,
+Promise/job queue/iterator runtime, and Map/Set/Iterator builtins. Planning and
+ownership live in [Native V9 scope](docs/native-v9-scope.md),
+[shared interface](docs/native-v9-interface.md), and
+[team plan](docs/native-v9-team-plan.md). Worker progress is tracked in
+`reports/v9-partA-report.md`, `reports/v9-partB-report.md`, and
+`reports/v9-partC-report.md`.
+
+The standard V9 lightweight scan is:
+
+```sh
+cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/native-v9-scan-summary.json
+```
+
+It runs the locked 5,000-case manifest in
+`reports/native-v9-scan-failures.txt`. Initial result: 0/5,000 passed, 5,000
+failed, and 0 skipped.
+
 Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
 The active post-V8 roadmap is `thoughts/newplan.md`.
 
@@ -314,6 +332,7 @@ cargo run -- test262 --native-v6-scan --jobs 4 --progress
 cargo run --release --no-default-features -- test262 --native-v7 --jobs 1 --verbose
 cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
 cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/native-v9-scan-summary.json
 cargo test --test native_test262
 ```
 
@@ -354,6 +373,12 @@ skipped and failed tests are reported separately and never count as passes.
 5,000 concrete Test262 files from `reports/native-v8-scan-failures.txt`, sampled
 from cases that did not pass in the locked 2026-06-24 full direct run. Use it
 after focused V8-A/B/C tests and record deltas in the relevant V8 part report.
+
+`--native-v9-scan` is the standard V9 lightweight integration scan. It runs
+5,000 V9 hotspot failures from `reports/native-v9-scan-failures.txt`, covering
+async/generator/for-of, Promise/job queue, iterator runtime, and Map/Set areas.
+Use it after focused V9-A/B/C tests and record deltas in the relevant V9 part
+report.
 
 V7 dashboard tests are reporting tools rather than ordinary pass/fail gates.
 They run child suites separately so parent reporting survives child OOM, stack

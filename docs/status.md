@@ -109,6 +109,13 @@
 - The version workflow now requires every future version to create per-track
   worker reports and a `--native-vN-scan` 5,000-case prior-failure manifest
   before implementation starts. See `docs/version-development-workflow.md`.
+- Native V9 setup has started. Scope, interface, team plan, per-track reports,
+  and the locked V9 lightweight scan are recorded in
+  `docs/native-v9-scope.md`, `docs/native-v9-interface.md`,
+  `docs/native-v9-team-plan.md`, `reports/v9-partA-report.md`,
+  `reports/v9-partB-report.md`, `reports/v9-partC-report.md`, and
+  `reports/native-v9-scan-failures.txt`. Initial V9 scan:
+  0/5,000 passed, 5,000 failed, 0 skipped.
 
 ## Acceptance Gates
 

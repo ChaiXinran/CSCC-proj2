@@ -307,11 +307,17 @@ V9 三组并行开发不同功能：
 ### V9 集成测试
 
 ```sh
+cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/native-v9-scan-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/statements/for-of --jobs 4 --progress --json reports/native-v9-forof-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Promise --jobs 4 --progress --json reports/native-v9-promise-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Iterator --jobs 4 --progress --json reports/native-v9-iterator-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-full-test262-summary.json
 ```
+
+V9 标准轻量 scan 已锁定为 `reports/native-v9-scan-failures.txt` 中的
+5000 个 V9 热点非通过用例。初始结果：0/5000 passed，5000 failed，0 skipped。
+V9 开发时每组完成 focused tests 后，应运行 `--native-v9-scan` 并更新对应
+`reports/v9-part*-report.md`。
 
 V9 完成后再启动 V10。
 
