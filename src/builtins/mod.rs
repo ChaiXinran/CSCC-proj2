@@ -9,8 +9,16 @@ mod object;
 // adapter layer in `std_primitives` bridges them into the runtime.
 // `allow(dead_code)` keeps low-level helpers (e.g. `utf16_slice`) available
 // without requiring a direct JavaScript-method home for each one.
+/// RegExp prototype refinements + ECMAScript Annex B legacy methods.
+mod annex_b;
+/// ArrayBuffer / DataView / TypedArray constructors + Intl skeleton.
+mod binary_data;
 #[allow(dead_code)]
 mod boolean;
+/// Map / Set / WeakMap / WeakSet + iterator infrastructure.
+mod collections;
+/// Date / Intl / Temporal built-ins.
+mod date_intl;
 #[allow(dead_code)]
 mod error;
 #[allow(dead_code)]
@@ -19,18 +27,10 @@ mod math;
 mod number;
 #[allow(dead_code)]
 pub(crate) mod regexp;
-#[allow(dead_code)]
-mod string;
 /// String / Number / Boolean / Math / Error / JSON adapter layer.
 mod std_primitives;
-/// ArrayBuffer / DataView / TypedArray constructors + Intl skeleton.
-mod binary_data;
-/// Map / Set / WeakMap / WeakSet + iterator infrastructure.
-mod collections;
-/// Date / Intl / Temporal built-ins.
-mod date_intl;
-/// RegExp prototype refinements + ECMAScript Annex B legacy methods.
-mod annex_b;
+#[allow(dead_code)]
+mod string;
 
 use crate::{
     runtime::{

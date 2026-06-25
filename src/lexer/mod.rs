@@ -425,6 +425,7 @@ impl<'source> Lexer<'source> {
     /// when the first `${` is encountered.
     fn read_template_literal(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
+        let saved = self.cursor.clone();
         self.cursor
             .bump()
             .expect("template literal opens with a backtick");
@@ -432,6 +433,10 @@ impl<'source> Lexer<'source> {
         loop {
             match self.cursor.bump() {
                 None => {
+                    if self.char_can_be_regex_body(start) {
+                        self.cursor = saved;
+                        return Ok(self.read_regex_body_placeholder());
+                    }
                     return Err(LexError {
                         span: Span::new(start, self.cursor.offset()),
                         message: "unterminated template literal".into(),
@@ -444,7 +449,15 @@ impl<'source> Lexer<'source> {
                         Span::new(start, end),
                     ));
                 }
-                Some('\\') => self.read_string_escape(start, &mut value)?,
+                Some('\\') => {
+                    if let Err(error) = self.read_string_escape(start, &mut value) {
+                        if self.char_can_be_regex_body(start) {
+                            self.cursor = saved;
+                            return Ok(self.read_regex_body_placeholder());
+                        }
+                        return Err(error);
+                    }
+                }
                 Some('$') if self.cursor.peek() == Some('{') => {
                     self.cursor.bump(); // consume '{'
                     let end = self.cursor.offset();
@@ -496,6 +509,7 @@ impl<'source> Lexer<'source> {
     }
     fn read_string(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
+        let saved = self.cursor.clone();
         let quote = self
             .cursor
             .bump()
@@ -505,6 +519,10 @@ impl<'source> Lexer<'source> {
         loop {
             match self.cursor.bump() {
                 None => {
+                    if self.char_can_be_regex_body(start) {
+                        self.cursor = saved;
+                        return Ok(self.read_regex_body_placeholder());
+                    }
                     return Err(LexError {
                         span: Span::new(start, self.cursor.offset()),
                         message: "unterminated string literal".into(),
@@ -516,10 +534,22 @@ impl<'source> Lexer<'source> {
                     token.has_legacy_escape = self.string_has_legacy_escape;
                     return Ok(token);
                 }
-                Some('\\') => self.read_string_escape(start, &mut value)?,
+                Some('\\') => {
+                    if let Err(error) = self.read_string_escape(start, &mut value) {
+                        if self.char_can_be_regex_body(start) {
+                            self.cursor = saved;
+                            return Ok(self.read_regex_body_placeholder());
+                        }
+                        return Err(error);
+                    }
+                }
                 // ES2019+: U+000A (LF) and U+000D (CR) terminate string literals,
                 // but U+2028 (LS) and U+2029 (PS) are now valid string content.
                 Some('\n' | '\r') => {
+                    if self.char_can_be_regex_body(start) {
+                        self.cursor = saved;
+                        return Ok(self.read_regex_body_placeholder());
+                    }
                     return Err(LexError {
                         span: Span::new(start, self.cursor.offset()),
                         message: "unterminated string literal".into(),
@@ -528,6 +558,45 @@ impl<'source> Lexer<'source> {
                 Some(ch) => value.push(ch),
             }
         }
+    }
+
+    fn char_can_be_regex_body(&self, quote_start: usize) -> bool {
+        let before = self.cursor.slice(Span::new(0, quote_start));
+        let line_start = before
+            .char_indices()
+            .filter_map(|(index, ch)| is_line_terminator(ch).then_some(index + ch.len_utf8()))
+            .last()
+            .unwrap_or(0);
+        if !before[line_start..].contains('/') {
+            return false;
+        }
+
+        let quote_end = quote_start
+            + self
+                .cursor
+                .slice(Span::new(quote_start, quote_start + 1))
+                .len();
+        let after = self
+            .cursor
+            .slice(Span::new(quote_end, self.cursor.offset()));
+        for ch in after.chars() {
+            if is_line_terminator(ch) {
+                return false;
+            }
+            if ch == '/' {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn read_regex_body_placeholder(&mut self) -> Token {
+        let start = self.cursor.offset();
+        self.cursor.bump();
+        Token::new(
+            TokenKind::Operator("\0".to_owned()),
+            Span::new(start, self.cursor.offset()),
+        )
     }
 
     fn read_string_escape(&mut self, start: usize, value: &mut String) -> Result<(), LexError> {
@@ -1443,6 +1512,12 @@ pub fn read_regex_literal_at(
                 pattern.push('\\');
                 i += 1;
                 if let Some(ch) = source[i..].chars().next() {
+                    if is_line_terminator(ch) {
+                        return Err(LexError {
+                            span: Span::new(start, i + ch.len_utf8()),
+                            message: "unterminated regex literal".into(),
+                        });
+                    }
                     pattern.push(ch);
                     i += ch.len_utf8();
                 }

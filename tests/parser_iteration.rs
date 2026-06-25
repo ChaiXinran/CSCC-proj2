@@ -5,9 +5,9 @@
 //! that the produced runtime error message mentions "V9-B pending".
 
 use agentjs::{
+    BackendKind, Engine, ExecutionOptions, RuntimeConfig,
     ast::{Expression, ForBinding, FunctionLiteral, Program, Statement, VariableKind},
     bytecode::Instruction,
-    BackendKind, Engine, ExecutionOptions, RuntimeConfig,
 };
 
 fn parse(source: &str) -> Program {
@@ -95,13 +95,7 @@ fn parses_yield_star() {
     let Statement::Expression(expr) = &body.statements[0] else {
         panic!();
     };
-    assert!(matches!(
-        expr,
-        Expression::Yield {
-            delegate: true,
-            ..
-        }
-    ));
+    assert!(matches!(expr, Expression::Yield { delegate: true, .. }));
 }
 
 #[test]
@@ -215,18 +209,16 @@ fn parses_for_of_with_existing_target() {
     let Statement::ForOf { left, .. } = &prog.body[0] else {
         panic!("expected ForOf");
     };
-    assert!(matches!(left, ForBinding::Target(Expression::Identifier(_))));
+    assert!(matches!(
+        left,
+        ForBinding::Target(Expression::Identifier(_))
+    ));
 }
 
 #[test]
 fn parses_for_of_with_var() {
     let prog = parse("for (var i of items) {}");
-    let Statement::ForOf {
-        left,
-        is_await,
-        ..
-    } = &prog.body[0]
-    else {
+    let Statement::ForOf { left, is_await, .. } = &prog.body[0] else {
         panic!("expected ForOf");
     };
     assert!(!is_await);

@@ -506,6 +506,22 @@ impl NativeContext {
         Ok(true)
     }
 
+    pub fn validate_and_apply_symbol_property_descriptor(
+        &mut self,
+        object: ObjectId,
+        symbol: SymbolId,
+        update: PropertyDescriptorUpdate,
+    ) -> Result<bool, VmError> {
+        if descriptor_update_has_data(&update) && descriptor_update_has_accessor(&update) {
+            return Err(VmError::type_error("invalid mixed property descriptor"));
+        }
+        let current = self.get_own_symbol_property_descriptor(object, symbol);
+        let Some(descriptor) = validate_and_apply_descriptor_update(current, update) else {
+            return Ok(false);
+        };
+        self.define_symbol_own_property(object, symbol, descriptor)
+    }
+
     /// Walk the prototype chain and return the first data value for a symbol key.
     /// Accessor-keyed symbol properties return `None` (the caller can use the VM path).
     #[must_use]
@@ -540,6 +556,89 @@ impl NativeContext {
             .object(object)?
             .own_symbol_property(symbol)
             .cloned()
+    }
+
+    pub fn has_symbol_property(&self, object: ObjectId, symbol: SymbolId) -> Result<bool, VmError> {
+        Ok(self
+            .find_symbol_property_descriptor(object, symbol)?
+            .is_some())
+    }
+
+    pub fn delete_symbol_property(
+        &mut self,
+        object: ObjectId,
+        symbol: SymbolId,
+        strict: bool,
+    ) -> Result<bool, VmError> {
+        if let Some(descriptor) = self.get_own_symbol_property_descriptor(object, symbol)
+            && !descriptor.configurable
+        {
+            return strict_error_or_false(strict, "cannot delete non-configurable property");
+        }
+
+        let Some(object) = self.heap.object_mut(object) else {
+            return Err(VmError::runtime("missing object"));
+        };
+        if object.own_symbol_property(symbol).is_none() {
+            return Ok(true);
+        }
+        Ok(object.delete_own_symbol_property(symbol).is_some())
+    }
+
+    pub fn set_symbol_property(
+        &mut self,
+        object: ObjectId,
+        symbol: SymbolId,
+        value: JsValue,
+        strict: bool,
+    ) -> Result<bool, VmError> {
+        if let Some(mut descriptor) = self.get_own_symbol_property_descriptor(object, symbol) {
+            return match &mut descriptor.kind {
+                PropertyKind::Data { writable, .. } if !*writable => {
+                    strict_error_or_false(strict, "cannot write non-writable property")
+                }
+                PropertyKind::Data {
+                    value: current_value,
+                    ..
+                } => {
+                    *current_value = value;
+                    self.define_symbol_own_property(object, symbol, descriptor)
+                }
+                PropertyKind::Accessor { set: None, .. } => {
+                    strict_error_or_false(strict, "property setter is undefined")
+                }
+                PropertyKind::Accessor { set: Some(_), .. } => Err(VmError::type_error(
+                    "accessor setter invocation requires the VM call path",
+                )),
+            };
+        }
+
+        if let Some(prototype) = self.get_prototype_of(object)
+            && let Some((_, descriptor)) =
+                self.find_symbol_property_descriptor(prototype, symbol)?
+        {
+            match descriptor.kind {
+                PropertyKind::Data {
+                    writable: false, ..
+                } => {
+                    return strict_error_or_false(
+                        strict,
+                        "cannot write inherited non-writable property",
+                    );
+                }
+                PropertyKind::Accessor { set: None, .. } => {
+                    return strict_error_or_false(strict, "inherited property setter is undefined");
+                }
+                PropertyKind::Accessor { set: Some(_), .. } => {
+                    return Err(VmError::type_error(
+                        "accessor setter invocation requires the VM call path",
+                    ));
+                }
+                PropertyKind::Data { .. } => {}
+            }
+        }
+
+        self.define_symbol_own_property(object, symbol, PropertyDescriptor::data(value))
     }
 
     pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
@@ -1199,111 +1298,9 @@ impl NativeContext {
         }
 
         let current = self.get_own_property_descriptor(object, &key);
-        let Some(current) = current else {
-            let descriptor = descriptor_from_update(update);
-            return self.define_own_property(object, key, descriptor);
+        let Some(descriptor) = validate_and_apply_descriptor_update(current, update) else {
+            return Ok(false);
         };
-
-        if !current.configurable {
-            if update.configurable == Some(true) {
-                return Ok(false);
-            }
-            if let Some(enumerable) = update.enumerable
-                && enumerable != current.enumerable
-            {
-                return Ok(false);
-            }
-
-            match &current.kind {
-                PropertyKind::Data { value, writable } => {
-                    if descriptor_update_has_accessor(&update) {
-                        return Ok(false);
-                    }
-                    if !*writable {
-                        if update.writable == Some(true) {
-                            return Ok(false);
-                        }
-                        if let Some(new_value) = &update.value
-                            && !value.same_value(new_value)
-                        {
-                            return Ok(false);
-                        }
-                    }
-                }
-                PropertyKind::Accessor { get, set } => {
-                    if descriptor_update_has_data(&update) {
-                        return Ok(false);
-                    }
-                    if let Some(new_get) = &update.get
-                        && !same_optional_value(get.as_ref(), new_get.as_ref())
-                    {
-                        return Ok(false);
-                    }
-                    if let Some(new_set) = &update.set
-                        && !same_optional_value(set.as_ref(), new_set.as_ref())
-                    {
-                        return Ok(false);
-                    }
-                }
-            }
-        }
-
-        let PropertyDescriptorUpdate {
-            value: update_value,
-            writable: update_writable,
-            get: update_get,
-            set: update_set,
-            enumerable,
-            configurable,
-        } = update;
-        let mut descriptor = current;
-        match &mut descriptor.kind {
-            PropertyKind::Data {
-                value: current_value,
-                writable: current_writable,
-            } => {
-                if update_get.is_some() || update_set.is_some() {
-                    if !descriptor.configurable {
-                        return Ok(false);
-                    }
-                    descriptor.kind = PropertyKind::Accessor {
-                        get: update_get.flatten(),
-                        set: update_set.flatten(),
-                    };
-                } else {
-                    if let Some(new_value) = update_value {
-                        *current_value = new_value;
-                    }
-                    if let Some(new_writable) = update_writable {
-                        *current_writable = new_writable;
-                    }
-                }
-            }
-            PropertyKind::Accessor {
-                get: current_get,
-                set: current_set,
-            } => {
-                if update_value.is_some() || update_writable.is_some() {
-                    descriptor.kind = PropertyKind::Data {
-                        value: update_value.unwrap_or(JsValue::Undefined),
-                        writable: update_writable.unwrap_or(false),
-                    };
-                } else {
-                    if let Some(new_get) = update_get {
-                        *current_get = new_get;
-                    }
-                    if let Some(new_set) = update_set {
-                        *current_set = new_set;
-                    }
-                }
-            }
-        }
-        if let Some(enumerable) = enumerable {
-            descriptor.enumerable = enumerable;
-        }
-        if let Some(configurable) = configurable {
-            descriptor.configurable = configurable;
-        }
         self.define_own_property(object, key, descriptor)
     }
 
@@ -1789,6 +1786,30 @@ impl NativeContext {
                 .object(id)
                 .ok_or_else(|| VmError::runtime("missing object"))?
                 .prototype;
+            depth += 1;
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn find_symbol_property_descriptor(
+        &self,
+        object: ObjectId,
+        symbol: SymbolId,
+    ) -> Result<Option<(ObjectId, PropertyDescriptor)>, VmError> {
+        let mut current = Some(object);
+        let mut depth = 0usize;
+        while let Some(id) = current {
+            if depth > PROTOTYPE_CHAIN_LIMIT {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
+            let object = self
+                .heap
+                .object(id)
+                .ok_or_else(|| VmError::runtime("missing object"))?;
+            if let Some(descriptor) = object.own_symbol_property(symbol) {
+                return Ok(Some((id, descriptor.clone())));
+            }
+            current = object.prototype;
             depth += 1;
         }
         Ok(None)
@@ -2538,6 +2559,117 @@ fn descriptor_from_update(update: PropertyDescriptorUpdate) -> PropertyDescripto
         update.enumerable.unwrap_or(false),
         update.configurable.unwrap_or(false),
     )
+}
+
+fn validate_and_apply_descriptor_update(
+    current: Option<PropertyDescriptor>,
+    update: PropertyDescriptorUpdate,
+) -> Option<PropertyDescriptor> {
+    let Some(current) = current else {
+        return Some(descriptor_from_update(update));
+    };
+
+    if !current.configurable {
+        if update.configurable == Some(true) {
+            return None;
+        }
+        if let Some(enumerable) = update.enumerable
+            && enumerable != current.enumerable
+        {
+            return None;
+        }
+
+        match &current.kind {
+            PropertyKind::Data { value, writable } => {
+                if descriptor_update_has_accessor(&update) {
+                    return None;
+                }
+                if !*writable {
+                    if update.writable == Some(true) {
+                        return None;
+                    }
+                    if let Some(new_value) = &update.value
+                        && !value.same_value(new_value)
+                    {
+                        return None;
+                    }
+                }
+            }
+            PropertyKind::Accessor { get, set } => {
+                if descriptor_update_has_data(&update) {
+                    return None;
+                }
+                if let Some(new_get) = &update.get
+                    && !same_optional_value(get.as_ref(), new_get.as_ref())
+                {
+                    return None;
+                }
+                if let Some(new_set) = &update.set
+                    && !same_optional_value(set.as_ref(), new_set.as_ref())
+                {
+                    return None;
+                }
+            }
+        }
+    }
+
+    let PropertyDescriptorUpdate {
+        value: update_value,
+        writable: update_writable,
+        get: update_get,
+        set: update_set,
+        enumerable,
+        configurable,
+    } = update;
+    let mut descriptor = current;
+    match &mut descriptor.kind {
+        PropertyKind::Data {
+            value: current_value,
+            writable: current_writable,
+        } => {
+            if update_get.is_some() || update_set.is_some() {
+                if !descriptor.configurable {
+                    return None;
+                }
+                descriptor.kind = PropertyKind::Accessor {
+                    get: update_get.flatten(),
+                    set: update_set.flatten(),
+                };
+            } else {
+                if let Some(new_value) = update_value {
+                    *current_value = new_value;
+                }
+                if let Some(new_writable) = update_writable {
+                    *current_writable = new_writable;
+                }
+            }
+        }
+        PropertyKind::Accessor {
+            get: current_get,
+            set: current_set,
+        } => {
+            if update_value.is_some() || update_writable.is_some() {
+                descriptor.kind = PropertyKind::Data {
+                    value: update_value.unwrap_or(JsValue::Undefined),
+                    writable: update_writable.unwrap_or(false),
+                };
+            } else {
+                if let Some(new_get) = update_get {
+                    *current_get = new_get;
+                }
+                if let Some(new_set) = update_set {
+                    *current_set = new_set;
+                }
+            }
+        }
+    }
+    if let Some(enumerable) = enumerable {
+        descriptor.enumerable = enumerable;
+    }
+    if let Some(configurable) = configurable {
+        descriptor.configurable = configurable;
+    }
+    Some(descriptor)
 }
 
 fn strict_error_or_false(strict: bool, message: &str) -> Result<bool, VmError> {

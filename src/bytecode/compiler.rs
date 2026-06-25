@@ -1189,28 +1189,28 @@ impl Compiler {
                     // Stack before: []
                     let name_idx = self.add_name(name, &mut fn_chunk)?;
                     fn_chunk.emit(Instruction::LoadName(name_idx)); // [param_val]
-                    fn_chunk.emit(Instruction::Duplicate);          // [param_val, param_val]
+                    fn_chunk.emit(Instruction::Duplicate); // [param_val, param_val]
                     let undef_c = fn_chunk
                         .add_constant(Constant::Undefined)
                         .map_err(CompileError::from_chunk)?;
                     fn_chunk.emit(Instruction::Constant(undef_c)); // [param_val, param_val, undefined]
-                    fn_chunk.emit(Instruction::StrictEqual);       // [param_val, is_undef]
+                    fn_chunk.emit(Instruction::StrictEqual); // [param_val, is_undef]
                     // JumpIfFalse peeks: jumps when is_undef=false (NOT undefined)
                     let jump_not_undef = fn_chunk.emit(Instruction::JumpIfFalse(usize::MAX));
                     // IS undefined path: [param_val, is_undef(=true)]
-                    fn_chunk.emit(Instruction::Pop);  // [param_val]   (remove is_undef)
-                    fn_chunk.emit(Instruction::Pop);  // []             (remove undefined param_val)
+                    fn_chunk.emit(Instruction::Pop); // [param_val]   (remove is_undef)
+                    fn_chunk.emit(Instruction::Pop); // []             (remove undefined param_val)
                     self.compile_expression(default_expr, &mut fn_chunk, &mut fn_context)?; // [default]
                     fn_chunk.emit(Instruction::StoreName(name_idx)); // [default]
-                    fn_chunk.emit(Instruction::Pop);                 // []
+                    fn_chunk.emit(Instruction::Pop); // []
                     let jump_end = fn_chunk.emit(Instruction::Jump(usize::MAX));
                     // NOT undefined path: [param_val, is_undef(=false)]
                     let not_undef = fn_chunk.current_offset();
                     fn_chunk
                         .patch_jump(jump_not_undef, not_undef)
                         .map_err(CompileError::from_chunk)?;
-                    fn_chunk.emit(Instruction::Pop);  // [param_val] (remove is_undef)
-                    fn_chunk.emit(Instruction::Pop);  // []          (discard — already bound)
+                    fn_chunk.emit(Instruction::Pop); // [param_val] (remove is_undef)
+                    fn_chunk.emit(Instruction::Pop); // []          (discard — already bound)
                     // end:
                     let end = fn_chunk.current_offset();
                     fn_chunk
@@ -2609,7 +2609,10 @@ impl Compiler {
         match left {
             crate::ast::ForBinding::Declaration { kind, pattern } => {
                 match (kind, pattern) {
-                    (VariableKind::Let | VariableKind::Var, crate::ast::BindingPattern::Identifier(name)) => {
+                    (
+                        VariableKind::Let | VariableKind::Var,
+                        crate::ast::BindingPattern::Identifier(name),
+                    ) => {
                         // Use StoreName: the binding was pre-initialized to undefined above.
                         self.emit_store_identifier(name, chunk, context)?;
                         chunk.emit(Instruction::Pop); // StoreName pushes the value back; discard it.

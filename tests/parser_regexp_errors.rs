@@ -84,3 +84,29 @@ fn accepts_unicode_escape_and_property_escape_syntax() {
     parse_ok(r"/\p{ASCII}/u;");
     parse_ok(r"/\P{General_Category=Letter}/u;");
 }
+
+#[test]
+fn accepts_quotes_inside_regexp_literals_before_parser_relexing() {
+    parse_ok(r#"/"/;"#);
+    parse_ok(r#"/nnnn"/;"#);
+    parse_ok("/'/;");
+    parse_ok("/nnnn'/;");
+    parse_ok("/`/;");
+    parse_ok("/nnnn`/;");
+}
+
+#[test]
+fn rejects_backslash_line_terminators_in_regexp_literals() {
+    for source in [
+        "/\\\n/;",
+        "/\\\r/;",
+        "/\\\u{2028}/;",
+        "/\\\u{2029}/;",
+        "/a\\\n/;",
+        "/a\\\r/;",
+        "/a\\\u{2028}/;",
+        "/a\\\u{2029}/;",
+    ] {
+        parse_fails(source);
+    }
+}

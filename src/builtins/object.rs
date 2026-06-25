@@ -207,23 +207,11 @@ fn object_define_property(
 
     if let JsValue::Symbol(sym_id) = key_arg {
         let update = descriptor_update_from_object(vm, context, descriptor_object)?;
-        let descriptor = if update.get.is_some() || update.set.is_some() {
-            PropertyDescriptor::accessor(
-                update.get.flatten(),
-                update.set.flatten(),
-                update.enumerable.unwrap_or(false),
-                update.configurable.unwrap_or(false),
-            )
+        if context.validate_and_apply_symbol_property_descriptor(object, sym_id, update)? {
+            return Ok(target);
         } else {
-            PropertyDescriptor::data_with(
-                update.value.unwrap_or(JsValue::Undefined),
-                update.writable.unwrap_or(false),
-                update.enumerable.unwrap_or(false),
-                update.configurable.unwrap_or(false),
-            )
-        };
-        context.define_symbol_own_property(object, sym_id, descriptor)?;
-        return Ok(target);
+            return Err(VmError::type_error("cannot define property"));
+        }
     }
 
     let key = to_property_key(&key_arg)?;

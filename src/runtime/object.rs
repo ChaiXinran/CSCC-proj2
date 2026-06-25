@@ -1,7 +1,7 @@
 //! JavaScript objects and prototype links.
 
-use super::{IteratorRecord, JsValue, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer};
 use super::iterator::IteratorKind;
+use super::{IteratorRecord, JsValue, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer};
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

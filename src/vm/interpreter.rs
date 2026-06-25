@@ -8,7 +8,7 @@ use crate::{
     },
     runtime::{
         FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, ObjectId, PreferredType,
-        PrimitiveValue, PropertyDescriptor, PropertyKind, to_property_key,
+        PrimitiveValue, PropertyDescriptor, PropertyKind, SymbolId, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -556,15 +556,13 @@ impl Vm {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
                     if let JsValue::Symbol(sym_id) = &key {
-                        let sym_id = *sym_id;
-                        let result = if let Some(obj_id) = context.value_object(&object) {
-                            context
-                                .get_symbol_property_value(obj_id, sym_id)
-                                .unwrap_or(JsValue::Undefined)
-                        } else {
-                            JsValue::Undefined
-                        };
-                        self.stack.push(result);
+                        match self.get_symbol_property_value_completion(object, *sym_id, context)? {
+                            OperationResult::Value(value) => self.stack.push(value),
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                        }
                     } else {
                         let key = to_property_key(&key)?;
                         match self.get_property_value_completion(object, &key, context)? {
@@ -803,19 +801,13 @@ impl Vm {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
                     if let JsValue::Symbol(sym_id) = &key {
-                        let sym_id = *sym_id;
-                        let obj_id = context.require_object(&object, "set symbol property")?;
-                        context.define_symbol_own_property(
-                            obj_id,
-                            sym_id,
-                            crate::runtime::PropertyDescriptor::data_with(
-                                value.clone(),
-                                true,
-                                true,
-                                true,
-                            ),
-                        )?;
-                        self.stack.push(value);
+                        match self.set_symbol_property_value(object, *sym_id, value, context)? {
+                            OperationResult::Value(result) => self.stack.push(result),
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                        }
                     } else {
                         let key = to_property_key(&key)?;
                         match self.set_property_value(object, &key, value, context)? {
@@ -1362,6 +1354,126 @@ impl Vm {
         context.set(receiver, key, value, false)
     }
 
+    pub(crate) fn get_property_value_with_receiver_from_builtin(
+        &mut self,
+        target: JsValue,
+        receiver: JsValue,
+        key: &str,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let object = self.property_lookup_object(&target, context)?;
+        let Some((_, descriptor)) = context.find_property_descriptor(object, key)? else {
+            return Ok(JsValue::Undefined);
+        };
+        match descriptor.kind {
+            PropertyKind::Data { value, .. } => Ok(value),
+            PropertyKind::Accessor { get: None, .. } => Ok(JsValue::Undefined),
+            PropertyKind::Accessor {
+                get: Some(getter), ..
+            } => self.call_value_from_builtin(getter, receiver, Vec::new(), context),
+        }
+    }
+
+    pub(crate) fn get_symbol_property_value_with_receiver_from_builtin(
+        &mut self,
+        target: JsValue,
+        receiver: JsValue,
+        symbol: SymbolId,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let object = self.property_lookup_object(&target, context)?;
+        let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? else {
+            return Ok(JsValue::Undefined);
+        };
+        match descriptor.kind {
+            PropertyKind::Data { value, .. } => Ok(value),
+            PropertyKind::Accessor { get: None, .. } => Ok(JsValue::Undefined),
+            PropertyKind::Accessor {
+                get: Some(getter), ..
+            } => self.call_value_from_builtin(getter, receiver, Vec::new(), context),
+        }
+    }
+
+    pub(crate) fn set_property_value_with_receiver_from_builtin(
+        &mut self,
+        target: JsValue,
+        receiver: JsValue,
+        key: &str,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<bool, VmError> {
+        let target_object = context.require_object(&target, "Reflect.set")?;
+        if let Some((_, descriptor)) = context.find_property_descriptor(target_object, key)? {
+            match descriptor.kind {
+                PropertyKind::Accessor {
+                    set: Some(setter), ..
+                } => {
+                    let _ = self.call_value_from_builtin(setter, receiver, vec![value], context)?;
+                    return Ok(true);
+                }
+                PropertyKind::Accessor { set: None, .. } => return Ok(false),
+                PropertyKind::Data {
+                    writable: false, ..
+                } => return Ok(false),
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        let Some(receiver_object) = context.value_object(&receiver) else {
+            return Ok(false);
+        };
+        if let Some(current) = context.get_own_property_descriptor(receiver_object, key) {
+            match current.kind {
+                PropertyKind::Accessor { .. } => return Ok(false),
+                PropertyKind::Data {
+                    writable: false, ..
+                } => return Ok(false),
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        context.define_own_property(receiver_object, key.into(), PropertyDescriptor::data(value))
+    }
+
+    pub(crate) fn set_symbol_property_value_with_receiver_from_builtin(
+        &mut self,
+        target: JsValue,
+        receiver: JsValue,
+        symbol: SymbolId,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<bool, VmError> {
+        let target_object = context.require_object(&target, "Reflect.set")?;
+        if let Some((_, descriptor)) =
+            context.find_symbol_property_descriptor(target_object, symbol)?
+        {
+            match descriptor.kind {
+                PropertyKind::Accessor {
+                    set: Some(setter), ..
+                } => {
+                    let _ = self.call_value_from_builtin(setter, receiver, vec![value], context)?;
+                    return Ok(true);
+                }
+                PropertyKind::Accessor { set: None, .. } => return Ok(false),
+                PropertyKind::Data {
+                    writable: false, ..
+                } => return Ok(false),
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        let Some(receiver_object) = context.value_object(&receiver) else {
+            return Ok(false);
+        };
+        if let Some(current) = context.get_own_symbol_property_descriptor(receiver_object, symbol) {
+            match current.kind {
+                PropertyKind::Accessor { .. } => return Ok(false),
+                PropertyKind::Data {
+                    writable: false, ..
+                } => return Ok(false),
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        context.define_symbol_own_property(receiver_object, symbol, PropertyDescriptor::data(value))
+    }
+
     fn abstract_equals(
         &mut self,
         left: JsValue,
@@ -1694,6 +1806,27 @@ impl Vm {
         }
     }
 
+    fn get_symbol_property_value_completion(
+        &mut self,
+        receiver: JsValue,
+        symbol: SymbolId,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let object = self.property_lookup_object(&receiver, context)?;
+        let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? else {
+            return Ok(OperationResult::Value(JsValue::Undefined));
+        };
+        match descriptor.kind {
+            PropertyKind::Data { value, .. } => Ok(OperationResult::Value(value)),
+            PropertyKind::Accessor { get: None, .. } => {
+                Ok(OperationResult::Value(JsValue::Undefined))
+            }
+            PropertyKind::Accessor {
+                get: Some(getter), ..
+            } => self.call_value(getter, receiver, Vec::new(), context),
+        }
+    }
+
     /// Resolves the object whose property table backs a receiver's reads. For
     /// the primitive wrapper types this is the corresponding intrinsic
     /// prototype, so `"abc".charAt` and `(5).toFixed` find their methods.
@@ -1789,6 +1922,56 @@ impl Vm {
         // runtime-internal errors (heap exhausted, etc.) propagate as Rust errors.
         match context.set_property(receiver, key, value) {
             Ok(result) => Ok(OperationResult::Value(result)),
+            Err(error)
+                if matches!(
+                    error.kind,
+                    VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
+                ) =>
+            {
+                Ok(OperationResult::Throw(vm_error_to_value(error)))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    fn set_symbol_property_value(
+        &mut self,
+        receiver: JsValue,
+        symbol: SymbolId,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let object = match context.require_object(&receiver, "write property") {
+            Ok(object) => object,
+            Err(error)
+                if matches!(
+                    error.kind,
+                    VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
+                ) =>
+            {
+                return Ok(OperationResult::Throw(vm_error_to_value(error)));
+            }
+            Err(error) => return Err(error),
+        };
+        if let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? {
+            match descriptor.kind {
+                PropertyKind::Accessor {
+                    set: Some(setter), ..
+                } => match self.call_value(setter, receiver, vec![value.clone()], context)? {
+                    OperationResult::Value(_) => return Ok(OperationResult::Value(value)),
+                    OperationResult::Throw(thrown) => return Ok(OperationResult::Throw(thrown)),
+                },
+                PropertyKind::Accessor { set: None, .. } => {
+                    return Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error("property setter is undefined"),
+                    )));
+                }
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        match context.set_symbol_property(object, symbol, value.clone(), context.strict()) {
+            Ok(true) => Ok(OperationResult::Value(value)),
+            Ok(false) => Ok(OperationResult::Value(value)),
             Err(error)
                 if matches!(
                     error.kind,

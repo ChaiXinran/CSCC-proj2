@@ -1,4 +1,4 @@
-# V11 Part A Report — RegExp Parser / Static Errors
+# V11 Part A Report - RegExp Parser / Static Errors
 
 Owner: A group
 Scope: lexer / parser / AST / RegExp static errors
@@ -25,14 +25,15 @@ Primary directories:
 
 ## Current Status
 
-Status: first V11-A RegExp literal static-error pass implemented.
+Status: second V11-A RegExp literal lexer-boundary pass implemented.
 
 ## Change Log
 
 | Date | Worker | Summary | Files changed | Tests run | Result delta |
 | --- | --- | --- | --- | --- | --- |
 | 2026-06-24 | setup | Created V11-A report template, locked V11 scan manifest, and installed `--native-v11-scan` selector | `reports/v11-partA-report.md`, `reports/native-v11-scan-failures.txt`, V11 docs/selector files | `cargo test --no-default-features --test native_test262`; `cargo check --no-default-features --all-targets`; attempted `cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json` | selector/gates pass; scan attempt exceeded 300s local timeout, no JSON summary produced |
-| 2026-06-24 | A | Added RegExp literal static checks for quantifiers without atoms, Unicode-mode identity/control/decimal escapes, Unicode property escape syntax, class-escape range endpoints, quantified lookarounds, and regex-body `\u...` lexer fallback before parser re-read | `src/lexer/mod.rs`, `tests/frontend_v11.rs`, `reports/v11-partA-report.md` | `cargo test --no-default-features --test frontend_v11`; `cargo test --no-default-features --test frontend_v10`; `cargo test --no-default-features --test native_test262`; `cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals/regexp --jobs 4 --progress --json reports/native-v11-a-regexp-literals-summary.json`; attempted `cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json` | focused regexp-literals scan now records 218/238 passed, 20 failed, 0 skipped, 91.60%; standard V11 scan still exceeded 600s local timeout and produced no JSON |
+| 2026-06-24 | A | Added RegExp literal static checks for quantifiers without atoms, Unicode-mode identity/control/decimal escapes, Unicode property escape syntax, class-escape range endpoints, quantified lookarounds, and regex-body `\u...` lexer fallback before parser re-read | `src/lexer/mod.rs`, `tests/parser_regexp_errors.rs`, `reports/v11-partA-report.md` | `cargo test --no-default-features --test parser_regexp_errors`; `cargo test --no-default-features --test native_test262`; `cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals/regexp --jobs 4 --progress --json reports/native-v11-a-regexp-literals-summary.json`; attempted `cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json` | focused regexp-literals scan recorded 218/238 passed, 20 failed, 0 skipped, 91.60%; standard V11 scan exceeded 600s local timeout and produced no JSON |
+| 2026-06-25 | Codex / A group | Added lexer-boundary fallback for quotes/backticks inside RegExp literal candidates and rejected backslash-line-terminator RegExp escapes during parser re-read | `src/lexer/mod.rs`, `tests/parser_regexp_errors.rs`, `reports/native-v11-a-regexp-literals-summary.json`, `reports/v11-partA-report.md` | `cargo fmt --all -- --check`; `cargo test --no-default-features --test parser_regexp_errors`; focused regexp-literals Test262 scan | `parser_regexp_errors`: 9/9; focused regexp-literals scan: 226/238 passed, 12 failed, 0 skipped, 94.9580%; current local retry baseline before this pass was 217/238 |
 
 ## Implemented Functionality
 
@@ -51,8 +52,15 @@ Status: first V11-A RegExp literal static-error pass implemented.
 - Made lexer `\u...` identifier handling fall back to placeholder tokens when
   the escape cannot form an identifier, so the parser's RegExp re-reader can
   classify RegExp body escapes instead of failing early as an identifier error.
-- Added `tests/frontend_v11.rs` with focused A-line parse success/failure
-  coverage.
+- Made unterminated quote and backtick scans fall back to placeholder tokens
+  when they appear inside a same-line RegExp literal candidate, allowing the
+  parser re-reader to preserve valid patterns such as `/"/`, `/''/`, and
+  ``/`/``.
+- Rejects RegExp backslash sequences whose escaped character is a line
+  terminator, including LF, CR, LS, and PS, for both first-character and
+  later-character positions.
+- Added `tests/parser_regexp_errors.rs` with focused A-line parse
+  success/failure coverage.
 
 ## Test Results and Delta Analysis
 
@@ -73,33 +81,38 @@ Setup validation:
 
 Current A validation:
 
-- `cargo test --no-default-features --test frontend_v11`: 7 passed, 0 failed.
-- `cargo test --no-default-features --test frontend_v10`: 7 passed, 0 failed.
-- `cargo test --no-default-features --test native_test262`: 15 passed, 0 failed.
-- Focused regexp literal scan:
-
 ```text
+cargo fmt --all -- --check
+cargo test --no-default-features --test parser_regexp_errors
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals/regexp --jobs 4 --progress --json reports/native-v11-a-regexp-literals-summary.json
 ```
 
-Result:
+Results:
+
+- `cargo fmt --all -- --check`: passed.
+- `parser_regexp_errors`: 9 passed, 0 failed.
+- Focused regexp literal scan:
 
 | Metric | Current |
 | --- | ---: |
 | total | 238 |
-| passed | 218 |
-| failed | 20 |
+| passed | 226 |
+| failed | 12 |
 | skipped | 0 |
-| conformance | 91.60% |
+| conformance | 94.9580% |
 
-- Standard V11 scan command attempted with a 600s local timeout:
+The focused scan improved from the current local retry baseline of 217/238 to
+226/238 after this pass. Compared with the previous report's 218/238 result,
+this is a net +8 focused Test262 passes.
 
-```text
-cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
+Large-suite commands to run externally when a longer local window is available:
+
+```powershell
+cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json *> reports/native-v11-scan-verbose.txt
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-v11-full-summary.json *> reports/native-v11-full-verbose.txt
 ```
 
-Result: timed out after 600s; `reports/native-v11-scan-summary.json` was not
-created.
+Do not count skipped, timed-out, crashed, or uncaptured cases as passes.
 
 ## Open Risks / Coordination Notes
 
@@ -107,8 +120,9 @@ created.
 - Do not implement RegExp runtime matching in A-owned files.
 - Coordinate RegExp literal metadata shape with C before builtin algorithms
   depend on it.
-- Remaining focused regexp-literal failures are mostly outside this A pass:
-  runtime RegExp backend limitations for named backreferences, `\0`,
-  surrogate-pair escapes, case mapping, and two runtime-limit cases. Several
-  dynamic `Function` string-boundary failures remain parser/host integration
-  follow-up candidates.
+- Remaining focused regexp-literal failures are now mostly outside A-owned
+  parser/static-error work: runtime RegExp backend limitations for named
+  backreferences, `\0`, surrogate-pair escapes, case mapping, and sticky `^`
+  behavior; one legacy parse-negative ambiguity (`/a//.source`); and several
+  65,536-iteration dynamic `eval` loops that can hit the harness wall-clock
+  deadline after lexer-boundary errors are removed.

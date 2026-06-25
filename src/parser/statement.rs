@@ -356,7 +356,10 @@ impl Parser {
             } else {
                 None
             };
-            elements.push(Some(ArrayBindingElement { pattern: pat, default }));
+            elements.push(Some(ArrayBindingElement {
+                pattern: pat,
+                default,
+            }));
             if !self.eat_punctuator(',') {
                 break;
             }
@@ -443,9 +446,7 @@ impl Parser {
     /// Returns `(PropertyName, Option<shorthand_binding_name>)`.
     /// `shorthand_name` is `Some` only for plain-identifier keys that can serve
     /// as both key and shorthand binding target: `{ foo }` → key `"foo"`, binding `"foo"`.
-    fn parse_object_binding_key(
-        &mut self,
-    ) -> Result<(PropertyName, Option<String>), ParseError> {
+    fn parse_object_binding_key(&mut self) -> Result<(PropertyName, Option<String>), ParseError> {
         let tok = self.peek().clone();
         match tok.kind {
             TokenKind::String(s) => {

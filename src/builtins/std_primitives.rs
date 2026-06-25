@@ -2858,8 +2858,7 @@ fn reflect_define_property(
     let update = reflect_descriptor_update_from_object(vm, context, descriptor_object)?;
 
     let defined = if let JsValue::Symbol(symbol) = key_arg {
-        let descriptor = reflect_descriptor_from_update(update);
-        context.define_symbol_own_property(object, symbol, descriptor)?
+        context.validate_and_apply_symbol_property_descriptor(object, symbol, update)?
     } else {
         let key = to_property_key(&key_arg)?;
         context.validate_and_apply_property_descriptor(object, key, update)?
@@ -2876,8 +2875,10 @@ fn reflect_delete_property(
     let target = arg(arguments, 0);
     let object = context.require_object(&target, "Reflect.deleteProperty")?;
     let key_arg = arg(arguments, 1);
-    if matches!(key_arg, JsValue::Symbol(_)) {
-        return Ok(JsValue::Boolean(true));
+    if let JsValue::Symbol(symbol) = key_arg {
+        return Ok(JsValue::Boolean(
+            context.delete_symbol_property(object, symbol, false)?,
+        ));
     }
     let key = to_property_key(&key_arg)?;
     Ok(JsValue::Boolean(
@@ -2892,15 +2893,16 @@ fn reflect_get(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.get")?;
+    context.require_object(&target, "Reflect.get")?;
     let key_arg = arg(arguments, 1);
+    let receiver = arguments.get(2).cloned().unwrap_or_else(|| target.clone());
     if let JsValue::Symbol(symbol) = key_arg {
-        return Ok(context
-            .get_symbol_property_value(object, symbol)
-            .unwrap_or(JsValue::Undefined));
+        return vm.get_symbol_property_value_with_receiver_from_builtin(
+            target, receiver, symbol, context,
+        );
     }
     let key = to_property_key(&key_arg)?;
-    vm.get_property_value(target, &key, context)
+    vm.get_property_value_with_receiver_from_builtin(target, receiver, &key, context)
 }
 
 fn reflect_get_own_property_descriptor(
@@ -2912,8 +2914,11 @@ fn reflect_get_own_property_descriptor(
     let target = arg(arguments, 0);
     let object = context.require_object(&target, "Reflect.getOwnPropertyDescriptor")?;
     let key_arg = arg(arguments, 1);
-    if matches!(key_arg, JsValue::Symbol(_)) {
-        return Ok(JsValue::Undefined);
+    if let JsValue::Symbol(symbol) = key_arg {
+        let Some(descriptor) = context.get_own_symbol_property_descriptor(object, symbol) else {
+            return Ok(JsValue::Undefined);
+        };
+        return reflect_descriptor_to_object(context, descriptor);
     }
     let key = to_property_key(&key_arg)?;
     let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
@@ -2945,11 +2950,9 @@ fn reflect_has(
     let object = context.require_object(&target, "Reflect.has")?;
     let key_arg = arg(arguments, 1);
     if let JsValue::Symbol(symbol) = key_arg {
-        let found = context
-            .heap()
-            .object(object)
-            .is_some_and(|value| value.own_symbol_property(symbol).is_some());
-        return Ok(JsValue::Boolean(found));
+        return Ok(JsValue::Boolean(
+            context.has_symbol_property(object, symbol)?,
+        ));
     }
     let key = to_property_key(&key_arg)?;
     Ok(JsValue::Boolean(context.has_property(object, &key)?))
@@ -3010,19 +3013,20 @@ fn reflect_set(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.set")?;
+    context.require_object(&target, "Reflect.set")?;
     let key_arg = arg(arguments, 1);
     let value = arg(arguments, 2);
+    let receiver = arguments.get(3).cloned().unwrap_or_else(|| target.clone());
     if let JsValue::Symbol(symbol) = key_arg {
-        context.define_symbol_own_property(
-            object,
-            symbol,
-            PropertyDescriptor::data_with(value, true, true, true),
-        )?;
-        return Ok(JsValue::Boolean(true));
+        return Ok(JsValue::Boolean(
+            vm.set_symbol_property_value_with_receiver_from_builtin(
+                target, receiver, symbol, value, context,
+            )?,
+        ));
     }
     let key = to_property_key(&key_arg)?;
-    let set = vm.set_property_value_from_builtin(target, &key, value, context)?;
+    let set =
+        vm.set_property_value_with_receiver_from_builtin(target, receiver, &key, value, context)?;
     Ok(JsValue::Boolean(set))
 }
 
@@ -3121,23 +3125,6 @@ fn reflect_optional_callable(value: JsValue, label: &str) -> Result<Option<JsVal
     Err(VmError::type_error(format!(
         "descriptor {label} is not callable"
     )))
-}
-
-fn reflect_descriptor_from_update(update: PropertyDescriptorUpdate) -> PropertyDescriptor {
-    if update.get.is_some() || update.set.is_some() {
-        return PropertyDescriptor::accessor(
-            update.get.flatten(),
-            update.set.flatten(),
-            update.enumerable.unwrap_or(false),
-            update.configurable.unwrap_or(false),
-        );
-    }
-    PropertyDescriptor::data_with(
-        update.value.unwrap_or(JsValue::Undefined),
-        update.writable.unwrap_or(false),
-        update.enumerable.unwrap_or(false),
-        update.configurable.unwrap_or(false),
-    )
 }
 
 fn reflect_descriptor_to_object(
