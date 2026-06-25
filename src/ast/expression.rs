@@ -131,6 +131,9 @@ pub struct FunctionLiteral {
     pub is_async: bool,
     /// `function*` — body may contain `yield` expressions.
     pub is_generator: bool,
+    /// `true` for arrow functions (`=>`). Arrow functions do not have their own
+    /// `arguments` binding or `this`, unlike regular function expressions.
+    pub is_arrow: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -163,13 +166,16 @@ pub enum ObjectProperty {
     PrototypeSetter { value: Expression },
 }
 
-/// The key of an object property. V3 supports identifier, string, and number
-/// keys; computed keys (`[expr]: value`) are deferred to a later milestone.
+/// The key of an object property or class member.
 #[derive(Debug, Clone, PartialEq)]
 pub enum PropertyName {
     Identifier(String),
     String(String),
     Number(f64),
+    /// `#name` — private class field/method identifier.
+    PrivateName(String),
+    /// `[expr]` — computed class member key (not valid in plain object literals).
+    Computed(Box<Expression>),
 }
 
 impl PropertyName {
@@ -178,6 +184,7 @@ impl PropertyName {
     pub fn to_key_string(&self) -> String {
         match self {
             Self::Identifier(name) | Self::String(name) => name.clone(),
+            Self::PrivateName(name) => format!("#{name}"),
             Self::Number(n) => {
                 if n.fract() == 0.0 && n.is_finite() {
                     format!("{}", *n as i64)
@@ -185,6 +192,7 @@ impl PropertyName {
                     format!("{n}")
                 }
             }
+            Self::Computed(_) => "__computed__".into(),
         }
     }
 }
@@ -231,6 +239,12 @@ pub enum ClassElement {
         name: PropertyName,
         function: FunctionLiteral,
         is_static: bool,
+    },
+    /// Instance or static field declaration: `[static] name [= expr]`.
+    Field {
+        name: PropertyName,
+        is_static: bool,
+        initializer: Option<Box<Expression>>,
     },
 }
 

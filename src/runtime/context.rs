@@ -1641,10 +1641,10 @@ impl NativeContext {
         let mut record = record_clone;
         let result = self.iterator_next(&mut record)?;
         // Write the updated index / done flag back into the heap object.
-        if let Some(obj) = self.heap_mut().object_mut(id) {
-            if let ObjectKind::Iterator { record: r } = &mut obj.kind {
-                *r = record;
-            }
+        if let Some(obj) = self.heap_mut().object_mut(id)
+            && let ObjectKind::Iterator { record: r } = &mut obj.kind
+        {
+            *r = record;
         }
         match result {
             Some(value) => Ok((value, false)),
@@ -1658,10 +1658,10 @@ impl NativeContext {
             JsValue::Object(id) => *id,
             _ => return Ok(()), // not our iterator object — nothing to close
         };
-        if let Some(obj) = self.heap_mut().object_mut(id) {
-            if let ObjectKind::Iterator { record } = &mut obj.kind {
-                record.done = true;
-            }
+        if let Some(obj) = self.heap_mut().object_mut(id)
+            && let ObjectKind::Iterator { record } = &mut obj.kind
+        {
+            record.done = true;
         }
         Ok(())
     }
@@ -2091,7 +2091,7 @@ impl NativeContext {
         length: usize,
     ) -> Result<TypedArrayViewId, VmError> {
         let byte_length = checked_view_byte_length(length, element_kind.bytes_per_element())?;
-        if byte_offset % element_kind.bytes_per_element() != 0 {
+        if !byte_offset.is_multiple_of(element_kind.bytes_per_element()) {
             return Err(VmError::range(
                 "TypedArray byteOffset is not element-aligned",
             ));

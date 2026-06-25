@@ -877,19 +877,22 @@ fn global_unescape(
     let mut units = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 5 < bytes.len() && matches!(bytes[i + 1], b'u' | b'U') {
-            if let Ok(unit) = u16::from_str_radix(&string[i + 2..i + 6], 16) {
-                units.push(unit);
-                i += 6;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 5 < bytes.len()
+            && matches!(bytes[i + 1], b'u' | b'U')
+            && let Ok(unit) = u16::from_str_radix(&string[i + 2..i + 6], 16)
+        {
+            units.push(unit);
+            i += 6;
+            continue;
         }
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(unit) = u16::from_str_radix(&string[i + 1..i + 3], 16) {
-                units.push(unit);
-                i += 3;
-                continue;
-            }
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let Ok(unit) = u16::from_str_radix(&string[i + 1..i + 3], 16)
+        {
+            units.push(unit);
+            i += 3;
+            continue;
         }
         let ch = string[i..].chars().next().unwrap();
         let mut buf = [0u16; 2];

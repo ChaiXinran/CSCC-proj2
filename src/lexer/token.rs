@@ -128,6 +128,8 @@ pub enum TokenKind {
     Keyword(Keyword),
     Punctuator(char),
     Operator(String),
+    /// `#name` — private class field/method identifier.
+    PrivateName(String),
 }
 
 /// One token and its location in source text.
@@ -146,6 +148,11 @@ pub struct Token {
     /// inside strict-mode code; the parser checks this flag after determining
     /// whether the enclosing function or script is strict.
     pub has_legacy_escape: bool,
+    /// Set on `Identifier` tokens that contain a Unicode escape sequence
+    /// (`\uXXXX` or `\u{XXXX}`). Per spec, identifiers with escape sequences
+    /// cannot serve as contextual keywords such as `async` or `let`, even when
+    /// their decoded value matches the keyword spelling.
+    pub has_identifier_escape: bool,
 }
 
 impl Token {
@@ -160,6 +167,7 @@ impl Token {
             span,
             line_terminator_before: false,
             has_legacy_escape: false,
+            has_identifier_escape: false,
         }
     }
 
@@ -175,6 +183,7 @@ impl Token {
             span,
             line_terminator_before,
             has_legacy_escape: false,
+            has_identifier_escape: false,
         }
     }
 }

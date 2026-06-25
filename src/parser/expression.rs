@@ -141,6 +141,15 @@ impl Parser {
             return Ok(None);
         }
 
+        // NSPL + "use strict" is forbidden for non-async arrows too.
+        let is_nspl = Self::params_are_non_simple(&params);
+        if is_nspl && self.check_punctuator('{') && self.peek_body_has_use_strict() {
+            return Err(self.error(
+                "\"use strict\" directive is not allowed in function with non-simple parameters"
+                    .into(),
+            ));
+        }
+
         let body = if self.check_punctuator('{') {
             self.parse_function_body()?
         } else {
@@ -156,6 +165,7 @@ impl Parser {
             body,
             is_async: false,
             is_generator: false,
+            is_arrow: true,
         })))
     }
 
@@ -424,7 +434,9 @@ impl Parser {
                 // V9-A: `async` is a contextual keyword when followed (on the same line)
                 // by `function`, `(`, or a simple identifier — in that case try to parse
                 // an async function expression or async arrow.
-                if name == "async" {
+                // Per spec, identifiers with Unicode escapes cannot serve as contextual
+                // keywords, so `async` must NOT be treated as async.
+                if name == "async" && !self.peek().has_identifier_escape {
                     let next_on_same_line = self
                         .tokens
                         .get(self.cursor + 1)
@@ -575,11 +587,50 @@ impl Parser {
         Ok(Expression::Object(properties))
     }
 
-    /// Parses a single object property: data, getter, setter, or `__proto__`.
+    /// Parses a single object property: data, getter, setter, method, or `__proto__`.
     fn parse_object_property(
         &mut self,
         has_proto_setter: &mut bool,
     ) -> Result<ObjectProperty, ParseError> {
+        // Generator method: `*name() {}` or `*[expr]() {}`
+        if self.eat_operator("*") {
+            return self.parse_object_method(false, true);
+        }
+
+        // Async method (contextual): `async [*] name() {}` or `async [*] [expr]() {}`.
+        // Detection: `async` identifier not followed by a newline, followed by a valid
+        // method key token (not `:`, `,`, `}`, `(`). This avoids consuming `async` when
+        // it's used as a plain property name (`{ async: 1 }`) or shorthand (`{ async }`).
+        if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "async")
+            && !self.peek().has_identifier_escape
+        {
+            let next = self.tokens.get(self.cursor + 1);
+            let next_is_method_key = next.is_some_and(|t| {
+                !t.line_terminator_before
+                    && matches!(
+                        &t.kind,
+                        TokenKind::Operator(op) if op == "*"
+                    )
+                    || next.is_some_and(|t| {
+                        !t.line_terminator_before
+                            && matches!(
+                                &t.kind,
+                                TokenKind::Punctuator('[')
+                                    | TokenKind::Identifier(_)
+                                    | TokenKind::Keyword(_)
+                                    | TokenKind::String(_)
+                                    | TokenKind::Number(_)
+                            )
+                    })
+            });
+            if next_is_method_key {
+                self.advance(); // consume `async`
+                let is_generator = self.eat_operator("*");
+                return self.parse_object_method(true, is_generator);
+            }
+        }
+
+        // Computed key: `[expr]: value` or `[expr]() {}`
         if self.eat_punctuator('[') {
             let key = self.parse_assignment()?;
             self.expect_punctuator(']')?;
@@ -594,6 +645,7 @@ impl Parser {
                         body,
                         is_async: false,
                         is_generator: false,
+                        is_arrow: false,
                     }),
                 });
             }
@@ -686,6 +738,7 @@ impl Parser {
                     body,
                     is_async: false,
                     is_generator: false,
+                    is_arrow: false,
                 }),
             });
         }
@@ -693,6 +746,47 @@ impl Parser {
         self.expect_punctuator(':')?;
         let value = self.parse_assignment()?;
         Ok(ObjectProperty::Data { key, value })
+    }
+
+    /// Helper: parses a method key and body after `[*]` and optional `async` flag are
+    /// already consumed. Handles both `name(){}` and `[computed](){}` forms.
+    fn parse_object_method(
+        &mut self,
+        is_async: bool,
+        is_generator: bool,
+    ) -> Result<ObjectProperty, ParseError> {
+        if self.eat_punctuator('[') {
+            let key = self.parse_assignment()?;
+            self.expect_punctuator(']')?;
+            let params = self.parse_param_list()?;
+            let body = self.parse_function_body()?;
+            return Ok(ObjectProperty::ComputedData {
+                key,
+                value: Expression::Function(FunctionLiteral {
+                    name: None,
+                    params,
+                    body,
+                    is_async,
+                    is_generator,
+                    is_arrow: false,
+                }),
+            });
+        }
+        let key = self.parse_property_name()?;
+        let name = key.to_key_string();
+        let params = self.parse_param_list()?;
+        let body = self.parse_function_body()?;
+        Ok(ObjectProperty::Data {
+            key,
+            value: Expression::Function(FunctionLiteral {
+                name: Some(name),
+                params,
+                body,
+                is_async,
+                is_generator,
+                is_arrow: false,
+            }),
+        })
     }
 
     /// Parses a property key: identifier, string literal, or number literal.
@@ -724,6 +818,8 @@ impl Parser {
     fn parse_function_expression(&mut self) -> Result<Expression, ParseError> {
         self.advance(); // `function`
         let is_generator = self.eat_operator("*");
+        let outer_generator = self.is_generator_context;
+        self.is_generator_context = is_generator;
         // Optional name for named function expressions (also accept keywords as names)
         let name = match self.peek().kind.clone() {
             TokenKind::Identifier(n) => {
@@ -737,13 +833,26 @@ impl Parser {
             _ => None,
         };
         let params = self.parse_param_list()?;
+        if is_generator || self.is_strict {
+            self.check_duplicate_params(&params)?;
+        }
+        let is_nspl = Self::params_are_non_simple(&params);
+        if is_nspl && self.peek_body_has_use_strict() {
+            self.is_generator_context = outer_generator;
+            return Err(self.error(
+                "\"use strict\" directive is not allowed in function with non-simple parameters"
+                    .into(),
+            ));
+        }
         let body = self.parse_function_body()?;
+        self.is_generator_context = outer_generator;
         Ok(Expression::Function(FunctionLiteral {
             name,
             params,
             body,
             is_async: false,
             is_generator,
+            is_arrow: false,
         }))
     }
 
@@ -757,6 +866,10 @@ impl Parser {
         if self.check_keyword(Keyword::Function) {
             self.advance(); // `function`
             let is_generator = self.eat_operator("*");
+            let outer_async = self.is_async_context;
+            let outer_generator = self.is_generator_context;
+            self.is_async_context = true;
+            self.is_generator_context = is_generator;
             let name = match self.peek().kind.clone() {
                 TokenKind::Identifier(n) => {
                     self.advance();
@@ -765,13 +878,26 @@ impl Parser {
                 _ => None,
             };
             let params = self.parse_param_list()?;
+            self.check_duplicate_params(&params)?;
+            let is_nspl = Self::params_are_non_simple(&params);
+            if is_nspl && self.peek_body_has_use_strict() {
+                self.is_async_context = outer_async;
+                self.is_generator_context = outer_generator;
+                return Err(self.error(
+                    "\"use strict\" directive is not allowed in function with non-simple parameters"
+                        .into(),
+                ));
+            }
             let body = self.parse_function_body()?;
+            self.is_async_context = outer_async;
+            self.is_generator_context = outer_generator;
             return Ok(Expression::Function(FunctionLiteral {
                 name,
                 params,
                 body,
                 is_async: true,
                 is_generator,
+                is_arrow: false,
             }));
         }
 
@@ -811,9 +937,23 @@ impl Parser {
             return Ok(Expression::Identifier("async".into()));
         }
 
+        // Now confirmed it's an async arrow — set async context for body parsing.
+        let outer_async = self.is_async_context;
+        self.is_async_context = true;
+        let is_nspl = Self::params_are_non_simple(&params);
+        if is_nspl && self.check_punctuator('{') && self.peek_body_has_use_strict() {
+            self.is_async_context = outer_async;
+            return Err(self.error(
+                "\"use strict\" directive is not allowed in function with non-simple parameters"
+                    .into(),
+            ));
+        }
         let body = if self.check_punctuator('{') {
-            self.parse_function_body()?
+            let b = self.parse_function_body()?;
+            self.is_async_context = outer_async;
+            b
         } else {
+            self.is_async_context = outer_async;
             let value = self.parse_assignment()?;
             crate::ast::FunctionBody {
                 statements: vec![Statement::Return(Some(value))],
@@ -826,6 +966,7 @@ impl Parser {
             body,
             is_async: true,
             is_generator: false,
+            is_arrow: true,
         }))
     }
 
@@ -904,54 +1045,705 @@ impl Parser {
         }))
     }
 
-    /// Parses `{ constructor() {...} method() {...} static foo() {...} }`.
+    /// Parses `{ constructor() {...} method() {...} static foo() {...} #priv = 0; }`.
     pub(super) fn parse_class_body(&mut self) -> Result<Vec<ClassElement>, ParseError> {
         self.expect_punctuator('{')?;
+        // Class bodies are always strict mode per ECMAScript specification.
+        let outer_strict = self.is_strict;
+        self.is_strict = true;
         let mut elements = Vec::new();
+        let result = self.parse_class_body_elements(&mut elements);
+        self.is_strict = outer_strict;
+        result?;
+        Ok(elements)
+    }
+
+    fn parse_class_body_elements(
+        &mut self,
+        elements: &mut Vec<ClassElement>,
+    ) -> Result<(), ParseError> {
+        // Track seen private names to detect duplicates.
+        let mut seen_private_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+
         while !self.check_punctuator('}') && !self.at_eof() {
             // Optional `static` keyword.
             let is_static = self.eat_keyword(Keyword::Static);
 
-            // Optional `*` for generator methods.
-            let is_generator_method = self.eat_operator("*");
-
-            // Property name
-            let prop_name = self.parse_property_name()?;
-
-            // Check for `constructor` special case.
-            let is_ctor = !is_static
-                && !is_generator_method
-                && matches!(&prop_name, PropertyName::Identifier(n) if n == "constructor");
-
-            // Parse method params + body.
-            let params = self.parse_param_list()?;
-            let body = self.parse_function_body()?;
-            let function = FunctionLiteral {
-                name: if is_ctor {
-                    Some("constructor".into())
+            // Check for `async` contextual keyword (method modifier).
+            // Only treat it as a modifier when the token after `async` on the SAME LINE
+            // looks like the start of a method key, AND the `async` token has no escape seqs.
+            let is_async = if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "async")
+                && !self.peek().has_identifier_escape
+            {
+                let next = self.tokens.get(self.cursor + 1);
+                let next_is_key = next.is_some_and(|t| {
+                    !t.line_terminator_before
+                        && !matches!(
+                            t.kind,
+                            TokenKind::Punctuator(';' | '(' | '}')
+                        )
+                });
+                if next_is_key {
+                    self.advance(); // consume `async`
+                    true
                 } else {
-                    Some(prop_name.to_key_string())
-                },
-                params,
-                body,
-                is_async: false,
-                is_generator: is_generator_method,
+                    false
+                }
+            } else {
+                false
             };
 
-            if is_ctor {
-                elements.push(ClassElement::Constructor(function));
-            } else {
+            // Check for `get`/`set` accessor keywords.
+            let is_getter = !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
+            let is_setter = !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
+
+            // For get/set: peek at the token after to distinguish `get(){}` (method named
+            // "get") from `get foo(){}` (getter). Treat as accessor only when next-next
+            // token is NOT `(`, `;`, `}`, or `=`.
+            let is_accessor = (is_getter || is_setter) && {
+                let next = self.tokens.get(self.cursor + 1);
+                next.is_some_and(|t| {
+                    !t.line_terminator_before
+                        && !matches!(
+                            t.kind,
+                            TokenKind::Punctuator('(' | ';' | '}' | '=')
+                        )
+                })
+            };
+            if is_accessor {
+                self.advance(); // consume `get` or `set`
+            }
+
+            // Optional `*` for generator methods.
+            let is_generator_method = !is_accessor && self.eat_operator("*");
+
+            // Class member name: identifier, string, number, `#private`, or `[computed]`.
+            let prop_name = self.parse_class_member_name()?;
+
+            // Private name duplicate check.
+            if let PropertyName::PrivateName(pn) = &prop_name {
+                let key = format!("{}#{}", if is_static { "s" } else { "i" }, pn);
+                if !seen_private_names.insert(key) {
+                    return Err(self.error(format!("duplicate private name `#{pn}`")));
+                }
+                // `#constructor` is forbidden (per spec, in any position).
+                if pn == "constructor" {
+                    return Err(self.error("`#constructor` is a reserved private name".into()));
+                }
+            }
+
+            // Semicolons can terminate standalone fields with no initializer.
+            if !is_async && !is_accessor && !is_generator_method && self.eat_punctuator(';') {
+                if Self::is_forbidden_field_name(&prop_name, is_static) {
+                    return Err(self.error(format!(
+                        "`{}` is not a valid class field name",
+                        prop_name.to_key_string()
+                    )));
+                }
+                elements.push(ClassElement::Field {
+                    name: prop_name,
+                    is_static,
+                    initializer: None,
+                });
+                continue;
+            }
+
+            // Field declaration: `[static] name = expr ;` or `[static] name;`
+            if !is_async && !is_accessor && !is_generator_method && self.eat_operator("=") {
+                if Self::is_forbidden_field_name(&prop_name, is_static) {
+                    return Err(self.error(format!(
+                        "`{}` is not a valid class field name",
+                        prop_name.to_key_string()
+                    )));
+                }
+                let init_expr = self.parse_assignment()?;
+                self.check_field_init_early_errors(&init_expr)?;
+                let initializer = Some(Box::new(init_expr));
+                // ASI: after field initializer, if no `;`, next token must be on new line or `}`.
+                if !self.check_punctuator(';')
+                    && !self.check_punctuator('}')
+                    && !self.peek().line_terminator_before
+                {
+                    return Err(self.error(format!(
+                        "unexpected token {} after class field initializer",
+                        crate::parser::describe(&self.peek().kind)
+                    )));
+                }
+                self.eat_punctuator(';');
+                elements.push(ClassElement::Field {
+                    name: prop_name,
+                    is_static,
+                    initializer,
+                });
+                while self.eat_punctuator(';') {}
+                continue;
+            }
+
+            // Accessor getter: `get name() { body }` — no params.
+            if is_getter && is_accessor {
+                // Early error: `get constructor(){}` and `static get prototype(){}` are forbidden.
+                if Self::is_forbidden_method_name(&prop_name, is_static, false, false, true, false) {
+                    return Err(self.error(format!(
+                        "`{}` is not a valid class method name in this position",
+                        prop_name.to_key_string()
+                    )));
+                }
+                self.expect_punctuator('(')?;
+                self.expect_punctuator(')')?;
+                let body = self.parse_function_body()?;
+                self.check_non_ctor_super_call(&body)?;
                 elements.push(ClassElement::Method {
                     name: prop_name,
-                    function,
+                    function: FunctionLiteral {
+                        name: None,
+                        params: vec![],
+                        body,
+                        is_async: false,
+                        is_generator: false,
+                        is_arrow: false,
+                    },
                     is_static,
                 });
+                while self.eat_punctuator(';') {}
+                continue;
             }
+
+            // Accessor setter: `set name(param) { body }` — one param.
+            if is_setter && is_accessor {
+                if Self::is_forbidden_method_name(&prop_name, is_static, false, false, false, true) {
+                    return Err(self.error(format!(
+                        "`{}` is not a valid class method name in this position",
+                        prop_name.to_key_string()
+                    )));
+                }
+                let params = self.parse_param_list()?;
+                // Check for non-simple params + "use strict" in setter body.
+                let is_nspl = Self::params_are_non_simple(&params);
+                if is_nspl && self.peek_body_has_use_strict() {
+                    return Err(self.error(
+                        "\"use strict\" directive is not allowed in function with non-simple parameters".into(),
+                    ));
+                }
+                let body = self.parse_function_body()?;
+                self.check_non_ctor_super_call(&body)?;
+                elements.push(ClassElement::Method {
+                    name: prop_name,
+                    function: FunctionLiteral {
+                        name: None,
+                        params,
+                        body,
+                        is_async: false,
+                        is_generator: false,
+                        is_arrow: false,
+                    },
+                    is_static,
+                });
+                while self.eat_punctuator(';') {}
+                continue;
+            }
+
+            // Method (constructor, regular, async, generator, async-generator).
+            if self.check_punctuator('(') {
+                let is_ctor = !is_static
+                    && !is_generator_method
+                    && !is_async
+                    && matches!(&prop_name, PropertyName::Identifier(n) if n == "constructor");
+
+                // Early error: async/generator/getter/setter constructor.
+                if (is_async || is_generator_method || is_accessor)
+                    && matches!(&prop_name, PropertyName::Identifier(n) if n == "constructor")
+                    && !is_static
+                {
+                    return Err(self.error(
+                        "class constructor may not be an async method, generator, getter, or setter"
+                            .into(),
+                    ));
+                }
+
+                // Early error: static method named "prototype".
+                if is_static
+                    && matches!(&prop_name,
+                        PropertyName::Identifier(n) | PropertyName::String(n) if n == "prototype")
+                {
+                    return Err(self.error(
+                        "a static class method may not be named `prototype`".into(),
+                    ));
+                }
+
+                // Early error: private method named "#constructor".
+                if matches!(&prop_name, PropertyName::PrivateName(n) if n == "constructor") {
+                    return Err(
+                        self.error("`#constructor` is a reserved private method name".into())
+                    );
+                }
+
+                // Set async/generator context for parameter and body parsing.
+                let outer_async = self.is_async_context;
+                let outer_generator = self.is_generator_context;
+                self.is_async_context = is_async;
+                self.is_generator_context = is_generator_method;
+
+                let params = self.parse_param_list()?;
+
+                // Strict mode: duplicate simple param names are a SyntaxError.
+                // (All class methods are strict since the class body is strict.)
+                self.check_duplicate_params(&params)?;
+
+                // Non-simple parameter list + explicit "use strict" in body = SyntaxError.
+                let is_nspl = Self::params_are_non_simple(&params);
+                if is_nspl && self.peek_body_has_use_strict() {
+                    self.is_async_context = outer_async;
+                    self.is_generator_context = outer_generator;
+                    return Err(self.error(
+                        "\"use strict\" directive is not allowed in function with non-simple parameters".into(),
+                    ));
+                }
+
+                let body = self.parse_function_body()?;
+                self.is_async_context = outer_async;
+                self.is_generator_context = outer_generator;
+
+                // Non-constructor methods: super() call is a SyntaxError.
+                if !is_ctor {
+                    self.check_non_ctor_super_call(&body)?;
+                }
+                let function = FunctionLiteral {
+                    name: if is_ctor {
+                        Some("constructor".into())
+                    } else {
+                        Some(prop_name.to_key_string())
+                    },
+                    params,
+                    body,
+                    is_async,
+                    is_generator: is_generator_method,
+                    is_arrow: false,
+                };
+                if is_ctor {
+                    elements.push(ClassElement::Constructor(function));
+                } else {
+                    elements.push(ClassElement::Method {
+                        name: prop_name,
+                        function,
+                        is_static,
+                    });
+                }
+            } else {
+                // Field without initializer (no `=` and no `;` was eaten above).
+                // ASI rule: next token must be `}`, `;`, or on a new line. Otherwise SyntaxError.
+                let next = self.peek();
+                if !self.check_punctuator('}')
+                    && !self.check_punctuator(';')
+                    && !next.line_terminator_before
+                {
+                    return Err(self.error(format!(
+                        "unexpected token {} after class field",
+                        crate::parser::describe(&next.kind)
+                    )));
+                }
+                if Self::is_forbidden_field_name(&prop_name, is_static) {
+                    return Err(self.error(format!(
+                        "`{}` is not a valid class field name",
+                        prop_name.to_key_string()
+                    )));
+                }
+                self.eat_punctuator(';');
+                elements.push(ClassElement::Field {
+                    name: prop_name,
+                    is_static,
+                    initializer: None,
+                });
+            }
+
             // Optional semicolons between class elements.
             while self.eat_punctuator(';') {}
         }
-        self.expect_punctuator('}')?;
-        Ok(elements)
+        self.expect_punctuator('}')
+    }
+
+    /// Parses a class member name: identifier, string, number, `#private`, or `[computed]`.
+    fn parse_class_member_name(&mut self) -> Result<PropertyName, ParseError> {
+        if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+            self.advance();
+            return Ok(PropertyName::PrivateName(name));
+        }
+        if self.eat_punctuator('[') {
+            let expr = self.parse_assignment()?;
+            self.expect_punctuator(']')?;
+            return Ok(PropertyName::Computed(Box::new(expr)));
+        }
+        self.parse_property_name()
+    }
+
+    /// Returns `true` if the given property name is forbidden as a class field name.
+    ///
+    /// - `constructor` is forbidden as a field name for both instance and static fields.
+    /// - `prototype` is forbidden only for static fields.
+    /// - `#constructor` is forbidden as a private field name.
+    fn is_forbidden_field_name(name: &PropertyName, is_static: bool) -> bool {
+        match name {
+            PropertyName::Identifier(n) | PropertyName::String(n) => {
+                n == "constructor" || (is_static && n == "prototype")
+            }
+            PropertyName::PrivateName(n) => n == "constructor",
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if the given property name is forbidden as a class method name
+    /// given the method's modifiers. The `is_getter`/`is_setter` flags refer to
+    /// accessor methods (parsed via `get`/`set`).
+    fn is_forbidden_method_name(
+        name: &PropertyName,
+        is_static: bool,
+        _is_async: bool,
+        _is_generator: bool,
+        is_getter: bool,
+        is_setter: bool,
+    ) -> bool {
+        // `get constructor(){}` and `set constructor(){}` are SyntaxErrors.
+        if (is_getter || is_setter)
+            && !is_static
+            && matches!(name, PropertyName::Identifier(n) if n == "constructor")
+        {
+            return true;
+        }
+        // Static methods named "prototype" are forbidden.
+        if is_static
+            && matches!(name, PropertyName::Identifier(n) | PropertyName::String(n) if n == "prototype")
+        {
+            return true;
+        }
+        false
+    }
+
+    /// Checks that a non-constructor method body does not directly contain a
+    /// `super()` call (`Contains SuperCall` abstract operation). Stops recursion
+    /// at nested function expressions (they have their own super binding) but
+    /// recurses into arrow functions.
+    fn check_non_ctor_super_call(&self, body: &crate::ast::FunctionBody) -> Result<(), ParseError> {
+        for stmt in &body.statements {
+            self.check_super_call_stmt(stmt)?;
+        }
+        Ok(())
+    }
+
+    fn check_super_call_stmt(&self, stmt: &crate::ast::Statement) -> Result<(), ParseError> {
+        use crate::ast::Statement;
+        match stmt {
+            Statement::Expression(e) => self.check_super_call_expr(e),
+            Statement::Return(Some(e)) => self.check_super_call_expr(e),
+            Statement::Block(stmts) => {
+                for s in stmts {
+                    self.check_super_call_stmt(s)?;
+                }
+                Ok(())
+            }
+            Statement::If { test, consequent, alternate } => {
+                self.check_super_call_expr(test)?;
+                self.check_super_call_stmt(consequent)?;
+                if let Some(alt) = alternate {
+                    self.check_super_call_stmt(alt)?;
+                }
+                Ok(())
+            }
+            Statement::While { test, body } => {
+                self.check_super_call_expr(test)?;
+                self.check_super_call_stmt(body)
+            }
+            Statement::For { init, test, update, body } => {
+                if let Some(e) = init.as_ref().and_then(|i| {
+                    if let Statement::Expression(e) = i.as_ref() { Some(e) } else { None }
+                }) {
+                    self.check_super_call_expr(e)?;
+                }
+                if let Some(e) = test { self.check_super_call_expr(e)?; }
+                if let Some(e) = update { self.check_super_call_expr(e)?; }
+                self.check_super_call_stmt(body)
+            }
+            Statement::Throw(e) => self.check_super_call_expr(e),
+            Statement::Try { block, handler, finalizer } => {
+                for s in block { self.check_super_call_stmt(s)?; }
+                if let Some(clause) = handler {
+                    for s in &clause.body { self.check_super_call_stmt(s)?; }
+                }
+                if let Some(fin) = finalizer {
+                    for s in fin { self.check_super_call_stmt(s)?; }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    fn check_super_call_expr(&self, expr: &Expression) -> Result<(), ParseError> {
+        match expr {
+            Expression::Call { callee, arguments } => {
+                if matches!(**callee, Expression::Super) {
+                    return Err(ParseError {
+                        span: self.peek().span,
+                        message: "`super()` is not allowed in non-constructor class methods".into(),
+                    });
+                }
+                self.check_super_call_expr(callee)?;
+                for arg in arguments {
+                    let e = match arg {
+                        crate::ast::CallArgument::Expression(e) => e,
+                        crate::ast::CallArgument::Spread(e) => e,
+                    };
+                    self.check_super_call_expr(e)?;
+                }
+                Ok(())
+            }
+            // Arrow functions share the outer super context — recurse.
+            Expression::Function(fl) if fl.is_arrow => {
+                for s in &fl.body.statements {
+                    self.check_super_call_stmt(s)?;
+                }
+                Ok(())
+            }
+            // Regular function expressions have their own super binding — stop.
+            Expression::Function(_) => Ok(()),
+            // Class expressions introduce a new class — stop.
+            Expression::Class(_) => Ok(()),
+            Expression::Binary { left, right, .. } => {
+                self.check_super_call_expr(left)?;
+                self.check_super_call_expr(right)
+            }
+            Expression::Logical { left, right, .. } => {
+                self.check_super_call_expr(left)?;
+                self.check_super_call_expr(right)
+            }
+            Expression::Assignment { target, value } => {
+                self.check_super_call_expr(target)?;
+                self.check_super_call_expr(value)
+            }
+            Expression::CompoundAssignment { target, value, .. } => {
+                self.check_super_call_expr(target)?;
+                self.check_super_call_expr(value)
+            }
+            Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
+                self.check_super_call_expr(argument)
+            }
+            Expression::Member { object, property, .. } => {
+                self.check_super_call_expr(object)?;
+                self.check_super_call_expr(property)
+            }
+            Expression::Conditional { test, consequent, alternate } => {
+                self.check_super_call_expr(test)?;
+                self.check_super_call_expr(consequent)?;
+                self.check_super_call_expr(alternate)
+            }
+            Expression::Construct { callee, arguments } => {
+                self.check_super_call_expr(callee)?;
+                for arg in arguments {
+                    let e = match arg {
+                        crate::ast::CallArgument::Expression(e) => e,
+                        crate::ast::CallArgument::Spread(e) => e,
+                    };
+                    self.check_super_call_expr(e)?;
+                }
+                Ok(())
+            }
+            Expression::Array(elements) => {
+                for el in elements {
+                    if let crate::ast::ArrayElement::Expression(e)
+                    | crate::ast::ArrayElement::Spread(e) = el
+                    {
+                        self.check_super_call_expr(e)?;
+                    }
+                }
+                Ok(())
+            }
+            Expression::Object(props) => {
+                for prop in props {
+                    match prop {
+                        ObjectProperty::Data { value, .. } => self.check_super_call_expr(value)?,
+                        ObjectProperty::ComputedData { key, value } => {
+                            self.check_super_call_expr(key)?;
+                            self.check_super_call_expr(value)?;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(())
+            }
+            Expression::TemplateLiteral(tl) => {
+                for e in &tl.expressions {
+                    self.check_super_call_expr(e)?;
+                }
+                Ok(())
+            }
+            Expression::Spread(e)
+            | Expression::Await(e)
+            | Expression::Yield { argument: Some(e), .. } => self.check_super_call_expr(e),
+            _ => Ok(()),
+        }
+    }
+
+    /// Early-error check for class field initializers.
+    ///
+    /// - `arguments` identifier is forbidden (no `arguments` binding in field context)
+    /// - `super()` calls are forbidden (`Contains SuperCall` must be false)
+    ///
+    /// Recurses into arrow functions but stops at regular function expressions.
+    fn check_field_init_early_errors(&self, expr: &Expression) -> Result<(), ParseError> {
+        self.walk_field_init(expr, false)
+    }
+
+    fn walk_field_init(&self, expr: &Expression, in_super_call: bool) -> Result<(), ParseError> {
+        use crate::ast::{ArrayElement, CallArgument, ObjectProperty};
+        match expr {
+            Expression::Identifier(name) if name == "arguments" => {
+                return Err(ParseError {
+                    span: self.peek().span,
+                    message: "`arguments` is not allowed in class field initializers".into(),
+                });
+            }
+            Expression::Call { callee, arguments } => {
+                if matches!(**callee, Expression::Super) {
+                    return Err(ParseError {
+                        span: self.peek().span,
+                        message: "`super()` is not allowed in class field initializers".into(),
+                    });
+                }
+                self.walk_field_init(callee, false)?;
+                for arg in arguments {
+                    match arg {
+                        CallArgument::Expression(e) | CallArgument::Spread(e) => {
+                            self.walk_field_init(e, false)?;
+                        }
+                    }
+                }
+            }
+            // Regular function expressions: stop recursion (they have own `arguments`)
+            Expression::Function(fl) if !fl.is_arrow => {}
+            Expression::Function(fl) => {
+                // Arrow function: recurse into body (no own `arguments`)
+                for stmt in &fl.body.statements {
+                    self.walk_field_init_stmt(stmt)?;
+                }
+            }
+            Expression::Unary { argument, .. } | Expression::Await(argument) => {
+                self.walk_field_init(argument, false)?;
+            }
+            Expression::Update { argument, .. } => {
+                self.walk_field_init(argument, false)?;
+            }
+            Expression::Binary { left, right, .. }
+            | Expression::Logical { left, right, .. }
+            | Expression::Assignment { target: left, value: right }
+            | Expression::CompoundAssignment { target: left, value: right, .. } => {
+                self.walk_field_init(left, false)?;
+                self.walk_field_init(right, false)?;
+            }
+            Expression::Conditional { test, consequent, alternate } => {
+                self.walk_field_init(test, false)?;
+                self.walk_field_init(consequent, false)?;
+                self.walk_field_init(alternate, false)?;
+            }
+            Expression::Construct { callee, arguments } => {
+                self.walk_field_init(callee, false)?;
+                for arg in arguments {
+                    match arg {
+                        CallArgument::Expression(e) | CallArgument::Spread(e) => {
+                            self.walk_field_init(e, false)?;
+                        }
+                    }
+                }
+            }
+            Expression::Member { object, property, .. } => {
+                self.walk_field_init(object, false)?;
+                self.walk_field_init(property, false)?;
+            }
+            Expression::Array(elements) => {
+                for el in elements {
+                    match el {
+                        ArrayElement::Expression(e) | ArrayElement::Spread(e) => {
+                            self.walk_field_init(e, false)?;
+                        }
+                        ArrayElement::Hole => {}
+                    }
+                }
+            }
+            Expression::Object(props) => {
+                for prop in props {
+                    match prop {
+                        ObjectProperty::Data { value, .. }
+                        | ObjectProperty::PrototypeSetter { value } => {
+                            self.walk_field_init(value, false)?;
+                        }
+                        ObjectProperty::ComputedData { key, value } => {
+                            self.walk_field_init(key, false)?;
+                            self.walk_field_init(value, false)?;
+                        }
+                        ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => {}
+                    }
+                }
+            }
+            Expression::Spread(e) => self.walk_field_init(e, false)?,
+            Expression::Yield { argument, .. } => {
+                if let Some(a) = argument {
+                    self.walk_field_init(a, false)?;
+                }
+            }
+            Expression::TemplateLiteral(tl) => {
+                for e in &tl.expressions {
+                    self.walk_field_init(e, false)?;
+                }
+            }
+            // Class expressions: stop recursion (own class scope)
+            Expression::Class(_) => {}
+            // Terminals: nothing to recurse into
+            Expression::Literal(_)
+            | Expression::This
+            | Expression::Super
+            | Expression::Identifier(_) => {}
+        }
+        let _ = in_super_call;
+        Ok(())
+    }
+
+    fn walk_field_init_stmt(&self, stmt: &crate::ast::Statement) -> Result<(), ParseError> {
+        use crate::ast::Statement;
+        match stmt {
+            Statement::Expression(e)
+            | Statement::Return(Some(e))
+            | Statement::Throw(e) => self.walk_field_init(e, false),
+            Statement::Block(stmts) => {
+                for s in stmts {
+                    self.walk_field_init_stmt(s)?;
+                }
+                Ok(())
+            }
+            Statement::VariableDeclaration { declarations, .. } => {
+                for d in declarations {
+                    if let Some(init) = &d.initializer {
+                        self.walk_field_init(init, false)?;
+                    }
+                }
+                Ok(())
+            }
+            Statement::If { test, consequent, alternate } => {
+                self.walk_field_init(test, false)?;
+                self.walk_field_init_stmt(consequent)?;
+                if let Some(alt) = alternate {
+                    self.walk_field_init_stmt(alt)?;
+                }
+                Ok(())
+            }
+            Statement::While { test, body } => {
+                self.walk_field_init(test, false)?;
+                self.walk_field_init_stmt(body)
+            }
+            Statement::For { init: _, test, update, body } => {
+                if let Some(e) = test { self.walk_field_init(e, false)?; }
+                if let Some(e) = update { self.walk_field_init(e, false)?; }
+                self.walk_field_init_stmt(body)
+            }
+            Statement::FunctionDeclaration { .. } => Ok(()),
+            _ => Ok(()),
+        }
     }
 }
 
