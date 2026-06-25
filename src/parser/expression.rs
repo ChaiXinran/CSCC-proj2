@@ -28,9 +28,17 @@ use crate::{
 };
 
 impl Parser {
-    /// Parses a full expression, including assignment.
+    /// Parses a full expression, including the comma/sequence operator.
     pub(super) fn parse_expression(&mut self) -> Result<Expression, ParseError> {
-        self.parse_assignment()
+        let first = self.parse_assignment()?;
+        if !self.check_punctuator(',') {
+            return Ok(first);
+        }
+        let mut exprs = vec![first];
+        while self.eat_punctuator(',') {
+            exprs.push(self.parse_assignment()?);
+        }
+        Ok(Expression::Sequence(exprs))
     }
 
     /// Runs `parse` with the relational `in` operator re-enabled, restoring the
@@ -50,7 +58,7 @@ impl Parser {
     /// Assignment is right associative and binds looser than every binary operator.
     pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
         // V9-A: `yield [*] [expr]` — only valid inside a generator function.
-        if self.check_keyword(Keyword::Yield) {
+        if self.is_generator_context && self.check_keyword(Keyword::Yield) {
             self.advance();
             let delegate = self.eat_operator("*");
             // `yield` can be followed by a line terminator, in which case the
@@ -73,7 +81,7 @@ impl Parser {
         }
 
         // V9-A: `await expr` — only valid inside an async function.
-        if self.check_keyword(Keyword::Await) {
+        if self.is_async_context && self.check_keyword(Keyword::Await) {
             self.advance();
             let value = self.parse_unary()?;
             return Ok(Expression::Await(Box::new(value)));
@@ -143,11 +151,15 @@ impl Parser {
 
         // NSPL + "use strict" is forbidden for non-async arrows too.
         let is_nspl = Self::params_are_non_simple(&params);
-        if is_nspl && self.check_punctuator('{') && self.peek_body_has_use_strict() {
+        let body_strict = self.check_punctuator('{') && self.peek_body_has_use_strict();
+        if is_nspl && body_strict {
             return Err(self.error(
                 "\"use strict\" directive is not allowed in function with non-simple parameters"
                     .into(),
             ));
+        }
+        if self.is_strict || body_strict || is_nspl {
+            self.check_duplicate_params(&params)?;
         }
 
         let body = if self.check_punctuator('{') {
@@ -194,7 +206,9 @@ impl Parser {
                 break;
             }
             self.advance();
-            let right = self.parse_binary(precedence + 1)?;
+            // `**` is right-associative: right operand uses same precedence
+            let right_min = if operator == "**" { precedence } else { precedence + 1 };
+            let right = self.parse_binary(right_min)?;
             left = combine(&operator, left, right);
         }
         Ok(left)
@@ -275,6 +289,7 @@ impl Parser {
                 "+" => Some(UnaryOperator::Plus),
                 "-" => Some(UnaryOperator::Minus),
                 "!" => Some(UnaryOperator::Not),
+                "~" => Some(UnaryOperator::BitwiseNot),
                 _ => None,
             };
             if let Some(operator) = operator {
@@ -505,6 +520,15 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Super)
             }
+            // Contextual keywords usable as identifiers when not in the relevant context.
+            TokenKind::Keyword(Keyword::Yield) if !self.is_generator_context && !self.is_strict => {
+                self.advance();
+                Ok(Expression::Identifier("yield".into()))
+            }
+            TokenKind::Keyword(Keyword::Await) if !self.is_async_context => {
+                self.advance();
+                Ok(Expression::Identifier("await".into()))
+            }
             other => Err(self.error(format!("unexpected {}", describe(&other)))),
         }
     }
@@ -577,8 +601,15 @@ impl Parser {
         let mut properties: Vec<ObjectProperty> = Vec::new();
         let mut has_proto_setter = false;
         while !self.check_punctuator('}') && !self.at_eof() {
-            let property = self.parse_object_property(&mut has_proto_setter)?;
-            properties.push(property);
+            // Spread element: `...expr`
+            if self.check_spread() {
+                self.advance(); // consume `...`
+                let expr = self.parse_assignment()?;
+                properties.push(ObjectProperty::Spread(expr));
+            } else {
+                let property = self.parse_object_property(&mut has_proto_setter)?;
+                properties.push(property);
+            }
             if !self.eat_punctuator(',') {
                 break;
             }
@@ -660,14 +691,14 @@ impl Parser {
         let is_set = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
 
         // `get key() { body }` — accessor getter (0 params)
+        // `get` followed immediately by `(` is a method named `get`, not a getter.
         if is_get {
-            // Peek ahead: if the next token after `get` is a property name followed
-            // by `(`, this is a getter.  Otherwise fall through to a data property.
             let saved = self.cursor;
             self.advance(); // consume `get`
             if !self.check_punctuator(':')
                 && !self.check_punctuator(',')
                 && !self.check_punctuator('}')
+                && !self.check_punctuator('(') // `get(` = method named `get`, not getter
                 && !self.at_eof()
             {
                 let key = self.parse_property_name()?;
@@ -683,12 +714,14 @@ impl Parser {
         }
 
         // `set key(param) { body }` — accessor setter (1 param)
+        // `set` followed immediately by `(` is a method named `set`, not a setter.
         if is_set {
             let saved = self.cursor;
             self.advance(); // consume `set`
             if !self.check_punctuator(':')
                 && !self.check_punctuator(',')
                 && !self.check_punctuator('}')
+                && !self.check_punctuator('(') // `set(` = method named `set`, not setter
                 && !self.at_eof()
             {
                 let key = self.parse_property_name()?;
@@ -755,38 +788,69 @@ impl Parser {
         is_async: bool,
         is_generator: bool,
     ) -> Result<ObjectProperty, ParseError> {
-        if self.eat_punctuator('[') {
-            let key = self.parse_assignment()?;
-            self.expect_punctuator(']')?;
+        let outer_async = self.is_async_context;
+        let outer_generator = self.is_generator_context;
+        self.is_async_context = is_async;
+        self.is_generator_context = is_generator;
+
+        let result = (|| -> Result<ObjectProperty, ParseError> {
+            if self.eat_punctuator('[') {
+                let key = self.parse_assignment()?;
+                self.expect_punctuator(']')?;
+                let params = self.parse_param_list()?;
+                let is_nspl = Self::params_are_non_simple(&params);
+                let body_strict = self.peek_body_has_use_strict();
+                if is_nspl && body_strict {
+                    return Err(self.error(
+                        "\"use strict\" directive is not allowed in function with non-simple parameters".into(),
+                    ));
+                }
+                if is_async || is_generator || self.is_strict || body_strict || is_nspl {
+                    self.check_duplicate_params(&params)?;
+                }
+                let body = self.parse_function_body()?;
+                return Ok(ObjectProperty::ComputedData {
+                    key,
+                    value: Expression::Function(FunctionLiteral {
+                        name: None,
+                        params,
+                        body,
+                        is_async,
+                        is_generator,
+                        is_arrow: false,
+                    }),
+                });
+            }
+            let key = self.parse_property_name()?;
+            let name = key.to_key_string();
             let params = self.parse_param_list()?;
+            let is_nspl = Self::params_are_non_simple(&params);
+            let body_strict = self.peek_body_has_use_strict();
+            if is_nspl && body_strict {
+                return Err(self.error(
+                    "\"use strict\" directive is not allowed in function with non-simple parameters".into(),
+                ));
+            }
+            if is_async || is_generator || self.is_strict || body_strict || is_nspl {
+                self.check_duplicate_params(&params)?;
+            }
             let body = self.parse_function_body()?;
-            return Ok(ObjectProperty::ComputedData {
+            Ok(ObjectProperty::Data {
                 key,
                 value: Expression::Function(FunctionLiteral {
-                    name: None,
+                    name: Some(name),
                     params,
                     body,
                     is_async,
                     is_generator,
                     is_arrow: false,
                 }),
-            });
-        }
-        let key = self.parse_property_name()?;
-        let name = key.to_key_string();
-        let params = self.parse_param_list()?;
-        let body = self.parse_function_body()?;
-        Ok(ObjectProperty::Data {
-            key,
-            value: Expression::Function(FunctionLiteral {
-                name: Some(name),
-                params,
-                body,
-                is_async,
-                is_generator,
-                is_arrow: false,
-            }),
-        })
+            })
+        })();
+
+        self.is_async_context = outer_async;
+        self.is_generator_context = outer_generator;
+        result
     }
 
     /// Parses a property key: identifier, string literal, or number literal.
@@ -809,6 +873,13 @@ impl Parser {
             TokenKind::Keyword(keyword) => {
                 self.advance();
                 Ok(PropertyName::Identifier(keyword.as_str().into()))
+            }
+            // Computed property name: `[expr]`
+            TokenKind::Punctuator('[') => {
+                self.advance(); // consume `[`
+                let expr = self.parse_assignment()?;
+                self.expect_punctuator(']')?;
+                Ok(PropertyName::Computed(Box::new(expr)))
             }
             other => Err(self.error(format!("expected property name, got {}", describe(&other)))),
         }
@@ -1678,6 +1749,7 @@ impl Parser {
                             self.walk_field_init(value, false)?;
                         }
                         ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => {}
+                        ObjectProperty::Spread(e) => self.walk_field_init(e, false)?,
                     }
                 }
             }
@@ -1689,6 +1761,11 @@ impl Parser {
             }
             Expression::TemplateLiteral(tl) => {
                 for e in &tl.expressions {
+                    self.walk_field_init(e, false)?;
+                }
+            }
+            Expression::Sequence(exprs) => {
+                for e in exprs {
                     self.walk_field_init(e, false)?;
                 }
             }
@@ -1751,13 +1828,19 @@ impl Parser {
 /// or logical operator.
 fn binary_precedence(operator: &str) -> Option<u8> {
     Some(match operator {
-        "||" => 1,
-        "&&" => 2,
-        "==" | "!=" | "===" | "!==" => 3,
-        "<" | "<=" | ">" | ">=" => 4,
-        "in" | "instanceof" => 4,
-        "+" | "-" => 5,
-        "*" | "/" | "%" => 6,
+        "??" => 1,
+        "||" => 2,
+        "&&" => 3,
+        "|" => 4,
+        "^" => 5,
+        "&" => 6,
+        "==" | "!=" | "===" | "!==" => 7,
+        "<" | "<=" | ">" | ">=" => 8,
+        "in" | "instanceof" => 8,
+        "<<" | ">>" | ">>>" => 9,
+        "+" | "-" => 10,
+        "*" | "/" | "%" => 11,
+        "**" => 12, // right-associative; handled specially in parse_binary
         _ => return None,
     })
 }
@@ -1783,6 +1866,7 @@ fn logical_operator(operator: &str) -> Option<LogicalOperator> {
     match operator {
         "&&" => Some(LogicalOperator::And),
         "||" => Some(LogicalOperator::Or),
+        "??" => Some(LogicalOperator::Nullish),
         _ => None,
     }
 }
@@ -1794,6 +1878,13 @@ fn binary_operator(operator: &str) -> BinaryOperator {
         "*" => BinaryOperator::Multiply,
         "/" => BinaryOperator::Divide,
         "%" => BinaryOperator::Remainder,
+        "**" => BinaryOperator::Exponentiation,
+        "&" => BinaryOperator::BitwiseAnd,
+        "|" => BinaryOperator::BitwiseOr,
+        "^" => BinaryOperator::BitwiseXor,
+        "<<" => BinaryOperator::LeftShift,
+        ">>" => BinaryOperator::RightShift,
+        ">>>" => BinaryOperator::UnsignedRightShift,
         "==" => BinaryOperator::Equal,
         "!=" => BinaryOperator::NotEqual,
         "===" => BinaryOperator::StrictEqual,
@@ -1824,6 +1915,16 @@ fn compound_assignment_operator(operator: &str) -> Option<AssignmentOperator> {
         "*=" => Some(AssignmentOperator::Multiply),
         "/=" => Some(AssignmentOperator::Divide),
         "%=" => Some(AssignmentOperator::Remainder),
+        "**=" => Some(AssignmentOperator::Exponentiation),
+        "&=" => Some(AssignmentOperator::BitwiseAnd),
+        "|=" => Some(AssignmentOperator::BitwiseOr),
+        "^=" => Some(AssignmentOperator::BitwiseXor),
+        "<<=" => Some(AssignmentOperator::LeftShift),
+        ">>=" => Some(AssignmentOperator::RightShift),
+        ">>>=" => Some(AssignmentOperator::UnsignedRightShift),
+        "&&=" => Some(AssignmentOperator::LogicalAnd),
+        "||=" => Some(AssignmentOperator::LogicalOr),
+        "??=" => Some(AssignmentOperator::NullishCoalescing),
         _ => None,
     }
 }

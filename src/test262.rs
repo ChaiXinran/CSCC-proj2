@@ -858,12 +858,22 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
 
     runtime.set_strict(strict);
 
+    // The Test262 conformance harness prefixes strict-mode variants with "use strict"
+    // so the parser's directive-prologue detection activates.
+    let strict_prefixed: String;
+    let eval_source: &str = if strict && source_kind != SourceKind::Module {
+        strict_prefixed = format!("\"use strict\";\n{source}");
+        &strict_prefixed
+    } else {
+        source
+    };
+
     let drain_jobs = !metadata.flags.contains("async");
     let outcome = if source_kind == SourceKind::Module {
         runtime.eval_module_source(source, path, drain_jobs)
     } else {
         runtime.eval(
-            source,
+            eval_source,
             ExecutionOptions {
                 strict,
                 drain_jobs,
@@ -960,9 +970,19 @@ fn run_static_negative_variant(
         ))
     })?;
 
+    // The Test262 conformance harness prefixes strict-mode variants with "use strict"
+    // so the parser's directive-prologue detection activates.  Build that prefixed
+    // source here before handing it to the native parser.
+    let strict_prefixed: String;
+    let parse_source: &str = if strict && source_kind != SourceKind::Module {
+        strict_prefixed = format!("\"use strict\";\n{source}");
+        &strict_prefixed
+    } else {
+        source
+    };
     runtime.set_strict(strict);
     let outcome = runtime.parse_only(
-        source,
+        parse_source,
         ExecutionOptions {
             strict,
             drain_jobs: false,

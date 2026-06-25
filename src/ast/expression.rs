@@ -24,6 +24,7 @@ pub enum UnaryOperator {
     Plus,
     Minus,
     Not,
+    BitwiseNot,
     TypeOf,
     Void,
     Delete,
@@ -44,6 +45,16 @@ pub enum AssignmentOperator {
     Multiply,
     Divide,
     Remainder,
+    Exponentiation,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    LeftShift,
+    RightShift,
+    UnsignedRightShift,
+    LogicalAnd,
+    LogicalOr,
+    NullishCoalescing,
 }
 
 /// Binary expression operators.
@@ -68,6 +79,14 @@ pub enum BinaryOperator {
     LogicalOr,
     In,
     InstanceOf,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    LeftShift,
+    RightShift,
+    UnsignedRightShift,
+    Exponentiation,
+    NullishCoalescing,
 }
 
 /// Short-circuiting logical operators.
@@ -79,6 +98,7 @@ pub enum BinaryOperator {
 pub enum LogicalOperator {
     And,
     Or,
+    Nullish,
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +184,8 @@ pub enum ObjectProperty {
     },
     /// `__proto__: value` — sets the object's prototype. At most one per literal.
     PrototypeSetter { value: Expression },
+    /// `...expr` — spread element in an object literal.
+    Spread(Expression),
 }
 
 /// The key of an object property or class member.
@@ -393,6 +415,8 @@ pub enum Expression {
     },
     /// `await expr` inside an async function.
     Await(Box<Expression>),
+    /// Comma operator: evaluates each expression and returns the last.
+    Sequence(Vec<Expression>),
 }
 
 /// One argument in a call or construct expression.

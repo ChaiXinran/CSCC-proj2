@@ -236,6 +236,21 @@ impl Parser {
                 _ => {}
             }
         }
+        // In non-strict non-generator contexts, `yield` is a contextual keyword usable
+        // as an identifier.  In non-strict non-async contexts, `await` is similarly
+        // contextual.  The early-error guards above already returned `Err` for the
+        // cases where these keywords ARE reserved.
+        match &self.peek().kind {
+            TokenKind::Keyword(Keyword::Yield) if !self.is_generator_context && !self.is_strict => {
+                self.advance();
+                return Ok("yield".into());
+            }
+            TokenKind::Keyword(Keyword::Await) if !self.is_async_context => {
+                self.advance();
+                return Ok("await".into());
+            }
+            _ => {}
+        }
         if let TokenKind::Identifier(name) = &self.peek().kind {
             if is_reserved_identifier_name(name) {
                 return Err(self.error(format!("reserved word `{name}` cannot be an identifier")));

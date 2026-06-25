@@ -137,6 +137,7 @@ fn lexical_bindings_are_created_before_initialization() {
                 kind: VariableKind::Let,
                 declarations: vec![VariableDeclarator {
                     name: "mutable".into(),
+                    pattern: None,
                     initializer: Some(number(1.0)),
                 }],
             },
@@ -144,6 +145,7 @@ fn lexical_bindings_are_created_before_initialization() {
                 kind: VariableKind::Const,
                 declarations: vec![VariableDeclarator {
                     name: "fixed".into(),
+                    pattern: None,
                     initializer: Some(number(2.0)),
                 }],
             },
@@ -185,6 +187,7 @@ fn compiler_rejects_hand_built_const_without_initializer() {
             kind: VariableKind::Const,
             declarations: vec![VariableDeclarator {
                 name: "missing".into(),
+                pattern: None,
                 initializer: None,
             }],
         }],

@@ -62,6 +62,14 @@ pub enum Instruction {
     Multiply,
     Divide,
     Remainder,
+    Exponentiation,
+    BitwiseAnd,
+    BitwiseOr,
+    BitwiseXor,
+    BitwiseNot,
+    LeftShift,
+    RightShift,
+    UnsignedRightShift,
 
     Equal,
     NotEqual,
@@ -76,6 +84,8 @@ pub enum Instruction {
     JumpIfFalse(usize),
     /// Observes, but does not remove, the top stack value.
     JumpIfTrue(usize),
+    /// Observes, but does not remove, the top stack value; jumps if NOT null or undefined.
+    JumpIfNotNullish(usize),
     /// Unconditionally transfers control to an absolute instruction offset.
     Jump(usize),
 
@@ -207,6 +217,11 @@ pub enum Instruction {
     /// Stack: [array, iterable] → [array]
     SpreadIntoArray,
 
+    /// Copies all enumerable own properties from the spread value into the
+    /// object sitting just below it on the stack (Object.assign semantics).
+    /// Stack: [object, spread_value] → [object]
+    SpreadObject,
+
     /// Calls a function using a single trailing spread argument.
     /// `n` = number of regular arguments already pushed before the spread.
     /// Stack: [callee, arg0…argN-1, spread_iterable] → [result]
@@ -298,6 +313,7 @@ impl Instruction {
             | Self::UnaryPlus
             | Self::Negate
             | Self::LogicalNot
+            | Self::BitwiseNot
             | Self::GetProperty(_)
             | Self::ForInKeys
             | Self::TypeOf => StackEffect::new(1, 1),
@@ -308,6 +324,13 @@ impl Instruction {
             | Self::Multiply
             | Self::Divide
             | Self::Remainder
+            | Self::Exponentiation
+            | Self::BitwiseAnd
+            | Self::BitwiseOr
+            | Self::BitwiseXor
+            | Self::LeftShift
+            | Self::RightShift
+            | Self::UnsignedRightShift
             | Self::Equal
             | Self::NotEqual
             | Self::StrictEqual
@@ -323,7 +346,7 @@ impl Instruction {
             | Self::CreateRegExp => StackEffect::new(2, 1),
 
             // observe top (no stack change)
-            Self::JumpIfFalse(_) | Self::JumpIfTrue(_) => StackEffect::with_required(1, 0, 0),
+            Self::JumpIfFalse(_) | Self::JumpIfTrue(_) | Self::JumpIfNotNullish(_) => StackEffect::with_required(1, 0, 0),
 
             // no stack effect
             Self::Jump(_)
@@ -368,7 +391,7 @@ impl Instruction {
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
 
             // ArrayPush: [array, value] → [array]
-            Self::ArrayPush | Self::SpreadIntoArray => StackEffect::with_required(2, 1, 0),
+            Self::ArrayPush | Self::SpreadIntoArray | Self::SpreadObject => StackEffect::with_required(2, 1, 0),
 
             // SpreadCall/SpreadConstruct: variable pops, push 1
             Self::SpreadCall(n) | Self::SpreadConstruct(n) => {
@@ -407,7 +430,7 @@ impl Instruction {
     #[must_use]
     pub const fn jump_target(self) -> Option<usize> {
         match self {
-            Self::JumpIfFalse(target) | Self::JumpIfTrue(target) | Self::Jump(target) => {
+            Self::JumpIfFalse(target) | Self::JumpIfTrue(target) | Self::JumpIfNotNullish(target) | Self::Jump(target) => {
                 Some(target)
             }
             _ => None,

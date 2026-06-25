@@ -138,13 +138,21 @@ impl Compiler {
             Statement::Block(statements) => self.compile_block(statements, chunk, context),
             Statement::VariableDeclaration { kind, declarations } => {
                 for declarator in declarations {
-                    self.compile_variable_declaration(
-                        *kind,
-                        &declarator.name,
-                        declarator.initializer.as_ref(),
-                        chunk,
-                        context,
-                    )?;
+                    if let Some(pattern) = &declarator.pattern {
+                        let init = declarator.initializer.as_ref().ok_or_else(|| CompileError {
+                            message: "destructuring declaration requires an initializer".into(),
+                        })?;
+                        self.compile_expression(init, chunk, context)?;
+                        self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+                    } else {
+                        self.compile_variable_declaration(
+                            *kind,
+                            &declarator.name,
+                            declarator.initializer.as_ref(),
+                            chunk,
+                            context,
+                        )?;
+                    }
                 }
                 Ok(())
             }
@@ -632,7 +640,16 @@ impl Compiler {
         let declared: Vec<(String, VariableKind)> = match init {
             Some(Statement::VariableDeclaration { kind, declarations }) => declarations
                 .iter()
-                .map(|declarator| (declarator.name.clone(), *kind))
+                .flat_map(|declarator| {
+                    if let Some(pattern) = &declarator.pattern {
+                        binding_pattern_names(pattern)
+                            .into_iter()
+                            .map(|n| (n, *kind))
+                            .collect::<Vec<_>>()
+                    } else {
+                        vec![(declarator.name.clone(), *kind)]
+                    }
+                })
                 .collect(),
             _ => Vec::new(),
         };
@@ -656,17 +673,31 @@ impl Compiler {
         match init {
             Some(Statement::VariableDeclaration { declarations, .. }) => {
                 for declarator in declarations {
-                    match &declarator.initializer {
-                        Some(expression) => self.compile_expression(expression, chunk, context)?,
-                        None => {
-                            let undefined = chunk
-                                .add_constant(Constant::Undefined)
-                                .map_err(CompileError::from_chunk)?;
-                            chunk.emit(Instruction::Constant(undefined));
+                    if let Some(pattern) = &declarator.pattern {
+                        // Destructuring declarator: compile RHS then bind pattern
+                        match &declarator.initializer {
+                            Some(expression) => self.compile_expression(expression, chunk, context)?,
+                            None => {
+                                let undefined = chunk
+                                    .add_constant(Constant::Undefined)
+                                    .map_err(CompileError::from_chunk)?;
+                                chunk.emit(Instruction::Constant(undefined));
+                            }
                         }
+                        self.compile_binding_pattern(VariableKind::Let, pattern, chunk, context)?;
+                    } else {
+                        match &declarator.initializer {
+                            Some(expression) => self.compile_expression(expression, chunk, context)?,
+                            None => {
+                                let undefined = chunk
+                                    .add_constant(Constant::Undefined)
+                                    .map_err(CompileError::from_chunk)?;
+                                chunk.emit(Instruction::Constant(undefined));
+                            }
+                        }
+                        let index = self.add_name(&declarator.name, chunk)?;
+                        chunk.emit(Instruction::InitializeBinding(index));
                     }
-                    let index = self.add_name(&declarator.name, chunk)?;
-                    chunk.emit(Instruction::InitializeBinding(index));
                 }
             }
             Some(other) => self.compile_statement(other, chunk, context, false)?,
@@ -1377,6 +1408,15 @@ impl Compiler {
                 chunk.emit(Instruction::AwaitValue);
                 Ok(())
             }
+            Expression::Sequence(exprs) => {
+                for (i, expr) in exprs.iter().enumerate() {
+                    self.compile_expression(expr, chunk, context)?;
+                    if i + 1 < exprs.len() {
+                        chunk.emit(Instruction::Pop);
+                    }
+                }
+                Ok(())
+            }
         }
     }
 
@@ -1448,6 +1488,7 @@ impl Compiler {
             UnaryOperator::Plus => Instruction::UnaryPlus,
             UnaryOperator::Minus => Instruction::Negate,
             UnaryOperator::Not => Instruction::LogicalNot,
+            UnaryOperator::BitwiseNot => Instruction::BitwiseNot,
             UnaryOperator::Void => {
                 self.compile_expression(argument, chunk, context)?;
                 chunk.emit(Instruction::Pop);
@@ -1518,6 +1559,9 @@ impl Compiler {
             BinaryOperator::LogicalOr => {
                 return self.compile_logical(LogicalOperator::Or, left, right, chunk, context);
             }
+            BinaryOperator::NullishCoalescing => {
+                return self.compile_logical(LogicalOperator::Nullish, left, right, chunk, context);
+            }
             _ => {}
         }
 
@@ -1527,6 +1571,13 @@ impl Compiler {
             BinaryOperator::Multiply => Instruction::Multiply,
             BinaryOperator::Divide => Instruction::Divide,
             BinaryOperator::Remainder => Instruction::Remainder,
+            BinaryOperator::Exponentiation => Instruction::Exponentiation,
+            BinaryOperator::BitwiseAnd => Instruction::BitwiseAnd,
+            BinaryOperator::BitwiseOr => Instruction::BitwiseOr,
+            BinaryOperator::BitwiseXor => Instruction::BitwiseXor,
+            BinaryOperator::LeftShift => Instruction::LeftShift,
+            BinaryOperator::RightShift => Instruction::RightShift,
+            BinaryOperator::UnsignedRightShift => Instruction::UnsignedRightShift,
             BinaryOperator::Equal => Instruction::Equal,
             BinaryOperator::NotEqual => Instruction::NotEqual,
             BinaryOperator::StrictEqual => Instruction::StrictEqual,
@@ -1537,7 +1588,7 @@ impl Compiler {
             BinaryOperator::GreaterThanOrEqual => Instruction::GreaterThanOrEqual,
             BinaryOperator::In => Instruction::HasProperty,
             BinaryOperator::InstanceOf => Instruction::InstanceOf,
-            BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr => unreachable!(),
+            BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr | BinaryOperator::NullishCoalescing => unreachable!(),
         };
 
         self.compile_expression(left, chunk, context)?;
@@ -1559,6 +1610,7 @@ impl Compiler {
         let jump = match operator {
             LogicalOperator::And => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
             LogicalOperator::Or => chunk.emit(Instruction::JumpIfTrue(usize::MAX)),
+            LogicalOperator::Nullish => chunk.emit(Instruction::JumpIfNotNullish(usize::MAX)),
         };
 
         chunk.emit(Instruction::Pop);
@@ -1662,7 +1714,42 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let instruction = compound_assignment_instruction(operator);
+        if let Some(instruction) = compound_assignment_instruction(operator) {
+            return self.compile_compound_assignment_arithmetic(instruction, target, value, chunk, context);
+        }
+        // Logical compound assignments: &&=, ||=, ??=
+        // Semantics: load target; if short-circuit condition met, jump to end (keep current value);
+        // otherwise pop, evaluate rhs, store.
+        let jump_instr = match operator {
+            AssignmentOperator::LogicalAnd => {
+                self.compile_load_target(target, chunk, context)?;
+                chunk.emit(Instruction::JumpIfFalse(usize::MAX))
+            }
+            AssignmentOperator::LogicalOr => {
+                self.compile_load_target(target, chunk, context)?;
+                chunk.emit(Instruction::JumpIfTrue(usize::MAX))
+            }
+            AssignmentOperator::NullishCoalescing => {
+                self.compile_load_target(target, chunk, context)?;
+                chunk.emit(Instruction::JumpIfNotNullish(usize::MAX))
+            }
+            _ => unreachable!(),
+        };
+        chunk.emit(Instruction::Pop);
+        self.compile_expression(value, chunk, context)?;
+        self.emit_store_target(target, chunk, context)?;
+        chunk.patch_jump(jump_instr, chunk.current_offset()).map_err(CompileError::from_chunk)?;
+        Ok(())
+    }
+
+    fn compile_compound_assignment_arithmetic(
+        &mut self,
+        instruction: Instruction,
+        target: &Expression,
+        value: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
         match target {
             Expression::Identifier(name) => {
                 self.compile_identifier(name, chunk, context)?;
@@ -1706,6 +1793,30 @@ impl Compiler {
             _ => Err(CompileError::unsupported(format!(
                 "compound assignment target {target:?}"
             ))),
+        }
+    }
+
+    fn compile_load_target(
+        &mut self,
+        target: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        match target {
+            Expression::Identifier(name) => self.compile_identifier(name, chunk, context),
+            _ => Err(CompileError::unsupported("non-identifier target for logical compound assignment")),
+        }
+    }
+
+    fn emit_store_target(
+        &mut self,
+        target: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        match target {
+            Expression::Identifier(name) => self.emit_store_identifier(name, chunk, context),
+            _ => Err(CompileError::unsupported("non-identifier target for logical compound assignment")),
         }
     }
 
@@ -2040,6 +2151,10 @@ impl Compiler {
                 ObjectProperty::PrototypeSetter { value } => {
                     self.compile_expression(value, chunk, context)?;
                     chunk.emit(Instruction::SetObjectPrototype);
+                }
+                ObjectProperty::Spread(expr) => {
+                    self.compile_expression(expr, chunk, context)?;
+                    chunk.emit(Instruction::SpreadObject);
                 }
             }
         }
@@ -2803,13 +2918,24 @@ fn property_key(key: &PropertyName) -> String {
     key.to_key_string()
 }
 
-fn compound_assignment_instruction(operator: AssignmentOperator) -> Instruction {
+fn compound_assignment_instruction(operator: AssignmentOperator) -> Option<Instruction> {
     match operator {
-        AssignmentOperator::Add => Instruction::Add,
-        AssignmentOperator::Subtract => Instruction::Subtract,
-        AssignmentOperator::Multiply => Instruction::Multiply,
-        AssignmentOperator::Divide => Instruction::Divide,
-        AssignmentOperator::Remainder => Instruction::Remainder,
+        AssignmentOperator::Add => Some(Instruction::Add),
+        AssignmentOperator::Subtract => Some(Instruction::Subtract),
+        AssignmentOperator::Multiply => Some(Instruction::Multiply),
+        AssignmentOperator::Divide => Some(Instruction::Divide),
+        AssignmentOperator::Remainder => Some(Instruction::Remainder),
+        AssignmentOperator::Exponentiation => Some(Instruction::Exponentiation),
+        AssignmentOperator::BitwiseAnd => Some(Instruction::BitwiseAnd),
+        AssignmentOperator::BitwiseOr => Some(Instruction::BitwiseOr),
+        AssignmentOperator::BitwiseXor => Some(Instruction::BitwiseXor),
+        AssignmentOperator::LeftShift => Some(Instruction::LeftShift),
+        AssignmentOperator::RightShift => Some(Instruction::RightShift),
+        AssignmentOperator::UnsignedRightShift => Some(Instruction::UnsignedRightShift),
+        // Logical compound assignments have short-circuit semantics; handled separately.
+        AssignmentOperator::LogicalAnd
+        | AssignmentOperator::LogicalOr
+        | AssignmentOperator::NullishCoalescing => None,
     }
 }
 
@@ -2822,7 +2948,13 @@ fn lexical_names(statements: &[Statement]) -> Vec<String> {
                 declarations,
             } => declarations
                 .iter()
-                .map(|declaration| declaration.name.clone())
+                .flat_map(|declaration| {
+                    if let Some(pattern) = &declaration.pattern {
+                        binding_pattern_names(pattern)
+                    } else {
+                        vec![declaration.name.clone()]
+                    }
+                })
                 .collect(),
             Statement::DestructuringDeclaration {
                 kind: VariableKind::Let | VariableKind::Const,
@@ -2866,9 +2998,13 @@ fn lexical_kind(statements: &[Statement], name: &str) -> Option<VariableKind> {
     statements.iter().find_map(|statement| match statement {
         Statement::VariableDeclaration { kind, declarations }
             if matches!(kind, VariableKind::Let | VariableKind::Const)
-                && declarations
-                    .iter()
-                    .any(|declaration| declaration.name == name) =>
+                && declarations.iter().any(|declaration| {
+                    if let Some(pattern) = &declaration.pattern {
+                        binding_pattern_names(pattern).contains(&name.to_string())
+                    } else {
+                        declaration.name == name
+                    }
+                }) =>
         {
             Some(*kind)
         }

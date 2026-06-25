@@ -33,11 +33,11 @@ impl std::error::Error for LexError {}
 /// containing `|`, `^`, `&`, `~`, `**`, `>>`, `<<` tokenize without lex errors.
 const OPERATORS: &[&str] = &[
     // 4-char
-    ">>>=", // 3-char
+    ">>>=", "&&=", "||=", "??=", // 3-char
     "===", "!==", ">>=", ">>>", "<<=", "**=", // 2-char
-    "=>", "==", "!=", "<=", ">=", "&&", "||", "++", "--", "+=", "-=", "**", "*=", "/=", "%=", "|=",
+    "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "++", "--", "+=", "-=", "**", "*=", "/=", "%=", "|=",
     "^=", "&=", ">>", "<<", // 1-char
-    "+", "-", "*", "/", "%", "!", "=", "<", ">", "|", "^", "&", "~",
+    "+", "-", "*", "/", "%", "!", "=", "<", ">", "|", "^", "&", "~", "?",
 ];
 
 /// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional
@@ -588,7 +588,7 @@ impl<'source> Lexer<'source> {
         let line_start = before
             .char_indices()
             .filter_map(|(index, ch)| is_line_terminator(ch).then_some(index + ch.len_utf8()))
-            .last()
+            .next_back()
             .unwrap_or(0);
         if !before[line_start..].contains('/') {
             return false;
@@ -799,6 +799,29 @@ impl<'source> Lexer<'source> {
                 TokenKind::Operator("...".to_owned()),
                 Span::new(start, self.cursor.offset()),
             ));
+        }
+
+        // `??=`, `??`, `?.` must be tried before the single-`?` punctuator.
+        if ch == '?' {
+            let rest = self.cursor.rest();
+            let (op_str, len) = if rest.starts_with("??=") {
+                ("??=", 3)
+            } else if rest.starts_with("??") {
+                ("??", 2)
+            } else if rest.starts_with("?.") {
+                ("?.", 2)
+            } else {
+                ("?", 1)
+            };
+            for _ in 0..len {
+                self.cursor.bump();
+            }
+            let kind = if len == 1 {
+                TokenKind::Punctuator('?')
+            } else {
+                TokenKind::Operator(op_str.to_owned())
+            };
+            return Ok(Token::new(kind, Span::new(start, self.cursor.offset())));
         }
 
         if PUNCTUATORS.contains(&ch) {

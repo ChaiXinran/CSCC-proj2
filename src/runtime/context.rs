@@ -786,6 +786,12 @@ impl NativeContext {
     /// Collects the `for-in` enumeration keys for `object`: own enumerable
     /// string keys followed by inherited ones, de-duplicated, walking the
     /// prototype chain.
+    pub fn own_enumerable_keys(&self, object: ObjectId) -> Vec<String> {
+        self.heap.object(object)
+            .map(|o| o.enumerable_own_keys())
+            .unwrap_or_default()
+    }
+
     pub fn for_in_keys(&self, object: ObjectId) -> Result<Vec<String>, VmError> {
         let mut seen = std::collections::HashSet::new();
         let mut result = Vec::new();

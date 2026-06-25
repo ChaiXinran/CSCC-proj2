@@ -334,6 +334,60 @@ impl Vm {
                     let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left % right));
                 }
+                Instruction::Exponentiation => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_number(right, context)?;
+                    let left = self.to_number(left, context)?;
+                    self.stack.push(JsValue::Number(left.powf(right)));
+                }
+                Instruction::BitwiseAnd => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_int32(right, context)?;
+                    let left = self.to_int32(left, context)?;
+                    self.stack.push(JsValue::Number(f64::from(left & right)));
+                }
+                Instruction::BitwiseOr => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_int32(right, context)?;
+                    let left = self.to_int32(left, context)?;
+                    self.stack.push(JsValue::Number(f64::from(left | right)));
+                }
+                Instruction::BitwiseXor => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_int32(right, context)?;
+                    let left = self.to_int32(left, context)?;
+                    self.stack.push(JsValue::Number(f64::from(left ^ right)));
+                }
+                Instruction::BitwiseNot => {
+                    let val = self.pop_value()?;
+                    let n = self.to_int32(val, context)?;
+                    self.stack.push(JsValue::Number(f64::from(!n)));
+                }
+                Instruction::LeftShift => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_uint32(right, context)? & 0x1f;
+                    let left = self.to_int32(left, context)?;
+                    self.stack.push(JsValue::Number(f64::from(left << right)));
+                }
+                Instruction::RightShift => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_uint32(right, context)? & 0x1f;
+                    let left = self.to_int32(left, context)?;
+                    self.stack.push(JsValue::Number(f64::from(left >> right)));
+                }
+                Instruction::UnsignedRightShift => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    let right = self.to_uint32(right, context)? & 0x1f;
+                    let left = self.to_uint32(left, context)?;
+                    self.stack.push(JsValue::Number(f64::from(left >> right)));
+                }
                 Instruction::Equal => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
@@ -406,6 +460,13 @@ impl Vm {
                             context,
                             &mut instruction_pointer,
                         )?;
+                    }
+                }
+                Instruction::JumpIfNotNullish(target) => {
+                    self.validate_jump_target(target, chunk, current_instruction)?;
+                    let top = self.peek_value()?;
+                    if !matches!(top, JsValue::Null | JsValue::Undefined) {
+                        self.jump_to(target, current_instruction, context, &mut instruction_pointer)?;
                     }
                 }
                 Instruction::Jump(target) => {
@@ -871,6 +932,18 @@ impl Vm {
                         name,
                         PropertyDescriptor::accessor(getter, Some(setter), true, true),
                     )?;
+                }
+                Instruction::SpreadObject => {
+                    let spread_val = self.pop_value()?;
+                    let target_val = self.peek_value()?.clone();
+                    let target_id = context.require_object(&target_val, "SpreadObject")?;
+                    if let JsValue::Object(source_id) = &spread_val {
+                        let keys = context.own_enumerable_keys(*source_id);
+                        for key in keys {
+                            let value = context.get_property(spread_val.clone(), &key)?;
+                            context.set_property(JsValue::Object(target_id), key.clone(), value)?;
+                        }
+                    }
                 }
                 Instruction::SetObjectPrototype => {
                     let prototype = self.pop_value()?;
@@ -1661,6 +1734,24 @@ impl Vm {
             }
             JsValue::Error(_) => Ok(f64::NAN),
         }
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn to_int32(&mut self, value: JsValue, context: &mut NativeContext) -> Result<i32, VmError> {
+        let n = self.to_number(value, context)?;
+        if n.is_nan() || n.is_infinite() || n == 0.0 {
+            return Ok(0);
+        }
+        Ok(n.trunc() as i64 as i32)
+    }
+
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn to_uint32(&mut self, value: JsValue, context: &mut NativeContext) -> Result<u32, VmError> {
+        let n = self.to_number(value, context)?;
+        if n.is_nan() || n.is_infinite() || n == 0.0 {
+            return Ok(0);
+        }
+        Ok(n.trunc() as i64 as u32)
     }
 
     /// ECMAScript `ToString`. For objects, applies `ToPrimitive(String)` first.

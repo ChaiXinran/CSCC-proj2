@@ -9,7 +9,7 @@ use crate::{
         VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, TokenKind},
-    parser::{ParseError, Parser, describe},
+    parser::{ParseError, Parser, describe, is_reserved_identifier_name},
 };
 
 impl Parser {
@@ -88,17 +88,19 @@ impl Parser {
         self.is_generator_context = is_generator;
         let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
-        // Generator functions and strict-mode functions require unique parameter names.
-        if is_generator || self.is_strict {
-            self.check_duplicate_params(&params)?;
-        }
         let is_nspl = Self::params_are_non_simple(&params);
-        if is_nspl && self.peek_body_has_use_strict() {
+        let body_strict = self.peek_body_has_use_strict();
+        // NSPL + "use strict" in body is always a SyntaxError.
+        if is_nspl && body_strict {
             self.is_generator_context = outer_generator;
             return Err(self.error(
                 "\"use strict\" directive is not allowed in function with non-simple parameters"
                     .into(),
             ));
+        }
+        // Duplicate params forbidden in: generators, strict mode, NSPL, or when body has "use strict".
+        if is_generator || self.is_strict || body_strict || is_nspl {
+            self.check_duplicate_params(&params)?;
         }
         let body = self.parse_function_body()?;
         self.is_generator_context = outer_generator;
@@ -280,7 +282,7 @@ impl Parser {
         for p in params {
             let name = p.name();
             if name.is_empty() {
-                continue; // pattern params — no simple name to check
+                continue; // pattern params �?no simple name to check
             }
             if !seen.insert(name) {
                 return Err(self.error(format!(
@@ -304,7 +306,7 @@ impl Parser {
                 break;
             };
             // Peek ahead: the token AFTER the string must be a `;`, `}`, a
-            // line terminator boundary, or EOF — otherwise this isn't a
+            // line terminator boundary, or EOF �?otherwise this isn't a
             // directive.
             let next_is_directive_end = {
                 let after = self.tokens.get(self.cursor + 1);
@@ -325,7 +327,7 @@ impl Parser {
             }
             let is_use_strict = value == "use strict";
             // Strict-mode early error: once strict mode is active, any string
-            // literal — even one still inside the directive prologue — must not
+            // literal �?even one still inside the directive prologue �?must not
             // contain a legacy escape sequence.
             if self.is_strict && tok.has_legacy_escape {
                 return Err(ParseError {
@@ -406,7 +408,7 @@ impl Parser {
             if kind == VariableKind::Const && initializer.is_none() {
                 return Err(self.error("`const` declarations require an initializer".into()));
             }
-            declarations.push(VariableDeclarator { name, initializer });
+            declarations.push(VariableDeclarator { name, pattern: None, initializer });
             if !self.eat_punctuator(',') {
                 break;
             }
@@ -512,6 +514,17 @@ impl Parser {
                                 .into(),
                         )
                     })?;
+                    // The shorthand name is a binding identifier �?reserved words are forbidden.
+                    if is_reserved_identifier_name(&shorthand) {
+                        return Err(self.error(format!(
+                            "reserved word `{shorthand}` cannot be used as a binding identifier"
+                        )));
+                    }
+                    if self.is_strict && matches!(shorthand.as_str(), "arguments" | "eval") {
+                        return Err(self.error(format!(
+                            "`{shorthand}` cannot be used as a binding identifier in strict mode"
+                        )));
+                    }
                     let def = if self.eat_operator("=") {
                         Some(Box::new(self.parse_assignment()?))
                     } else {
@@ -540,7 +553,7 @@ impl Parser {
     /// Parses the key portion of an object binding property.
     /// Returns `(PropertyName, Option<shorthand_binding_name>)`.
     /// `shorthand_name` is `Some` only for plain-identifier keys that can serve
-    /// as both key and shorthand binding target: `{ foo }` → key `"foo"`, binding `"foo"`.
+    /// as both key and shorthand binding target: `{ foo }` �?key `"foo"`, binding `"foo"`.
     fn parse_object_binding_key(&mut self) -> Result<(PropertyName, Option<String>), ParseError> {
         let tok = self.peek().clone();
         match tok.kind {
@@ -627,7 +640,7 @@ impl Parser {
     fn parse_for(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `for`
 
-        // V9-A: `for await (left of right)` — the `await` must immediately follow `for`
+        // V9-A: `for await (left of right)` �?the `await` must immediately follow `for`
         // without a line terminator. We accept it syntactically but it only makes
         // sense inside an async function; runtime will surface the error otherwise.
         let is_await = matches!(&self.peek().kind, TokenKind::Keyword(Keyword::Await));
@@ -654,7 +667,7 @@ impl Parser {
             };
             self.advance(); // declaration keyword
 
-            // `for (let/const/var [a,b] of/in right)` — destructuring for-of/for-in
+            // `for (let/const/var [a,b] of/in right)` �?destructuring for-of/for-in
             if self.check_punctuator('[') || self.check_punctuator('{') {
                 let pattern = self.parse_binding_pattern()?;
                 if self.check_contextual_of() {
@@ -680,9 +693,26 @@ impl Parser {
                         body,
                     });
                 }
-                return Err(
-                    self.error("expected `of` or `in` after destructuring pattern in for head".into())
-                );
+                // Classic for: `for (const [x, y] = init; test; update)`
+                let initializer = if self.eat_operator("=") {
+                    let expr = self.parse_assignment()?;
+                    Some(expr)
+                } else {
+                    None
+                };
+                if kind == VariableKind::Const && initializer.is_none() {
+                    return Err(self.error("`const` declarations require an initializer".into()));
+                }
+                let decl = Statement::VariableDeclaration {
+                    kind,
+                    declarations: vec![VariableDeclarator {
+                        name: String::new(),
+                        pattern: Some(pattern),
+                        initializer,
+                    }],
+                };
+                self.expect_semicolon()?; // consume `;` between init and test
+                return self.parse_for_classic_rest(Some(Box::new(decl)));
             }
 
             let name = self.expect_identifier()?;
@@ -748,7 +778,7 @@ impl Parser {
             });
         }
 
-        // V9-A: `for (expr of right)` — also accepts Array/Object destructuring targets.
+        // V9-A: `for (expr of right)` �?also accepts Array/Object destructuring targets.
         if self.check_contextual_of() {
             if !matches!(
                 expression,
@@ -794,7 +824,7 @@ impl Parser {
             if kind == VariableKind::Const && initializer.is_none() {
                 return Err(self.error("`const` declarations require an initializer".into()));
             }
-            declarations.push(VariableDeclarator { name, initializer });
+            declarations.push(VariableDeclarator { name, pattern: None, initializer });
             if !self.eat_punctuator(',') {
                 break;
             }
@@ -1171,6 +1201,7 @@ mod tests {
     fn declarator(name: &str, initializer: Option<Expression>) -> VariableDeclarator {
         VariableDeclarator {
             name: name.into(),
+            pattern: None,
             initializer,
         }
     }

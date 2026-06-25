@@ -81,7 +81,7 @@ fn parse_err(tokens: Vec<Token>) -> crate::parser::ParseError {
 // Operator precedence
 // ---------------------------------------------------------------------------
 
-/// `1 + 2 * 3` must produce `Add(1, Mul(2, 3))` — multiplication binds tighter.
+/// `1 + 2 * 3` must produce `Add(1, Mul(2, 3))` �?multiplication binds tighter.
 #[test]
 fn addition_binds_looser_than_multiplication() {
     let tokens = vec![
@@ -108,7 +108,7 @@ fn addition_binds_looser_than_multiplication() {
     );
 }
 
-/// `18 / 2 / 3` must produce `Div(Div(18, 2), 3)` — left associativity.
+/// `18 / 2 / 3` must produce `Div(Div(18, 2), 3)` �?left associativity.
 #[test]
 fn division_is_left_associative() {
     let tokens = vec![
@@ -135,7 +135,7 @@ fn division_is_left_associative() {
     );
 }
 
-/// `1 === 2` → Binary { StrictEqual }.
+/// `1 === 2` �?Binary { StrictEqual }.
 #[test]
 fn strict_equal_produces_binary_node() {
     let tokens = vec![num(1.0), op("==="), num(2.0), punc(';'), eof()];
@@ -149,7 +149,7 @@ fn strict_equal_produces_binary_node() {
     ));
 }
 
-/// `1 !== 2` → Binary { StrictNotEqual }.
+/// `1 !== 2` �?Binary { StrictNotEqual }.
 #[test]
 fn strict_not_equal_produces_binary_node() {
     let tokens = vec![num(1.0), op("!=="), num(2.0), punc(';'), eof()];
@@ -163,7 +163,7 @@ fn strict_not_equal_produces_binary_node() {
     ));
 }
 
-/// `1 <= 2` → Binary { LessThanOrEqual }.
+/// `1 <= 2` �?Binary { LessThanOrEqual }.
 #[test]
 fn less_than_or_equal_produces_binary_node() {
     let tokens = vec![num(1.0), op("<="), num(2.0), punc(';'), eof()];
@@ -177,7 +177,7 @@ fn less_than_or_equal_produces_binary_node() {
     ));
 }
 
-/// `1 >= 2` → Binary { GreaterThanOrEqual }.
+/// `1 >= 2` �?Binary { GreaterThanOrEqual }.
 #[test]
 fn greater_than_or_equal_produces_binary_node() {
     let tokens = vec![num(1.0), op(">="), num(2.0), punc(';'), eof()];
@@ -192,10 +192,10 @@ fn greater_than_or_equal_produces_binary_node() {
 }
 
 // ---------------------------------------------------------------------------
-// Logical (short-circuit) operators — must emit Logical, not Binary
+// Logical (short-circuit) operators �?must emit Logical, not Binary
 // ---------------------------------------------------------------------------
 
-/// `a && b` → Logical { And }.
+/// `a && b` �?Logical { And }.
 #[test]
 fn logical_and_produces_logical_node_not_binary() {
     let tokens = vec![ident("a"), op("&&"), ident("b"), punc(';'), eof()];
@@ -212,7 +212,7 @@ fn logical_and_produces_logical_node_not_binary() {
     );
 }
 
-/// `a || b` → Logical { Or }.
+/// `a || b` �?Logical { Or }.
 #[test]
 fn logical_or_produces_logical_node_not_binary() {
     let tokens = vec![ident("a"), op("||"), ident("b"), punc(';'), eof()];
@@ -229,7 +229,7 @@ fn logical_or_produces_logical_node_not_binary() {
     );
 }
 
-/// `a || b && c` — `&&` binds tighter than `||` so the top node must be `||`.
+/// `a || b && c` �?`&&` binds tighter than `||` so the top node must be `||`.
 #[test]
 fn and_binds_tighter_than_or() {
     let tokens = vec![
@@ -262,7 +262,7 @@ fn and_binds_tighter_than_or() {
 // Unary operators
 // ---------------------------------------------------------------------------
 
-/// `- 5` → Unary { Minus, Number(5) }.
+/// `- 5` �?Unary { Minus, Number(5) }.
 #[test]
 fn unary_minus_wraps_operand() {
     let tokens = vec![op("-"), num(5.0), punc(';'), eof()];
@@ -276,7 +276,7 @@ fn unary_minus_wraps_operand() {
     );
 }
 
-/// `+ ""` → Unary { Plus, String("") }.
+/// `+ ""` �?Unary { Plus, String("") }.
 #[test]
 fn unary_plus_on_empty_string() {
     let tokens = vec![
@@ -295,7 +295,7 @@ fn unary_plus_on_empty_string() {
     );
 }
 
-/// `! true` → Unary { Not }.
+/// `! true` �?Unary { Not }.
 #[test]
 fn logical_not_wraps_boolean() {
     let tokens = vec![op("!"), kw(Keyword::True), punc(';'), eof()];
@@ -313,7 +313,7 @@ fn logical_not_wraps_boolean() {
 // Member access and function call
 // ---------------------------------------------------------------------------
 
-/// `a . b` → Member { computed: false }.
+/// `a . b` �?Member { computed: false }.
 #[test]
 fn member_access_with_dot() {
     let tokens = vec![ident("a"), punc('.'), ident("b"), punc(';'), eof()];
@@ -328,7 +328,7 @@ fn member_access_with_dot() {
     );
 }
 
-/// `f ( )` → Call with zero arguments.
+/// `f ( )` �?Call with zero arguments.
 #[test]
 fn call_with_no_arguments() {
     let tokens = vec![ident("f"), punc('('), punc(')'), punc(';'), eof()];
@@ -339,7 +339,7 @@ fn call_with_no_arguments() {
     ));
 }
 
-/// `assert . sameValue ( x , 1 )` → Call with two arguments.
+/// `assert . sameValue ( x , 1 )` �?Call with two arguments.
 #[test]
 fn call_with_two_arguments() {
     let tokens = vec![
@@ -372,7 +372,7 @@ fn call_with_two_arguments() {
 // Assignment
 // ---------------------------------------------------------------------------
 
-/// `x = 1` — identifier is a valid assignment target.
+/// `x = 1` �?identifier is a valid assignment target.
 #[test]
 fn assignment_to_identifier() {
     let tokens = vec![ident("x"), op("="), num(1.0), punc(';'), eof()];
@@ -380,7 +380,7 @@ fn assignment_to_identifier() {
     assert!(matches!(expr, Expression::Assignment { .. }));
 }
 
-/// `1 = 2` — number literal is not a valid assignment target.
+/// `1 = 2` �?number literal is not a valid assignment target.
 #[test]
 fn assignment_to_literal_is_a_parse_error() {
     let tokens = vec![num(1.0), op("="), num(2.0), punc(';'), eof()];
@@ -396,7 +396,7 @@ fn assignment_to_literal_is_a_parse_error() {
 // Variable declaration
 // ---------------------------------------------------------------------------
 
-/// `var x ;` → VariableDeclaration with no initializer.
+/// `var x ;` �?VariableDeclaration with no initializer.
 #[test]
 fn var_without_initializer() {
     let tokens = vec![kw(Keyword::Var), ident("x"), punc(';'), eof()];
@@ -406,13 +406,14 @@ fn var_without_initializer() {
             kind: VariableKind::Var,
             declarations: vec![VariableDeclarator {
                 name: "x".into(),
+                pattern: None,
                 initializer: None,
             }],
         }
     );
 }
 
-/// `var y = 42 ;` → VariableDeclaration with number initializer.
+/// `var y = 42 ;` �?VariableDeclaration with number initializer.
 #[test]
 fn var_with_number_initializer() {
     let tokens = vec![
@@ -429,13 +430,14 @@ fn var_with_number_initializer() {
             kind: VariableKind::Var,
             declarations: vec![VariableDeclarator {
                 name: "y".into(),
+                pattern: None,
                 initializer: Some(Expression::Literal(Literal::Number(42.0))),
             }],
         }
     );
 }
 
-/// `var a , b = 1 ;` → two declarators, only the second initialized.
+/// `var a , b = 1 ;` �?two declarators, only the second initialized.
 #[test]
 fn var_with_multiple_declarators() {
     let tokens = vec![
@@ -455,10 +457,12 @@ fn var_with_multiple_declarators() {
             declarations: vec![
                 VariableDeclarator {
                     name: "a".into(),
+                    pattern: None,
                     initializer: None,
                 },
                 VariableDeclarator {
                     name: "b".into(),
+                    pattern: None,
                     initializer: Some(Expression::Literal(Literal::Number(1.0))),
                 },
             ],
@@ -470,14 +474,14 @@ fn var_with_multiple_declarators() {
 // V2 control flow
 // ---------------------------------------------------------------------------
 
-/// `{ ; }` → an empty block holding one empty statement.
+/// `{ ; }` �?an empty block holding one empty statement.
 #[test]
 fn block_groups_statements() {
     let tokens = vec![punc('{'), punc(';'), punc('}'), eof()];
     assert_eq!(parse_stmt(tokens), Statement::Block(vec![Statement::Empty]));
 }
 
-/// `if ( 1 ) 2 ; else 3 ;` → if/else with both branches present.
+/// `if ( 1 ) 2 ; else 3 ;` �?if/else with both branches present.
 #[test]
 fn if_else_parses_both_branches() {
     let tokens = vec![
@@ -506,7 +510,7 @@ fn if_else_parses_both_branches() {
     );
 }
 
-/// `if ( 1 ) if ( 2 ) 3 ; else 4 ;` → the `else` binds to the inner `if`.
+/// `if ( 1 ) if ( 2 ) 3 ; else 4 ;` �?the `else` binds to the inner `if`.
 #[test]
 fn dangling_else_binds_to_innermost_if() {
     let tokens = vec![
@@ -543,7 +547,7 @@ fn dangling_else_binds_to_innermost_if() {
     ));
 }
 
-/// `while ( 1 ) { break ; }` → break is legal inside the loop body.
+/// `while ( 1 ) { break ; }` �?break is legal inside the loop body.
 #[test]
 fn while_body_allows_break() {
     let tokens = vec![
@@ -580,7 +584,7 @@ fn top_level_continue_is_a_parse_error() {
     assert!(parse_err(tokens).message.contains("continue"));
 }
 
-/// `throw 1 ;` → a throw statement carrying the literal.
+/// `throw 1 ;` �?a throw statement carrying the literal.
 #[test]
 fn throw_carries_its_expression() {
     let tokens = vec![kw(Keyword::Throw), num(1.0), punc(';'), eof()];
@@ -603,7 +607,7 @@ fn newline_after_throw_is_a_parse_error() {
     assert!(parse_err(tokens).message.contains("throw"));
 }
 
-/// `a ? b : c` → a conditional expression.
+/// `a ? b : c` �?a conditional expression.
 #[test]
 fn conditional_expression_builds_conditional_node() {
     let tokens = vec![
@@ -625,7 +629,7 @@ fn conditional_expression_builds_conditional_node() {
     );
 }
 
-/// `typeof x` → a unary `typeof` expression.
+/// `typeof x` �?a unary `typeof` expression.
 #[test]
 fn typeof_builds_unary_node() {
     let tokens = vec![kw(Keyword::TypeOf), ident("x"), punc(';'), eof()];
@@ -638,7 +642,7 @@ fn typeof_builds_unary_node() {
     );
 }
 
-/// `new E ( 1 )` → a construct expression with one argument.
+/// `new E ( 1 )` �?a construct expression with one argument.
 #[test]
 fn new_builds_construct_node() {
     let tokens = vec![
@@ -665,14 +669,14 @@ fn new_builds_construct_node() {
 // Error cases
 // ---------------------------------------------------------------------------
 
-/// `1 + EOF` — missing right operand produces ParseError.
+/// `1 + EOF` �?missing right operand produces ParseError.
 #[test]
 fn missing_right_operand_is_a_parse_error() {
     let tokens = vec![num(1.0), op("+"), eof()];
     parse_err(tokens);
 }
 
-/// `; ; ;` — multiple empty statements parse cleanly.
+/// `; ; ;` �?multiple empty statements parse cleanly.
 #[test]
 fn multiple_empty_statements() {
     let tokens = vec![punc(';'), punc(';'), punc(';'), eof()];

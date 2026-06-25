@@ -1177,6 +1177,7 @@ fn variable_declaration(
         kind,
         declarations: vec![VariableDeclarator {
             name: name.into(),
+            pattern: None,
             initializer,
         }],
     }

@@ -39,6 +39,8 @@ pub enum VariableKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableDeclarator {
     pub name: String,
+    /// When `Some`, this is a destructuring declarator and `name` is unused.
+    pub pattern: Option<BindingPattern>,
     pub initializer: Option<Expression>,
 }
 
