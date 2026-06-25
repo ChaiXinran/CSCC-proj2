@@ -295,13 +295,10 @@ fn async_function_declaration_emits_declare_function() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn for_of_fails_at_runtime_with_pending_message() {
-    let result = run_native("for (let x of [1, 2]) { }");
-    let err = result.expect_err("should fail at runtime");
-    assert!(
-        err.contains("V9-B") || err.contains("not yet implemented"),
-        "unexpected error: {err}"
-    );
+fn for_of_over_array_runs_successfully() {
+    // Basic array for-of now executes end-to-end through the iterator protocol.
+    let result = run_native("var s = 0; for (let x of [1, 2, 3]) { s = s + x; } s");
+    assert_eq!(result.expect("for-of should succeed"), "6");
 }
 
 #[test]

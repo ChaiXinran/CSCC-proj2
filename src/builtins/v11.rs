@@ -249,7 +249,10 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, St
     let object = context.value_object(value)?;
     match &context.heap().object(object)?.kind {
         ObjectKind::RegExp { pattern, flags } => Some((object, pattern.clone(), flags.clone())),
-        ObjectKind::Ordinary | ObjectKind::Array { .. } | ObjectKind::PrimitiveWrapper(_) => None,
+        ObjectKind::Ordinary
+        | ObjectKind::Array { .. }
+        | ObjectKind::PrimitiveWrapper(_)
+        | ObjectKind::Iterator { .. } => None,
     }
 }
 

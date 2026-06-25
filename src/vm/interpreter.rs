@@ -695,24 +695,22 @@ impl Vm {
                     }
                 }
 
-                // V9-A stubs: iterator protocol (B group provides full implementation)
+                // Iterator protocol — wired to IteratorRecord helpers in NativeContext.
                 Instruction::GetIterator => {
-                    let _iterable = self.pop_value()?;
-                    return Err(VmError::runtime(
-                        "for-of / GetIterator not yet implemented (V9-B pending)",
-                    ));
+                    let iterable = self.pop_value()?;
+                    let iterator = context.create_iterator_object(iterable)?;
+                    self.stack.push(iterator);
                 }
                 Instruction::IteratorNext => {
-                    let _iterator = self.pop_value()?;
-                    return Err(VmError::runtime(
-                        "IteratorNext not yet implemented (V9-B pending)",
-                    ));
+                    let iterator = self.pop_value()?;
+                    let (value, done) = context.step_iterator_object(iterator)?;
+                    // Push value first, then done-flag on top (JumpIfTrue peeks the top).
+                    self.stack.push(value);
+                    self.stack.push(JsValue::Boolean(done));
                 }
                 Instruction::IteratorClose => {
-                    let _iterator = self.pop_value()?;
-                    return Err(VmError::runtime(
-                        "IteratorClose not yet implemented (V9-B pending)",
-                    ));
+                    let iterator = self.pop_value()?;
+                    context.close_iterator_object(iterator)?;
                 }
 
                 // V9-A stubs: generator support (B group provides full implementation)

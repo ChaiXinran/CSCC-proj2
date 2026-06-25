@@ -1610,9 +1610,28 @@ fn string_replace_all(
                     )?;
                     let repl = vm.to_string_coerce(repl_val, context)?;
                     result.push_str(&repl);
-                    let skip = pos + search.len().max(1);
+                    // When `search` is empty, `str::find("")` always returns
+                    // `Some(0)`.  Advancing by 1 byte is wrong for multi-byte
+                    // UTF-8 characters and panics on empty `rest`.  Advance by
+                    // the byte length of the next character instead.
+                    let char_advance = if search.is_empty() {
+                        rest[pos..].chars().next().map_or(0, |c| c.len_utf8())
+                    } else {
+                        search.len()
+                    };
+                    let skip = pos + char_advance;
+                    // For an empty search the skipped character belongs in the
+                    // output between the two surrounding replacements.
+                    if search.is_empty() && char_advance > 0 {
+                        result.push_str(&rest[pos..skip]);
+                    }
                     char_offset += rest[..skip].encode_utf16().count();
                     rest = &rest[skip..];
+                    // Empty search + empty rest means we just processed the
+                    // final end-of-string position; exit to avoid infinite loop.
+                    if search.is_empty() && char_advance == 0 {
+                        break;
+                    }
                 }
             }
         }

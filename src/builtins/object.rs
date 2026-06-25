@@ -480,6 +480,7 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::RegExp { .. } => "RegExp",
         ObjectKind::Ordinary if context.is_error_object(object) => "Error",
         ObjectKind::Ordinary => "Object",
+        ObjectKind::Iterator { .. } => "Object",
     })
 }
 

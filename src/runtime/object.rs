@@ -1,6 +1,7 @@
 //! JavaScript objects and prototype links.
 
-use super::{JsValue, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer};
+use super::{IteratorRecord, JsValue, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer};
+use super::iterator::IteratorKind;
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -39,6 +40,8 @@ pub enum ObjectKind {
     /// Regular expression object. The `pattern` and `flags` are the source strings.
     /// Used by `String.prototype.match`, `search`, `replace`, `split`, etc. to detect regexp args.
     RegExp { pattern: String, flags: String },
+    /// Internal iterator object created by `GetIterator`. Not directly observable from JS.
+    Iterator { record: IteratorRecord },
 }
 
 /// Ordinary object storage.
@@ -86,6 +89,16 @@ impl JsObject {
                 length: length.min(u32::MAX as usize) as u32,
                 length_writable: true,
             },
+            properties: PropertyMap::default(),
+            symbol_properties: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn iterator(record: IteratorRecord) -> Self {
+        Self {
+            prototype: None,
+            kind: ObjectKind::Iterator { record },
             properties: PropertyMap::default(),
             symbol_properties: Vec::new(),
         }
@@ -243,9 +256,10 @@ impl JsObject {
     pub fn array_length(&self) -> Option<usize> {
         match &self.kind {
             ObjectKind::Array { length, .. } => Some(*length as usize),
-            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {
-                None
-            }
+            ObjectKind::Ordinary
+            | ObjectKind::PrimitiveWrapper(_)
+            | ObjectKind::RegExp { .. }
+            | ObjectKind::Iterator { .. } => None,
         }
     }
 
@@ -255,9 +269,10 @@ impl JsObject {
             ObjectKind::Array {
                 length_writable, ..
             } => Some(*length_writable),
-            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {
-                None
-            }
+            ObjectKind::Ordinary
+            | ObjectKind::PrimitiveWrapper(_)
+            | ObjectKind::RegExp { .. }
+            | ObjectKind::Iterator { .. } => None,
         }
     }
 
@@ -394,6 +409,12 @@ impl Trace for JsObject {
                 }
             }
             ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {}
+            ObjectKind::Iterator { record } => {
+                // Trace the backing array/string so GC doesn't collect it.
+                if let IteratorKind::Array { object, .. } = &record.kind {
+                    object.trace(tracer);
+                }
+            }
         }
         self.properties.trace(tracer);
         for (_, descriptor) in &self.symbol_properties {
@@ -418,6 +439,7 @@ impl JsObject {
             ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) => value.len(),
             ObjectKind::PrimitiveWrapper(_) => std::mem::size_of::<PrimitiveValue>(),
             ObjectKind::RegExp { pattern, flags } => pattern.len().saturating_add(flags.len()),
+            ObjectKind::Iterator { .. } => std::mem::size_of::<IteratorRecord>(),
         };
         std::mem::size_of::<Self>()
             .saturating_add(kind_bytes)

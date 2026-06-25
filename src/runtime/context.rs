@@ -1603,6 +1603,69 @@ impl NativeContext {
         Ok(())
     }
 
+    /// Create a heap-allocated iterator object from an iterable value.
+    /// Returns a `JsValue::Object` that `IteratorNext` / `IteratorClose` can use.
+    pub fn create_iterator_object(&mut self, iterable: JsValue) -> Result<JsValue, VmError> {
+        let record = self.get_iterator(iterable)?;
+        let obj = JsObject::iterator(record);
+        let id = self
+            .heap_mut()
+            .allocate_object(obj)
+            .ok_or_else(|| VmError::runtime("heap full: cannot allocate iterator object"))?;
+        Ok(JsValue::Object(id))
+    }
+
+    /// Advance an iterator object one step.
+    /// Returns `(value, done)` — `done = true` means the iteration has finished.
+    pub fn step_iterator_object(
+        &mut self,
+        iterator_val: JsValue,
+    ) -> Result<(JsValue, bool), VmError> {
+        let id = match &iterator_val {
+            JsValue::Object(id) => *id,
+            _ => return Err(VmError::type_error("value is not an iterator object")),
+        };
+        // Clone the IteratorRecord to avoid holding an immutable borrow on
+        // `self.heap` while calling `iterator_next` (which may access the heap
+        // for array element lookups).
+        let record_clone = {
+            let obj = self
+                .heap()
+                .object(id)
+                .ok_or_else(|| VmError::runtime("invalid iterator object"))?;
+            match &obj.kind {
+                ObjectKind::Iterator { record } => record.clone(),
+                _ => return Err(VmError::type_error("object is not an iterator")),
+            }
+        };
+        let mut record = record_clone;
+        let result = self.iterator_next(&mut record)?;
+        // Write the updated index / done flag back into the heap object.
+        if let Some(obj) = self.heap_mut().object_mut(id) {
+            if let ObjectKind::Iterator { record: r } = &mut obj.kind {
+                *r = record;
+            }
+        }
+        match result {
+            Some(value) => Ok((value, false)),
+            None => Ok((JsValue::Undefined, true)),
+        }
+    }
+
+    /// Mark an iterator object as exhausted (used on `break` / early exit).
+    pub fn close_iterator_object(&mut self, iterator_val: JsValue) -> Result<(), VmError> {
+        let id = match &iterator_val {
+            JsValue::Object(id) => *id,
+            _ => return Ok(()), // not our iterator object — nothing to close
+        };
+        if let Some(obj) = self.heap_mut().object_mut(id) {
+            if let ObjectKind::Iterator { record } = &mut obj.kind {
+                record.done = true;
+            }
+        }
+        Ok(())
+    }
+
     pub fn set_element(
         &mut self,
         object: JsValue,

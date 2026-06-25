@@ -2391,6 +2391,17 @@ impl Compiler {
         scope.insert(ITER.to_string());
 
         // Declare loop variable if it's a new binding.
+        // Pre-declare the loop variable(s) in the outer lexical scope and pre-initialize
+        // mutable bindings to `undefined`.  This lets the loop body use `StoreName`
+        // (set_mutable_binding) on every iteration instead of `InitializeBinding`, which
+        // would throw "already initialized" on the second pass.
+        // `const` bindings are left uninitialized here and initialized inside the loop via
+        // `compile_binding_pattern` — but `const` in for-of is handled below by re-emitting
+        // `CreateImmutableBinding` + `InitializeBinding` per iteration with a per-iter scope.
+        let undefined_idx = chunk
+            .add_constant(Constant::Undefined)
+            .map_err(CompileError::from_chunk)?;
+
         match left {
             crate::ast::ForBinding::Declaration { kind, pattern } => {
                 let names = binding_pattern_names(pattern);
@@ -2398,10 +2409,15 @@ impl Compiler {
                     let idx = self.add_name(name, chunk)?;
                     match kind {
                         VariableKind::Const => {
+                            // Const loop variable: keep uninitialized; we'll initialize per-iter.
                             chunk.emit(Instruction::CreateImmutableBinding(idx));
                         }
                         _ => {
+                            // Let / var: create AND pre-initialize to undefined so
+                            // subsequent StoreName calls work without "already initialized" errors.
                             chunk.emit(Instruction::CreateMutableBinding(idx));
+                            chunk.emit(Instruction::Constant(undefined_idx));
+                            chunk.emit(Instruction::InitializeBinding(idx));
                         }
                     }
                     scope.insert(name.clone());
@@ -2426,10 +2442,25 @@ impl Compiler {
         let exit_jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX));
         chunk.emit(Instruction::Pop); // pop is_done=false
 
-        // Assign value to the loop variable.
+        // Assign the iteration value to the loop variable.
+        // For mutable (let/var) declarations, use StoreName so that every iteration
+        // re-assigns the same (already-initialized) binding instead of failing with
+        // "already initialized" on the second pass.
         match left {
             crate::ast::ForBinding::Declaration { kind, pattern } => {
-                self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+                match (kind, pattern) {
+                    (VariableKind::Let | VariableKind::Var, crate::ast::BindingPattern::Identifier(name)) => {
+                        // Use StoreName: the binding was pre-initialized to undefined above.
+                        self.emit_store_identifier(name, chunk, context)?;
+                        chunk.emit(Instruction::Pop); // StoreName pushes the value back; discard it.
+                    }
+                    _ => {
+                        // Const or complex pattern: use compile_binding_pattern.
+                        // Const creates a fresh immutable binding per-iteration (first iteration only
+                        // works today; per-iteration const scope requires V10-D).
+                        self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+                    }
+                }
             }
             crate::ast::ForBinding::Target(target) => {
                 if let Expression::Identifier(name) = target {
