@@ -167,12 +167,9 @@ impl Compiler {
                 chunk,
                 context,
             ),
-            Statement::ForIn {
-                declaration,
-                target,
-                right,
-                body,
-            } => self.compile_for_in(*declaration, target, right, body, chunk, context),
+            Statement::ForIn { left, right, body } => {
+                self.compile_for_in(left, right, body, chunk, context)
+            }
             Statement::Break => self.compile_break(chunk, context),
             Statement::Continue => self.compile_continue(chunk, context),
             Statement::Throw(expression) => {
@@ -752,25 +749,14 @@ impl Compiler {
     /// both held in a per-loop lexical environment.
     fn compile_for_in(
         &mut self,
-        declaration: Option<VariableKind>,
-        target: &Expression,
+        left: &crate::ast::ForBinding,
         right: &Expression,
         body: &Statement,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        // Hidden binding names contain a NUL so they cannot collide with any
-        // user identifier.
         const KEYS: &str = "\u{0}forin_keys";
         const INDEX: &str = "\u{0}forin_index";
-
-        // Member targets without a declaration are not yet supported; reject
-        // before emitting anything so no partial state leaks.
-        if declaration.is_none() && !matches!(target, Expression::Identifier(_)) {
-            return Err(CompileError::unsupported(
-                "for-in target must be a variable or a simple identifier",
-            ));
-        }
 
         chunk.emit(Instruction::CreateLexicalEnvironment);
         context.environment_depth += 1;
@@ -783,20 +769,23 @@ impl Compiler {
         chunk.emit(Instruction::CreateMutableBinding(cursor_index));
         scope.insert(INDEX.to_string());
 
-        let loop_var = match (declaration, target) {
-            (Some(_), Expression::Identifier(name)) => {
-                let var_index = self.add_name(name, chunk)?;
-                chunk.emit(Instruction::CreateMutableBinding(var_index));
+        // Declare the loop variable(s) up front.
+        match left {
+            crate::ast::ForBinding::Declaration { kind, pattern } => {
                 let undefined = chunk
                     .add_constant(Constant::Undefined)
                     .map_err(CompileError::from_chunk)?;
-                chunk.emit(Instruction::Constant(undefined));
-                chunk.emit(Instruction::InitializeBinding(var_index));
-                scope.insert(name.clone());
-                Some(name.clone())
+                for name in binding_pattern_names(pattern) {
+                    let idx = self.add_name(&name, chunk)?;
+                    chunk.emit(Instruction::CreateMutableBinding(idx));
+                    chunk.emit(Instruction::Constant(undefined));
+                    chunk.emit(Instruction::InitializeBinding(idx));
+                    scope.insert(name.clone());
+                }
+                let _ = kind; // used below
             }
-            _ => None,
-        };
+            crate::ast::ForBinding::Target(_) => {}
+        }
         context.lexical_scopes.push(scope);
 
         // keys = ForInKeys(ToObject(right)); index = 0
@@ -818,22 +807,35 @@ impl Compiler {
         let exit_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
         chunk.emit(Instruction::Pop);
 
-        // value = keys[index]; assign to the loop target.
+        // value = keys[index]; assign to the loop variable.
         chunk.emit(Instruction::LoadName(keys_index));
         chunk.emit(Instruction::LoadName(cursor_index));
         chunk.emit(Instruction::GetElement);
-        match &loop_var {
-            Some(name) => {
-                let var_index = self.add_name(name, chunk)?;
-                chunk.emit(Instruction::StoreName(var_index));
-                chunk.emit(Instruction::Pop);
+        match left {
+            crate::ast::ForBinding::Declaration { kind, pattern } => {
+                match (kind, pattern) {
+                    (_, crate::ast::BindingPattern::Identifier(name)) => {
+                        let idx = self.add_name(name, chunk)?;
+                        chunk.emit(Instruction::StoreName(idx));
+                        chunk.emit(Instruction::Pop);
+                    }
+                    (k, pat) => {
+                        self.compile_binding_pattern(*k, pat, chunk, context)?;
+                    }
+                }
             }
-            None => {
-                let Expression::Identifier(name) = target else {
-                    unreachable!("member targets rejected above");
-                };
-                self.emit_store_identifier(name, chunk, context)?;
-                chunk.emit(Instruction::Pop);
+            crate::ast::ForBinding::Target(target) => {
+                match target {
+                    Expression::Identifier(name) => {
+                        self.emit_store_identifier(name, chunk, context)?;
+                        chunk.emit(Instruction::Pop);
+                    }
+                    _ => {
+                        return Err(CompileError::unsupported(
+                            "for-in target must be a variable or a simple identifier",
+                        ));
+                    }
+                }
             }
         }
 
@@ -2252,6 +2254,7 @@ impl Compiler {
                 },
                 is_async: false,
                 is_generator: false,
+                is_arrow: false,
             }
         };
         let ctor_fn = self.compile_function_body(&ctor_body.params, &ctor_body.body, context)?;
@@ -2309,28 +2312,47 @@ impl Compiler {
 
         // Instance methods — defined on the prototype.
         for element in elements {
-            if let ClassElement::Method {
-                name: prop_name,
-                function,
-                is_static: false,
-            } = element
-            {
-                let fn_compiled =
-                    self.compile_function_body(&function.params, &function.body, context)?;
-                let fn_template = FunctionTemplate {
-                    name: Some(prop_name.to_key_string()),
-                    params: fn_compiled.params,
-                    rest_param: fn_compiled.rest_param,
-                    chunk: fn_compiled.chunk,
-                    is_strict: fn_compiled.is_strict,
-                    environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
-                };
-                let fn_idx = chunk
-                    .add_function(fn_template)
-                    .map_err(CompileError::from_chunk)?;
-                chunk.emit(Instruction::CreateFunction(fn_idx));
-                let key = self.add_name(&prop_name.to_key_string(), chunk)?;
-                chunk.emit(Instruction::DefineDataProperty(key)); // [.., proto]
+            match element {
+                ClassElement::Method {
+                    name: prop_name,
+                    function,
+                    is_static: false,
+                } => {
+                    let fn_compiled =
+                        self.compile_function_body(&function.params, &function.body, context)?;
+                    let fn_template = FunctionTemplate {
+                        name: Some(prop_name.to_key_string()),
+                        params: fn_compiled.params,
+                        rest_param: fn_compiled.rest_param,
+                        chunk: fn_compiled.chunk,
+                        is_strict: fn_compiled.is_strict,
+                        environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+                    };
+                    let fn_idx = chunk
+                        .add_function(fn_template)
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::CreateFunction(fn_idx));
+                    let key = self.add_name(&prop_name.to_key_string(), chunk)?;
+                    chunk.emit(Instruction::DefineDataProperty(key)); // [.., proto]
+                }
+                // Instance fields — stub: initialize to undefined or the given expression.
+                ClassElement::Field {
+                    name: prop_name,
+                    is_static: false,
+                    initializer,
+                } => {
+                    // Skip private fields for now — they require per-instance init
+                    // at `new` time, which we don't support yet.
+                    if matches!(prop_name, crate::ast::PropertyName::PrivateName(_)) {
+                        continue;
+                    }
+                    // Public instance fields are ignored at class-definition time in this
+                    // stub — they should be set on `this` in the constructor. We skip them
+                    // rather than erroring out so that class bodies with fields parse and
+                    // compile without crashing.
+                    let _ = initializer;
+                }
+                _ => {}
             }
         }
 
@@ -2626,13 +2648,19 @@ impl Compiler {
                 }
             }
             crate::ast::ForBinding::Target(target) => {
-                if let Expression::Identifier(name) = target {
-                    self.emit_store_identifier(name, chunk, context)?;
-                    chunk.emit(Instruction::Pop);
-                } else {
-                    return Err(CompileError::unsupported(
-                        "for-of target must be a simple identifier or declaration",
-                    ));
+                match target {
+                    Expression::Identifier(name) => {
+                        self.emit_store_identifier(name, chunk, context)?;
+                        chunk.emit(Instruction::Pop);
+                    }
+                    Expression::Array(_) | Expression::Object(_) => {
+                        self.compile_destructuring_assignment_target(target, chunk, context)?;
+                    }
+                    _ => {
+                        return Err(CompileError::unsupported(
+                            "for-of target must be a simple identifier, array, or object pattern",
+                        ));
+                    }
                 }
             }
         }
@@ -2681,6 +2709,85 @@ impl Compiler {
         context.environment_depth -= 1;
         chunk.emit(Instruction::PopEnvironment);
         Ok(())
+    }
+
+    /// Emits a destructuring ASSIGNMENT (not declaration) for Array/Object expression targets.
+    ///
+    /// Used by `for ([a, b] of xs)` where `a` and `b` are existing variables.
+    /// TOS is consumed; each target variable receives its element.
+    fn compile_destructuring_assignment_target(
+        &mut self,
+        target: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        match target {
+            Expression::Array(elements) => {
+                for (i, elem) in elements.iter().enumerate() {
+                    match elem {
+                        crate::ast::ArrayElement::Hole => continue,
+                        crate::ast::ArrayElement::Expression(expr) => {
+                            chunk.emit(Instruction::Duplicate);
+                            let idx_c = chunk
+                                .add_constant(Constant::String(i.to_string()))
+                                .map_err(CompileError::from_chunk)?;
+                            chunk.emit(Instruction::Constant(idx_c));
+                            chunk.emit(Instruction::GetElement);
+                            match expr {
+                                Expression::Identifier(name) => {
+                                    self.emit_store_identifier(name, chunk, context)?;
+                                    chunk.emit(Instruction::Pop);
+                                }
+                                Expression::Array(_) | Expression::Object(_) => {
+                                    self.compile_destructuring_assignment_target(
+                                        expr, chunk, context,
+                                    )?;
+                                }
+                                _ => {
+                                    return Err(CompileError::unsupported(
+                                        "complex destructuring assignment target not supported",
+                                    ));
+                                }
+                            }
+                        }
+                        crate::ast::ArrayElement::Spread(_) => {
+                            return Err(CompileError::unsupported(
+                                "spread in destructuring assignment target not supported",
+                            ));
+                        }
+                    }
+                }
+                chunk.emit(Instruction::Pop);
+                Ok(())
+            }
+            Expression::Object(props) => {
+                for prop in props {
+                    match prop {
+                        crate::ast::ObjectProperty::Data {
+                            key,
+                            value: Expression::Identifier(target_name),
+                        } => {
+                            chunk.emit(Instruction::Duplicate);
+                            let key_str = key.to_key_string();
+                            let key_idx = self.add_name(&key_str, chunk)?;
+                            chunk.emit(Instruction::GetProperty(key_idx));
+                            self.emit_store_identifier(target_name, chunk, context)?;
+                            chunk.emit(Instruction::Pop);
+                        }
+                        _ => {
+                            return Err(CompileError::unsupported(
+                                "complex object destructuring assignment target not supported",
+                            ));
+                        }
+                    }
+                }
+                chunk.emit(Instruction::Pop);
+                Ok(())
+            }
+            _ => Err(CompileError::unsupported(
+                "destructuring assignment target must be array or object expression",
+            )),
+        }
     }
 }
 

@@ -98,6 +98,15 @@ impl<'source> Lexer<'source> {
                     *tpl_stack.last_mut().expect("checked non-empty") -= 1;
                     self.read_operator_or_punctuator()?
                 }
+            } else if ch == '#'
+                && self
+                    .cursor
+                    .rest()
+                    .chars()
+                    .nth(1)
+                    .is_some_and(is_identifier_start)
+            {
+                self.read_private_name()?
             } else if is_identifier_start(ch)
                 || (self.cursor.rest().starts_with("\\u")
                     && !tokens.last().is_some_and(|token| {
@@ -186,6 +195,17 @@ impl<'source> Lexer<'source> {
         }
     }
 
+    fn read_private_name(&mut self) -> Result<Token, LexError> {
+        let start = self.cursor.offset();
+        self.cursor.bump(); // consume `#`
+        let mut name = String::new();
+        while self.cursor.peek().is_some_and(is_identifier_part) {
+            name.push(self.cursor.bump().expect("identifier part exists"));
+        }
+        let end = self.cursor.offset();
+        Ok(Token::new(TokenKind::PrivateName(name), Span::new(start, end)))
+    }
+
     fn read_identifier_or_keyword(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
         let mut text = String::new();
@@ -224,7 +244,10 @@ impl<'source> Lexer<'source> {
         }
         let end = self.cursor.offset();
         let kind = if had_escape {
-            TokenKind::Identifier(text)
+            // Identifiers containing Unicode escapes cannot be contextual keywords.
+            let mut tok = Token::new(TokenKind::Identifier(text), Span::new(start, end));
+            tok.has_identifier_escape = true;
+            return Ok(tok);
         } else {
             match text.as_str() {
                 "let" => TokenKind::Keyword(Keyword::Let),
@@ -1099,7 +1122,7 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                     i += 2;
                     let atom = if unicode_mode {
                         validate_unicode_regex_escape(&chars, &mut i, escape, true)
-                            .map_err(|message| make_err(message))?
+                            .map_err(make_err)?
                     } else if matches!(escape, 'd' | 'D' | 's' | 'S' | 'w' | 'W') {
                         RegexClassAtomKind::Multi
                     } else {
@@ -1119,7 +1142,7 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                     if let Some(previous) = class_previous_atom {
                         let Some((next_atom, next_i)) =
                             regex_class_atom_at(&chars, i + 1, unicode_mode)
-                                .map_err(|message| make_err(message))?
+                                .map_err(make_err)?
                         else {
                             class_previous_atom = Some(RegexClassAtomKind::Single);
                             i += 1;
@@ -1190,7 +1213,7 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                         }
                     } else if unicode_mode {
                         validate_unicode_regex_escape(&chars, &mut i, esc, false)
-                            .map_err(|message| make_err(message))?;
+                            .map_err(make_err)?;
                     }
                     can_quantify = true;
                 }
@@ -1206,12 +1229,13 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                 i += 2; // skip (?
                 match chars.get(i) {
                     Some(&'=') | Some(&'!') => {
-                        if let Some(end) = find_regex_group_end(&chars, group_start) {
-                            if unicode_mode && is_regex_quantifier_at(&chars, end + 1) {
-                                return Err(make_err(
-                                    "lookahead assertion cannot be quantified in Unicode regular expression",
-                                ));
-                            }
+                        if let Some(end) = find_regex_group_end(&chars, group_start)
+                            && unicode_mode
+                            && is_regex_quantifier_at(&chars, end + 1)
+                        {
+                            return Err(make_err(
+                                "lookahead assertion cannot be quantified in Unicode regular expression",
+                            ));
                         }
                         can_quantify = false;
                         i += 1;

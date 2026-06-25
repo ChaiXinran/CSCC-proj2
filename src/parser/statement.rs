@@ -26,8 +26,11 @@ impl Parser {
             }
             TokenKind::Keyword(Keyword::Function) => self.parse_function_declaration(),
             // V9-A: `async function` declaration (contextual: `async` is an Identifier)
+            // Per spec, `async` with a Unicode escape (e.g. `async`) cannot serve
+            // as the contextual keyword, so we check `has_identifier_escape` here.
             TokenKind::Identifier(name)
                 if name == "async"
+                    && !self.peek().has_identifier_escape
                     && matches!(
                         self.tokens.get(self.cursor + 1).map(|t| &t.kind),
                         Some(TokenKind::Keyword(Keyword::Function))
@@ -81,9 +84,24 @@ impl Parser {
     fn parse_function_declaration(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `function`
         let is_generator = self.eat_operator("*");
+        let outer_generator = self.is_generator_context;
+        self.is_generator_context = is_generator;
         let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
+        // Generator functions and strict-mode functions require unique parameter names.
+        if is_generator || self.is_strict {
+            self.check_duplicate_params(&params)?;
+        }
+        let is_nspl = Self::params_are_non_simple(&params);
+        if is_nspl && self.peek_body_has_use_strict() {
+            self.is_generator_context = outer_generator;
+            return Err(self.error(
+                "\"use strict\" directive is not allowed in function with non-simple parameters"
+                    .into(),
+            ));
+        }
         let body = self.parse_function_body()?;
+        self.is_generator_context = outer_generator;
         Ok(Statement::FunctionDeclaration {
             name,
             params,
@@ -98,9 +116,26 @@ impl Parser {
         self.advance(); // `async` (Identifier)
         self.advance(); // `function`
         let is_generator = self.eat_operator("*");
+        let outer_async = self.is_async_context;
+        let outer_generator = self.is_generator_context;
+        self.is_async_context = true;
+        self.is_generator_context = is_generator;
         let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
+        // Async (and async-generator) functions always require unique parameter names.
+        self.check_duplicate_params(&params)?;
+        let is_nspl = Self::params_are_non_simple(&params);
+        if is_nspl && self.peek_body_has_use_strict() {
+            self.is_async_context = outer_async;
+            self.is_generator_context = outer_generator;
+            return Err(self.error(
+                "\"use strict\" directive is not allowed in function with non-simple parameters"
+                    .into(),
+            ));
+        }
         let body = self.parse_function_body()?;
+        self.is_async_context = outer_async;
+        self.is_generator_context = outer_generator;
         Ok(Statement::FunctionDeclaration {
             name,
             params,
@@ -128,8 +163,10 @@ impl Parser {
                         let rest_name = self.expect_identifier()?;
                         params.push(FunctionParam::Rest(rest_name));
                     }
-                    // rest must be last; consume optional trailing comma
-                    self.eat_punctuator(',');
+                    // rest parameter must be last; trailing comma is a SyntaxError
+                    if self.check_punctuator(',') {
+                        return Err(self.error("rest parameter must be last formal parameter".into()));
+                    }
                     break;
                 }
                 // destructuring parameter: `{a,b}` or `[a,b]`
@@ -194,6 +231,64 @@ impl Parser {
             statements,
             is_strict: function_is_strict,
         })
+    }
+
+    /// Looks ahead to check if the next function body (starting with `{`) has
+    /// an explicit `"use strict"` directive. Does not consume tokens.
+    /// Needed for the NSPL + "use strict" early error check.
+    pub(super) fn peek_body_has_use_strict(&self) -> bool {
+        // Cursor is at `{`. Directive string is at cursor+1.
+        let Some(tok) = self.tokens.get(self.cursor + 1) else {
+            return false;
+        };
+        let TokenKind::String(s) = &tok.kind else {
+            return false;
+        };
+        if s != "use strict" {
+            return false;
+        }
+        let Some(after) = self.tokens.get(self.cursor + 2) else {
+            return true;
+        };
+        matches!(
+            after.kind,
+            TokenKind::Punctuator(';') | TokenKind::Punctuator('}') | TokenKind::Eof
+        ) || after.line_terminator_before
+    }
+
+    /// Returns `true` if any parameter in the list makes it non-simple:
+    /// destructuring patterns, rest parameters, or parameters with defaults.
+    pub(super) fn params_are_non_simple(params: &[FunctionParam]) -> bool {
+        params.iter().any(|p| {
+            matches!(
+                p,
+                FunctionParam::Pattern(..)
+                    | FunctionParam::RestPattern(_)
+                    | FunctionParam::Rest(_)
+                    | FunctionParam::Default(..)
+            )
+        })
+    }
+
+    /// Checks for duplicate simple parameter names in a strict-mode parameter
+    /// list. Returns `Err` if a name appears more than once.
+    pub(super) fn check_duplicate_params(
+        &self,
+        params: &[FunctionParam],
+    ) -> Result<(), ParseError> {
+        let mut seen: HashSet<&str> = HashSet::new();
+        for p in params {
+            let name = p.name();
+            if name.is_empty() {
+                continue; // pattern params — no simple name to check
+            }
+            if !seen.insert(name) {
+                return Err(self.error(format!(
+                    "duplicate parameter name `{name}` is not allowed in strict mode"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Scans for ECMAScript directive prologues (`"use strict";`) at the start
@@ -559,7 +654,7 @@ impl Parser {
             };
             self.advance(); // declaration keyword
 
-            // `for (let/const/var [a,b] of right)` — destructuring for-of
+            // `for (let/const/var [a,b] of/in right)` — destructuring for-of/for-in
             if self.check_punctuator('[') || self.check_punctuator('{') {
                 let pattern = self.parse_binding_pattern()?;
                 if self.check_contextual_of() {
@@ -574,9 +669,19 @@ impl Parser {
                         is_await,
                     });
                 }
-                // Not for-of — error, destructuring init needs `=`
+                if self.check_keyword(Keyword::In) {
+                    self.advance(); // `in`
+                    let right = self.parse_expression()?;
+                    self.expect_punctuator(')')?;
+                    let body = self.parse_loop_body()?;
+                    return Ok(Statement::ForIn {
+                        left: ForBinding::Declaration { kind, pattern },
+                        right,
+                        body,
+                    });
+                }
                 return Err(
-                    self.error("expected `of` after destructuring pattern in for head".into())
+                    self.error("expected `of` or `in` after destructuring pattern in for head".into())
                 );
             }
 
@@ -588,8 +693,10 @@ impl Parser {
                 self.expect_punctuator(')')?;
                 let body = self.parse_loop_body()?;
                 return Ok(Statement::ForIn {
-                    declaration: Some(kind),
-                    target: Expression::Identifier(name),
+                    left: ForBinding::Declaration {
+                        kind,
+                        pattern: crate::ast::BindingPattern::Identifier(name),
+                    },
                     right,
                     body,
                 });
@@ -635,18 +742,20 @@ impl Parser {
             self.expect_punctuator(')')?;
             let body = self.parse_loop_body()?;
             return Ok(Statement::ForIn {
-                declaration: None,
-                target: expression,
+                left: ForBinding::Target(expression),
                 right,
                 body,
             });
         }
 
-        // V9-A: `for (expr of right)`
+        // V9-A: `for (expr of right)` — also accepts Array/Object destructuring targets.
         if self.check_contextual_of() {
             if !matches!(
                 expression,
-                Expression::Identifier(_) | Expression::Member { .. }
+                Expression::Identifier(_)
+                    | Expression::Member { .. }
+                    | Expression::Array(_)
+                    | Expression::Object(_)
             ) {
                 return Err(self.error("invalid left-hand side in for-of loop".into()));
             }
@@ -994,8 +1103,11 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
             collect_var_declared_names(body, names);
         }
         Statement::ForIn {
-            declaration: Some(VariableKind::Var),
-            target: Expression::Identifier(name),
+            left:
+                ForBinding::Declaration {
+                    kind: VariableKind::Var,
+                    pattern: crate::ast::BindingPattern::Identifier(name),
+                },
             body,
             ..
         } => {

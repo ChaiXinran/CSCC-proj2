@@ -74,6 +74,13 @@ pub struct Parser {
     /// body. Used to enforce strict-mode early errors (e.g. legacy octal
     /// escapes in string literals, `delete` of an unqualified identifier).
     pub(super) is_strict: bool,
+    /// Whether the innermost enclosing function is an async function. Used to
+    /// reject `await` as a binding identifier in async function parameter lists
+    /// and bodies (including escaped forms like `await`).
+    pub(super) is_async_context: bool,
+    /// Whether the innermost enclosing function is a generator. Used to reject
+    /// `yield` as a binding identifier in generator parameter lists and bodies.
+    pub(super) is_generator_context: bool,
 }
 
 impl Parser {
@@ -93,6 +100,8 @@ impl Parser {
             source: None,
             nesting_depth: 0,
             is_strict: false,
+            is_async_context: false,
+            is_generator_context: false,
         }
     }
 
@@ -202,9 +211,40 @@ impl Parser {
     }
 
     fn expect_identifier(&mut self) -> Result<String, ParseError> {
+        let tok = self.peek();
+        // `await` is a reserved word inside async functions (including escaped forms).
+        if self.is_async_context {
+            match &tok.kind {
+                TokenKind::Keyword(Keyword::Await) => {
+                    return Err(self.error("`await` is not allowed as an identifier in async context".into()));
+                }
+                TokenKind::Identifier(n) if n == "await" => {
+                    return Err(self.error("`await` is not allowed as an identifier in async context".into()));
+                }
+                _ => {}
+            }
+        }
+        // `yield` is a reserved word inside generator functions.
+        if self.is_generator_context {
+            match &tok.kind {
+                TokenKind::Keyword(Keyword::Yield) => {
+                    return Err(self.error("`yield` is not allowed as an identifier in generator context".into()));
+                }
+                TokenKind::Identifier(n) if n == "yield" => {
+                    return Err(self.error("`yield` is not allowed as an identifier in generator context".into()));
+                }
+                _ => {}
+            }
+        }
         if let TokenKind::Identifier(name) = &self.peek().kind {
             if is_reserved_identifier_name(name) {
                 return Err(self.error(format!("reserved word `{name}` cannot be an identifier")));
+            }
+            // In strict mode, `arguments` and `eval` cannot be used as binding identifiers.
+            if self.is_strict && matches!(name.as_str(), "arguments" | "eval") {
+                return Err(self.error(format!(
+                    "`{name}` cannot be used as a binding identifier in strict mode"
+                )));
             }
             let name = name.clone();
             self.advance();
@@ -270,6 +310,7 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::Keyword(keyword) => format!("keyword `{keyword:?}`"),
         TokenKind::Punctuator(ch) => format!("`{ch}`"),
         TokenKind::Operator(op) => format!("`{op}`"),
+        TokenKind::PrivateName(name) => format!("`#{name}`"),
         TokenKind::TemplateHead(_) => "template literal head".into(),
         TokenKind::TemplateMiddle(_) => "template literal middle".into(),
         TokenKind::TemplateTail(_) => "template literal tail".into(),

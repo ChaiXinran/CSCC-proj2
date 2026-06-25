@@ -107,12 +107,9 @@ pub enum Statement {
         update: Option<Expression>,
         body: Box<Statement>,
     },
-    /// `for (left in right) body`. `declaration` is `Some` for
-    /// `for (var/let/const x in obj)`, `None` when `target` is an existing
-    /// assignment target (`for (x in obj)`).
+    /// `for (left in right) body`.
     ForIn {
-        declaration: Option<VariableKind>,
-        target: Expression,
+        left: ForBinding,
         right: Expression,
         body: Box<Statement>,
     },
