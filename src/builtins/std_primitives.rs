@@ -1,4 +1,4 @@
-//! V6 thin adapter layer.
+//! Standard-primitives adapter layer (String / Number / Boolean / Math / Error / JSON).
 //!
 //! This module is the integration-owned bridge between the VM/runtime and the
 //! pure C1/C2 algorithm modules (`string`, `number`, `boolean`, `math`,

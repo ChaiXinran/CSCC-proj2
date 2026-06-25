@@ -41,7 +41,7 @@ source -> AST
 范围内 Early Error -> ParseError
 ```
 
-分支建议：`feat/v4e-frontend-compat`。
+分支建议：`feat/v4e-parser_basics-compat`。
 
 当前状态：**已完成**。
 
@@ -50,7 +50,7 @@ source -> AST
 - 关键字可作为点号后的 IdentifierName，例如 `object.delete`；
 - 关键字属性名使用稳定源码拼写，不依赖 Debug 格式；
 - 调用参数支持单个尾逗号；
-- `tests/frontend_v4.rs` 独立覆盖 Builtin 调用形状、V4 正向 Test262 文件和
+- `tests/parser_destructuring.rs` 独立覆盖 Builtin 调用形状、V4 正向 Test262 文件和
   范围内 Early Error；
 - 未修改 Compiler、VM、Runtime 或 Builtins。
 
@@ -60,8 +60,8 @@ source -> AST
 
 ```text
 src/bytecode/
-tests/bytecode_v4_contract.rs
-tests/frontend_bytecode_v4.rs
+tests/bytecode_objects.rs
+tests/parser_objects_bytecode.rs
 ```
 
 B 组任务：
@@ -111,7 +111,7 @@ src/vm/
 src/runtime/
 src/builtins/
 src/contracts.rs
-tests/native_v4_runtime.rs
+tests/native_objects_runtime.rs
 ```
 
 ### C0：Builtin 基础设施
@@ -192,7 +192,7 @@ src/vm/interpreter.rs
 src/test262.rs
 src/main.rs
 tests/native_test262.rs
-tests/native_v4.rs
+tests/native_objects.rs
 reports/native-v4-test262-report.md
 .github/workflows/ci.yml
 readme.md

@@ -4,18 +4,18 @@ V11 is a three-track semantic precision and RegExp batch. The three groups work
 in parallel on different feature families, then merge into one V11 integration
 pass.
 
-Shared contracts in `native-v11-interface.md` merge first.
+Shared contracts in `native-annex_b-interface.md` merge first.
 
 ## 1. Execution Model
 
 Recommended branches:
 
 ```text
-docs/v11-contracts
-feat/v11-a-regexp-static
-feat/v11-b-object-descriptor-precision
-feat/v11-c-regexp-annexb-descriptor-builtins
-test/v11-integration
+docs/annex_b-contracts
+feat/annex_b-a-regexp-static
+feat/annex_b-b-object-descriptor-precision
+feat/annex_b-c-regexp-annexb-descriptor-builtins
+test/annex_b-integration
 ```
 
 Recommended merge order:
@@ -36,7 +36,7 @@ Owned files:
 src/lexer/
 src/parser/
 src/ast/
-tests/frontend_v11.rs
+tests/parser_regexp_errors.rs
 ```
 
 Tasks:
@@ -51,13 +51,13 @@ A must not implement RegExp runtime matching or builtin behavior.
 Independent validation:
 
 ```sh
-cargo test --no-default-features frontend_v11
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals/regexp --jobs 4 --progress --json reports/native-v11-a-regexp-literals-summary.json
+cargo test --no-default-features parser_regexp_errors
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals/regexp --jobs 4 --progress --json reports/native-annex_b-a-regexp-literals-summary.json
 ```
 
 Required report:
 
-- `reports/v11-partA-report.md`
+- `reports/annex_b-partA-report.md`
 
 ## 3. B Group — Object Model / Descriptor Precision
 
@@ -67,7 +67,7 @@ Owned files:
 src/runtime/
 src/vm/
 src/contracts.rs
-tests/native_v11_runtime.rs
+tests/native_object_keys.rs
 ```
 
 Tasks:
@@ -85,13 +85,13 @@ owns JS-visible builtins.
 Independent validation:
 
 ```sh
-cargo test --no-default-features native_v11_runtime
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --progress --json reports/native-v11-b-object-summary.json
+cargo test --no-default-features native_object_keys
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --progress --json reports/native-annex_b-b-object-summary.json
 ```
 
 Required report:
 
-- `reports/v11-partB-report.md`
+- `reports/annex_b-partB-report.md`
 
 ## 4. C Group — RegExp / Annex B / Descriptor Builtins
 
@@ -99,7 +99,7 @@ Owned files:
 
 ```text
 src/builtins/
-tests/native_v11_builtins.rs
+tests/native_regexp.rs
 ```
 
 Tasks:
@@ -115,14 +115,14 @@ helpers.
 Independent validation:
 
 ```sh
-cargo test --no-default-features native_v11_builtins
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/RegExp --jobs 4 --progress --json reports/native-v11-c-regexp-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/annexB --jobs 4 --progress --json reports/native-v11-c-annexb-summary.json
+cargo test --no-default-features native_regexp
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/RegExp --jobs 4 --progress --json reports/native-annex_b-c-regexp-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/annexB --jobs 4 --progress --json reports/native-annex_b-c-annexb-summary.json
 ```
 
 Required report:
 
-- `reports/v11-partC-report.md`
+- `reports/annex_b-partC-report.md`
 
 ## 5. Shared-File Lock
 
@@ -133,7 +133,7 @@ Required report:
 | `src/vm/` | B | Runtime error ordering and receiver behavior may require VM review |
 | `src/builtins/` | C | RegExp/Annex B/descriptor sweep work lives here |
 | `src/test262.rs` | shared | Keep V11 scan selector stable |
-| `docs/native-v11-*.md` | all groups | Contract updates before shared-file changes |
+| `docs/native-annex_b-*.md` | all groups | Contract updates before shared-file changes |
 
 ## 6. Integration Gate
 
@@ -143,7 +143,7 @@ Before V11 is considered complete:
 cargo fmt --all -- --check
 cargo check --no-default-features --all-targets
 cargo test --no-default-features --test native_test262
-cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-annex_b-scan --jobs 4 --json reports/native-annex_b-scan-summary.json
 ```
 
 Initial V11 scan status: selector installed and manifest locked; first local
@@ -152,18 +152,18 @@ setup attempt exceeded 300s and did not produce a JSON summary.
 Focused summaries should also be current:
 
 ```sh
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals/regexp --jobs 4 --progress --json reports/native-v11-a-regexp-literals-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --progress --json reports/native-v11-b-object-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/RegExp --jobs 4 --progress --json reports/native-v11-c-regexp-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/annexB --jobs 4 --progress --json reports/native-v11-c-annexb-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals/regexp --jobs 4 --progress --json reports/native-annex_b-a-regexp-literals-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --progress --json reports/native-annex_b-b-object-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/RegExp --jobs 4 --progress --json reports/native-annex_b-c-regexp-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/annexB --jobs 4 --progress --json reports/native-annex_b-c-annexb-summary.json
 ```
 
 Reports and docs to update after integration:
 
-- `reports/v11-partA-report.md`
-- `reports/v11-partB-report.md`
-- `reports/v11-partC-report.md`
-- `reports/native-v11-scan-summary.json`
+- `reports/annex_b-partA-report.md`
+- `reports/annex_b-partB-report.md`
+- `reports/annex_b-partC-report.md`
+- `reports/native-annex_b-scan-summary.json`
 - `docs/status.md`
 - `AGENTS.md`
 - `readme.md`

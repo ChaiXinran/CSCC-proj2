@@ -1,4 +1,4 @@
-//! V8 builtin skeletons for large global families.
+//! Binary-data built-ins: ArrayBuffer, DataView, TypedArray constructors, and Intl skeleton.
 //!
 //! This module intentionally installs honest first-stage shapes: constructors,
 //! prototypes, descriptors, and deterministic Intl option objects. Operations

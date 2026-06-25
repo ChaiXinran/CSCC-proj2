@@ -165,8 +165,8 @@ V8 三组并行开发不同功能：
 推荐命令：
 
 ```sh
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language --jobs 4 --progress --json reports/native-v8-a-language-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/String --jobs 4 --progress --json reports/native-v8-a-string-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language --jobs 4 --progress --json reports/native-binary_data-a-language-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/String --jobs 4 --progress --json reports/native-binary_data-a-string-summary.json
 ```
 
 ### V8-B：Module runner 基础设施
@@ -197,15 +197,15 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 验收：
 
-- module runner 相关代码可以独立编译和单测。（`native_v8_module` 5/5 passed）
+- module runner 相关代码可以独立编译和单测。（`native_modules` 5/5 passed）
 - focused `test/language/module-code`：201/599 passed，398 failed，0 skipped。
-- standard `--native-v8-scan`：205/5000 passed，4795 failed，0 skipped。
+- standard `--native-binary_data-scan`：205/5000 passed，4795 failed，0 skipped。
 - 后续等 A 组 import/export parser 接上后，继续把剩余 parse/linking failure 转为真实 module semantic coverage。
 
 推荐命令：
 
 ```sh
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/module-code --jobs 4 --progress --json reports/native-v8-b-module-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/module-code --jobs 4 --progress --json reports/native-binary_data-b-module-summary.json
 ```
 
 ### V8-C：Builtin skeletons 第一批
@@ -238,9 +238,9 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 推荐命令：
 
 ```sh
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-v8-c-typedarray-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/ArrayBuffer --jobs 4 --progress --json reports/native-v8-c-arraybuffer-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-v8-c-intl402-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-binary_data-c-typedarray-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/ArrayBuffer --jobs 4 --progress --json reports/native-binary_data-c-arraybuffer-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-binary_data-c-intl402-summary.json
 ```
 
 ### V8 集成测试
@@ -251,14 +251,14 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 cargo fmt --all -- --check
 cargo check --no-default-features --all-targets
 cargo test --no-default-features --test native_test262
-cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-binary_data-scan --jobs 4 --json reports/native-binary_data-scan-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-full-test262-summary.json
 ```
 
-`--native-v8-scan` 是 V8 标准轻量集成测试，固定运行
-`reports/native-v8-scan-failures.txt` 中的 5000 个之前未通过样例。V8 相关
+`--native-binary_data-scan` 是 V8 标准轻量集成测试，固定运行
+`reports/native-binary_data-scan-failures.txt` 中的 5000 个之前未通过样例。V8 相关
 AI/协作者在完成 focused tests 后应默认运行该命令，并把结果写入对应
-`reports/v8-part*-report.md`。
+`reports/binary_data-part*-report.md`。
 
 V8 完成后再启动 V9。
 
@@ -315,17 +315,17 @@ runtime connector。
 ### V9 集成测试
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/native-v9-scan-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/statements/for-of --jobs 4 --progress --json reports/native-v9-forof-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Promise --jobs 4 --progress --json reports/native-v9-promise-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Iterator --jobs 4 --progress --json reports/native-v9-iterator-summary.json
+cargo run --release --no-default-features -- test262 --native-collections-scan --jobs 4 --json reports/native-collections-scan-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/statements/for-of --jobs 4 --progress --json reports/native-collections-forof-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Promise --jobs 4 --progress --json reports/native-collections-promise-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Iterator --jobs 4 --progress --json reports/native-collections-iterator-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-full-test262-summary.json
 ```
 
-V9 标准轻量 scan 已锁定为 `reports/native-v9-scan-failures.txt` 中的
+V9 标准轻量 scan 已锁定为 `reports/native-collections-scan-failures.txt` 中的
 5000 个 V9 热点非通过用例。初始结果：0/5000 passed，5000 failed，0 skipped。
-V9 开发时每组完成 focused tests 后，应运行 `--native-v9-scan` 并更新对应
-`reports/v9-part*-report.md`。
+V9 开发时每组完成 focused tests 后，应运行 `--native-collections-scan` 并更新对应
+`reports/collections-part*-report.md`。
 
 V9 完成后再启动 V10。
 
@@ -333,14 +333,14 @@ V9 完成后再启动 V10。
 
 目标：从 skeleton 进入主要算法实现。
 
-状态：V10 第一阶段 setup 已完成。已创建 `docs/native-v10-scope.md`、
-`docs/native-v10-interface.md`、`docs/native-v10-team-plan.md`、
-`reports/v10-partA-report.md`、`reports/v10-partB-report.md`、
-`reports/v10-partC-report.md`，并锁定 `reports/native-v10-scan-failures.txt`。
+状态：V10 第一阶段 setup 已完成。已创建 `docs/native-date_intl-scope.md`、
+`docs/native-date_intl-interface.md`、`docs/native-date_intl-team-plan.md`、
+`reports/date_intl-partA-report.md`、`reports/date_intl-partB-report.md`、
+`reports/date_intl-partC-report.md`，并锁定 `reports/native-date_intl-scan-failures.txt`。
 标准命令：
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v10-scan --jobs 4 --json reports/native-v10-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-date_intl-scan --jobs 4 --json reports/native-date_intl-scan-summary.json
 ```
 
 初始结果：645/5,000 passed，4,355 failed，0 skipped。V9-A 仍在进行时，
@@ -395,10 +395,10 @@ substrate。
 ### V10 集成测试
 
 ```sh
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-v10-typedarray-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/DataView --jobs 4 --progress --json reports/native-v10-dataview-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Temporal --jobs 4 --progress --json reports/native-v10-temporal-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-v10-intl402-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-date_intl-typedarray-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/DataView --jobs 4 --progress --json reports/native-date_intl-dataview-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Temporal --jobs 4 --progress --json reports/native-date_intl-temporal-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-date_intl-intl402-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-full-test262-summary.json
 ```
 
@@ -408,19 +408,19 @@ V10 完成后再启动 V11。
 
 目标：清理已经能执行但行为不符合 spec 的测试。
 
-状态：V11 第一阶段 setup 已完成。已创建 `docs/native-v11-scope.md`、
-`docs/native-v11-interface.md`、`docs/native-v11-team-plan.md`、
-`reports/v11-partA-report.md`、`reports/v11-partB-report.md`、
-`reports/v11-partC-report.md`，并锁定 `reports/native-v11-scan-failures.txt`。
+状态：V11 第一阶段 setup 已完成。已创建 `docs/native-annex_b-scope.md`、
+`docs/native-annex_b-interface.md`、`docs/native-annex_b-team-plan.md`、
+`reports/annex_b-partA-report.md`、`reports/annex_b-partB-report.md`、
+`reports/annex_b-partC-report.md`，并锁定 `reports/native-annex_b-scan-failures.txt`。
 标准命令：
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-annex_b-scan --jobs 4 --json reports/native-annex_b-scan-summary.json
 ```
 
 当前状态：selector 已接入，`native_test262` 15/15 passed；
-第一次本地 `--native-v11-scan` 在 300s 工具超时内未完成，未生成
-`reports/native-v11-scan-summary.json`。后续 V11 工作者需要用更长外部
+第一次本地 `--native-annex_b-scan` 在 300s 工具超时内未完成，未生成
+`reports/native-annex_b-scan-summary.json`。后续 V11 工作者需要用更长外部
 timeout 重跑，或先替换 manifest 中疑似长耗时样本，再记录正式 baseline。
 
 V11 三组并行开发不同功能：
@@ -464,10 +464,10 @@ V11 三组并行开发不同功能：
 ### V11 集成测试
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/RegExp --jobs 4 --progress --json reports/native-v11-regexp-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --progress --json reports/native-v11-object-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/annexB --jobs 4 --progress --json reports/native-v11-annexb-summary.json
+cargo run --release --no-default-features -- test262 --native-annex_b-scan --jobs 4 --json reports/native-annex_b-scan-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/RegExp --jobs 4 --progress --json reports/native-annex_b-regexp-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --progress --json reports/native-annex_b-object-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/annexB --jobs 4 --progress --json reports/native-annex_b-annexb-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-full-test262-summary.json
 ```
 
@@ -500,7 +500,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 - `reports/test262-report.md`
 - 新建 dated/versioned analysis 文件，不覆盖 `reports/test262-analysis.md`
-- `reports/v8-partA-report.md`、`reports/v8-partB-report.md`、`reports/v8-partC-report.md`
+- `reports/binary_data-partA-report.md`、`reports/binary_data-partB-report.md`、`reports/binary_data-partC-report.md`
 - `AGENTS.md`
 - 本文件
 

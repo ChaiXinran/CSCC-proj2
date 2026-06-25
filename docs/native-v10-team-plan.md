@@ -4,25 +4,25 @@ V10 is a three-track numeric and builtin semantics batch. The three groups work
 in parallel on different feature families, then merge into one V10 integration
 pass.
 
-Shared contracts in `native-v10-interface.md` merge first.
+Shared contracts in `native-date_intl-interface.md` merge first.
 
 ## 1. Execution Model
 
 Recommended branches:
 
 ```text
-docs/v10-contracts
-feat/v10-a-numeric-bigint-unicode
-feat/v10-b-typedarray-buffer-runtime
-feat/v10-c-date-intl-temporal-builtins
-test/v10-integration
+docs/date_intl-contracts
+feat/date_intl-a-numeric-bigint-unicode
+feat/date_intl-b-typedarray-buffer-runtime
+feat/date_intl-c-date-intl-temporal-builtins
+test/date_intl-integration
 ```
 
 Recommended merge order:
 
 ```text
 V10 contracts
-  -> V10-A numeric/source-text frontend
+  -> V10-A numeric/source-text parser_basics
   -> V10-B buffer and typed-array runtime substrate
   -> V10-C Date/Intl/Temporal builtin semantics
   -> V10 integration reports and docs
@@ -37,7 +37,7 @@ src/lexer/
 src/parser/
 src/ast/
 src/bytecode/compiler.rs
-tests/frontend_v10.rs
+tests/parser_bigint.rs
 ```
 
 Tasks:
@@ -53,13 +53,13 @@ ArrayBuffer object state.
 Independent validation:
 
 ```sh
-cargo test --no-default-features frontend_v10
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals --jobs 4 --progress --json reports/native-v10-a-literals-summary.json
+cargo test --no-default-features parser_bigint
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals --jobs 4 --progress --json reports/native-date_intl-a-literals-summary.json
 ```
 
 Required report:
 
-- `reports/v10-partA-report.md`
+- `reports/date_intl-partA-report.md`
 
 ## 3. B Group — TypedArray / ArrayBuffer / DataView Runtime
 
@@ -69,7 +69,7 @@ Owned files:
 src/runtime/
 src/vm/
 src/contracts.rs
-tests/native_v10_runtime.rs
+tests/native_binary_data.rs
 ```
 
 Tasks:
@@ -91,13 +91,13 @@ typed-array element semantics remain future A/C integration work.
 Independent validation:
 
 ```sh
-cargo test --no-default-features native_v10_runtime
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-v10-b-typedarray-summary.json
+cargo test --no-default-features native_binary_data
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-date_intl-b-typedarray-summary.json
 ```
 
 Required report:
 
-- `reports/v10-partB-report.md`
+- `reports/date_intl-partB-report.md`
 
 ## 4. C Group — Date / Intl / Temporal Builtins
 
@@ -105,7 +105,7 @@ Owned files:
 
 ```text
 src/builtins/
-tests/native_v10_builtins.rs
+tests/native_date.rs
 ```
 
 Tasks:
@@ -121,14 +121,14 @@ storage through JS-visible objects.
 Independent validation:
 
 ```sh
-cargo test --no-default-features native_v10_builtins
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Date --jobs 4 --progress --json reports/native-v10-c-date-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-v10-c-intl402-summary.json
+cargo test --no-default-features native_date
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Date --jobs 4 --progress --json reports/native-date_intl-c-date-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-date_intl-c-intl402-summary.json
 ```
 
 Required report:
 
-- `reports/v10-partC-report.md`
+- `reports/date_intl-partC-report.md`
 
 ## 5. Shared-File Lock
 
@@ -140,7 +140,7 @@ Required report:
 | `src/vm/` | B | A/C request opcode support through interface docs |
 | `src/builtins/` | C | Date/Intl/Temporal and JS-visible TypedArray constructors live here |
 | `src/test262.rs` | shared | Keep V10 scan selector stable |
-| `docs/native-v10-*.md` | all groups | Contract updates before shared-file changes |
+| `docs/native-date_intl-*.md` | all groups | Contract updates before shared-file changes |
 
 ## 6. Integration Gate
 
@@ -150,7 +150,7 @@ Before V10 is considered complete:
 cargo fmt --all -- --check
 cargo check --no-default-features --all-targets
 cargo test --no-default-features --test native_test262
-cargo run --release --no-default-features -- test262 --native-v10-scan --jobs 4 --json reports/native-v10-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-date_intl-scan --jobs 4 --json reports/native-date_intl-scan-summary.json
 ```
 
 Initial V10 scan baseline: 645/5,000 passed, 4,355 failed, 0 skipped.
@@ -158,18 +158,18 @@ Initial V10 scan baseline: 645/5,000 passed, 4,355 failed, 0 skipped.
 Focused summaries should also be current:
 
 ```sh
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals --jobs 4 --progress --json reports/native-v10-a-literals-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-v10-b-typedarray-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Date --jobs 4 --progress --json reports/native-v10-c-date-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-v10-c-intl402-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/literals --jobs 4 --progress --json reports/native-date_intl-a-literals-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-date_intl-b-typedarray-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Date --jobs 4 --progress --json reports/native-date_intl-c-date-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-date_intl-c-intl402-summary.json
 ```
 
 Reports and docs to update after integration:
 
-- `reports/v10-partA-report.md`
-- `reports/v10-partB-report.md`
-- `reports/v10-partC-report.md`
-- `reports/native-v10-scan-summary.json`
+- `reports/date_intl-partA-report.md`
+- `reports/date_intl-partB-report.md`
+- `reports/date_intl-partC-report.md`
+- `reports/native-date_intl-scan-summary.json`
 - `docs/status.md`
 - `AGENTS.md`
 - `readme.md`

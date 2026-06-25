@@ -1,4 +1,4 @@
-//! V11 RegExp / Annex B / descriptor builtin refinements.
+//! RegExp prototype refinements and ECMAScript Annex B legacy methods.
 //!
 //! This module is a post-V6/V10 augmentation pass. It keeps parser and shared
 //! object-model changes out of C scope while tightening JS-visible RegExp and

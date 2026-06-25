@@ -1,4 +1,4 @@
-//! V9 collection and iterator builtin basics.
+//! Collection built-ins: Map, Set, WeakMap, WeakSet, and iterator infrastructure.
 //!
 //! This module intentionally implements the small observable core for Map/Set
 //! and honest skeletons for weak collections and iterator helpers.

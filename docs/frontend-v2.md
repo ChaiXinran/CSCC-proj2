@@ -5,7 +5,7 @@
 
 - 模块边界见 [interface-spec.md](interface-spec.md) 与 [native-v2-interface.md](native-v2-interface.md)。
 - V2 语言范围与分工见 [native-v2-scope.md](native-v2-scope.md)。
-- V1 实现见 [frontend-v1.md](frontend-v1.md)。
+- V1 实现见 [parser_basics-v1.md](parser_basics-v1.md)。
 
 ## 1. 职责边界
 
@@ -102,7 +102,7 @@ cargo clippy --all-targets -- -D warnings
 - **Token 驱动测试**(`src/parser/token_tests.rs`):全部手工构造 `Vec<Token>` 直接喂给
   `Parser`,完全绕过词法,对上述 V2 产生式逐条断言 AST 形状;换行报错用 `tok_nl` 注入
   `line_terminator_before`。
-- **集成测试**(`tests/frontend.rs`):解析 native-v2-scope §4 的端到端控制流脚本;
+- **集成测试**(`tests/parser_basics.rs`):解析 native-v2-scope §4 的端到端控制流脚本;
   校验 `break;`、`continue;`、`throw\n1;`、孤立 `else` 均归 `NativeError::Parse`。
 
 ## 4. 契约变更说明(需其他组知晓)
@@ -113,7 +113,7 @@ cargo clippy --all-targets -- -D warnings
   另提供 `Token::with_line_terminator_before`,因此既有手工构造 Token 的测试无需改动,
   仅词法负责记录真实换行。
 - `Statement::VariableDeclaration` 改为 `Vec<VariableDeclarator>`。**这是破坏性变更**:
-  编译器组(B)的 `src/bytecode/compiler.rs` 与 `tests/bytecode_contract.rs` 需相应适配。
+  编译器组(B)的 `src/bytecode/compiler.rs` 与 `tests/bytecode_basics.rs` 需相应适配。
   为保持仓库可编译、各组测试可运行,本次已对 B 组做**最小机械适配**(遍历 `declarations`
   调用既有的单声明逻辑),其语义归属仍属编译器组,后续由 B 组按需重写。
 - 新增的 `Break`/`Continue`/`Throw`/`Conditional`/`Construct` 节点目前会落入编译器的

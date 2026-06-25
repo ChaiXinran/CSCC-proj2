@@ -181,7 +181,7 @@ let chunk = Compiler::new().compile_program(&program)?;
 ```
 
 跨组组装时由 `ProgramCompiler` Trait 委托到同一入口。B 组测试位于
-`tests/bytecode_contract.rs`，不得通过 Parser 生成测试输入，也不得通过 VM
+`tests/bytecode_basics.rs`，不得通过 Parser 生成测试输入，也不得通过 VM
 判断编译是否正确。
 
 ## 5. C 部分：执行内核接口

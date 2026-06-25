@@ -15,7 +15,7 @@ Test262 gate.
 Branch:
 
 ```text
-feat/v6-coercion
+feat/std_primitives-coercion
 ```
 
 Owned files:
@@ -26,7 +26,7 @@ src/runtime/object.rs
 src/runtime/context.rs
 src/runtime/intrinsics.rs
 src/vm/
-tests/native_v6_runtime.rs
+tests/native_primitives.rs
 ```
 
 Tasks:
@@ -44,14 +44,14 @@ V6.
 Branch:
 
 ```text
-feat/v6-string
+feat/std_primitives-string
 ```
 
 Owned files:
 
 ```text
 src/builtins/string.rs
-tests/native_v6_string.rs
+tests/native_string.rs
 ```
 
 Tasks:
@@ -69,7 +69,7 @@ Developer 2 must not modify VM, runtime object storage, or `builtins/mod.rs`.
 Branch:
 
 ```text
-feat/v6-numeric
+feat/std_primitives-numeric
 ```
 
 Owned files:
@@ -79,7 +79,7 @@ src/builtins/number.rs
 src/builtins/boolean.rs
 src/builtins/math.rs
 src/builtins/error.rs
-tests/native_v6_numeric.rs
+tests/native_number_format.rs
 ```
 
 Tasks:
@@ -95,10 +95,10 @@ helpers.
 
 ### Phase 2 — JSON and Integration
 
-After `feat/v6-coercion` merges:
+After `feat/std_primitives-coercion` merges:
 
 - Developer 1 implements `src/builtins/json.rs` and
-  `tests/native_v6_json.rs`.
+  `tests/native_json.rs`.
 - Developer 2 connects String to the merged runtime and validates String/JSON
   Test262 candidates.
 - Developer 3 connects numeric and Error modules and validates their focused
@@ -113,7 +113,7 @@ src/builtins/mod.rs
 src/test262.rs
 src/main.rs
 tests/native_test262.rs
-reports/native-v6-test262-report.md
+reports/native-std_primitives-test262-report.md
 .github/workflows/ci.yml
 readme.md
 ```
@@ -121,9 +121,9 @@ readme.md
 Merge order:
 
 ```text
-feat/v6-coercion
-  -> feat/v6-string + feat/v6-numeric
-  -> v6-json
+feat/std_primitives-coercion
+  -> feat/std_primitives-string + feat/std_primitives-numeric
+  -> std_primitives-json
   -> Test262/CLI/CI integration
 ```
 
@@ -137,12 +137,12 @@ it.
 Recommended branches:
 
 ```text
-docs/v6-contracts
-feat/v6-coercion
-feat/v6-string
-feat/v6-numeric
-feat/v6-json
-test/v6-test262
+docs/std_primitives-contracts
+feat/std_primitives-coercion
+feat/std_primitives-string
+feat/std_primitives-numeric
+feat/std_primitives-json
+test/std_primitives-test262
 ```
 
 Recommended merge order:
@@ -212,7 +212,7 @@ src/runtime/object.rs
 src/runtime/context.rs
 src/runtime/intrinsics.rs
 src/vm/
-tests/native_v6_runtime.rs
+tests/native_primitives.rs
 ```
 
 Implement the frozen conversion API, primitive wrapper internal slots,
@@ -225,7 +225,7 @@ Owned files:
 
 ```text
 src/builtins/string.rs
-tests/native_v6_string.rs
+tests/native_string.rs
 ```
 
 Implement V6.1 using C0 conversion and UTF-16 helpers. Do not edit numeric,
@@ -240,7 +240,7 @@ src/builtins/number.rs
 src/builtins/boolean.rs
 src/builtins/math.rs
 src/builtins/error.rs
-tests/native_v6_numeric.rs
+tests/native_number_format.rs
 ```
 
 Move the existing partial implementations out of `builtins/mod.rs`, then
@@ -252,7 +252,7 @@ Owned files:
 
 ```text
 src/builtins/json.rs
-tests/native_v6_json.rs
+tests/native_json.rs
 ```
 
 Implement the standalone JSON parser/stringifier and direct runtime tests.
@@ -267,7 +267,7 @@ src/builtins/mod.rs
 src/test262.rs
 src/main.rs
 tests/native_test262.rs
-reports/native-v6-test262-report.md
+reports/native-std_primitives-test262-report.md
 .github/workflows/ci.yml
 readme.md
 ```
@@ -275,7 +275,7 @@ readme.md
 Tasks:
 
 - integrate module installers after their branches pass independently;
-- add `--native-v6` and `--native-v6-scan`;
+- add `--native-std_primitives` and `--native-std_primitives-scan`;
 - scan String, Number, Math, Boolean, Error, and JSON directories;
 - select a zero-failure, zero-skip pinned gate for each completed stage;
 - retain every V1-V5 gate;
@@ -330,8 +330,8 @@ cargo run -- test262 --native-v2 --jobs 1
 cargo run -- test262 --native-v3 --jobs 1
 cargo run -- test262 --native-v4 --jobs 1
 cargo run -- test262 --native-v5 --jobs 1
-cargo run -- test262 --native-v6 --jobs 1
-cargo run -- test262 --native-v6-scan --jobs 4
+cargo run -- test262 --native-std_primitives --jobs 1
+cargo run -- test262 --native-std_primitives-scan --jobs 4
 ```
 
 The scan percentage is diagnostic. Only the pinned gate is a merge blocker,

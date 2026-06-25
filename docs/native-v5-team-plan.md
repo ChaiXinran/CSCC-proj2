@@ -10,7 +10,7 @@ Create branches from the latest agreed stable commit:
 
 ```text
 docs/v5-contracts
-feat/v5-frontend
+feat/v5-parser_basics
 feat/v5-bytecode
 test/v5-test262
 feat/v5-runtime       # starts after V4 repair merges
@@ -20,7 +20,7 @@ Recommended merge order:
 
 ```text
 V5 contracts
-  -> A frontend
+  -> A parser_basics
   -> B bytecode
   -> V4 repair
   -> C VM/runtime
@@ -38,7 +38,7 @@ Owned files:
 src/lexer/
 src/ast/
 src/parser/
-tests/frontend_v5.rs
+tests/parser_closures.rs
 ```
 
 Tasks:
@@ -64,7 +64,7 @@ Delivered:
 - duplicate lexical declaration checks for scripts, blocks, functions, catch
   bodies, and the shared switch lexical scope;
 - nested functions no longer inherit outer loop/switch breakable contexts;
-- independent coverage in `tests/frontend_v5.rs`.
+- independent coverage in `tests/parser_closures.rs`.
 
 The only cross-owner change is a compiler compatibility arm that returns an
 explicit `CompileError` for V5 statements until B implements bytecode lowering.
@@ -75,8 +75,8 @@ Owned files:
 
 ```text
 src/bytecode/
-tests/bytecode_v5_contract.rs
-tests/frontend_bytecode_v5.rs
+tests/bytecode_closures.rs
+tests/parser_closures_bytecode.rs
 ```
 
 Tasks:
@@ -104,8 +104,8 @@ Delivered:
 - catch/finally handler metadata and catch exception loading;
 - two-phase `let`/`const` creation and initialization, including lexical name
   loads/stores;
-- hand-built AST/Chunk tests in `tests/bytecode_v5_contract.rs`;
-- A→B source integration in `tests/frontend_bytecode_v5.rs`.
+- hand-built AST/Chunk tests in `tests/bytecode_closures.rs`;
+- A→B source integration in `tests/parser_closures_bytecode.rs`.
 
 The VM contains only a compatibility rejection for unimplemented V5 runtime
 instructions; execution semantics remain C-group work.
@@ -121,7 +121,7 @@ src/vm/
 src/runtime/environment.rs
 src/runtime/context.rs
 src/contracts.rs
-tests/native_v5_runtime.rs
+tests/native_closures_runtime.rs
 ```
 
 Tasks:
@@ -143,7 +143,7 @@ Owned files:
 ```text
 src/test262.rs
 src/main.rs
-tests/native_v5.rs
+tests/native_closures.rs
 tests/native_test262.rs
 reports/native-v5-test262-report.md
 .github/workflows/ci.yml

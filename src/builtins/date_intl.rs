@@ -1,4 +1,4 @@
-//! V10 Date / Intl / Temporal builtin basics.
+//! Date / Intl / Temporal built-ins.
 //!
 //! The implementation is intentionally a deterministic UTC-oriented subset.
 //! It installs real JS-visible constructors, prototypes, descriptors, and a

@@ -104,22 +104,22 @@ V7 relies on layered validation rather than one giant in-process test:
 
 | Layer | Purpose |
 | --- | --- |
-| `cargo test --test native_v7_runtime` | direct budget, heap, GC, and cache tests |
+| `cargo test --test native_limits` | direct budget, heap, GC, and cache tests |
 | top-level Test262 dashboard | crash-safe whole-suite visibility |
 | child-suite dashboards | diagnose `built-ins` and `language` hotspots |
 | failure-sample report | focused root-cause inspection without unbounded JSON |
 | benchmark report | cold/warm/cache/JetStream evidence |
 
 The lightweight V7 diagnostic scan is selected by `--native-v7-scan`. It is
-intended for frontend/cache-safety smoke coverage over a few thousand files:
+intended for parser_basics/cache-safety smoke coverage over a few thousand files:
 
 | Area | Purpose |
 | --- | --- |
 | `test/language/literals` | lexical and literal parsing stress |
 | `test/language/types` | primitive type grammar and runtime front door |
 | `test/language/block-scope` | scope-oriented parser/compiler coverage |
-| `test/language/function-code` | function-body frontend coverage |
-| `test/language/global-code` | global script frontend coverage |
+| `test/language/function-code` | function-body parser_basics coverage |
+| `test/language/global-code` | global script parser_basics coverage |
 | `test/built-ins/Function` | generic call/construct shapes |
 | `test/built-ins/String` | string literal/coercion-heavy scripts |
 | `test/built-ins/Symbol` | modern identifier/member/builtin shapes |
@@ -129,7 +129,7 @@ Recommended command:
 
 ```powershell
 cargo run --release --no-default-features -- test262 --native-v7 --jobs 1 --verbose
-cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
+cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-parser_basics-summary.json
 ```
 
 `--native-v7` is the pinned integration gate. Since V7 is not a syntax or

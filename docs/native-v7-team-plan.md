@@ -39,7 +39,7 @@ Owned files:
 src/lexer/
 src/parser/
 src/ast/
-tests/frontend_v7.rs
+tests/parser_fuzzing.rs
 ```
 
 Tasks:
@@ -58,8 +58,8 @@ Owned files:
 
 ```text
 src/bytecode/
-tests/bytecode_v7_contract.rs
-tests/frontend_bytecode_v7.rs
+tests/bytecode_gc.rs
+tests/parser_gc.rs
 ```
 
 Tasks:
@@ -88,7 +88,7 @@ src/vm/
 src/builtins/string.rs
 src/builtins/array.rs
 src/builtins/json.rs
-tests/native_v7_runtime.rs
+tests/native_limits.rs
 ```
 
 Tasks:
@@ -111,7 +111,7 @@ src/runtime/environment.rs
 src/runtime/function.rs
 src/runtime/value.rs
 src/vm/interpreter.rs
-tests/native_v7_gc.rs
+tests/native_gc.rs
 ```
 
 Tasks:
@@ -132,7 +132,7 @@ src/backend/native.rs
 src/bytecode/chunk.rs
 src/vm/
 src/runtime/property_map.rs
-tests/native_v7_cache.rs
+tests/native_cache.rs
 ```
 
 Tasks:
@@ -228,9 +228,9 @@ cargo run --release --no-default-features -- test262 --native-v2 --jobs 1
 cargo run --release --no-default-features -- test262 --native-v3 --jobs 1
 cargo run --release --no-default-features -- test262 --native-v4 --jobs 1
 cargo run --release --no-default-features -- test262 --native-v5 --jobs 1
-cargo run --release --no-default-features -- test262 --native-v6 --jobs 1
+cargo run --release --no-default-features -- test262 --native-std_primitives --jobs 1
 cargo run --release --no-default-features -- test262 --native-v7 --jobs 1
-cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
+cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-parser_basics-summary.json
 ```
 
 Recommended dashboard runs:

@@ -6,9 +6,9 @@ mod json;
 mod object;
 
 // C1/C2 pure algorithm modules. They contain no VM/runtime wiring; the thin
-// adapter layer in `v6` bridges them into the runtime. `allow(dead_code)` keeps
-// low-level helpers mandated by the V6 interface (e.g. `utf16_slice`) available
-// without forcing a direct JavaScript-method home for each one.
+// adapter layer in `std_primitives` bridges them into the runtime.
+// `allow(dead_code)` keeps low-level helpers (e.g. `utf16_slice`) available
+// without requiring a direct JavaScript-method home for each one.
 #[allow(dead_code)]
 mod boolean;
 #[allow(dead_code)]
@@ -21,11 +21,16 @@ mod number;
 pub(crate) mod regexp;
 #[allow(dead_code)]
 mod string;
-mod v6;
-mod v8;
-mod v9;
-mod v10;
-mod v11;
+/// String / Number / Boolean / Math / Error / JSON adapter layer.
+mod std_primitives;
+/// ArrayBuffer / DataView / TypedArray constructors + Intl skeleton.
+mod binary_data;
+/// Map / Set / WeakMap / WeakSet + iterator infrastructure.
+mod collections;
+/// Date / Intl / Temporal built-ins.
+mod date_intl;
+/// RegExp prototype refinements + ECMAScript Annex B legacy methods.
+mod annex_b;
 
 use crate::{
     runtime::{
@@ -211,7 +216,7 @@ pub fn install_test262_harness(context: &mut NativeContext) {
         )
         .expect("install Test262Error");
     context.declare_global("Test262Error", test262_error);
-    v8::install_test262_host_object(context);
+    binary_data::install_test262_host_object(context);
 }
 
 fn test262_error_call(
@@ -249,11 +254,11 @@ fn test262_error_construct(
 /// Installs the standard-library globals by delegating to the V6 adapter layer,
 /// which bridges the pure C1/C2 algorithm modules into the runtime.
 fn install_std_globals(context: &mut NativeContext) -> Result<(), VmError> {
-    v6::install(context)?;
-    v8::install(context)?;
-    v9::install(context)?;
-    v10::install(context)?;
-    v11::install(context)
+    std_primitives::install(context)?;
+    binary_data::install(context)?;
+    collections::install(context)?;
+    date_intl::install(context)?;
+    annex_b::install(context)
 }
 
 #[cfg(test)]

@@ -3,18 +3,18 @@
 V8 is a three-track feature unlock batch. The three groups work in parallel on
 different feature families, then merge into one V8 integration pass.
 
-Shared contracts in `native-v8-interface.md` merge first.
+Shared contracts in `native-binary_data-interface.md` merge first.
 
 ## 1. Execution Model
 
 Recommended branches:
 
 ```text
-docs/v8-contracts
-feat/v8-a-frontend-unlockers
-feat/v8-b-module-runner
-feat/v8-c-builtin-skeletons
-test/v8-integration
+docs/binary_data-contracts
+feat/binary_data-a-parser_basics-unlockers
+feat/binary_data-b-module-runner
+feat/binary_data-c-builtin-skeletons
+test/binary_data-integration
 ```
 
 Recommended merge order:
@@ -22,7 +22,7 @@ Recommended merge order:
 ```text
 V8 contracts
   -> shared AST/source-kind/runtime helper connector patches
-  -> V8-A frontend unlockers
+  -> V8-A parser_basics unlockers
   -> V8-B module runner infrastructure
   -> V8-C builtin skeletons
   -> V8 integration reports and docs
@@ -30,7 +30,7 @@ V8 contracts
 
 The three feature branches may develop in parallel after the contracts merge.
 If a branch needs a shared interface not covered here, update
-`native-v8-interface.md` before continuing.
+`native-binary_data-interface.md` before continuing.
 
 ## 2. A Group — Frontend Unlockers
 
@@ -58,12 +58,12 @@ Independent validation:
 
 ```sh
 cargo test --no-default-features frontend_v8
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language --jobs 4 --progress --json reports/native-v8-a-language-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language --jobs 4 --progress --json reports/native-binary_data-a-language-summary.json
 ```
 
 Required report:
 
-- `reports/v8-partA-report.md`
+- `reports/binary_data-partA-report.md`
 
 Every A-track implementation change must update this report with the change
 summary, touched files, tests run, result deltas, and open coordination notes.
@@ -78,7 +78,7 @@ src/runtime/
 src/vm/
 src/contracts.rs
 src/test262.rs
-tests/native_v8_module.rs
+tests/native_modules.rs
 ```
 
 Tasks:
@@ -98,25 +98,25 @@ document the connector needed from A.
 Independent validation:
 
 ```sh
-cargo test --no-default-features native_v8_module
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/module-code --jobs 4 --progress --json reports/native-v8-b-module-summary.json
+cargo test --no-default-features native_modules
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/module-code --jobs 4 --progress --json reports/native-binary_data-b-module-summary.json
 ```
 
 Required report:
 
-- `reports/v8-partB-report.md`
+- `reports/binary_data-partB-report.md`
 
 Every B-track implementation change must update this report with the change
 summary, touched files, tests run, module skip delta, and open coordination
 notes.
 
 Current B status (2026-06-24): first-stage module infrastructure is in place.
-`cargo test --no-default-features --test native_v8_module` passes 5/5, and
+`cargo test --no-default-features --test native_modules` passes 5/5, and
 `cargo test --no-default-features --test native_test262` passes 12/12. The
 focused module-code command reports 201/599 passed, 398 failed, 0 skipped
-(`reports/native-v8-b-module-summary.json`). The standard V8 scan reports
+(`reports/native-binary_data-b-module-summary.json`). The standard V8 scan reports
 205/5,000 passed, 4,795 failed, 0 skipped
-(`reports/native-v8-scan-summary.json`). Remaining failures are dominated by
+(`reports/native-binary_data-scan-summary.json`). Remaining failures are dominated by
 import/export parser and linking semantics that require A/B connector work.
 
 ## 4. C Group — Builtin Skeletons and Test262 Host
@@ -129,7 +129,7 @@ src/test262.rs
 reports/
 docs/status.md
 readme.md
-tests/native_v8_builtins.rs
+tests/native_typed_arrays.rs
 ```
 
 Tasks:
@@ -146,14 +146,14 @@ instead of hard-coding behavior in one builtin.
 Independent validation:
 
 ```sh
-cargo test --no-default-features native_v8_builtins
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-v8-c-typedarray-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-v8-c-intl402-summary.json
+cargo test --no-default-features native_typed_arrays
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/TypedArray --jobs 4 --progress --json reports/native-binary_data-c-typedarray-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-binary_data-c-intl402-summary.json
 ```
 
 Required report:
 
-- `reports/v8-partC-report.md`
+- `reports/binary_data-partC-report.md`
 
 Every C-track implementation change must update this report with the change
 summary, touched files, tests run, missing-global delta, and newly exposed
@@ -169,7 +169,7 @@ descriptor/semantic failures.
 | `src/vm/interpreter.rs` | B | A may request opcode support through interface docs |
 | `src/builtins/` | C | Must use runtime object-model APIs |
 | `src/test262.rs` | B/C shared | B owns module runner behavior; C owns reports/host helpers |
-| `docs/native-v8-*.md` | all groups | contract updates before shared-file changes |
+| `docs/native-binary_data-*.md` | all groups | contract updates before shared-file changes |
 
 ## 6. Integration Gate
 
@@ -179,17 +179,17 @@ Before V8 is considered complete:
 cargo fmt --all -- --check
 cargo check --no-default-features --all-targets
 cargo test --no-default-features --test native_test262
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language --jobs 4 --progress --json reports/native-v8-a-language-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/module-code --jobs 4 --progress --json reports/native-v8-b-module-summary.json
-cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-v8-c-intl402-summary.json
-cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language --jobs 4 --progress --json reports/native-binary_data-a-language-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/module-code --jobs 4 --progress --json reports/native-binary_data-b-module-summary.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/intl402 --jobs 4 --progress --json reports/native-binary_data-c-intl402-summary.json
+cargo run --release --no-default-features -- test262 --native-binary_data-scan --jobs 4 --json reports/native-binary_data-scan-summary.json
 cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test --jobs 4 --progress --json reports/native-full-test262-summary.json
 ```
 
-`--native-v8-scan` is the standard lightweight V8 integration check. It runs
-the locked 5,000-case manifest in `reports/native-v8-scan-failures.txt`, sampled
+`--native-binary_data-scan` is the standard lightweight V8 integration check. It runs
+the locked 5,000-case manifest in `reports/native-binary_data-scan-failures.txt`, sampled
 from cases that did not pass in the 2026-06-24 full direct run. The initial
-initial summary was `reports/native-v8-scan-summary.json`: 0/5,000 passed,
+initial summary was `reports/native-binary_data-scan-summary.json`: 0/5,000 passed,
 4,504 failed, and 496 skipped. After the first V8-B module runner pass, the
 current summary is 205/5,000 passed, 4,795 failed, and 0 skipped.
 
@@ -198,10 +198,10 @@ Reports and docs to update after the integration run:
 - `reports/test262-report.md`;
 - a new dated or versioned analysis file, not the locked
   `reports/test262-analysis.md`;
-- `reports/v8-partA-report.md`;
-- `reports/v8-partB-report.md`;
-- `reports/v8-partC-report.md`;
-- `reports/native-v8-scan-summary.json` if generated and intentionally kept for
+- `reports/binary_data-partA-report.md`;
+- `reports/binary_data-partB-report.md`;
+- `reports/binary_data-partC-report.md`;
+- `reports/native-binary_data-scan-summary.json` if generated and intentionally kept for
   the integration pass;
 - `docs/status.md`;
 - `AGENTS.md`;
