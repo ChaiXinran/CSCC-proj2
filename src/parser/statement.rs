@@ -4,8 +4,9 @@ use std::collections::HashSet;
 
 use crate::{
     ast::{
-        BindingPattern, CatchClause, Expression, ForBinding, FunctionBody, FunctionParam,
-        PropertyName, Statement, SwitchCase, VariableDeclarator, VariableKind,
+        ArrayBindingElement, BindingPattern, CatchClause, Expression, ForBinding, FunctionBody,
+        FunctionParam, ObjectBindingKey, ObjectBindingProp, PropertyName, Statement, SwitchCase,
+        VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, TokenKind},
     parser::{ParseError, Parser, describe},
@@ -110,22 +111,45 @@ impl Parser {
     }
 
     /// Parses a parameter list `(name, name, ..., ...rest)`.
+    /// Supports destructuring patterns (`{a,b}`, `[a,b]`), default values (`x=1`),
+    /// and rest destructuring (`...[a,b]`).
     pub(super) fn parse_param_list(&mut self) -> Result<Vec<FunctionParam>, ParseError> {
         self.expect_punctuator('(')?;
         let mut params = Vec::new();
         if !self.check_punctuator(')') {
             loop {
                 if self.check_spread() {
-                    // rest parameter: `...name`
+                    // rest parameter: `...name` or `...[pat]` or `...{pat}`
                     self.advance(); // consume `...`
-                    let rest_name = self.expect_identifier()?;
-                    params.push(FunctionParam::Rest(rest_name));
+                    if self.check_punctuator('[') || self.check_punctuator('{') {
+                        let pat = self.parse_binding_pattern()?;
+                        params.push(FunctionParam::RestPattern(pat));
+                    } else {
+                        let rest_name = self.expect_identifier()?;
+                        params.push(FunctionParam::Rest(rest_name));
+                    }
                     // rest must be last; consume optional trailing comma
                     self.eat_punctuator(',');
                     break;
                 }
-                let name = self.expect_identifier()?;
-                params.push(FunctionParam::Simple(name));
+                // destructuring parameter: `{a,b}` or `[a,b]`
+                if self.check_punctuator('[') || self.check_punctuator('{') {
+                    let pat = self.parse_binding_pattern()?;
+                    let default_value = if self.eat_operator("=") {
+                        Some(Box::new(self.parse_assignment()?))
+                    } else {
+                        None
+                    };
+                    params.push(FunctionParam::Pattern(pat, default_value));
+                } else {
+                    let name = self.expect_identifier()?;
+                    if self.eat_operator("=") {
+                        let default_val = self.parse_assignment()?;
+                        params.push(FunctionParam::Default(name, Box::new(default_val)));
+                    } else {
+                        params.push(FunctionParam::Simple(name));
+                    }
+                }
                 if !self.eat_punctuator(',') {
                     break;
                 }
@@ -310,46 +334,141 @@ impl Parser {
 
     fn parse_array_binding_pattern(&mut self) -> Result<BindingPattern, ParseError> {
         self.expect_punctuator('[')?;
-        let mut elements = Vec::new();
+        let mut elements: Vec<Option<ArrayBindingElement>> = Vec::new();
+        let mut rest = None;
         while !self.check_punctuator(']') && !self.at_eof() {
+            // hole
             if self.eat_punctuator(',') {
-                elements.push(None); // hole
+                elements.push(None);
                 continue;
             }
+            // rest element: `...name` or `...[pat]` or `...{pat}`
+            if self.check_spread() {
+                self.advance(); // consume `...`
+                let rest_pat = self.parse_binding_pattern()?;
+                rest = Some(Box::new(rest_pat));
+                self.eat_punctuator(','); // optional trailing comma
+                break;
+            }
             let pat = self.parse_binding_pattern()?;
-            elements.push(Some(pat));
+            let default = if self.eat_operator("=") {
+                Some(Box::new(self.parse_assignment()?))
+            } else {
+                None
+            };
+            elements.push(Some(ArrayBindingElement { pattern: pat, default }));
             if !self.eat_punctuator(',') {
                 break;
             }
         }
         self.expect_punctuator(']')?;
-        Ok(BindingPattern::Array(elements))
+        Ok(BindingPattern::Array { elements, rest })
     }
 
     fn parse_object_binding_pattern(&mut self) -> Result<BindingPattern, ParseError> {
         self.expect_punctuator('{')?;
-        let mut props = Vec::new();
+        let mut props: Vec<ObjectBindingProp> = Vec::new();
+        let mut rest = None;
         while !self.check_punctuator('}') && !self.at_eof() {
-            // `{ name }` shorthand or `{ key: pattern }`
-            let key_name = self.expect_identifier()?;
-            let (key, value_pat) = if self.eat_punctuator(':') {
-                // `{ key: pattern }`
-                let pat = self.parse_binding_pattern()?;
-                (PropertyName::Identifier(key_name), pat)
+            // rest property: `...name`
+            if self.check_spread() {
+                self.advance(); // consume `...`
+                let name = self.expect_identifier()?;
+                rest = Some(Box::new(BindingPattern::Identifier(name)));
+                self.eat_punctuator(',');
+                break;
+            }
+            // computed key: `[expr]: pattern`
+            if self.eat_punctuator('[') {
+                let key_expr = self.parse_assignment()?;
+                self.expect_punctuator(']')?;
+                self.expect_punctuator(':')?;
+                let value = self.parse_binding_pattern()?;
+                let default = if self.eat_operator("=") {
+                    Some(Box::new(self.parse_assignment()?))
+                } else {
+                    None
+                };
+                props.push(ObjectBindingProp {
+                    key: ObjectBindingKey::Computed(Box::new(key_expr)),
+                    value,
+                    default,
+                });
             } else {
-                // `{ name }` shorthand — binds to same identifier
-                (
-                    PropertyName::Identifier(key_name.clone()),
-                    BindingPattern::Identifier(key_name),
-                )
-            };
-            props.push((key, value_pat));
+                // static key: identifier (including keywords), string, or number
+                let (key_prop_name, shorthand_name) = self.parse_object_binding_key()?;
+                let (value, default) = if self.eat_punctuator(':') {
+                    // `{ key: pattern }` or `{ key: pattern = default }`
+                    let pat = self.parse_binding_pattern()?;
+                    let def = if self.eat_operator("=") {
+                        Some(Box::new(self.parse_assignment()?))
+                    } else {
+                        None
+                    };
+                    (pat, def)
+                } else {
+                    // `{ name }` shorthand, possibly `{ name = default }`
+                    let shorthand = shorthand_name.ok_or_else(|| {
+                        self.error(
+                            "expected `:` after non-identifier property key in binding pattern"
+                                .into(),
+                        )
+                    })?;
+                    let def = if self.eat_operator("=") {
+                        Some(Box::new(self.parse_assignment()?))
+                    } else {
+                        None
+                    };
+                    (BindingPattern::Identifier(shorthand), def)
+                };
+                props.push(ObjectBindingProp {
+                    key: ObjectBindingKey::Static(key_prop_name),
+                    value,
+                    default,
+                });
+            }
             if !self.eat_punctuator(',') {
+                break;
+            }
+            // trailing comma before `}` is valid
+            if self.check_punctuator('}') {
                 break;
             }
         }
         self.expect_punctuator('}')?;
-        Ok(BindingPattern::Object(props))
+        Ok(BindingPattern::Object { props, rest })
+    }
+
+    /// Parses the key portion of an object binding property.
+    /// Returns `(PropertyName, Option<shorthand_binding_name>)`.
+    /// `shorthand_name` is `Some` only for plain-identifier keys that can serve
+    /// as both key and shorthand binding target: `{ foo }` → key `"foo"`, binding `"foo"`.
+    fn parse_object_binding_key(
+        &mut self,
+    ) -> Result<(PropertyName, Option<String>), ParseError> {
+        let tok = self.peek().clone();
+        match tok.kind {
+            TokenKind::String(s) => {
+                self.advance();
+                Ok((PropertyName::String(s), None))
+            }
+            TokenKind::Number(n) => {
+                self.advance();
+                Ok((PropertyName::Number(n), None))
+            }
+            TokenKind::Keyword(kw) => {
+                self.advance();
+                Ok((PropertyName::Identifier(kw.as_str().into()), None))
+            }
+            TokenKind::Identifier(name) => {
+                self.advance();
+                Ok((PropertyName::Identifier(name.clone()), Some(name)))
+            }
+            _ => Err(self.error(format!(
+                "expected property name, got {}",
+                describe(&tok.kind)
+            ))),
+        }
     }
 
     /// Parses a class declaration: `class Name { ... }`.

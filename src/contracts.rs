@@ -8,11 +8,11 @@ use std::{error::Error, fmt};
 
 pub use crate::{
     ast::{
-        ArrayElement, AssignmentOperator, BinaryOperator, BindingPattern, CallArgument,
-        CatchClause, ClassDeclaration, ClassElement, ClassExpression, Expression, FunctionBody,
-        FunctionLiteral, FunctionParam, Literal, LogicalOperator, ObjectProperty, Program,
-        PropertyName, Statement, SwitchCase, TemplateLiteral, UnaryOperator, VariableDeclarator,
-        VariableKind,
+        ArrayBindingElement, ArrayElement, AssignmentOperator, BinaryOperator, BindingPattern,
+        CallArgument, CatchClause, ClassDeclaration, ClassElement, ClassExpression, Expression,
+        FunctionBody, FunctionLiteral, FunctionParam, Literal, LogicalOperator, ObjectBindingKey,
+        ObjectBindingProp, ObjectProperty, Program, PropertyName, Statement, SwitchCase,
+        TemplateLiteral, UnaryOperator, VariableDeclarator, VariableKind,
     },
     bytecode::{
         Chunk, ChunkError, CompileError, Compiler, Constant, EnvironmentCapturePolicy,

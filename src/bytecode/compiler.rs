@@ -1129,24 +1129,42 @@ impl Compiler {
         body: &FunctionBody,
         outer_context: &mut CompileContext,
     ) -> Result<CompiledFunction, CompileError> {
-        // Split simple params from the optional trailing rest parameter.
-        let rest_param = params.iter().find_map(|p| {
-            if let crate::ast::FunctionParam::Rest(name) = p {
-                Some(name.clone())
-            } else {
-                None
-            }
-        });
-        let param_names: Vec<String> = params
-            .iter()
-            .filter_map(|p| {
-                if let crate::ast::FunctionParam::Simple(name) = p {
-                    Some(name.clone())
-                } else {
-                    None
+        use crate::ast::FunctionParam;
+
+        // Build positional param names and rest param name for the FunctionTemplate.
+        // For destructuring/default params, we generate placeholder names and emit
+        // preamble code at function entry to apply defaults and destructure.
+        let mut param_names: Vec<String> = Vec::new();
+        let mut rest_param: Option<String> = None;
+        // Each preamble item: (placeholder_name, param_reference)
+        // `is_default` = true means it's a simple param with a default value;
+        // false means it's a pattern (destructuring) param.
+        let mut preamble: Vec<(String, &FunctionParam)> = Vec::new();
+
+        for p in params {
+            match p {
+                FunctionParam::Simple(name) => {
+                    param_names.push(name.clone());
                 }
-            })
-            .collect();
+                FunctionParam::Default(name, _) => {
+                    param_names.push(name.clone());
+                    preamble.push((name.clone(), p));
+                }
+                FunctionParam::Pattern(..) => {
+                    let placeholder = format!("$p{}", param_names.len());
+                    param_names.push(placeholder.clone());
+                    preamble.push((placeholder, p));
+                }
+                FunctionParam::Rest(name) => {
+                    rest_param = Some(name.clone());
+                }
+                FunctionParam::RestPattern(_) => {
+                    let placeholder = "$rest_pat".to_string();
+                    rest_param = Some(placeholder.clone());
+                    preamble.push((placeholder, p));
+                }
+            }
+        }
 
         let mut fn_chunk = Chunk::default();
         let mut fn_context = CompileContext {
@@ -1158,6 +1176,75 @@ impl Compiler {
         };
         let lexical_scope = self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
         fn_context.lexical_scopes.push(lexical_scope);
+
+        // Emit preamble: default-value checks and pattern destructuring.
+        //
+        // NOTE: JumpIfFalse/JumpIfTrue are PEEK instructions (they do not pop
+        // their operand). Stack depths must account for the peeked value being
+        // present after the conditional branch.
+        for (placeholder, param) in &preamble {
+            match param {
+                FunctionParam::Default(name, default_expr) => {
+                    // if param === undefined, store the default value.
+                    // Stack before: []
+                    let name_idx = self.add_name(name, &mut fn_chunk)?;
+                    fn_chunk.emit(Instruction::LoadName(name_idx)); // [param_val]
+                    fn_chunk.emit(Instruction::Duplicate);          // [param_val, param_val]
+                    let undef_c = fn_chunk
+                        .add_constant(Constant::Undefined)
+                        .map_err(CompileError::from_chunk)?;
+                    fn_chunk.emit(Instruction::Constant(undef_c)); // [param_val, param_val, undefined]
+                    fn_chunk.emit(Instruction::StrictEqual);       // [param_val, is_undef]
+                    // JumpIfFalse peeks: jumps when is_undef=false (NOT undefined)
+                    let jump_not_undef = fn_chunk.emit(Instruction::JumpIfFalse(usize::MAX));
+                    // IS undefined path: [param_val, is_undef(=true)]
+                    fn_chunk.emit(Instruction::Pop);  // [param_val]   (remove is_undef)
+                    fn_chunk.emit(Instruction::Pop);  // []             (remove undefined param_val)
+                    self.compile_expression(default_expr, &mut fn_chunk, &mut fn_context)?; // [default]
+                    fn_chunk.emit(Instruction::StoreName(name_idx)); // [default]
+                    fn_chunk.emit(Instruction::Pop);                 // []
+                    let jump_end = fn_chunk.emit(Instruction::Jump(usize::MAX));
+                    // NOT undefined path: [param_val, is_undef(=false)]
+                    let not_undef = fn_chunk.current_offset();
+                    fn_chunk
+                        .patch_jump(jump_not_undef, not_undef)
+                        .map_err(CompileError::from_chunk)?;
+                    fn_chunk.emit(Instruction::Pop);  // [param_val] (remove is_undef)
+                    fn_chunk.emit(Instruction::Pop);  // []          (discard — already bound)
+                    // end:
+                    let end = fn_chunk.current_offset();
+                    fn_chunk
+                        .patch_jump(jump_end, end)
+                        .map_err(CompileError::from_chunk)?;
+                    // Stack: []
+                }
+                FunctionParam::Pattern(pattern, default_expr) => {
+                    let ph_idx = self.add_name(placeholder, &mut fn_chunk)?;
+                    fn_chunk.emit(Instruction::LoadName(ph_idx)); // [arg_val]
+                    if let Some(def) = default_expr {
+                        self.emit_binding_default(def, &mut fn_chunk, &mut fn_context)?;
+                    }
+                    self.compile_binding_pattern(
+                        VariableKind::Var,
+                        pattern,
+                        &mut fn_chunk,
+                        &mut fn_context,
+                    )?; // []
+                }
+                FunctionParam::RestPattern(pattern) => {
+                    let ph_idx = self.add_name(placeholder, &mut fn_chunk)?;
+                    fn_chunk.emit(Instruction::LoadName(ph_idx)); // [rest_array]
+                    self.compile_binding_pattern(
+                        VariableKind::Var,
+                        pattern,
+                        &mut fn_chunk,
+                        &mut fn_context,
+                    )?; // []
+                }
+                _ => unreachable!("only Default/Pattern/RestPattern go in preamble"),
+            }
+        }
+
         // Hoist function declarations within the function body.
         for statement in &body.statements {
             if let Statement::FunctionDeclaration {
@@ -2299,38 +2386,111 @@ impl Compiler {
                 }
                 Ok(())
             }
-            BindingPattern::Array(elements) => {
+            BindingPattern::Array { elements, rest } => {
                 // Stack: [rhs]
-                // For each element index i, get rhs[i] and bind.
-                for (i, maybe_pat) in elements.iter().enumerate() {
-                    let Some(pat) = maybe_pat else {
+                for (i, maybe_elem) in elements.iter().enumerate() {
+                    let Some(elem) = maybe_elem else {
                         continue; // hole — skip
                     };
                     chunk.emit(Instruction::Duplicate); // [rhs, rhs]
-                    let idx_str = i.to_string();
                     let idx_key = chunk
-                        .add_constant(Constant::String(idx_str.clone()))
+                        .add_constant(Constant::String(i.to_string()))
                         .map_err(CompileError::from_chunk)?;
                     chunk.emit(Instruction::Constant(idx_key)); // [rhs, rhs, "i"]
-                    chunk.emit(Instruction::GetElement); // [rhs, rhs[i]]
-                    self.compile_binding_pattern(kind, pat, chunk, context)?; // [rhs]
+                    chunk.emit(Instruction::GetElement); // [rhs, elem_val]
+                    if let Some(default_expr) = &elem.default {
+                        self.emit_binding_default(default_expr, chunk, context)?;
+                    }
+                    self.compile_binding_pattern(kind, &elem.pattern, chunk, context)?; // [rhs]
+                }
+                // Rest element: rhs.slice(elements.len())
+                if let Some(rest_pat) = rest {
+                    chunk.emit(Instruction::Duplicate); // [rhs, rhs]
+                    let slice_idx = self.add_name("slice", chunk)?;
+                    chunk.emit(Instruction::GetMethod(slice_idx)); // [rhs, slice_fn, rhs_copy]
+                    let n_const = chunk
+                        .add_constant(Constant::Number(elements.len() as f64))
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Constant(n_const)); // [rhs, slice_fn, rhs_copy, N]
+                    chunk.emit(Instruction::CallWithThis(1)); // [rhs, rest_array]
+                    self.compile_binding_pattern(kind, rest_pat, chunk, context)?; // [rhs]
                 }
                 chunk.emit(Instruction::Pop); // []
                 Ok(())
             }
-            BindingPattern::Object(props) => {
+            BindingPattern::Object { props, rest } => {
                 // Stack: [rhs]
-                for (key, pat) in props {
+                for prop in props {
                     chunk.emit(Instruction::Duplicate); // [rhs, rhs]
-                    let key_str = key.to_key_string();
-                    let key_idx = self.add_name(&key_str, chunk)?;
-                    chunk.emit(Instruction::GetProperty(key_idx)); // [rhs, rhs.key]
-                    self.compile_binding_pattern(kind, pat, chunk, context)?; // [rhs]
+                    match &prop.key {
+                        crate::ast::ObjectBindingKey::Static(key) => {
+                            let key_str = key.to_key_string();
+                            let key_idx = self.add_name(&key_str, chunk)?;
+                            chunk.emit(Instruction::GetProperty(key_idx)); // [rhs, rhs.key]
+                        }
+                        crate::ast::ObjectBindingKey::Computed(key_expr) => {
+                            // [rhs, rhs]
+                            self.compile_expression(key_expr, chunk, context)?; // [rhs, rhs, computed_key]
+                            chunk.emit(Instruction::GetElement); // [rhs, rhs[computed_key]]
+                        }
+                    }
+                    if let Some(default_expr) = &prop.default {
+                        self.emit_binding_default(default_expr, chunk, context)?;
+                    }
+                    self.compile_binding_pattern(kind, &prop.value, chunk, context)?; // [rhs]
+                }
+                // Object rest: shallow copy of rhs (simplified — doesn't exclude consumed keys)
+                if let Some(rest_pat) = rest {
+                    chunk.emit(Instruction::Duplicate); // [rhs, rhs]
+                    self.compile_binding_pattern(kind, rest_pat, chunk, context)?; // [rhs]
                 }
                 chunk.emit(Instruction::Pop); // []
                 Ok(())
             }
         }
+    }
+
+    /// Emits code to apply a default value when TOS is `undefined`.
+    /// Before: `[value]` — After: `[value_or_default]`.
+    ///
+    /// JumpIfFalse is a PEEK instruction (does not consume its operand).
+    /// Both the jump and fall-through paths leave `is_undef` on the stack above
+    /// `value`, so each path needs a Pop to remove it before proceeding.
+    fn emit_binding_default(
+        &mut self,
+        default_expr: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        // [value] depth=1
+        chunk.emit(Instruction::Duplicate); // [value, value] depth=2
+        let undef_const = chunk
+            .add_constant(Constant::Undefined)
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Constant(undef_const)); // [value, value, undefined] depth=3
+        chunk.emit(Instruction::StrictEqual); // [value, is_undef] depth=2
+        // JumpIfFalse PEEKS — does not pop. Jumps when is_undef=false (value is NOT undefined).
+        let jump_not_undef = chunk.emit(Instruction::JumpIfFalse(usize::MAX)); // depth=2
+
+        // Fall-through: IS undefined. [value, is_undef(=true)] depth=2
+        chunk.emit(Instruction::Pop); // [value] depth=1  — remove is_undef
+        chunk.emit(Instruction::Pop); // [] depth=0        — remove the undefined value
+        self.compile_expression(default_expr, chunk, context)?; // [default_value] depth=1
+        let jump_end = chunk.emit(Instruction::Jump(usize::MAX));
+
+        // NOT undefined. [value, is_undef(=false)] depth=2
+        let not_undef = chunk.current_offset();
+        chunk
+            .patch_jump(jump_not_undef, not_undef)
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Pop); // [value] depth=1 — remove is_undef
+
+        // end: both paths arrive at depth=1 [value_or_default]
+        let end = chunk.current_offset();
+        chunk
+            .patch_jump(jump_end, end)
+            .map_err(CompileError::from_chunk)?;
+        Ok(())
     }
 
     fn compile_function_expression(
@@ -2568,15 +2728,27 @@ fn binding_pattern_names(pattern: &crate::ast::BindingPattern) -> Vec<String> {
     use crate::ast::BindingPattern;
     match pattern {
         BindingPattern::Identifier(name) => vec![name.clone()],
-        BindingPattern::Array(elements) => elements
-            .iter()
-            .flatten()
-            .flat_map(binding_pattern_names)
-            .collect(),
-        BindingPattern::Object(props) => props
-            .iter()
-            .flat_map(|(_, pat)| binding_pattern_names(pat))
-            .collect(),
+        BindingPattern::Array { elements, rest } => {
+            let mut names: Vec<String> = elements
+                .iter()
+                .flatten()
+                .flat_map(|elem| binding_pattern_names(&elem.pattern))
+                .collect();
+            if let Some(r) = rest {
+                names.extend(binding_pattern_names(r));
+            }
+            names
+        }
+        BindingPattern::Object { props, rest } => {
+            let mut names: Vec<String> = props
+                .iter()
+                .flat_map(|prop| binding_pattern_names(&prop.value))
+                .collect();
+            if let Some(r) = rest {
+                names.extend(binding_pattern_names(r));
+            }
+            names
+        }
     }
 }
 

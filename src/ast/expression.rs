@@ -90,15 +90,23 @@ pub enum LogicalOperator {
 pub enum FunctionParam {
     /// A simple identifier parameter: `function f(x)`.
     Simple(String),
-    /// A rest parameter collecting remaining arguments: `function f(...rest)`.
+    /// A simple parameter with a default value: `function f(x = 1)`.
+    Default(String, Box<Expression>),
+    /// A destructuring parameter with an optional default: `function f({a, b})`.
+    Pattern(BindingPattern, Option<Box<Expression>>),
+    /// A rest parameter collecting remaining arguments into a named array: `function f(...rest)`.
     Rest(String),
+    /// A rest parameter with a destructuring pattern: `function f(...[a, b])`.
+    RestPattern(BindingPattern),
 }
 
 impl FunctionParam {
-    /// Returns the binding name for this parameter.
+    /// Returns the binding name for simple/rest/default parameters.
+    /// Returns `""` for pattern-based parameters.
     pub fn name(&self) -> &str {
         match self {
-            Self::Simple(name) | Self::Rest(name) => name.as_str(),
+            Self::Simple(name) | Self::Rest(name) | Self::Default(name, _) => name.as_str(),
+            Self::Pattern(..) | Self::RestPattern(..) => "",
         }
     }
 }
@@ -246,15 +254,47 @@ pub struct ClassDeclaration {
 // V8 binding patterns (destructuring)
 // ---------------------------------------------------------------------------
 
+/// One element in an array binding pattern, pairing a sub-pattern with an
+/// optional initialiser: `[a = 1]`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArrayBindingElement {
+    pub pattern: BindingPattern,
+    pub default: Option<Box<Expression>>,
+}
+
+/// The key of a property in an object binding pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ObjectBindingKey {
+    /// A static property name (identifier, string, or number key).
+    Static(PropertyName),
+    /// A computed property key: `[expr]`.
+    Computed(Box<Expression>),
+}
+
+/// One property binding in an object binding pattern.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectBindingProp {
+    pub key: ObjectBindingKey,
+    pub value: BindingPattern,
+    pub default: Option<Box<Expression>>,
+}
+
 /// A binding pattern used in variable declarations and parameter lists.
 #[derive(Debug, Clone, PartialEq)]
 pub enum BindingPattern {
     /// Plain identifier binding: `x`.
     Identifier(String),
-    /// Array destructuring: `[a, b, , c]`. `None` entries are holes (elisions).
-    Array(Vec<Option<BindingPattern>>),
-    /// Object destructuring: `{ x, y: z }`. Each entry is (key, local_pattern).
-    Object(Vec<(PropertyName, BindingPattern)>),
+    /// Array destructuring: `[a, b, , c, ...rest]`.
+    /// `elements` entries are `None` for holes; `rest` is an optional trailing rest.
+    Array {
+        elements: Vec<Option<ArrayBindingElement>>,
+        rest: Option<Box<BindingPattern>>,
+    },
+    /// Object destructuring: `{ x, y: z, [k]: w, ...rest }`.
+    Object {
+        props: Vec<ObjectBindingProp>,
+        rest: Option<Box<BindingPattern>>,
+    },
 }
 
 // ---------------------------------------------------------------------------
