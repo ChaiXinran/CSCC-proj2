@@ -11,7 +11,7 @@
 use super::{boolean, error, json, math, number, regexp, string};
 use crate::runtime::{
     JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
-    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, to_property_key,
+    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
 };
 use crate::vm::{Vm, VmError, VmErrorKind};
 
@@ -896,7 +896,13 @@ fn install_bigint(context: &mut NativeContext) -> Result<(), VmError> {
         method_descriptor(constructor.clone()),
     )?;
     define_method(context, prototype, "toString", 0, bigint_to_string)?;
-    define_method(context, prototype, "toLocaleString", 0, bigint_to_locale_string)?;
+    define_method(
+        context,
+        prototype,
+        "toLocaleString",
+        0,
+        bigint_to_locale_string,
+    )?;
     define_method(context, prototype, "valueOf", 0, bigint_value_of)?;
     context.define_symbol_own_property(
         prototype,
@@ -1022,7 +1028,8 @@ fn to_bigint(vm: &mut Vm, context: &mut NativeContext, value: JsValue) -> Result
         JsValue::String(value) => parse_bigint_string(&value)
             .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
-            let primitive = vm.to_primitive(value, crate::runtime::PreferredType::Number, context)?;
+            let primitive =
+                vm.to_primitive(value, crate::runtime::PreferredType::Number, context)?;
             to_bigint(vm, context, primitive)
         }
         _ => Err(VmError::type_error("Cannot convert value to BigInt")),
@@ -1036,9 +1043,12 @@ fn to_bigint_constructor(
 ) -> Result<i128, VmError> {
     match value {
         JsValue::Number(value) if value.is_finite() && value.fract() == 0.0 => Ok(value as i128),
-        JsValue::Number(_) => Err(VmError::range("Cannot convert non-integer number to BigInt")),
+        JsValue::Number(_) => Err(VmError::range(
+            "Cannot convert non-integer number to BigInt",
+        )),
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
-            let primitive = vm.to_primitive(value, crate::runtime::PreferredType::Number, context)?;
+            let primitive =
+                vm.to_primitive(value, crate::runtime::PreferredType::Number, context)?;
             to_bigint_constructor(vm, context, primitive)
         }
         other => to_bigint(vm, context, other),
@@ -3101,9 +3111,14 @@ fn install_reflect(context: &mut NativeContext) -> Result<(), VmError> {
     context.define_symbol_own_property(
         object,
         to_string_tag,
-        constant_descriptor(JsValue::String("Reflect".into())),
+        PropertyDescriptor::data_with(JsValue::String("Reflect".into()), false, false, true),
     )?;
     context.declare_global("Reflect", reflect);
+    context.define_own_property(
+        context.global_object(),
+        "Reflect".into(),
+        PropertyDescriptor::data_with(context.object_value(object), true, false, true),
+    )?;
     Ok(())
 }
 
@@ -3141,7 +3156,7 @@ fn reflect_construct(
         ));
     }
     let args = array_like_to_vec(vm, context, arg(arguments, 1))?;
-    vm.construct_value_from_builtin(target, args, context)
+    vm.construct_value_from_builtin_with_new_target(target, args, new_target, context)
 }
 
 fn reflect_define_property(
@@ -3153,15 +3168,18 @@ fn reflect_define_property(
     let target = arg(arguments, 0);
     let object = context.require_object(&target, "Reflect.defineProperty")?;
     let key_arg = arg(arguments, 1);
+    let key = vm.to_property_key_from_builtin(key_arg, context)?;
     let descriptor_value = arg(arguments, 2);
     let descriptor_object =
         context.require_object(&descriptor_value, "read property descriptor")?;
     let update = reflect_descriptor_update_from_object(vm, context, descriptor_object)?;
 
-    let defined = if let JsValue::Symbol(symbol) = key_arg {
+    let defined = if let JsValue::Symbol(symbol) = key {
         context.validate_and_apply_symbol_property_descriptor(object, symbol, update)?
     } else {
-        let key = to_property_key(&key_arg)?;
+        let JsValue::String(key) = key else {
+            unreachable!("ToPropertyKey returns a string or symbol")
+        };
         context.validate_and_apply_property_descriptor(object, key, update)?
     };
     Ok(JsValue::Boolean(defined))
@@ -3176,12 +3194,15 @@ fn reflect_delete_property(
     let target = arg(arguments, 0);
     let object = context.require_object(&target, "Reflect.deleteProperty")?;
     let key_arg = arg(arguments, 1);
-    if let JsValue::Symbol(symbol) = key_arg {
+    let key = _vm.to_property_key_from_builtin(key_arg, context)?;
+    if let JsValue::Symbol(symbol) = key {
         return Ok(JsValue::Boolean(
             context.delete_symbol_property(object, symbol, false)?,
         ));
     }
-    let key = to_property_key(&key_arg)?;
+    let JsValue::String(key) = key else {
+        unreachable!("ToPropertyKey returns a string or symbol")
+    };
     Ok(JsValue::Boolean(
         context.delete_property(object, &key, false)?,
     ))
@@ -3197,12 +3218,15 @@ fn reflect_get(
     context.require_object(&target, "Reflect.get")?;
     let key_arg = arg(arguments, 1);
     let receiver = arguments.get(2).cloned().unwrap_or_else(|| target.clone());
-    if let JsValue::Symbol(symbol) = key_arg {
+    let key = vm.to_property_key_from_builtin(key_arg, context)?;
+    if let JsValue::Symbol(symbol) = key {
         return vm.get_symbol_property_value_with_receiver_from_builtin(
             target, receiver, symbol, context,
         );
     }
-    let key = to_property_key(&key_arg)?;
+    let JsValue::String(key) = key else {
+        unreachable!("ToPropertyKey returns a string or symbol")
+    };
     vm.get_property_value_with_receiver_from_builtin(target, receiver, &key, context)
 }
 
@@ -3215,13 +3239,16 @@ fn reflect_get_own_property_descriptor(
     let target = arg(arguments, 0);
     let object = context.require_object(&target, "Reflect.getOwnPropertyDescriptor")?;
     let key_arg = arg(arguments, 1);
-    if let JsValue::Symbol(symbol) = key_arg {
+    let key = _vm.to_property_key_from_builtin(key_arg, context)?;
+    if let JsValue::Symbol(symbol) = key {
         let Some(descriptor) = context.get_own_symbol_property_descriptor(object, symbol) else {
             return Ok(JsValue::Undefined);
         };
         return reflect_descriptor_to_object(context, descriptor);
     }
-    let key = to_property_key(&key_arg)?;
+    let JsValue::String(key) = key else {
+        unreachable!("ToPropertyKey returns a string or symbol")
+    };
     let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
         return Ok(JsValue::Undefined);
     };
@@ -3250,12 +3277,15 @@ fn reflect_has(
     let target = arg(arguments, 0);
     let object = context.require_object(&target, "Reflect.has")?;
     let key_arg = arg(arguments, 1);
-    if let JsValue::Symbol(symbol) = key_arg {
+    let key = _vm.to_property_key_from_builtin(key_arg, context)?;
+    if let JsValue::Symbol(symbol) = key {
         return Ok(JsValue::Boolean(
             context.has_symbol_property(object, symbol)?,
         ));
     }
-    let key = to_property_key(&key_arg)?;
+    let JsValue::String(key) = key else {
+        unreachable!("ToPropertyKey returns a string or symbol")
+    };
     Ok(JsValue::Boolean(context.has_property(object, &key)?))
 }
 
@@ -3318,14 +3348,17 @@ fn reflect_set(
     let key_arg = arg(arguments, 1);
     let value = arg(arguments, 2);
     let receiver = arguments.get(3).cloned().unwrap_or_else(|| target.clone());
-    if let JsValue::Symbol(symbol) = key_arg {
+    let key = vm.to_property_key_from_builtin(key_arg, context)?;
+    if let JsValue::Symbol(symbol) = key {
         return Ok(JsValue::Boolean(
             vm.set_symbol_property_value_with_receiver_from_builtin(
                 target, receiver, symbol, value, context,
             )?,
         ));
     }
-    let key = to_property_key(&key_arg)?;
+    let JsValue::String(key) = key else {
+        unreachable!("ToPropertyKey returns a string or symbol")
+    };
     let set =
         vm.set_property_value_with_receiver_from_builtin(target, receiver, &key, value, context)?;
     Ok(JsValue::Boolean(set))
@@ -3362,7 +3395,12 @@ fn array_like_to_vec(
 ) -> Result<Vec<JsValue>, VmError> {
     let object = context.require_object(&value, "read argument list")?;
     let object_value = context.object_value(object);
-    let length_value = vm.get_property_value(object_value.clone(), "length", context)?;
+    let length_value = vm.get_property_value_with_receiver_from_builtin(
+        object_value.clone(),
+        object_value.clone(),
+        "length",
+        context,
+    )?;
     let length_number = vm.to_number(length_value, context)?;
     let length = if !length_number.is_finite() || length_number <= 0.0 {
         0
@@ -3374,7 +3412,13 @@ fn array_like_to_vec(
     }
     let mut values = Vec::with_capacity(length);
     for index in 0..length {
-        values.push(vm.get_property_value(object_value.clone(), &index.to_string(), context)?);
+        let key = index.to_string();
+        values.push(vm.get_property_value_with_receiver_from_builtin(
+            object_value.clone(),
+            object_value.clone(),
+            &key,
+            context,
+        )?);
     }
     Ok(values)
 }
@@ -3419,8 +3463,13 @@ fn reflect_descriptor_field(
     if !context.has_property(object, key)? {
         return Ok(None);
     }
-    vm.get_property_value(JsValue::Object(object), key, context)
-        .map(Some)
+    vm.get_property_value_with_receiver_from_builtin(
+        JsValue::Object(object),
+        JsValue::Object(object),
+        key,
+        context,
+    )
+    .map(Some)
 }
 
 fn reflect_optional_callable(value: JsValue, label: &str) -> Result<Option<JsValue>, VmError> {
@@ -3652,10 +3701,7 @@ fn symbol_proto_to_string(
     Ok(JsValue::String(symbol_descriptive_string(context, sym_id)))
 }
 
-fn symbol_descriptive_string(
-    context: &NativeContext,
-    sym_id: crate::runtime::SymbolId,
-) -> String {
+fn symbol_descriptive_string(context: &NativeContext, sym_id: crate::runtime::SymbolId) -> String {
     match context.symbols().description(sym_id) {
         Some(description) => format!("Symbol({description})"),
         None => "Symbol()".into(),

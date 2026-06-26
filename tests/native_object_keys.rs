@@ -113,6 +113,21 @@ fn symbol_accessors_use_the_receiver_for_get_and_set() {
 }
 
 #[test]
+fn computed_symbol_accessors_define_symbol_properties() {
+    assert_eq!(
+        native_eval(
+            "var s = Symbol('s'); \
+             var saved = 0; \
+             var object = { get [s]() { return 3; }, set [s](value) { saved = value; } }; \
+             var desc = Object.getOwnPropertyDescriptor(object, s); \
+             object[s] = 5; \
+             object[s] + ':' + saved + ':' + desc.enumerable + ':' + desc.configurable;"
+        ),
+        "3:5:true:true"
+    );
+}
+
+#[test]
 fn reflect_get_and_set_use_explicit_receiver() {
     assert_eq!(
         native_eval(
@@ -189,6 +204,22 @@ fn object_assign_uses_strict_set_and_copies_symbols() {
 }
 
 #[test]
+fn object_assign_calls_existing_accessors_and_propagates_setter_errors() {
+    assert_eq!(
+        native_eval(
+            "var value = 0; \
+             var target = Object.preventExtensions({ set x(v) { value = v; } }); \
+             Object.assign(target, { x: 7 }); \
+             var threw = false; \
+             try { Object.assign({ set y(v) { throw 'setter'; } }, { y: 1 }); } \
+             catch (e) { threw = e === 'setter'; } \
+             value + ':' + threw;"
+        ),
+        "7:true"
+    );
+}
+
+#[test]
 fn reflect_set_prototype_of_reports_false_for_impossible_changes() {
     assert_eq!(
         native_eval(
@@ -200,5 +231,39 @@ fn reflect_set_prototype_of_reports_false_for_impossible_changes() {
              same + ':' + changed;"
         ),
         "true:false"
+    );
+}
+
+#[test]
+fn reflect_property_keys_and_descriptors_preserve_abrupt_completions() {
+    assert_eq!(
+        native_eval(
+            "var keyThrows = false; \
+             try { Reflect.defineProperty({}, { toString: function() { throw 'key'; } }, {}); } \
+             catch (e) { keyThrows = e === 'key'; } \
+             var attr = {}; \
+             Object.defineProperty(attr, 'enumerable', { get: function() { throw 'attr'; } }); \
+             var attrThrows = false; \
+             try { Reflect.defineProperty({}, 'x', attr); } \
+             catch (e) { attrThrows = e === 'attr'; } \
+             keyThrows + ':' + attrThrows;"
+        ),
+        "true:true"
+    );
+}
+
+#[test]
+fn reflect_construct_uses_new_target_prototype_and_reflect_descriptor_shape() {
+    assert_eq!(
+        native_eval(
+            "function F() { this.marker = Object.getPrototypeOf(this) === Array.prototype; } \
+             var result = Reflect.construct(F, [], Array); \
+             var desc = Object.getOwnPropertyDescriptor(this, 'Reflect'); \
+             var tag = Object.getOwnPropertyDescriptor(Reflect, Symbol.toStringTag); \
+             result.marker + ':' + (Object.getPrototypeOf(result) === Array.prototype) + ':' + \
+             desc.enumerable + ':' + desc.writable + ':' + desc.configurable + ':' + \
+             tag.value + ':' + tag.enumerable + ':' + tag.writable + ':' + tag.configurable;"
+        ),
+        "true:true:false:true:true:Reflect:false:false:true"
     );
 }

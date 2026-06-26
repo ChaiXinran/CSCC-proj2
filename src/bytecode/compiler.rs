@@ -751,6 +751,7 @@ impl Compiler {
         let declared: Vec<(String, VariableKind)> = match init {
             Some(Statement::VariableDeclaration { kind, declarations }) => declarations
                 .iter()
+                .filter(|_| *kind != VariableKind::Var)
                 .flat_map(|declarator| {
                     if let Some(pattern) = &declarator.pattern {
                         binding_pattern_names(pattern)
@@ -782,7 +783,7 @@ impl Compiler {
 
         // init
         match init {
-            Some(Statement::VariableDeclaration { declarations, .. }) => {
+            Some(Statement::VariableDeclaration { kind, declarations }) => {
                 for declarator in declarations {
                     if let Some(pattern) = &declarator.pattern {
                         // Destructuring declarator: compile RHS then bind pattern
@@ -799,19 +800,13 @@ impl Compiler {
                         }
                         self.compile_binding_pattern(VariableKind::Let, pattern, chunk, context)?;
                     } else {
-                        match &declarator.initializer {
-                            Some(expression) => {
-                                self.compile_expression(expression, chunk, context)?
-                            }
-                            None => {
-                                let undefined = chunk
-                                    .add_constant(Constant::Undefined)
-                                    .map_err(CompileError::from_chunk)?;
-                                chunk.emit(Instruction::Constant(undefined));
-                            }
-                        }
-                        let index = self.add_name(&declarator.name, chunk)?;
-                        chunk.emit(Instruction::InitializeBinding(index));
+                        self.compile_variable_declaration(
+                            *kind,
+                            &declarator.name,
+                            declarator.initializer.as_ref(),
+                            chunk,
+                            context,
+                        )?;
                     }
                 }
             }
@@ -2823,23 +2818,42 @@ impl Compiler {
                     chunk.emit(Instruction::Pop);
                 }
                 ObjectProperty::Getter { key, body } => {
-                    self.compile_accessor_function(&[], body, chunk, context)?;
-                    let key = self.add_name(&property_key(key), chunk)?;
-                    chunk.emit(Instruction::DefineGetter(key));
+                    if let PropertyName::Computed(expr) = key {
+                        chunk.emit(Instruction::Duplicate);
+                        self.compile_expression(expr, chunk, context)?;
+                        self.compile_accessor_function(&[], body, chunk, context)?;
+                        chunk.emit(Instruction::DefineComputedGetter);
+                    } else {
+                        self.compile_accessor_function(&[], body, chunk, context)?;
+                        let key = self.add_name(&property_key(key), chunk)?;
+                        chunk.emit(Instruction::DefineGetter(key));
+                    }
                 }
                 ObjectProperty::Setter {
                     key,
                     parameter,
                     body,
                 } => {
-                    self.compile_accessor_function(
-                        std::slice::from_ref(parameter),
-                        body,
-                        chunk,
-                        context,
-                    )?;
-                    let key = self.add_name(&property_key(key), chunk)?;
-                    chunk.emit(Instruction::DefineSetter(key));
+                    if let PropertyName::Computed(expr) = key {
+                        chunk.emit(Instruction::Duplicate);
+                        self.compile_expression(expr, chunk, context)?;
+                        self.compile_accessor_function(
+                            std::slice::from_ref(parameter),
+                            body,
+                            chunk,
+                            context,
+                        )?;
+                        chunk.emit(Instruction::DefineComputedSetter);
+                    } else {
+                        self.compile_accessor_function(
+                            std::slice::from_ref(parameter),
+                            body,
+                            chunk,
+                            context,
+                        )?;
+                        let key = self.add_name(&property_key(key), chunk)?;
+                        chunk.emit(Instruction::DefineSetter(key));
+                    }
                 }
                 ObjectProperty::PrototypeSetter { value } => {
                     self.compile_expression(value, chunk, context)?;

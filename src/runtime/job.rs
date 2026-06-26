@@ -19,14 +19,24 @@ pub enum PromiseState {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseRecord {
     pub state: PromiseState,
+    pub reactions: Vec<PromiseThenReaction>,
 }
 
 impl Default for PromiseRecord {
     fn default() -> Self {
         Self {
             state: PromiseState::Pending,
+            reactions: Vec::new(),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromiseThenReaction {
+    pub result_promise: PromiseId,
+    pub on_fulfilled: Option<JsValue>,
+    pub on_rejected: Option<JsValue>,
+    pub finally: bool,
 }
 
 /// Promise reaction work item.  Full reaction lists are future work; V9 starts
@@ -44,6 +54,16 @@ pub enum PromiseReaction {
     Reject,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromiseCallbackJob {
+    pub result_promise: PromiseId,
+    pub on_fulfilled: Option<JsValue>,
+    pub on_rejected: Option<JsValue>,
+    pub fulfilled: bool,
+    pub value: JsValue,
+    pub finally: bool,
+}
+
 /// Host-observable native jobs used by tests and Test262 host plumbing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeJob {
@@ -53,6 +73,7 @@ pub enum NativeJob {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Job {
     PromiseReaction(PromiseJob),
+    PromiseCallback(PromiseCallbackJob),
     HostCallback(NativeJob),
 }
 
@@ -97,6 +118,20 @@ impl Trace for PromiseState {
 impl Trace for PromiseRecord {
     fn trace(&self, tracer: &mut Tracer<'_>) {
         self.state.trace(tracer);
+        for reaction in &self.reactions {
+            reaction.trace(tracer);
+        }
+    }
+}
+
+impl Trace for PromiseThenReaction {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        if let Some(value) = &self.on_fulfilled {
+            value.trace(tracer);
+        }
+        if let Some(value) = &self.on_rejected {
+            value.trace(tracer);
+        }
     }
 }
 
@@ -106,10 +141,23 @@ impl Trace for PromiseJob {
     }
 }
 
+impl Trace for PromiseCallbackJob {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        self.value.trace(tracer);
+        if let Some(value) = &self.on_fulfilled {
+            value.trace(tracer);
+        }
+        if let Some(value) = &self.on_rejected {
+            value.trace(tracer);
+        }
+    }
+}
+
 impl Trace for Job {
     fn trace(&self, tracer: &mut Tracer<'_>) {
         match self {
             Self::PromiseReaction(job) => job.trace(tracer),
+            Self::PromiseCallback(job) => job.trace(tracer),
             Self::HostCallback(_) => {}
         }
     }

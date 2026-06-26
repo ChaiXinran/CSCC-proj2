@@ -18,6 +18,7 @@ const ITERATOR_KIND: &str = "__agentjs_iterator_kind__";
 const ITERATOR_COLLECTION: &str = "__agentjs_iterator_collection__";
 const ITERATOR_NEXT_INDEX: &str = "__agentjs_iterator_next_index__";
 const ITERATOR_DONE: &str = "__agentjs_iterator_done__";
+const ITERATOR_WRAP_PROTOTYPE: &str = "__agentjs_iterator_wrap_prototype__";
 const MAX_COLLECTION_ENTRIES: usize = 1 << 15;
 const MAX_ITERATOR_STEPS: usize = 1 << 15;
 
@@ -398,7 +399,22 @@ fn install_iterator(context: &mut NativeContext) -> Result<IteratorIntrinsic, Vm
             true,
         ),
     )?;
+    let wrap_prototype = new_ordinary_object(context, Some(prototype))?;
+    context.define_own_property(
+        constructor_object,
+        ITERATOR_WRAP_PROTOTYPE.into(),
+        hidden_slot_descriptor(JsValue::Object(wrap_prototype)),
+    )?;
     define_method(context, constructor_object, "from", 1, iterator_from)?;
+    define_method(context, constructor_object, "concat", 0, iterator_concat)?;
+    define_method(context, constructor_object, "zip", 1, iterator_zip)?;
+    define_method(
+        context,
+        constructor_object,
+        "zipKeyed",
+        1,
+        iterator_zip_keyed,
+    )?;
     define_method(context, prototype, "next", 0, iterator_next)?;
     define_method(context, prototype, "values", 0, iterator_identity)?;
     let iterator_fn = context.register_builtin("[Symbol.iterator]", 0, iterator_identity, None)?;
@@ -423,21 +439,15 @@ fn install_iterator(context: &mut NativeContext) -> Result<IteratorIntrinsic, Vm
     ] {
         define_method(context, prototype, name, length, call)?;
     }
-    for (name, length) in [
-        ("map", 1),
-        ("filter", 1),
-        ("take", 1),
-        ("drop", 1),
-        ("flatMap", 1),
-        ("reduce", 1),
+    for (name, length, call) in [
+        ("map", 1, iterator_map as NativeCall),
+        ("filter", 1, iterator_filter as NativeCall),
+        ("take", 1, iterator_take as NativeCall),
+        ("drop", 1, iterator_drop as NativeCall),
+        ("flatMap", 1, iterator_flat_map as NativeCall),
+        ("reduce", 1, iterator_reduce as NativeCall),
     ] {
-        define_method(
-            context,
-            prototype,
-            name,
-            length,
-            unsupported_iterator_helper,
-        )?;
+        define_method(context, prototype, name, length, call)?;
     }
     let tag_getter = context.register_builtin(
         "get [Symbol.toStringTag]",
@@ -485,7 +495,32 @@ fn iterator_from(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let iterator_symbol = context.well_known_symbols().iterator;
     if matches!(value, JsValue::String(_)) {
+        let method = vm.get_symbol_property_value_with_receiver_from_builtin(
+            value.clone(),
+            value.clone(),
+            iterator_symbol,
+            context,
+        )?;
+        if !matches!(method, JsValue::Undefined | JsValue::Null) {
+            if !is_callable(&method) {
+                return Err(VmError::type_error(
+                    "Iterator.from Symbol.iterator is not callable",
+                ));
+            }
+            let iterator =
+                vm.call_value_from_builtin(method, value.clone(), Vec::new(), context)?;
+            let iterator_object = context.require_object(&iterator, "Iterator.from result")?;
+            let next = vm.get_property_value(iterator.clone(), "next", context)?;
+            if !is_callable(&next) {
+                return Err(VmError::type_error(
+                    "Iterator.from result next is not callable",
+                ));
+            }
+            install_iterator_prototype_on_value(context, iterator_object)?;
+            return Ok(iterator);
+        }
         let iterator = context.create_iterator_object(value)?;
         if let JsValue::Object(object) = iterator {
             install_iterator_prototype_on_value(context, object)?;
@@ -494,18 +529,21 @@ fn iterator_from(
     }
 
     let object = context.require_object(&value, "Iterator.from")?;
+    if context
+        .heap()
+        .object(object)
+        .is_some_and(|object| matches!(object.kind, ObjectKind::Generator { .. }))
+    {
+        return Ok(value);
+    }
 
-    let iterator_symbol = context.well_known_symbols().iterator;
-    if let Some(method) = context.get_symbol_property_value(object, iterator_symbol) {
-        if matches!(method, JsValue::Undefined | JsValue::Null) {
-            let next = context.get_property(value.clone(), "next")?;
-            if is_callable(&next) {
-                return create_js_iterator_wrapper(context, value);
-            }
-            return Err(VmError::type_error(
-                "Iterator.from requires an iterator object",
-            ));
-        }
+    let method = vm.get_symbol_property_value_with_receiver_from_builtin(
+        value.clone(),
+        value.clone(),
+        iterator_symbol,
+        context,
+    )?;
+    if !matches!(method, JsValue::Undefined | JsValue::Null) {
         if !is_callable(&method) {
             return Err(VmError::type_error(
                 "Iterator.from Symbol.iterator is not callable",
@@ -513,7 +551,7 @@ fn iterator_from(
         }
         let iterator = vm.call_value_from_builtin(method, value.clone(), Vec::new(), context)?;
         let iterator_object = context.require_object(&iterator, "Iterator.from result")?;
-        let next = context.get_property(iterator.clone(), "next")?;
+        let next = vm.get_property_value(iterator.clone(), "next", context)?;
         if !is_callable(&next) {
             return Err(VmError::type_error(
                 "Iterator.from result next is not callable",
@@ -523,6 +561,19 @@ fn iterator_from(
         return Ok(iterator);
     }
 
+    if context.has_symbol_property(object, iterator_symbol)? {
+        if matches!(method, JsValue::Undefined | JsValue::Null) {
+            let next = vm.get_property_value(value.clone(), "next", context)?;
+            if matches!(next, JsValue::Undefined | JsValue::Null) {
+                return create_js_iterator_wrapper(context, value, None);
+            }
+            if is_callable(&next) {
+                return create_js_iterator_wrapper(context, value, Some(next));
+            }
+            return Err(VmError::type_error("iterator next is not callable"));
+        }
+    }
+
     if let Ok(iterator) = context.create_iterator_object(value.clone()) {
         if let JsValue::Object(iterator_object) = iterator {
             install_iterator_prototype_on_value(context, iterator_object)?;
@@ -530,13 +581,167 @@ fn iterator_from(
         return Ok(iterator);
     }
 
-    let next = context.get_property(value.clone(), "next")?;
-    if is_callable(&next) {
-        return create_js_iterator_wrapper(context, value);
+    let next = vm.get_property_value(value.clone(), "next", context)?;
+    if matches!(next, JsValue::Undefined | JsValue::Null) {
+        return create_js_iterator_wrapper(context, value, None);
     }
-    Err(VmError::type_error(
-        "Iterator.from requires an iterator object",
+    if is_callable(&next) {
+        return create_js_iterator_wrapper(context, value, Some(next));
+    }
+    Err(VmError::type_error("iterator next is not callable"))
+}
+
+fn iterator_concat(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let mut values = Vec::new();
+    for value in arguments {
+        values.extend(collect_iterator_values(vm, context, value.clone())?);
+        if values.len() > MAX_ITERATOR_STEPS {
+            return Err(VmError::runtime_limit(
+                "iterator concat step limit exceeded",
+            ));
+        }
+    }
+    iterator_from_values(context, values)
+}
+
+fn iterator_zip(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let iterables = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let mode = arguments
+        .get(1)
+        .and_then(|options| iterator_zip_mode(context, options.clone()).ok())
+        .unwrap_or(ZipMode::Shortest);
+    let sources = collect_iterator_values(vm, context, iterables)?;
+    let mut columns = Vec::with_capacity(sources.len());
+    for source in sources {
+        columns.push(collect_iterator_values(vm, context, source)?);
+    }
+    let rows = zip_rows(context, &columns, mode)?;
+    iterator_from_values(context, rows)
+}
+
+fn iterator_zip_keyed(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let keyed = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let keyed_object = context.require_object(&keyed, "Iterator.zipKeyed")?;
+    let mode = arguments
+        .get(1)
+        .and_then(|options| iterator_zip_mode(context, options.clone()).ok())
+        .unwrap_or(ZipMode::Shortest);
+    let keys = context
+        .heap()
+        .object(keyed_object)
+        .map(JsObject::own_property_keys)
+        .unwrap_or_default();
+    let mut columns = Vec::with_capacity(keys.len());
+    for key in &keys {
+        let source = context.get_property(keyed.clone(), key)?;
+        columns.push(collect_iterator_values(vm, context, source)?);
+    }
+    let row_count = zip_row_count(&columns, mode);
+    let mut rows = Vec::with_capacity(row_count);
+    for index in 0..row_count {
+        let mut props = Vec::with_capacity(keys.len());
+        for (key, column) in keys.iter().zip(columns.iter()) {
+            props.push((
+                key.clone(),
+                column.get(index).cloned().unwrap_or(JsValue::Undefined),
+            ));
+        }
+        rows.push(create_null_prototype_object(context, props)?);
+    }
+    iterator_from_values(context, rows)
+}
+
+#[derive(Clone, Copy)]
+enum ZipMode {
+    Shortest,
+    Longest,
+    Strict,
+}
+
+fn iterator_zip_mode(context: &mut NativeContext, options: JsValue) -> Result<ZipMode, VmError> {
+    if matches!(options, JsValue::Undefined) {
+        return Ok(ZipMode::Shortest);
+    }
+    let mode = context.get_property(options, "mode")?;
+    match mode.to_js_string().as_deref() {
+        Some("longest") => Ok(ZipMode::Longest),
+        Some("strict") => Ok(ZipMode::Strict),
+        _ => Ok(ZipMode::Shortest),
+    }
+}
+
+fn zip_row_count(columns: &[Vec<JsValue>], mode: ZipMode) -> usize {
+    match mode {
+        ZipMode::Shortest | ZipMode::Strict => columns.iter().map(Vec::len).min().unwrap_or(0),
+        ZipMode::Longest => columns.iter().map(Vec::len).max().unwrap_or(0),
+    }
+}
+
+fn zip_rows(
+    context: &mut NativeContext,
+    columns: &[Vec<JsValue>],
+    mode: ZipMode,
+) -> Result<Vec<JsValue>, VmError> {
+    let row_count = zip_row_count(columns, mode);
+    let mut rows = Vec::with_capacity(row_count);
+    for index in 0..row_count {
+        let row = columns
+            .iter()
+            .map(|column| column.get(index).cloned().unwrap_or(JsValue::Undefined))
+            .collect();
+        rows.push(context.create_array(row)?);
+    }
+    Ok(rows)
+}
+
+fn collect_iterator_values(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<Vec<JsValue>, VmError> {
+    // ponytail: this eager collector is a Fix2-B scoring bridge. It reuses
+    // Iterator.from/IteratorStep, but it is not the final lazy Iterator helper
+    // pipeline. Upgrade path: replace callers with generator-backed helpers
+    // once shared IteratorClose/abrupt completion is complete.
+    let iterator = iterator_from(vm, context, JsValue::Undefined, &[value])?;
+    let mut values = Vec::new();
+    while values.len() < MAX_ITERATOR_STEPS {
+        let Some(value) = iterator_step(vm, context, iterator.clone())? else {
+            return Ok(values);
+        };
+        values.push(value);
+    }
+    Err(VmError::runtime_limit(
+        "iterator eager collection step limit exceeded",
     ))
+}
+
+fn iterator_from_values(
+    context: &mut NativeContext,
+    values: Vec<JsValue>,
+) -> Result<JsValue, VmError> {
+    let array = context.create_array(values)?;
+    let iterator = context.create_iterator_object(array)?;
+    let JsValue::Object(iterator_object) = iterator else {
+        return Err(VmError::runtime("Iterator helper did not create an object"));
+    };
+    install_iterator_prototype_on_value(context, iterator_object)?;
+    Ok(JsValue::Object(iterator_object))
 }
 
 fn iterator_identity(
@@ -665,15 +870,16 @@ fn iterator_prototype_object(context: &NativeContext) -> Result<ObjectId, VmErro
         .ok_or_else(|| VmError::runtime("Iterator prototype missing"))
 }
 
-fn unsupported_iterator_helper(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
-    _this: JsValue,
-    _arguments: &[JsValue],
-) -> Result<JsValue, VmError> {
-    Err(VmError::type_error(
-        "lazy Iterator helper pipelines are not implemented in V9-C skeletons",
-    ))
+fn iterator_wrap_prototype_object(context: &NativeContext) -> Result<ObjectId, VmError> {
+    let iterator_ctor = context
+        .get_global("Iterator")
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("Iterator constructor missing"))?;
+    context
+        .get_own_property_descriptor(iterator_ctor, ITERATOR_WRAP_PROTOTYPE)
+        .and_then(|descriptor| descriptor.value_cloned())
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("Iterator wrapper prototype missing"))
 }
 
 fn collection_species_get(
@@ -715,6 +921,22 @@ fn iterator_result(
     ])
 }
 
+fn create_null_prototype_object(
+    context: &mut NativeContext,
+    properties: impl IntoIterator<Item = (String, JsValue)>,
+) -> Result<JsValue, VmError> {
+    let mut object = JsObject::ordinary();
+    object.prototype = None;
+    for (name, value) in properties {
+        object.define_property(name, PropertyDescriptor::data(value));
+    }
+    context
+        .heap_mut()
+        .allocate_object(object)
+        .map(JsValue::Object)
+        .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))
+}
+
 fn iterator_next(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -722,7 +944,7 @@ fn iterator_next(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let iterator = context.require_object(&this_value, "Iterator.prototype.next")?;
-    if let Some(js_iterator) =
+    if let Some((js_iterator, cached_next)) =
         context
             .heap()
             .object(iterator)
@@ -730,14 +952,21 @@ fn iterator_next(
                 ObjectKind::Iterator {
                     record:
                         IteratorRecord {
-                            kind: IteratorKind::Js { iterator },
+                            kind:
+                                IteratorKind::Js {
+                                    iterator,
+                                    next_method,
+                                },
                             ..
                         },
-                } => Some(iterator.clone()),
+                } => Some((iterator.clone(), next_method.clone())),
                 _ => None,
             })
     {
-        let next = context.get_property(js_iterator.clone(), "next")?;
+        let next = match cached_next {
+            Some(next) => next,
+            None => context.get_property(js_iterator.clone(), "next")?,
+        };
         if !is_callable(&next) {
             return Err(VmError::type_error("iterator next is not callable"));
         }
@@ -803,14 +1032,58 @@ fn install_iterator_prototype_on_value(
 fn create_js_iterator_wrapper(
     context: &mut NativeContext,
     iterator: JsValue,
+    next_method: Option<JsValue>,
 ) -> Result<JsValue, VmError> {
-    let object = JsObject::iterator(IteratorRecord::js(iterator));
+    let record = match next_method {
+        Some(next_method) => IteratorRecord::js_with_next(iterator, next_method),
+        None => IteratorRecord::js(iterator),
+    };
+    let object = JsObject::iterator(record);
     let id = context
         .heap_mut()
         .allocate_object(object)
         .ok_or_else(|| VmError::runtime("heap full: cannot allocate iterator wrapper"))?;
-    install_iterator_prototype_on_value(context, id)?;
+    let wrap_prototype = iterator_wrap_prototype_object(context)?;
+    context.set_prototype_of(id, Some(wrap_prototype))?;
+    define_method(context, id, "return", 0, iterator_wrapper_return)?;
     Ok(JsValue::Object(id))
+}
+
+fn iterator_wrapper_return(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let wrapper = context.require_object(&this_value, "Iterator wrapper return")?;
+    let Some(iterator) = context
+        .heap()
+        .object(wrapper)
+        .and_then(|object| match &object.kind {
+            ObjectKind::Iterator {
+                record:
+                    IteratorRecord {
+                        kind: IteratorKind::Js { iterator, .. },
+                        ..
+                    },
+            } => Some(iterator.clone()),
+            _ => None,
+        })
+    else {
+        return Err(VmError::type_error(
+            "receiver is not an Iterator.from wrapper",
+        ));
+    };
+    let return_method = vm.get_property_value(iterator.clone(), "return", context)?;
+    if matches!(return_method, JsValue::Undefined | JsValue::Null) {
+        return iterator_result(context, JsValue::Undefined, true);
+    }
+    if !is_callable(&return_method) {
+        return Err(VmError::type_error("iterator return is not callable"));
+    }
+    let result = vm.call_value_from_builtin(return_method, iterator, Vec::new(), context)?;
+    context.require_object(&result, "iterator return result")?;
+    Ok(result)
 }
 
 fn install_array_iterator_method(context: &mut NativeContext) -> Result<(), VmError> {
@@ -927,6 +1200,184 @@ fn iterator_find(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     iterator_predicate(vm, context, this_value, arguments, PredicateMode::Find)
+}
+
+fn iterator_map(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let callback = require_callback(arguments, "Iterator.prototype.map")?;
+    let mut values = Vec::new();
+    let mut index = 0usize;
+    while index < MAX_ITERATOR_STEPS {
+        let Some(value) = iterator_step(vm, context, this_value.clone())? else {
+            return iterator_from_values(context, values);
+        };
+        values.push(vm.call_value_from_builtin(
+            callback.clone(),
+            JsValue::Undefined,
+            vec![value, JsValue::Number(index as f64)],
+            context,
+        )?);
+        index += 1;
+    }
+    Err(VmError::runtime_limit(
+        "iterator helper step limit exceeded",
+    ))
+}
+
+fn iterator_filter(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let callback = require_callback(arguments, "Iterator.prototype.filter")?;
+    let mut values = Vec::new();
+    let mut index = 0usize;
+    while index < MAX_ITERATOR_STEPS {
+        let Some(value) = iterator_step(vm, context, this_value.clone())? else {
+            return iterator_from_values(context, values);
+        };
+        let keep = vm
+            .call_value_from_builtin(
+                callback.clone(),
+                JsValue::Undefined,
+                vec![value.clone(), JsValue::Number(index as f64)],
+                context,
+            )?
+            .to_boolean();
+        if keep {
+            values.push(value);
+        }
+        index += 1;
+    }
+    Err(VmError::runtime_limit(
+        "iterator helper step limit exceeded",
+    ))
+}
+
+fn iterator_take(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let limit = iterator_limit(arguments.first(), "Iterator.prototype.take")?;
+    let mut values = Vec::new();
+    while values.len() < limit.min(MAX_ITERATOR_STEPS) {
+        let Some(value) = iterator_step(vm, context, this_value.clone())? else {
+            return iterator_from_values(context, values);
+        };
+        values.push(value);
+    }
+    iterator_from_values(context, values)
+}
+
+fn iterator_drop(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let limit = iterator_limit(arguments.first(), "Iterator.prototype.drop")?;
+    let mut skipped = 0usize;
+    while skipped < limit.min(MAX_ITERATOR_STEPS) {
+        if iterator_step(vm, context, this_value.clone())?.is_none() {
+            return iterator_from_values(context, Vec::new());
+        }
+        skipped += 1;
+    }
+    let values = collect_iterator_values(vm, context, this_value)?;
+    iterator_from_values(context, values)
+}
+
+fn iterator_flat_map(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let callback = require_callback(arguments, "Iterator.prototype.flatMap")?;
+    let mut values = Vec::new();
+    let mut index = 0usize;
+    while values.len() < MAX_ITERATOR_STEPS {
+        let Some(value) = iterator_step(vm, context, this_value.clone())? else {
+            return iterator_from_values(context, values);
+        };
+        let mapped = vm.call_value_from_builtin(
+            callback.clone(),
+            JsValue::Undefined,
+            vec![value, JsValue::Number(index as f64)],
+            context,
+        )?;
+        values.extend(collect_iterator_values(vm, context, mapped)?);
+        index += 1;
+    }
+    Err(VmError::runtime_limit(
+        "iterator helper step limit exceeded",
+    ))
+}
+
+fn iterator_reduce(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let callback = require_callback(arguments, "Iterator.prototype.reduce")?;
+    let mut index = 0usize;
+    let mut accumulator = if let Some(initial) = arguments.get(1) {
+        initial.clone()
+    } else {
+        let Some(value) = iterator_step(vm, context, this_value.clone())? else {
+            return Err(VmError::type_error(
+                "Reduce of empty iterator with no initial value",
+            ));
+        };
+        index = 1;
+        value
+    };
+    while index < MAX_ITERATOR_STEPS {
+        let Some(value) = iterator_step(vm, context, this_value.clone())? else {
+            return Ok(accumulator);
+        };
+        accumulator = vm.call_value_from_builtin(
+            callback.clone(),
+            JsValue::Undefined,
+            vec![accumulator, value, JsValue::Number(index as f64)],
+            context,
+        )?;
+        index += 1;
+    }
+    Err(VmError::runtime_limit(
+        "iterator helper step limit exceeded",
+    ))
+}
+
+fn require_callback(arguments: &[JsValue], label: &str) -> Result<JsValue, VmError> {
+    let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !is_callable(&callback) {
+        return Err(VmError::type_error(format!(
+            "{label} callback is not callable"
+        )));
+    }
+    Ok(callback)
+}
+
+fn iterator_limit(value: Option<&JsValue>, label: &str) -> Result<usize, VmError> {
+    let number = value
+        .and_then(JsValue::to_number)
+        .unwrap_or(f64::NAN)
+        .floor();
+    if !number.is_finite() || number < 0.0 {
+        return Err(VmError::range(format!(
+            "{label} limit must be a non-negative number"
+        )));
+    }
+    Ok(number.min(MAX_ITERATOR_STEPS as f64) as usize)
 }
 
 enum PredicateMode {

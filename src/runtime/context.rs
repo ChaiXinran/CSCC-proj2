@@ -10,8 +10,9 @@ use super::{
     Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId, Heap, HeapStats,
     IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue, NativeCall,
     NativeConstruct, NativeErrorKind, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PromiseId,
-    PromiseJob, PromiseReaction, PromiseRecord, PromiseState, PropertyDescriptor,
-    PropertyDescriptorUpdate, PropertyKind, RootSet, SymbolId, SymbolRegistry,
+    PromiseCallbackJob, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
+    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, RootSet,
+    SymbolId, SymbolRegistry,
     TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols,
     iterator::IteratorKind, object::array_index,
 };
@@ -306,10 +307,28 @@ impl NativeContext {
                 }
                 PromiseState::Pending => {}
             }
+            for reaction in &promise.reactions {
+                if let Some(value) = &reaction.on_fulfilled {
+                    roots.value_roots.push(value.clone());
+                }
+                if let Some(value) = &reaction.on_rejected {
+                    roots.value_roots.push(value.clone());
+                }
+            }
         }
         for job in self.job_queue.iter() {
-            if let Job::PromiseReaction(job) = job {
-                roots.value_roots.push(job.value.clone());
+            match job {
+                Job::PromiseReaction(job) => roots.value_roots.push(job.value.clone()),
+                Job::PromiseCallback(job) => {
+                    roots.value_roots.push(job.value.clone());
+                    if let Some(value) = &job.on_fulfilled {
+                        roots.value_roots.push(value.clone());
+                    }
+                    if let Some(value) = &job.on_rejected {
+                        roots.value_roots.push(value.clone());
+                    }
+                }
+                Job::HostCallback(_) => {}
             }
         }
     }
@@ -2434,6 +2453,35 @@ impl NativeContext {
         Ok(PromiseId(index))
     }
 
+    pub fn create_promise_object(
+        &mut self,
+        promise: PromiseId,
+        prototype: Option<ObjectId>,
+    ) -> Result<JsValue, VmError> {
+        if self.promises.get(promise.0 as usize).is_none() {
+            return Err(VmError::runtime("invalid promise id"));
+        }
+        let mut object = JsObject::ordinary();
+        object.prototype = prototype.or_else(|| self.object_prototype());
+        object.kind = ObjectKind::Promise { promise };
+        let id = self
+            .heap
+            .allocate_object(object)
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+        Ok(JsValue::Object(id))
+    }
+
+    #[must_use]
+    pub fn promise_id_from_value(&self, value: &JsValue) -> Option<PromiseId> {
+        let JsValue::Object(object) = value else {
+            return None;
+        };
+        match &self.heap.object(*object)?.kind {
+            ObjectKind::Promise { promise } => Some(*promise),
+            _ => None,
+        }
+    }
+
     #[must_use]
     pub fn promise_state(&self, promise: PromiseId) -> Option<PromiseState> {
         self.promises
@@ -2457,13 +2505,68 @@ impl NativeContext {
         if !matches!(record.state, PromiseState::Pending) {
             return Ok(false);
         }
+        let (fulfilled, value) = match &state {
+            PromiseState::Fulfilled(value) => (true, value.clone()),
+            PromiseState::Rejected(value) => (false, value.clone()),
+            PromiseState::Pending => unreachable!("settle_promise only receives settled states"),
+        };
+        let reactions = std::mem::take(&mut record.reactions);
         record.state = state;
+        for reaction in reactions {
+            self.job_queue.push(Job::PromiseCallback(PromiseCallbackJob {
+                result_promise: reaction.result_promise,
+                on_fulfilled: reaction.on_fulfilled,
+                on_rejected: reaction.on_rejected,
+                fulfilled,
+                value: value.clone(),
+                finally: reaction.finally,
+            }));
+        }
         Ok(true)
+    }
+
+    pub fn add_promise_reaction(
+        &mut self,
+        promise: PromiseId,
+        reaction: PromiseThenReaction,
+    ) -> Result<(), VmError> {
+        let record = self
+            .promises
+            .get_mut(promise.0 as usize)
+            .ok_or_else(|| VmError::runtime("invalid promise id"))?;
+        match &record.state {
+            PromiseState::Pending => record.reactions.push(reaction),
+            PromiseState::Fulfilled(value) => self.job_queue.push(Job::PromiseCallback(
+                PromiseCallbackJob {
+                    result_promise: reaction.result_promise,
+                    on_fulfilled: reaction.on_fulfilled,
+                    on_rejected: reaction.on_rejected,
+                    fulfilled: true,
+                    value: value.clone(),
+                    finally: reaction.finally,
+                },
+            )),
+            PromiseState::Rejected(value) => {
+                self.job_queue.push(Job::PromiseCallback(PromiseCallbackJob {
+                    result_promise: reaction.result_promise,
+                    on_fulfilled: reaction.on_fulfilled,
+                    on_rejected: reaction.on_rejected,
+                    fulfilled: false,
+                    value: value.clone(),
+                    finally: reaction.finally,
+                }));
+            }
+        }
+        Ok(())
     }
 
     pub fn enqueue_job(&mut self, job: Job) -> Result<(), VmError> {
         self.job_queue.push(job);
         Ok(())
+    }
+
+    pub(crate) fn pop_job(&mut self) -> Option<Job> {
+        self.job_queue.pop()
     }
 
     pub fn drain_jobs(&mut self) -> Result<(), VmError> {
@@ -2488,6 +2591,11 @@ impl NativeContext {
                 value,
             }) => {
                 self.reject_promise(promise, value)?;
+            }
+            Job::PromiseCallback(_) => {
+                return Err(VmError::runtime(
+                    "promise callback jobs require VM-assisted draining",
+                ));
             }
             Job::HostCallback(NativeJob::PushOutput(line)) => self.push_output(line),
         }
@@ -3341,7 +3449,8 @@ fn error_kind_name(kind: &NativeErrorKind) -> &'static str {
         NativeErrorKind::Reference => "ReferenceError",
         NativeErrorKind::Syntax => "SyntaxError",
         NativeErrorKind::Range | NativeErrorKind::RuntimeLimit => "RangeError",
-        NativeErrorKind::Error | NativeErrorKind::Test262 => "Error",
+        NativeErrorKind::Error => "Error",
+        NativeErrorKind::Test262 => "Test262Error",
     }
 }
 
@@ -3354,6 +3463,7 @@ fn native_error_is_instance_of(kind: &NativeErrorKind, constructor_name: &str) -
         "SyntaxError" => matches!(kind, NativeErrorKind::Syntax),
         "ReferenceError" => matches!(kind, NativeErrorKind::Reference),
         "RangeError" => matches!(kind, NativeErrorKind::Range),
+        "Test262Error" => matches!(kind, NativeErrorKind::Test262),
         _ => false,
     }
 }

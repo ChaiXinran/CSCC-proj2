@@ -338,9 +338,7 @@ impl Parser {
             }
             // Strict-mode early error: `delete expr.#privateName` (spec: MemberExpression.PrivateName).
             if self.is_strict && is_private_member_access(&argument) {
-                return Err(
-                    self.error("cannot delete a private member access expression".into())
-                );
+                return Err(self.error("cannot delete a private member access expression".into()));
             }
             return Ok(Expression::Unary {
                 operator: UnaryOperator::Delete,
@@ -924,17 +922,25 @@ impl Parser {
 
         // Shorthand property: `{name}` or `{name = default}`.
         // Only when: token was Identifier (not keyword), and name is not a reserved word.
-        if key_from_ident_token {
+        if key_from_ident_token && !self.check_punctuator(':') {
             if let PropertyName::Identifier(ref ident) = key {
-                let ident_is_valid = !is_reserved_identifier_name(ident)
-                    && !(self.is_strict
+                // Truly reserved words can never appear as shorthand.
+                if is_reserved_identifier_name(ident)
+                    || (self.is_strict
                         && (ident == "eval"
                             || ident == "arguments"
                             || is_strict_future_reserved(ident)
                             || is_strict_future_reserved_keyword(ident)))
-                    && !(self.is_generator_context && ident == "yield")
-                    && !(self.is_async_context && ident == "await");
-                if ident_is_valid && !self.check_punctuator(':') {
+                {
+                    return Err(self.error(format!(
+                        "reserved word `{ident}` cannot be used as shorthand property"
+                    )));
+                }
+                // Context-sensitive keywords (yield/await) are not valid shorthands
+                // inside generator/async functions but are fine elsewhere.
+                let is_context_keyword = (self.is_generator_context && ident == "yield")
+                    || (self.is_async_context && ident == "await");
+                if !is_context_keyword {
                     let ident = ident.clone();
                     let default_expr = if self.eat_operator("=") {
                         Some(self.parse_assignment()?)
@@ -2236,7 +2242,11 @@ fn update_operator(operator: &str) -> Option<UpdateOperator> {
 /// via non-computed member access — e.g. `expr.#x` or `(a.b).#x`.
 fn is_private_member_access(expr: &crate::ast::Expression) -> bool {
     match expr {
-        crate::ast::Expression::Member { property, computed: false, .. } => {
+        crate::ast::Expression::Member {
+            property,
+            computed: false,
+            ..
+        } => {
             matches!(property.as_ref(), crate::ast::Expression::PrivateName(_))
         }
         _ => false,
@@ -2835,6 +2845,20 @@ mod tests {
                 value: Expression::Function(FunctionLiteral { params, .. }),
                 ..
             } if params.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parses_object_property_shorthand() {
+        let Expression::Object(properties) = parse_expression("({ length })") else {
+            panic!("expected object literal");
+        };
+        assert!(matches!(
+            &properties[0],
+            ObjectProperty::Data {
+                key: PropertyName::Identifier(key),
+                value: Expression::Identifier(value),
+            } if key == "length" && value == "length"
         ));
     }
 
