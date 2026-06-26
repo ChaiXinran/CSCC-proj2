@@ -348,6 +348,130 @@ fn generator_yield_star_uses_custom_symbol_iterator_incrementally() {
 }
 
 #[test]
+fn generator_return_closes_yield_star_delegate() {
+    let result = run_native(
+        "var calls = 0; \
+         var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { \
+             next: function() { return { value: 1, done: false }; }, \
+             return: function() { calls = calls + 1; return { done: true }; } \
+           }; \
+         }; \
+         function* g() { yield* iterable; return 9; } \
+         var it = g(); \
+         var first = it.next(); \
+         var closed = it.return(42); \
+         '' + first.value + '/' + calls + '/' + closed.value + '/' + closed.done;",
+    );
+    assert_eq!(
+        result.expect("delegate return should run"),
+        "1/1/undefined/true"
+    );
+}
+
+#[test]
+fn generator_return_rejects_non_object_delegate_return_result() {
+    let result = run_native(
+        "var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { \
+             next: function() { return { value: 1, done: false }; }, \
+             return: function() { return 1; } \
+           }; \
+         }; \
+         function* g() { yield* iterable; } \
+         var it = g(); \
+         it.next(); \
+         var caught = false; \
+         try { it.return(42); } catch (e) { caught = true; } \
+         caught;",
+    );
+    assert_eq!(result.expect("bad delegate return should throw"), "true");
+}
+
+#[test]
+fn generator_return_passes_value_to_yield_star_delegate_return() {
+    let result = run_native(
+        "var received = 0; \
+         var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { \
+             next: function() { return { value: 1, done: false }; }, \
+             return: function(value) { received = value; return { value: value + 1, done: true }; } \
+           }; \
+         }; \
+         function* g() { yield* iterable; } \
+         var it = g(); \
+         it.next(); \
+         var result = it.return(41); \
+         '' + received + '/' + result.value + '/' + result.done;",
+    );
+    assert_eq!(result.expect("delegate return should receive value"), "41/42/true");
+}
+
+#[test]
+fn generator_return_yields_when_delegate_return_is_not_done() {
+    let result = run_native(
+        "var done = false; \
+         var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { \
+             next: function() { return { value: 1, done: false }; }, \
+             return: function() { return { value: 7, done: done }; } \
+           }; \
+         }; \
+         function* g() { yield* iterable; return 9; } \
+         var it = g(); \
+         it.next(); \
+         var a = it.return(41); \
+         done = true; \
+         var b = it.return(41); \
+         '' + a.value + '/' + a.done + '/' + b.value + '/' + b.done;",
+    );
+    assert_eq!(result.expect("delegate return should be resumable"), "7/false/7/true");
+}
+
+#[test]
+fn generator_throw_forwards_to_yield_star_delegate_throw() {
+    let result = run_native(
+        "var calls = 0; \
+         var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { \
+             next: function() { return { value: 1, done: false }; }, \
+             throw: function(value) { calls = calls + 1; return { value: value + 1, done: false }; } \
+           }; \
+         }; \
+         function* g() { yield* iterable; } \
+         var it = g(); \
+         it.next(); \
+         var result = it.throw(41); \
+         '' + calls + '/' + result.value + '/' + result.done;",
+    );
+    assert_eq!(result.expect("delegate throw should yield"), "1/42/false");
+}
+
+#[test]
+fn generator_throw_resumes_after_delegate_done() {
+    let result = run_native(
+        "var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { \
+             next: function() { return { value: 1, done: false }; }, \
+             throw: function(value) { return { value: value + 1, done: true }; } \
+           }; \
+         }; \
+         function* g() { var value = yield* iterable; return value + 1; } \
+         var it = g(); \
+         it.next(); \
+         var result = it.throw(40); \
+         '' + result.value + '/' + result.done;",
+    );
+    assert_eq!(result.expect("delegate done should resume generator"), "42/true");
+}
+
+#[test]
 fn generator_function_is_not_constructible() {
     let result = run_native(
         "function* g() { yield 1; } \

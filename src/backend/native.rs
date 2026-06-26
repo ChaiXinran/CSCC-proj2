@@ -289,8 +289,9 @@ impl RuntimeBackend for NativeRuntime {
     }
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure> {
-        self.context
-            .drain_jobs()
+        self.pipeline
+            .executor
+            .drain_jobs(&mut self.context)
             .map_err(|error| classify_native_error(NativeError::Execute(error)))
     }
 

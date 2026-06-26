@@ -4,6 +4,7 @@ mod array;
 mod function;
 mod json;
 mod object;
+mod promise;
 
 // C1/C2 pure algorithm modules. They contain no VM/runtime wiring; the thin
 // adapter layer in `std_primitives` bridges them into the runtime.
@@ -257,6 +258,7 @@ fn install_std_globals(context: &mut NativeContext) -> Result<(), VmError> {
     std_primitives::install(context)?;
     binary_data::install(context)?;
     collections::install(context)?;
+    promise::install(context)?;
     date_intl::install(context)?;
     annex_b::install(context)
 }

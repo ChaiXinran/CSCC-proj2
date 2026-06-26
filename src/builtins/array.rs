@@ -441,14 +441,16 @@ fn array_from(
         return Err(VmError::type_error("Array.from: mapfn is not callable"));
     };
 
-    let object = context.require_object(&source, "Array.from")?;
-    if let Some(iterator_method) =
-        context.get_symbol_property_value(object, context.well_known_symbols().iterator)
-    {
-        if matches!(iterator_method, JsValue::Undefined | JsValue::Null) {
-            let length = array_like_length(context, object);
-            return array_from_array_like(vm, context, source, length, map_fn, map_this);
-        }
+    if matches!(source, JsValue::Null | JsValue::Undefined) {
+        return Err(VmError::type_error("cannot Array.from on nullish value"));
+    }
+    let iterator_method = vm.get_symbol_property_value_with_receiver_from_builtin(
+        source.clone(),
+        source.clone(),
+        context.well_known_symbols().iterator,
+        context,
+    )?;
+    if !matches!(iterator_method, JsValue::Undefined | JsValue::Null) {
         if !is_callable(&iterator_method) {
             return Err(VmError::type_error(
                 "Array.from: @@iterator is not callable",
@@ -456,7 +458,9 @@ fn array_from(
         }
         return array_from_iterator(vm, context, source, iterator_method, map_fn, map_this);
     }
-    let length = array_like_length(context, object);
+    let length = context
+        .value_object(&source)
+        .map_or(0, |object| array_like_length(context, object));
 
     array_from_array_like(vm, context, source, length, map_fn, map_this)
 }

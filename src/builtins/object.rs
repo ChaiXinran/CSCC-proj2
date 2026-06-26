@@ -490,6 +490,7 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Ordinary => "Object",
         ObjectKind::Iterator { .. } => "Object",
         ObjectKind::Generator { .. } => "Generator",
+        ObjectKind::Promise { .. } => "Promise",
     })
 }
 

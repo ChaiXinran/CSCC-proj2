@@ -34,7 +34,8 @@ pub use heap::Heap;
 pub(crate) use iterator::IteratorKind;
 pub use iterator::{IteratorMode, IteratorRecord};
 pub use job::{
-    Job, JobQueue, NativeJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
+    Job, JobQueue, NativeJob, PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction,
+    PromiseRecord, PromiseState, PromiseThenReaction,
 };
 pub use module::{
     ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus,
