@@ -1409,6 +1409,14 @@ impl Parser {
                 return Err(self.error(format!("duplicate lexical declaration `{name}` in switch")));
             }
         }
+        // Spec: SwitchStatement early error — var-declared names must not overlap lexical names.
+        for name in cases.iter().flat_map(|case| var_declared_names(&case.consequent)) {
+            if lexical_names.contains(name) {
+                return Err(self.error(format!(
+                    "var `{name}` conflicts with a lexical declaration in switch"
+                )));
+            }
+        }
 
         Ok(cases)
     }

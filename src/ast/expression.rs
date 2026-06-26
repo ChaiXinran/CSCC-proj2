@@ -261,6 +261,8 @@ pub enum ClassElement {
         name: PropertyName,
         function: FunctionLiteral,
         is_static: bool,
+        is_getter: bool,
+        is_setter: bool,
     },
     /// Instance or static field declaration: `[static] name [= expr]`.
     Field {
@@ -418,6 +420,8 @@ pub enum Expression {
     /// `new.target` — the constructor or function that was invoked with `new`.
     /// Returns `undefined` in regular calls; the constructor function in `new` calls.
     NewTarget,
+    /// `#name` used as a member-access property (e.g. `this.#x`, `obj.#method()`).
+    PrivateName(String),
     /// Comma operator: evaluates each expression and returns the last.
     Sequence(Vec<Expression>),
 }
