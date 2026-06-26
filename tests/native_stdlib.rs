@@ -79,6 +79,44 @@ fn bigint_minimal_runtime_semantics() {
 }
 
 #[test]
+fn bigint_arithmetic_rejects_mixed_number_operands() {
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n + 1; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n & 1; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
+}
+
+#[test]
+fn bigint_bitwise_and_shift_operations() {
+    assert_eq!(native_eval("(6n & 3n).toString()"), "2");
+    assert_eq!(native_eval("(4n | 1n).toString()"), "5");
+    assert_eq!(native_eval("(7n ^ 3n).toString()"), "4");
+    assert_eq!(native_eval("(~0n).toString()"), "-1");
+    assert_eq!(native_eval("(1n << 5n).toString()"), "32");
+    assert_eq!(native_eval("(32n >> 2n).toString()"), "8");
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n >>> 0n; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
+}
+
+#[test]
+fn bigint_division_by_zero_is_catchable_range_error() {
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n / 0n; } catch (e) { r = e.name; } r;"),
+        "RangeError"
+    );
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n % 0n; } catch (e) { r = e.name; } r;"),
+        "RangeError"
+    );
+}
+
+#[test]
 fn number_to_string_supports_radix() {
     assert_eq!(native_eval("(255).toString(16)"), "ff");
     assert_eq!(native_eval("(255).toString()"), "255");
@@ -318,7 +356,10 @@ fn reflect_apply_and_construct_enter_vm_call_paths() {
 
 #[test]
 fn bigint_and_template_literals_parse_through_native_pipeline() {
-    assert_eq!(native_eval("1n + 2"), "3");
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n + 2; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
     assert_eq!(native_eval("`hello`"), "hello");
     assert_eq!(native_eval("`a\\n`"), "a\n");
 }
