@@ -177,9 +177,37 @@ Newest first.
 
 | Date | Worker | Summary | Files changed | Tests run | Result delta |
 | --- | --- | --- | --- | --- | --- |
+| 2026-06-26 | A group | Class/private/member/frontend follow-up plus destructuring assignment handoff completion | `src/ast/expression.rs`, `src/lexer/mod.rs`, `src/parser/expression.rs`, `src/parser/statement.rs`, `src/bytecode/opcode.rs`, `src/bytecode/compiler.rs`, `src/vm/interpreter.rs`, `tests/bytecode_basics.rs`, `tests/native_for_loops.rs`, `reports/native-v8-scan-summary.json` | `cargo test --no-default-features --test bytecode_basics`; `cargo test --no-default-features --test native_for_loops`; `cargo test --no-default-features` (stops at existing BigInt stdlib failure); `cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json` | V8 scan now 1,085/5,000 passed, 3,915 failed, 0 skipped (21.70%). Delta: +468 passed vs previous local summary 617/5,000; +1,085 vs initial V8 scan baseline. Full 2026-06-24 baseline unchanged; no new full-suite run claimed. |
 | 2026-06-24 | A group | Complete V8-A implementation | lexer, ast, parser, bytecode/compiler, bytecode/opcode, bytecode/chunk, vm/interpreter, runtime/function | `cargo test --all-targets` + V1–V6 gates | 205 passed, 0 failed; all gates 100% |
 | 2026-06-24 | setup | Recorded V8 scan baseline | `reports/native-v8-scan-summary.json` | `--native-v8-scan --jobs 4` | 0/5,000 passed, 4,504 failed, 496 skipped |
 | 2026-06-24 | setup | Created report template | `reports/v8-partA-report.md` | — | baseline recorded |
+
+---
+
+## 2026-06-26 Follow-up Notes
+
+This pass continued the interrupted A-track repair and stayed on frontend/parser/compiler/runtime-instruction support:
+
+- Class declarations now participate in lexical predeclaration/binding so `class C {}` does not compile into an undeclared global store.
+- Class methods/accessors use class-specific property definition instructions so methods are non-enumerable and configurable, and getters/setters preserve accessor descriptors.
+- Private member access parses and compiles through member expressions (`this.#x`, `obj.#m()`), with private names represented as internal string keys for this stage.
+- Private names accept Unicode escapes in the lexer.
+- Switch lexical/var conflict validation now catches same-switch `var` vs lexical conflicts.
+- Assignment targets now accept array/object destructuring forms; array and object destructuring assignment update existing bindings and member targets.
+- Computed-member postfix update (`obj[key]++`) now compiles using `Swap` and stack cleanup.
+- Function name inference was added for anonymous functions/classes in variable declarations, assignments, and default binding initializers.
+- `var` names are predeclared to `undefined` for script/function hoisting before execution.
+
+Newly exposed / remaining failures:
+
+- `cargo test --no-default-features` still stops in `tests/native_stdlib.rs::bigint_and_template_literals_parse_through_native_pipeline`: BigInt literal runtime semantics remain a B/C-owned V10 gap, not part of this A-track patch.
+- Object destructuring assignment rest is still simplified: it copies all enumerable properties and does not yet exclude already-bound keys.
+- Computed-member postfix update re-evaluates object/key for the write path; side-effect-perfect semantics need a future rotate/tuck VM instruction.
+
+Coordination notes:
+
+- B/C should not depend on private-name string-key storage as final private brand semantics; it is an A-stage parser/compiler compatibility bridge.
+- The new `Swap`, `SetFunctionName`, and class property-definition opcodes are shared VM surface and should be reused rather than duplicated in later frontend/runtime work.
 
 ---
 

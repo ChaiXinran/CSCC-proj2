@@ -45,6 +45,11 @@ pub enum Instruction {
     Duplicate,
     /// Duplicates the top two stack values while preserving their order.
     DuplicatePair,
+    /// Swaps the top two stack values. [a, b] → [b, a].
+    Swap,
+    /// Sets the `name` property of the top-of-stack function to the given constant string,
+    /// if the function's name is currently empty (anonymous inference). Value stays on stack.
+    SetFunctionName(u16),
 
     DeclareGlobal(u16),
     LoadGlobal(u16),
@@ -183,6 +188,13 @@ pub enum Instruction {
     DefineDataProperty(u16),
     DefineGetter(u16),
     DefineSetter(u16),
+    /// Like `DefineDataProperty` but uses `writable=true, enumerable=false, configurable=true`.
+    /// Used for class instance/static methods (spec: non-enumerable, configurable).
+    DefineClassMethod(u16),
+    /// Like `DefineGetter` but uses `enumerable=false, configurable=true` for class accessors.
+    DefineClassGetter(u16),
+    /// Like `DefineSetter` but uses `enumerable=false, configurable=true` for class accessors.
+    DefineClassSetter(u16),
     SetObjectPrototype,
     DefineElement(u32),
     DeleteProperty(u16),
@@ -304,6 +316,8 @@ impl Instruction {
 
             Self::Duplicate => StackEffect::with_required(1, 0, 1),
             Self::DuplicatePair => StackEffect::with_required(2, 0, 2),
+            Self::Swap => StackEffect::with_required(2, 2, 2),
+            Self::SetFunctionName(_) => StackEffect::with_required(1, 0, 0),
 
             // pop 1, push 0
             Self::Pop
@@ -352,7 +366,9 @@ impl Instruction {
             | Self::CreateRegExp => StackEffect::new(2, 1),
 
             // observe top (no stack change)
-            Self::JumpIfFalse(_) | Self::JumpIfTrue(_) | Self::JumpIfNotNullish(_) => StackEffect::with_required(1, 0, 0),
+            Self::JumpIfFalse(_) | Self::JumpIfTrue(_) | Self::JumpIfNotNullish(_) => {
+                StackEffect::with_required(1, 0, 0)
+            }
 
             // no stack effect
             Self::Jump(_)
@@ -391,13 +407,18 @@ impl Instruction {
             Self::DefineDataProperty(_)
             | Self::DefineGetter(_)
             | Self::DefineSetter(_)
+            | Self::DefineClassMethod(_)
+            | Self::DefineClassGetter(_)
+            | Self::DefineClassSetter(_)
             | Self::SetObjectPrototype
             | Self::DefineElement(_) => StackEffect::with_required(2, 1, 0),
 
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
 
             // ArrayPush: [array, value] → [array]
-            Self::ArrayPush | Self::SpreadIntoArray | Self::SpreadObject => StackEffect::with_required(2, 1, 0),
+            Self::ArrayPush | Self::SpreadIntoArray | Self::SpreadObject => {
+                StackEffect::with_required(2, 1, 0)
+            }
 
             // SpreadCall/SpreadConstruct: variable pops, push 1
             Self::SpreadCall(n) | Self::SpreadConstruct(n) => {
@@ -436,9 +457,10 @@ impl Instruction {
     #[must_use]
     pub const fn jump_target(self) -> Option<usize> {
         match self {
-            Self::JumpIfFalse(target) | Self::JumpIfTrue(target) | Self::JumpIfNotNullish(target) | Self::Jump(target) => {
-                Some(target)
-            }
+            Self::JumpIfFalse(target)
+            | Self::JumpIfTrue(target)
+            | Self::JumpIfNotNullish(target)
+            | Self::Jump(target) => Some(target),
             _ => None,
         }
     }

@@ -87,6 +87,24 @@ impl Compiler {
         let lexical_scope = self.predeclare_lexical_bindings(&program.body, &mut chunk)?;
         context.lexical_scopes.push(lexical_scope);
 
+        // Hoist all var declarations to the top of the global scope (pre-declare as undefined).
+        // This ensures var names from un-executed branches (loops, if-bodies) are still
+        // accessible in the enclosing scope after that branch.
+        {
+            let mut var_names: Vec<String> = Vec::new();
+            collect_var_names(&program.body, &mut var_names);
+            if !var_names.is_empty() {
+                let undef_const = chunk
+                    .add_constant(Constant::Undefined)
+                    .map_err(CompileError::from_chunk)?;
+                for name in var_names {
+                    let idx = self.add_name(&name, &mut chunk)?;
+                    chunk.emit(Instruction::Constant(undef_const));
+                    chunk.emit(Instruction::DeclareGlobal(idx));
+                }
+            }
+        }
+
         // Hoist function declarations to the top of the program scope.
         for statement in &program.body {
             if let Statement::FunctionDeclaration {
@@ -139,9 +157,12 @@ impl Compiler {
             Statement::VariableDeclaration { kind, declarations } => {
                 for declarator in declarations {
                     if let Some(pattern) = &declarator.pattern {
-                        let init = declarator.initializer.as_ref().ok_or_else(|| CompileError {
-                            message: "destructuring declaration requires an initializer".into(),
-                        })?;
+                        let init = declarator
+                            .initializer
+                            .as_ref()
+                            .ok_or_else(|| CompileError {
+                                message: "destructuring declaration requires an initializer".into(),
+                            })?;
                         self.compile_expression(init, chunk, context)?;
                         self.compile_binding_pattern(*kind, pattern, chunk, context)?;
                     } else {
@@ -596,7 +617,9 @@ impl Compiler {
         let test_offset = chunk.current_offset();
         let loop_ctx = context.loops.pop().expect("do-while loop context");
         for jump in loop_ctx.continue_jumps {
-            chunk.patch_jump(jump, test_offset).map_err(CompileError::from_chunk)?;
+            chunk
+                .patch_jump(jump, test_offset)
+                .map_err(CompileError::from_chunk)?;
         }
 
         // do-while: evaluate test; if false pop and exit; else pop and loop.
@@ -610,13 +633,17 @@ impl Compiler {
         chunk.emit(Instruction::Pop); // pop truthy test value, then loop
         chunk.emit(Instruction::Jump(loop_start));
         let loop_end_pop = chunk.current_offset();
-        chunk.patch_jump(exit_jump, loop_end_pop).map_err(CompileError::from_chunk)?;
+        chunk
+            .patch_jump(exit_jump, loop_end_pop)
+            .map_err(CompileError::from_chunk)?;
         chunk.emit(Instruction::Pop); // pop falsy test value
         let loop_end = chunk.current_offset();
 
         let break_context = context.breakables.pop().expect("do-while break context");
         for jump in break_context.break_jumps {
-            chunk.patch_jump(jump, loop_end).map_err(CompileError::from_chunk)?;
+            chunk
+                .patch_jump(jump, loop_end)
+                .map_err(CompileError::from_chunk)?;
         }
         Ok(())
     }
@@ -732,7 +759,9 @@ impl Compiler {
                     if let Some(pattern) = &declarator.pattern {
                         // Destructuring declarator: compile RHS then bind pattern
                         match &declarator.initializer {
-                            Some(expression) => self.compile_expression(expression, chunk, context)?,
+                            Some(expression) => {
+                                self.compile_expression(expression, chunk, context)?
+                            }
                             None => {
                                 let undefined = chunk
                                     .add_constant(Constant::Undefined)
@@ -743,7 +772,9 @@ impl Compiler {
                         self.compile_binding_pattern(VariableKind::Let, pattern, chunk, context)?;
                     } else {
                         match &declarator.initializer {
-                            Some(expression) => self.compile_expression(expression, chunk, context)?,
+                            Some(expression) => {
+                                self.compile_expression(expression, chunk, context)?
+                            }
                             None => {
                                 let undefined = chunk
                                     .add_constant(Constant::Undefined)
@@ -906,24 +937,23 @@ impl Compiler {
                         chunk.emit(Instruction::StoreName(idx));
                         chunk.emit(Instruction::Pop);
                     }
-                    (k, pat) => {
-                        self.compile_binding_pattern(*k, pat, chunk, context)?;
+                    (_, pat) => {
+                        // Use store (not initialize) — bindings were already initialized before the loop.
+                        self.compile_binding_pattern_store(pat, chunk, context)?;
                     }
                 }
             }
-            crate::ast::ForBinding::Target(target) => {
-                match target {
-                    Expression::Identifier(name) => {
-                        self.emit_store_identifier(name, chunk, context)?;
-                        chunk.emit(Instruction::Pop);
-                    }
-                    _ => {
-                        return Err(CompileError::unsupported(
-                            "for-in target must be a variable or a simple identifier",
-                        ));
-                    }
+            crate::ast::ForBinding::Target(target) => match target {
+                Expression::Identifier(name) => {
+                    self.emit_store_identifier(name, chunk, context)?;
+                    chunk.emit(Instruction::Pop);
                 }
-            }
+                _ => {
+                    return Err(CompileError::unsupported(
+                        "for-in target must be a variable or a simple identifier",
+                    ));
+                }
+            },
         }
 
         context.loops.push(LoopContext {
@@ -1030,12 +1060,16 @@ impl Compiler {
                 property,
                 computed: false,
             } => {
-                let Expression::Identifier(prop_name) = property.as_ref() else {
-                    return Err(CompileError::unsupported(
-                        "non-identifier static property in `++`/`--`",
-                    ));
+                let prop_name = match property.as_ref() {
+                    Expression::Identifier(name) => name.clone(),
+                    Expression::PrivateName(name) => format!("#{name}"),
+                    _ => {
+                        return Err(CompileError::unsupported(
+                            "non-identifier static property in `++`/`--`",
+                        ));
+                    }
                 };
-                let prop_index = self.add_name(prop_name, chunk)?;
+                let prop_index = self.add_name(&prop_name, chunk)?;
                 // Stack before step: [obj, old_num]
                 self.compile_expression(object, chunk, context)?;
                 chunk.emit(Instruction::Duplicate); // [obj, obj]
@@ -1081,59 +1115,149 @@ impl Compiler {
                     chunk.emit(step);
                     chunk.emit(Instruction::SetElement);
                 } else {
-                    // Need to leave old_num as result after storing new.
-                    // Use Duplicate to save old_num, then build [obj, key, new]
-                    // for SetElement. This requires moving old_num out of the way.
+                    // Postfix: need old_num as result, obj[key] = new_val as side-effect.
+                    // The saved [obj,key] duplicates are at positions [-3,-2] under old_num.
+                    // Sequence using re-evaluation of object+key (safe for pure expressions)
+                    // and two Swap instructions:
                     //
-                    // Stack trace: [obj, key, old_num]
-                    //   Duplicate    → [obj, key, old_num, old_num]
-                    //   Constant(1)  → [obj, key, old_num, old_num, 1]
-                    //   step         → [obj, key, old_num, new]
-                    //   — need SetElement([obj, key, new]) but stack has
-                    //     extra old_num; re-read element from duplicated [obj,key].
-                    //   — Instead: evaluate object and key again (safe for simple
-                    //     cases; may double side-effects for complex expressions).
+                    //   [obj_s, key_s, old_num]  (obj_s/key_s from DuplicatePair above)
+                    //   Duplicate     → [obj_s, key_s, old_num, old_num]
+                    //   Constant(1)   → [obj_s, key_s, old_num, old_num, 1]
+                    //   step          → [obj_s, key_s, old_num, new_val]
+                    //   compile(obj)  → [obj_s, key_s, old_num, new_val, obj2]
+                    //   Swap          → [obj_s, key_s, old_num, obj2, new_val]
+                    //   compile(key)  → [obj_s, key_s, old_num, obj2, new_val, key2]
+                    //   Swap          → [obj_s, key_s, old_num, obj2, key2, new_val]
+                    //   SetElement    → [obj_s, key_s, old_num, new_val]  (pushes value back)
+                    //   Pop           → [obj_s, key_s, old_num]
+                    //   ... but obj_s and key_s are still on the stack from the earlier DuplicatePair!
+                    //   We need to pop those too. Use a trick: instead of DuplicatePair above,
+                    //   don't duplicate at all; just GetElement and save old then re-eval for store.
                     //
-                    // Simpler sequence that re-evaluates object/key:
-                    //   Duplicate (old_num) → save it deeper
-                    //   compile(object)
-                    //   compile(key_expr)
-                    //   stack: [obj, key, old_num, old_num, obj2, key2]
-                    //   — but key_expr may not be re-evaluatable here easily.
+                    // Better: skip the DuplicatePair/GetElement above and use a simpler sequence.
+                    // Since we already emitted DuplicatePair + GetElement + UnaryPlus, the stack
+                    // is now [obj_s, key_s, old_num]. Pop obj_s and key_s AFTER the SetElement:
                     //
-                    // Compromise: for computed postfix we emit a Duplicate to
-                    // preserve old, compute new into a fresh [obj,key,new] pair
-                    // by using the saved [obj,key] still below old_num.
+                    //   [obj_s, key_s, old_num]
+                    //   Duplicate      → [obj_s, key_s, old_num, old_num]
+                    //   Constant(1)    → [obj_s, key_s, old_num, old_num, 1]
+                    //   step           → [obj_s, key_s, old_num, new_val]
+                    //   compile(obj)   → [obj_s, key_s, old_num, new_val, obj2]
+                    //   Swap           → [obj_s, key_s, old_num, obj2, new_val]
+                    //   compile(key)   → [obj_s, key_s, old_num, obj2, new_val, key2]
+                    //   Swap           → [obj_s, key_s, old_num, obj2, key2, new_val]
+                    //   SetElement     → [obj_s, key_s, old_num, new_val]
+                    //   Pop            → [obj_s, key_s, old_num]
+                    //   PopTwo          → [old_num]  ← need to remove obj_s and key_s
                     //
-                    // Final chosen sequence (avoids re-evaluation):
-                    //   [obj, key, old_num]
-                    //   Duplicate       → [obj, key, old_num, old_num]
-                    //   Constant(1)     → [obj, key, old_num, old_num, 1]
-                    //   step            → [obj, key, old_num, new]
-                    //   — rotate new below old_num to make [obj, key, new, old_num]
-                    //   — then SetElement([obj,key,new])→[old_num]
-                    // Without a rotate instruction we fall back to DuplicatePair
-                    // on [old_num] which would only dup 1 value.
+                    // We don't have PopTwo. Alternative: just pop twice:
+                    //   Pop, Pop — but then stack has wrong top (popping old_num and key_s).
                     //
-                    // Use DuplicatePair on the full 4-value window:
-                    // Before GetElement we had [obj,key,obj,key] from above.
-                    // After GetElement: [obj,key,old]. After UnaryPlus: [obj,key,old_num].
-                    // The saved [obj,key] are still at positions -3,-2 below old_num.
-                    // Stack: bottom→top: [obj_s, key_s, old_num]  (obj_s/key_s = saved copies)
+                    // Use a different structure: DON'T DuplicatePair before GetElement in
+                    // the postfix computed case. Instead just GetElement and re-eval for store.
                     //
-                    // Emit: Duplicate → [obj_s, key_s, old_num, old_num]
-                    //        Constant, step → [obj_s, key_s, old_num, new]
-                    //        SetElement consumes TOP 3 as [object=key_s, key=old_num, value=new]
-                    //        which is WRONG.
+                    // Since we've already emitted [DuplicatePair, GetElement, UnaryPlus]
+                    // for both prefix and postfix above, and the obj_s/key_s ARE on the stack,
+                    // we need to clean them up. Use a sequence that leverages them:
                     //
-                    // There is no clean way to express computed-member postfix
-                    // update without a dedicated swap/rotate instruction. Emit an
-                    // unsupported error for this specific case; prefix computed and
-                    // all static-member variants work correctly above.
-                    return Err(CompileError::unsupported(
-                        "postfix `++`/`--` on a computed member expression is not yet supported; \
-                         use prefix `++`/`--` or assign to a local variable first",
-                    ));
+                    //   [obj_s, key_s, old_num]
+                    //   Duplicate      → [obj_s, key_s, old_num, old_num]
+                    //   Constant(1)    → [obj_s, key_s, old_num, old_num, 1]
+                    //   step           → [obj_s, key_s, old_num, new_val]
+                    //   Swap           → [obj_s, key_s, new_val, old_num]
+                    //   SetElement uses TOP 3: [key_s, new_val, old_num] as [object, key, value]
+                    //   → key_s[new_val] = old_num — WRONG
+                    //
+                    // Still wrong without a full rotate. Re-evaluate the object and key:
+                    // After re-evaluation, we need 2 pops for obj_s/key_s.
+                    //
+                    // Final approach: after [obj_s, key_s, old_num, new_val, obj2, key2, new_val]
+                    // from SetElement, the stack is [obj_s, key_s, old_num, new_val].
+                    // Pop new_val → [obj_s, key_s, old_num].
+                    // Rotate top 3: [old_num, obj_s, key_s] — move obj_s and key_s to top
+                    //   then pop twice → [old_num].
+                    // This requires a rotate. So we still need Rotate3.
+                    //
+                    // For now, use a simpler workaround: emit a separate GetElement for
+                    // the old value WITHOUT keeping obj/key, then re-eval for SetElement.
+                    // This sequence avoids the dangling obj_s/key_s:
+                    //
+                    // NOTE: We've already emitted DuplicatePair + GetElement + UnaryPlus.
+                    // The obj_s + key_s are still on the stack below old_num.
+                    // Clean-up: emit two more pops AFTER the postfix sequence removes obj_s/key_s.
+                    //
+                    // [obj_s, key_s, old_num]
+                    // Duplicate     → [obj_s, key_s, old_num, old_num]
+                    // Const(1)/step → [obj_s, key_s, old_num, new_val]
+                    // compile(obj2) → [obj_s, key_s, old_num, new_val, obj2]
+                    // Swap          → [obj_s, key_s, old_num, obj2, new_val]  ← new_val below obj2? No.
+                    // Wait: Swap swaps TOP 2. Stack top=new_val, 2nd=obj2. After Swap: top=obj2, 2nd=new_val.
+                    // So [obj_s, key_s, old_num, new_val, obj2] → Swap → [obj_s, key_s, old_num, obj2, new_val]? No!
+                    // Swap: top=obj2, 2nd=new_val → after: top=new_val, 2nd=obj2.
+                    // Wait I keep confusing myself. Let me be pedantic.
+                    //
+                    // Stack representation: push to right (rightmost = TOP).
+                    // [obj_s, key_s, old_num, new_val, obj2]
+                    // TOP = obj2. 2nd from top = new_val.
+                    // Swap → [obj_s, key_s, old_num, obj2, new_val]  (obj2 and new_val swapped)
+                    // Now TOP = new_val, 2nd = obj2. ← Hmm, that's the SAME order?
+                    //
+                    // No wait: Swap swaps the TWO topmost values.
+                    // Before Swap: [..., new_val, obj2]  TOP = obj2
+                    // After Swap:  [..., obj2, new_val]  TOP = new_val
+                    //
+                    // So from [obj_s, key_s, old_num, new_val, obj2]:
+                    // After Swap: [obj_s, key_s, old_num, obj2, new_val]
+                    // Now top=new_val, 2nd=obj2.
+                    // compile(key2): [obj_s, key_s, old_num, obj2, new_val, key2]
+                    // After Swap: [obj_s, key_s, old_num, obj2, key2, new_val]
+                    // SetElement pops top 3: object=obj2, key=key2, value=new_val → obj2[key2]=new_val ✓
+                    // Pushes new_val back. Stack: [obj_s, key_s, old_num, new_val]
+                    // Pop → [obj_s, key_s, old_num]
+                    // Now need to remove obj_s and key_s. Two more Pops would remove old_num and key_s.
+                    // But I want to keep old_num!
+                    //
+                    // So I need: [obj_s, key_s, old_num] → remove obj_s and key_s → [old_num]
+                    // This requires moving old_num "past" obj_s and key_s, then popping them.
+                    //
+                    // Without a rotate: I can Swap top 2 then pop:
+                    // [obj_s, key_s, old_num]: top=old_num, 2nd=key_s
+                    // Swap → [obj_s, old_num, key_s]: top=key_s, 2nd=old_num
+                    // Pop → [obj_s, old_num]: top=old_num, 2nd=obj_s
+                    // Swap → [old_num, obj_s]: top=obj_s
+                    // Pop → [old_num] ✓
+                    //
+                    // YES! Two Swap+Pop pairs to remove the two extra items below old_num!
+                    //
+                    // Full sequence:
+                    // [obj_s, key_s, old_num]  (from DuplicatePair+GetElement+UnaryPlus)
+                    // Duplicate     → [obj_s, key_s, old_num, old_num]
+                    // Constant(1)   → [obj_s, key_s, old_num, old_num, 1]
+                    // step          → [obj_s, key_s, old_num, new_val]
+                    // compile(obj2) → [obj_s, key_s, old_num, new_val, obj2]
+                    // Swap          → [obj_s, key_s, old_num, obj2, new_val]
+                    // compile(key2) → [obj_s, key_s, old_num, obj2, new_val, key2]
+                    // Swap          → [obj_s, key_s, old_num, obj2, key2, new_val]
+                    // SetElement    → [obj_s, key_s, old_num, new_val]
+                    // Pop           → [obj_s, key_s, old_num]
+                    // Swap          → [obj_s, old_num, key_s]
+                    // Pop           → [obj_s, old_num]
+                    // Swap          → [old_num, obj_s]
+                    // Pop           → [old_num] ✓
+                    chunk.emit(Instruction::Duplicate);
+                    chunk.emit(Instruction::Constant(one));
+                    chunk.emit(step);
+                    self.compile_expression(object, chunk, context)?;
+                    chunk.emit(Instruction::Swap);
+                    self.compile_expression(property, chunk, context)?;
+                    chunk.emit(Instruction::Swap);
+                    chunk.emit(Instruction::SetElement);
+                    chunk.emit(Instruction::Pop); // remove new_val pushed by SetElement
+                                                  // Remove obj_s and key_s while preserving old_num:
+                    chunk.emit(Instruction::Swap); // [obj_s, old_num, key_s]
+                    chunk.emit(Instruction::Pop); // [obj_s, old_num]
+                    chunk.emit(Instruction::Swap); // [old_num, obj_s]
+                    chunk.emit(Instruction::Pop); // [old_num]
                 }
             }
             _ => {
@@ -1284,12 +1408,16 @@ impl Compiler {
                         .map_err(CompileError::from_chunk)?;
                     fn_chunk.emit(Instruction::Constant(undef_c)); // [param_val, param_val, undefined]
                     fn_chunk.emit(Instruction::StrictEqual); // [param_val, is_undef]
-                    // JumpIfFalse peeks: jumps when is_undef=false (NOT undefined)
+                                                             // JumpIfFalse peeks: jumps when is_undef=false (NOT undefined)
                     let jump_not_undef = fn_chunk.emit(Instruction::JumpIfFalse(usize::MAX));
                     // IS undefined path: [param_val, is_undef(=true)]
                     fn_chunk.emit(Instruction::Pop); // [param_val]   (remove is_undef)
                     fn_chunk.emit(Instruction::Pop); // []             (remove undefined param_val)
                     self.compile_expression(default_expr, &mut fn_chunk, &mut fn_context)?; // [default]
+                                                                                            // Spec: infer function name when default is an anonymous function.
+                    if is_anonymous_function_definition(default_expr) {
+                        fn_chunk.emit(Instruction::SetFunctionName(name_idx));
+                    }
                     fn_chunk.emit(Instruction::StoreName(name_idx)); // [default]
                     fn_chunk.emit(Instruction::Pop); // []
                     let jump_end = fn_chunk.emit(Instruction::Jump(usize::MAX));
@@ -1300,7 +1428,7 @@ impl Compiler {
                         .map_err(CompileError::from_chunk)?;
                     fn_chunk.emit(Instruction::Pop); // [param_val] (remove is_undef)
                     fn_chunk.emit(Instruction::Pop); // []          (discard — already bound)
-                    // end:
+                                                     // end:
                     let end = fn_chunk.current_offset();
                     fn_chunk
                         .patch_jump(jump_end, end)
@@ -1331,6 +1459,29 @@ impl Compiler {
                     )?; // []
                 }
                 _ => unreachable!("only Default/Pattern/RestPattern go in preamble"),
+            }
+        }
+
+        // Hoist all var declarations to the top of the function scope (pre-declare as undefined).
+        {
+            let mut var_names: Vec<String> = Vec::new();
+            collect_var_names(&body.statements, &mut var_names);
+            // Exclude names that are already bound as parameters (those are DeclareLocal'd by the runtime).
+            let param_set: std::collections::HashSet<&str> =
+                param_names.iter().map(|s| s.as_str()).collect();
+            let var_names: Vec<String> = var_names
+                .into_iter()
+                .filter(|name| !param_set.contains(name.as_str()))
+                .collect();
+            if !var_names.is_empty() {
+                let undef_const = fn_chunk
+                    .add_constant(Constant::Undefined)
+                    .map_err(CompileError::from_chunk)?;
+                for name in var_names {
+                    let idx = self.add_name(&name, &mut fn_chunk)?;
+                    fn_chunk.emit(Instruction::Constant(undef_const));
+                    fn_chunk.emit(Instruction::DeclareLocal(idx));
+                }
             }
         }
 
@@ -1480,6 +1631,9 @@ impl Compiler {
                 }
                 Ok(())
             }
+            Expression::PrivateName(_) => Err(CompileError::unsupported(
+                "standalone private name expression",
+            )),
         }
     }
 
@@ -1651,7 +1805,9 @@ impl Compiler {
             BinaryOperator::GreaterThanOrEqual => Instruction::GreaterThanOrEqual,
             BinaryOperator::In => Instruction::HasProperty,
             BinaryOperator::InstanceOf => Instruction::InstanceOf,
-            BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr | BinaryOperator::NullishCoalescing => unreachable!(),
+            BinaryOperator::LogicalAnd
+            | BinaryOperator::LogicalOr
+            | BinaryOperator::NullishCoalescing => unreachable!(),
         };
 
         self.compile_expression(left, chunk, context)?;
@@ -1699,7 +1855,14 @@ impl Compiler {
         }
 
         match initializer {
-            Some(initializer) => self.compile_expression(initializer, chunk, context)?,
+            Some(initializer) => {
+                self.compile_expression(initializer, chunk, context)?;
+                // Spec: anonymous function definition in a variable declarator → infer name.
+                if is_anonymous_function_definition(initializer) {
+                    let name_idx = self.add_name(name, chunk)?;
+                    chunk.emit(Instruction::SetFunctionName(name_idx));
+                }
+            }
             None => {
                 let undefined = chunk
                     .add_constant(Constant::Undefined)
@@ -1733,6 +1896,11 @@ impl Compiler {
         match target {
             Expression::Identifier(name) => {
                 self.compile_expression(value, chunk, context)?;
+                // Spec: anonymous function definition assigned to identifier → infer name.
+                if is_anonymous_function_definition(value) {
+                    let name_idx = self.add_name(name, chunk)?;
+                    chunk.emit(Instruction::SetFunctionName(name_idx));
+                }
                 self.emit_store_identifier(name, chunk, context)?;
                 Ok(())
             }
@@ -1741,14 +1909,18 @@ impl Compiler {
                 property,
                 computed: false,
             } => {
-                let Expression::Identifier(property_name) = property.as_ref() else {
-                    return Err(CompileError::unsupported(
-                        "non-identifier static member as assignment target",
-                    ));
+                let property_name = match property.as_ref() {
+                    Expression::Identifier(name) => name.clone(),
+                    Expression::PrivateName(name) => format!("#{name}"),
+                    _ => {
+                        return Err(CompileError::unsupported(
+                            "non-identifier static member as assignment target",
+                        ));
+                    }
                 };
                 self.compile_expression(object, chunk, context)?;
                 self.compile_expression(value, chunk, context)?;
-                let prop_index = self.add_name(property_name, chunk)?;
+                let prop_index = self.add_name(&property_name, chunk)?;
                 chunk.emit(Instruction::SetProperty(prop_index));
                 Ok(())
             }
@@ -1763,10 +1935,321 @@ impl Compiler {
                 chunk.emit(Instruction::SetElement);
                 Ok(())
             }
+            Expression::Array(elements) => {
+                self.compile_expression(value, chunk, context)?;
+                self.compile_array_destructuring_assignment(elements, chunk, context)?;
+                Ok(())
+            }
+            Expression::Object(props) => {
+                self.compile_expression(value, chunk, context)?;
+                self.compile_object_destructuring_assignment(props, chunk, context)?;
+                Ok(())
+            }
             _ => Err(CompileError::unsupported(format!(
                 "assignment target {target:?}"
             ))),
         }
+    }
+
+    /// Compiles array destructuring assignment: `[a, , b, ...rest] = rhs`.
+    /// The RHS value is already on the stack. Leaves the RHS on the stack (assignment result).
+    fn compile_array_destructuring_assignment(
+        &mut self,
+        elements: &[ArrayElement],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        use crate::ast::ArrayElement;
+
+        const RHS_SLOT: &str = "\u{0}dstr_rhs";
+        const ITER_SLOT: &str = "\u{0}dstr_iter";
+
+        chunk.emit(Instruction::CreateLexicalEnvironment);
+        context.environment_depth += 1;
+        let mut scope = std::collections::HashSet::new();
+
+        let rhs_idx = self.add_name(RHS_SLOT, chunk)?;
+        let iter_idx = self.add_name(ITER_SLOT, chunk)?;
+        chunk.emit(Instruction::CreateMutableBinding(rhs_idx));
+        scope.insert(RHS_SLOT.to_string());
+        chunk.emit(Instruction::CreateMutableBinding(iter_idx));
+        scope.insert(ITER_SLOT.to_string());
+
+        // rhs is on stack. Store it, then GetIterator and store the iterator.
+        chunk.emit(Instruction::InitializeBinding(rhs_idx)); // pops rhs, stores
+        chunk.emit(Instruction::LoadName(rhs_idx)); // push rhs back
+        chunk.emit(Instruction::GetIterator); // rhs → iter
+        chunk.emit(Instruction::InitializeBinding(iter_idx)); // store iter (pops)
+
+        let undef_idx = chunk
+            .add_constant(Constant::Undefined)
+            .map_err(CompileError::from_chunk)?;
+        context.lexical_scopes.push(scope);
+
+        for elem in elements {
+            match elem {
+                ArrayElement::Hole => {
+                    // Consume one iterator value and discard.
+                    chunk.emit(Instruction::LoadName(iter_idx));
+                    chunk.emit(Instruction::IteratorNext); // → [value, done]
+                    chunk.emit(Instruction::Pop); // pop done
+                    chunk.emit(Instruction::Pop); // pop value
+                }
+                ArrayElement::Expression(target_expr) => {
+                    chunk.emit(Instruction::LoadName(iter_idx));
+                    chunk.emit(Instruction::IteratorNext); // → [value, done]
+
+                    let done_jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX)); // if done, jump
+                    chunk.emit(Instruction::Pop); // pop done=false → [value]
+
+                    // value is on stack: handle optional default.
+                    if let Expression::Assignment {
+                        target,
+                        value: default_expr,
+                    } = target_expr
+                    {
+                        // [value]; if value is undefined, use default instead.
+                        let skip_default = chunk.emit(Instruction::JumpIfNotNullish(usize::MAX));
+                        chunk.emit(Instruction::Pop); // pop undefined
+                        self.compile_expression(default_expr, chunk, context)?;
+                        let after_default = chunk.current_offset();
+                        chunk
+                            .patch_jump(skip_default, after_default)
+                            .map_err(CompileError::from_chunk)?;
+                        self.assign_dstr_element_to_target(target, chunk, context)?;
+                    } else {
+                        self.assign_dstr_element_to_target(target_expr, chunk, context)?;
+                    }
+
+                    let after_jump = chunk.emit(Instruction::Jump(usize::MAX));
+
+                    // done=true path: value is undefined (or use default).
+                    let done_target = chunk.current_offset();
+                    chunk
+                        .patch_jump(done_jump, done_target)
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Pop); // pop done=true
+                    chunk.emit(Instruction::Pop); // pop iterator value placeholder
+                    if let Expression::Assignment {
+                        target,
+                        value: default_expr,
+                    } = target_expr
+                    {
+                        self.compile_expression(default_expr, chunk, context)?;
+                        self.assign_dstr_element_to_target(target, chunk, context)?;
+                    } else {
+                        chunk.emit(Instruction::Constant(undef_idx));
+                        self.assign_dstr_element_to_target(target_expr, chunk, context)?;
+                    }
+
+                    let after_target = chunk.current_offset();
+                    chunk
+                        .patch_jump(after_jump, after_target)
+                        .map_err(CompileError::from_chunk)?;
+                }
+                ArrayElement::Spread(rest_target) => {
+                    // Collect remaining iterator values into an array.
+                    chunk.emit(Instruction::ArrayCreate(0)); // [] on stack
+                    let loop_start = chunk.current_offset();
+                    chunk.emit(Instruction::LoadName(iter_idx));
+                    chunk.emit(Instruction::IteratorNext); // → [array, value, done]
+                    let exit_jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX));
+                    chunk.emit(Instruction::Pop); // pop done=false → [array, value]
+                    chunk.emit(Instruction::ArrayPush); // [array, value] → [array]
+                    chunk.emit(Instruction::Jump(loop_start));
+                    let exit_target = chunk.current_offset();
+                    chunk
+                        .patch_jump(exit_jump, exit_target)
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Pop); // pop done=true → [array]
+                    chunk.emit(Instruction::Pop); // pop iterator value placeholder
+                    self.assign_dstr_element_to_target(rest_target, chunk, context)?;
+                }
+            }
+        }
+
+        chunk.emit(Instruction::LoadName(rhs_idx));
+        context.lexical_scopes.pop();
+        chunk.emit(Instruction::PopEnvironment);
+        context.environment_depth -= 1;
+        Ok(())
+    }
+
+    /// Assigns the top-of-stack value to a single destructuring assignment target.
+    /// Pops the value (does NOT leave it on the stack).
+    fn assign_dstr_element_to_target(
+        &mut self,
+        target: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        match target {
+            Expression::Identifier(name) => {
+                self.emit_store_identifier(name, chunk, context)?;
+                chunk.emit(Instruction::Pop); // StoreName leaves value; discard it
+                Ok(())
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: false,
+            } => {
+                let prop_name = match property.as_ref() {
+                    Expression::Identifier(n) => n.clone(),
+                    Expression::PrivateName(n) => format!("#{n}"),
+                    _ => {
+                        return Err(CompileError::unsupported(
+                            "non-identifier member in destructuring assignment",
+                        ))
+                    }
+                };
+                // Stack: [value]. Need [object, value] for SetProperty.
+                // Use Swap after pushing object: push obj first, then Swap.
+                // [value] → [value, object] → [object, value] via Swap.
+                // Actually simpler: compile a no-op store via the Assignment compile path.
+                // Or: duplicate stack trick: SetProperty pops [obj, val] → [val], then Pop.
+                // Let's do: (value is on TOS)
+                //   compile object  → [value, object]
+                //   Swap            → [object, value]
+                //   SetProperty     → [value] (leaves val on stack)
+                //   Pop             → []
+                self.compile_expression(object, chunk, context)?; // [value, object]
+                chunk.emit(Instruction::Swap); // [object, value]
+                let prop_idx = self.add_name(&prop_name, chunk)?;
+                chunk.emit(Instruction::SetProperty(prop_idx)); // [object, value] → [value]
+                chunk.emit(Instruction::Pop);
+                Ok(())
+            }
+            Expression::Member {
+                object,
+                property,
+                computed: true,
+            } => {
+                // Stack: [value]. Need [object, key, value] for SetElement.
+                // ponytail: use a one-binding lexical scope as the missing rotate/tuck;
+                // replace with a dedicated stack instruction if this path gets hot.
+                const VAL_SLOT: &str = "\u{0}dstr_mv";
+                chunk.emit(Instruction::CreateLexicalEnvironment);
+                context.environment_depth += 1;
+                let val_idx = self.add_name(VAL_SLOT, chunk)?;
+                chunk.emit(Instruction::CreateMutableBinding(val_idx));
+                chunk.emit(Instruction::InitializeBinding(val_idx)); // store value
+                self.compile_expression(object, chunk, context)?;
+                self.compile_expression(property, chunk, context)?;
+                chunk.emit(Instruction::LoadName(val_idx));
+                chunk.emit(Instruction::SetElement); // → [value]
+                chunk.emit(Instruction::Pop);
+                chunk.emit(Instruction::PopEnvironment);
+                context.environment_depth -= 1;
+                Ok(())
+            }
+            Expression::Array(elements) => {
+                // Nested array destructuring: value is an iterable.
+                self.compile_array_destructuring_assignment(elements, chunk, context)?;
+                chunk.emit(Instruction::Pop); // discard nested rhs
+                Ok(())
+            }
+            Expression::Object(props) => {
+                self.compile_object_destructuring_assignment(props, chunk, context)?;
+                chunk.emit(Instruction::Pop);
+                Ok(())
+            }
+            _ => Err(CompileError::unsupported(format!(
+                "complex destructuring assignment target: {target:?}"
+            ))),
+        }
+    }
+
+    /// Compiles object destructuring assignment: `{a, b: c, ...rest} = rhs`.
+    /// The RHS value is already on the stack. Leaves the RHS on the stack.
+    fn compile_object_destructuring_assignment(
+        &mut self,
+        props: &[ObjectProperty],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        use crate::ast::{ObjectProperty, PropertyName};
+
+        const RHS_SLOT: &str = "\u{0}dstr_obj_rhs";
+
+        chunk.emit(Instruction::CreateLexicalEnvironment);
+        context.environment_depth += 1;
+        let mut scope = std::collections::HashSet::new();
+
+        let rhs_idx = self.add_name(RHS_SLOT, chunk)?;
+        chunk.emit(Instruction::CreateMutableBinding(rhs_idx));
+        scope.insert(RHS_SLOT.to_string());
+        chunk.emit(Instruction::InitializeBinding(rhs_idx)); // store rhs (pops)
+
+        context.lexical_scopes.push(scope);
+
+        for prop in props {
+            match prop {
+                ObjectProperty::Data {
+                    key,
+                    value: val_target,
+                } => {
+                    let key_name = match key {
+                        PropertyName::Identifier(s) | PropertyName::String(s) => s.clone(),
+                        PropertyName::Number(n) => n.to_string(),
+                        PropertyName::Computed(_) => {
+                            return Err(CompileError::unsupported(
+                                "computed key in object destructuring assignment",
+                            ));
+                        }
+                        PropertyName::PrivateName(n) => format!("#{n}"),
+                    };
+                    chunk.emit(Instruction::LoadName(rhs_idx));
+                    let key_idx = self.add_name(&key_name, chunk)?;
+                    chunk.emit(Instruction::GetProperty(key_idx)); // → [prop_value]
+
+                    if let Expression::Assignment {
+                        target,
+                        value: default_expr,
+                    } = val_target
+                    {
+                        let skip_default = chunk.emit(Instruction::JumpIfNotNullish(usize::MAX));
+                        chunk.emit(Instruction::Pop);
+                        self.compile_expression(default_expr, chunk, context)?;
+                        let after_default = chunk.current_offset();
+                        chunk
+                            .patch_jump(skip_default, after_default)
+                            .map_err(CompileError::from_chunk)?;
+                        self.assign_dstr_element_to_target(target, chunk, context)?;
+                    } else {
+                        self.assign_dstr_element_to_target(val_target, chunk, context)?;
+                    }
+                }
+                ObjectProperty::ComputedData {
+                    key,
+                    value: val_target,
+                } => {
+                    chunk.emit(Instruction::LoadName(rhs_idx));
+                    self.compile_expression(key, chunk, context)?;
+                    chunk.emit(Instruction::GetElement); // → [prop_value]
+                    self.assign_dstr_element_to_target(val_target, chunk, context)?;
+                }
+                ObjectProperty::Spread(rest_target) => {
+                    // Create a shallow copy of rhs into a new object (simplified: copies all props).
+                    chunk.emit(Instruction::ObjectCreateEmpty); // → [{}]
+                    chunk.emit(Instruction::LoadName(rhs_idx)); // → [{}, rhs]
+                    chunk.emit(Instruction::SpreadObject); // [{}, rhs] → [{}+rhs_props]
+                    self.assign_dstr_element_to_target(rest_target, chunk, context)?;
+                }
+                _ => {
+                    return Err(CompileError::unsupported(
+                        "unsupported property in object destructuring assignment",
+                    ));
+                }
+            }
+        }
+
+        // Leave the original rhs on the stack as the assignment expression result.
+        chunk.emit(Instruction::LoadName(rhs_idx));
+        context.lexical_scopes.pop();
+        chunk.emit(Instruction::PopEnvironment);
+        context.environment_depth -= 1;
+        Ok(())
     }
 
     fn compile_compound_assignment(
@@ -1778,30 +2261,95 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         if let Some(instruction) = compound_assignment_instruction(operator) {
-            return self.compile_compound_assignment_arithmetic(instruction, target, value, chunk, context);
+            return self.compile_compound_assignment_arithmetic(
+                instruction,
+                target,
+                value,
+                chunk,
+                context,
+            );
         }
         // Logical compound assignments: &&=, ||=, ??=
-        // Semantics: load target; if short-circuit condition met, jump to end (keep current value);
-        // otherwise pop, evaluate rhs, store.
-        let jump_instr = match operator {
-            AssignmentOperator::LogicalAnd => {
-                self.compile_load_target(target, chunk, context)?;
-                chunk.emit(Instruction::JumpIfFalse(usize::MAX))
-            }
-            AssignmentOperator::LogicalOr => {
-                self.compile_load_target(target, chunk, context)?;
-                chunk.emit(Instruction::JumpIfTrue(usize::MAX))
-            }
-            AssignmentOperator::NullishCoalescing => {
-                self.compile_load_target(target, chunk, context)?;
-                chunk.emit(Instruction::JumpIfNotNullish(usize::MAX))
-            }
+        // For identifier targets: load; jump-if-short-circuit (keeps value); pop; rhs; store.
+        // For member targets: we need the object available for the store, so we use a Swap+Pop
+        // on the short-circuit path to remove the extra object copy.
+        let jump_variant = match operator {
+            AssignmentOperator::LogicalAnd => 0u8,
+            AssignmentOperator::LogicalOr => 1,
+            AssignmentOperator::NullishCoalescing => 2,
             _ => unreachable!(),
         };
-        chunk.emit(Instruction::Pop);
-        self.compile_expression(value, chunk, context)?;
-        self.emit_store_target(target, chunk, context)?;
-        chunk.patch_jump(jump_instr, chunk.current_offset()).map_err(CompileError::from_chunk)?;
+
+        match target {
+            Expression::Member {
+                object,
+                property,
+                computed,
+            } => {
+                let prop_name = match property.as_ref() {
+                    Expression::Identifier(n) => n.clone(),
+                    Expression::PrivateName(n) => format!("#{n}"),
+                    _ if *computed => String::new(),
+                    _ => {
+                        return Err(CompileError::unsupported(
+                            "non-identifier static member as logical assignment target",
+                        ))
+                    }
+                };
+                // emit: compile(obj), Duplicate, GetProperty/GetElement → [obj, old_val]
+                self.compile_expression(object, chunk, context)?;
+                chunk.emit(Instruction::Duplicate);
+                if *computed {
+                    self.compile_expression(property, chunk, context)?;
+                    chunk.emit(Instruction::DuplicatePair); // [obj, obj, key, obj, key] — wrong. Let me fix.
+                                                            // Actually for computed: [obj, prop_expr]; need DuplicatePair → [obj, key, obj, key];
+                                                            // GetElement → [obj, key, old_val]. But we need to drop [obj, key] on SC path.
+                                                            // This is complex; fall back to Unsupported for now.
+                    return Err(CompileError::unsupported(
+                        "computed member as logical assignment target",
+                    ));
+                } else {
+                    let prop_index = self.add_name(&prop_name, chunk)?;
+                    chunk.emit(Instruction::GetProperty(prop_index));
+                    // Stack: [obj, old_val]
+                    let jump_instr = match jump_variant {
+                        0 => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
+                        1 => chunk.emit(Instruction::JumpIfTrue(usize::MAX)),
+                        _ => chunk.emit(Instruction::JumpIfNotNullish(usize::MAX)),
+                    };
+                    // Non-short-circuit path: pop old_val, eval rhs, SetProperty
+                    chunk.emit(Instruction::Pop); // [obj]
+                    self.compile_expression(value, chunk, context)?; // [obj, new_val]
+                    chunk.emit(Instruction::SetProperty(prop_index)); // [new_val]
+                    let jump_end = chunk.emit(Instruction::Jump(usize::MAX));
+                    // Short-circuit path: [obj, old_val] → Swap → [old_val, obj] → Pop → [old_val]
+                    let sc_target = chunk.current_offset();
+                    chunk.emit(Instruction::Swap);
+                    chunk.emit(Instruction::Pop);
+                    let end_target = chunk.current_offset();
+                    chunk
+                        .patch_jump(jump_instr, sc_target)
+                        .map_err(CompileError::from_chunk)?;
+                    chunk
+                        .patch_jump(jump_end, end_target)
+                        .map_err(CompileError::from_chunk)?;
+                }
+            }
+            _ => {
+                self.compile_load_target(target, chunk, context)?;
+                let jump_instr = match jump_variant {
+                    0 => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
+                    1 => chunk.emit(Instruction::JumpIfTrue(usize::MAX)),
+                    _ => chunk.emit(Instruction::JumpIfNotNullish(usize::MAX)),
+                };
+                chunk.emit(Instruction::Pop);
+                self.compile_expression(value, chunk, context)?;
+                self.emit_store_target(target, chunk, context)?;
+                chunk
+                    .patch_jump(jump_instr, chunk.current_offset())
+                    .map_err(CompileError::from_chunk)?;
+            }
+        }
         Ok(())
     }
 
@@ -1825,14 +2373,18 @@ impl Compiler {
                 property,
                 computed: false,
             } => {
-                let Expression::Identifier(property_name) = property.as_ref() else {
-                    return Err(CompileError::unsupported(
-                        "non-identifier static member as compound assignment target",
-                    ));
+                let property_name = match property.as_ref() {
+                    Expression::Identifier(name) => name.clone(),
+                    Expression::PrivateName(name) => format!("#{name}"),
+                    _ => {
+                        return Err(CompileError::unsupported(
+                            "non-identifier static member as compound assignment target",
+                        ));
+                    }
                 };
                 self.compile_expression(object, chunk, context)?;
                 chunk.emit(Instruction::Duplicate);
-                let property_index = self.add_name(property_name, chunk)?;
+                let property_index = self.add_name(&property_name, chunk)?;
                 chunk.emit(Instruction::GetProperty(property_index));
                 self.compile_expression(value, chunk, context)?;
                 chunk.emit(instruction);
@@ -1867,7 +2419,9 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         match target {
             Expression::Identifier(name) => self.compile_identifier(name, chunk, context),
-            _ => Err(CompileError::unsupported("non-identifier target for logical compound assignment")),
+            _ => Err(CompileError::unsupported(
+                "non-identifier target for logical compound assignment",
+            )),
         }
     }
 
@@ -1879,7 +2433,9 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         match target {
             Expression::Identifier(name) => self.emit_store_identifier(name, chunk, context),
-            _ => Err(CompileError::unsupported("non-identifier target for logical compound assignment")),
+            _ => Err(CompileError::unsupported(
+                "non-identifier target for logical compound assignment",
+            )),
         }
     }
 
@@ -1905,14 +2461,18 @@ impl Compiler {
             return Ok(());
         }
 
-        let Expression::Identifier(property_name) = property else {
-            return Err(CompileError::unsupported(format!(
-                "non-identifier member property {property:?}"
-            )));
+        let property_name = match property {
+            Expression::Identifier(name) => name.clone(),
+            Expression::PrivateName(name) => format!("#{name}"),
+            _ => {
+                return Err(CompileError::unsupported(format!(
+                    "non-identifier member property {property:?}"
+                )));
+            }
         };
 
         self.compile_expression(object, chunk, context)?;
-        let property_index = self.add_name(property_name, chunk)?;
+        let property_index = self.add_name(&property_name, chunk)?;
         chunk.emit(Instruction::GetProperty(property_index));
         Ok(())
     }
@@ -1936,13 +2496,17 @@ impl Compiler {
             computed: false,
         } = callee
         {
-            let Expression::Identifier(method_name) = property.as_ref() else {
-                return Err(CompileError::unsupported(
-                    "computed method call (use obj['method']() separately)",
-                ));
+            let method_name = match property.as_ref() {
+                Expression::Identifier(name) => name.clone(),
+                Expression::PrivateName(name) => format!("#{name}"),
+                _ => {
+                    return Err(CompileError::unsupported(
+                        "computed method call (use obj['method']() separately)",
+                    ));
+                }
             };
             self.compile_expression(object, chunk, context)?;
-            let method_index = self.add_name(method_name, chunk)?;
+            let method_index = self.add_name(&method_name, chunk)?;
             chunk.emit(Instruction::GetMethod(method_index));
 
             if has_spread {
@@ -2368,13 +2932,18 @@ impl Compiler {
             context,
         )?;
         // Bind the constructor function to the class name in the current scope.
+        // Class declarations are lexical (like `let`), so use InitializeBinding
+        // which pops the value from the stack without pushing it back.
+        // StoreGlobal peeks-and-pops, so still needs a Pop after.
         let name_idx = self.add_name(&decl.name, chunk)?;
         if context.inside_function() || context.is_lexical(&decl.name) {
-            chunk.emit(Instruction::StoreName(name_idx));
+            // InitializeBinding: pop value, store — no push back. No Pop needed.
+            chunk.emit(Instruction::InitializeBinding(name_idx));
         } else {
+            // StoreGlobal: pop, store, push back. Needs Pop.
             chunk.emit(Instruction::StoreGlobal(name_idx));
+            chunk.emit(Instruction::Pop);
         }
-        chunk.emit(Instruction::Pop);
         Ok(())
     }
 
@@ -2456,6 +3025,8 @@ impl Compiler {
                 name: prop_name,
                 function,
                 is_static: true,
+                is_getter,
+                is_setter,
             } = element
             {
                 let fn_compiled =
@@ -2473,7 +3044,14 @@ impl Compiler {
                     .map_err(CompileError::from_chunk)?;
                 chunk.emit(Instruction::CreateFunction(fn_idx));
                 let key = self.add_name(&prop_name.to_key_string(), chunk)?;
-                chunk.emit(Instruction::DefineDataProperty(key)); // [ctor, ctor_copy]
+                if *is_getter {
+                    chunk.emit(Instruction::DefineClassGetter(key));
+                } else if *is_setter {
+                    chunk.emit(Instruction::DefineClassSetter(key));
+                } else {
+                    chunk.emit(Instruction::DefineClassMethod(key));
+                }
+                // [ctor, ctor_copy]
             }
         }
 
@@ -2495,6 +3073,8 @@ impl Compiler {
                     name: prop_name,
                     function,
                     is_static: false,
+                    is_getter,
+                    is_setter,
                 } => {
                     let fn_compiled =
                         self.compile_function_body(&function.params, &function.body, context)?;
@@ -2511,7 +3091,14 @@ impl Compiler {
                         .map_err(CompileError::from_chunk)?;
                     chunk.emit(Instruction::CreateFunction(fn_idx));
                     let key = self.add_name(&prop_name.to_key_string(), chunk)?;
-                    chunk.emit(Instruction::DefineDataProperty(key)); // [.., proto]
+                    if *is_getter {
+                        chunk.emit(Instruction::DefineClassGetter(key));
+                    } else if *is_setter {
+                        chunk.emit(Instruction::DefineClassSetter(key));
+                    } else {
+                        chunk.emit(Instruction::DefineClassMethod(key));
+                    }
+                    // [.., proto]
                 }
                 // Instance fields — stub: initialize to undefined or the given expression.
                 ClassElement::Field {
@@ -2559,6 +3146,90 @@ impl Compiler {
         self.compile_binding_pattern(kind, pattern, chunk, context)
     }
 
+    /// Like `compile_binding_pattern` but uses `StoreName` (write to existing binding)
+    /// instead of `InitializeBinding`. Used for for-in/for-of loop variables where
+    /// the bindings were already initialized before the loop started.
+    fn compile_binding_pattern_store(
+        &mut self,
+        pattern: &crate::ast::BindingPattern,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        use crate::ast::BindingPattern;
+        match pattern {
+            BindingPattern::Identifier(name) => {
+                let idx = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::StoreName(idx));
+                chunk.emit(Instruction::Pop);
+                Ok(())
+            }
+            BindingPattern::Array { elements, rest } => {
+                for (i, maybe_elem) in elements.iter().enumerate() {
+                    let Some(elem) = maybe_elem else { continue };
+                    chunk.emit(Instruction::Duplicate);
+                    let idx_key = chunk
+                        .add_constant(Constant::String(i.to_string()))
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Constant(idx_key));
+                    chunk.emit(Instruction::GetElement);
+                    if let Some(default_expr) = &elem.default {
+                        let infer = if let BindingPattern::Identifier(n) = &elem.pattern {
+                            Some(n.as_str())
+                        } else {
+                            None
+                        };
+                        self.emit_binding_default_with_name(default_expr, infer, chunk, context)?;
+                    }
+                    self.compile_binding_pattern_store(&elem.pattern, chunk, context)?;
+                }
+                if let Some(rest_pat) = rest {
+                    chunk.emit(Instruction::Duplicate);
+                    let slice_idx = self.add_name("slice", chunk)?;
+                    chunk.emit(Instruction::GetMethod(slice_idx));
+                    let n_const = chunk
+                        .add_constant(Constant::Number(elements.len() as f64))
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Constant(n_const));
+                    chunk.emit(Instruction::CallWithThis(1));
+                    self.compile_binding_pattern_store(rest_pat, chunk, context)?;
+                }
+                chunk.emit(Instruction::Pop);
+                Ok(())
+            }
+            BindingPattern::Object { props, rest } => {
+                for prop in props {
+                    chunk.emit(Instruction::Duplicate);
+                    match &prop.key {
+                        crate::ast::ObjectBindingKey::Static(key) => {
+                            let key_str = key.to_key_string();
+                            let key_idx = self.add_name(&key_str, chunk)?;
+                            chunk.emit(Instruction::GetProperty(key_idx));
+                        }
+                        crate::ast::ObjectBindingKey::Computed(key_expr) => {
+                            self.compile_expression(key_expr, chunk, context)?;
+                            chunk.emit(Instruction::GetElement);
+                        }
+                    }
+                    if let Some(default_expr) = &prop.default {
+                        let infer = if let BindingPattern::Identifier(n) = &prop.value {
+                            Some(n.as_str())
+                        } else {
+                            None
+                        };
+                        self.emit_binding_default_with_name(default_expr, infer, chunk, context)?;
+                    }
+                    self.compile_binding_pattern_store(&prop.value, chunk, context)?;
+                }
+                if let Some(rest_pat) = rest {
+                    chunk.emit(Instruction::Duplicate);
+                    self.compile_binding_pattern_store(rest_pat, chunk, context)?;
+                }
+                chunk.emit(Instruction::Pop);
+                Ok(())
+            }
+        }
+    }
+
     /// Emits bytecode to bind the TOP of stack to the given pattern,
     /// consuming the value from the stack.
     fn compile_binding_pattern(
@@ -2599,9 +3270,17 @@ impl Compiler {
                     chunk.emit(Instruction::Constant(idx_key)); // [rhs, rhs, "i"]
                     chunk.emit(Instruction::GetElement); // [rhs, elem_val]
                     if let Some(default_expr) = &elem.default {
-                        self.emit_binding_default(default_expr, chunk, context)?;
+                        // Pass identifier name for function name inference in default values.
+                        let infer = if let crate::ast::BindingPattern::Identifier(n) = &elem.pattern
+                        {
+                            Some(n.as_str())
+                        } else {
+                            None
+                        };
+                        self.emit_binding_default_with_name(default_expr, infer, chunk, context)?;
                     }
-                    self.compile_binding_pattern(kind, &elem.pattern, chunk, context)?; // [rhs]
+                    self.compile_binding_pattern(kind, &elem.pattern, chunk, context)?;
+                    // [rhs]
                 }
                 // Rest element: rhs.slice(elements.len())
                 if let Some(rest_pat) = rest {
@@ -2613,7 +3292,8 @@ impl Compiler {
                         .map_err(CompileError::from_chunk)?;
                     chunk.emit(Instruction::Constant(n_const)); // [rhs, slice_fn, rhs_copy, N]
                     chunk.emit(Instruction::CallWithThis(1)); // [rhs, rest_array]
-                    self.compile_binding_pattern(kind, rest_pat, chunk, context)?; // [rhs]
+                    self.compile_binding_pattern(kind, rest_pat, chunk, context)?;
+                    // [rhs]
                 }
                 chunk.emit(Instruction::Pop); // []
                 Ok(())
@@ -2635,14 +3315,22 @@ impl Compiler {
                         }
                     }
                     if let Some(default_expr) = &prop.default {
-                        self.emit_binding_default(default_expr, chunk, context)?;
+                        // Pass identifier name for function name inference in default values.
+                        let infer = if let crate::ast::BindingPattern::Identifier(n) = &prop.value {
+                            Some(n.as_str())
+                        } else {
+                            None
+                        };
+                        self.emit_binding_default_with_name(default_expr, infer, chunk, context)?;
                     }
-                    self.compile_binding_pattern(kind, &prop.value, chunk, context)?; // [rhs]
+                    self.compile_binding_pattern(kind, &prop.value, chunk, context)?;
+                    // [rhs]
                 }
                 // Object rest: shallow copy of rhs (simplified — doesn't exclude consumed keys)
                 if let Some(rest_pat) = rest {
                     chunk.emit(Instruction::Duplicate); // [rhs, rhs]
-                    self.compile_binding_pattern(kind, rest_pat, chunk, context)?; // [rhs]
+                    self.compile_binding_pattern(kind, rest_pat, chunk, context)?;
+                    // [rhs]
                 }
                 chunk.emit(Instruction::Pop); // []
                 Ok(())
@@ -2662,6 +3350,16 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        self.emit_binding_default_with_name(default_expr, None, chunk, context)
+    }
+
+    fn emit_binding_default_with_name(
+        &mut self,
+        default_expr: &Expression,
+        infer_name: Option<&str>,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
         // [value] depth=1
         chunk.emit(Instruction::Duplicate); // [value, value] depth=2
         let undef_const = chunk
@@ -2669,13 +3367,20 @@ impl Compiler {
             .map_err(CompileError::from_chunk)?;
         chunk.emit(Instruction::Constant(undef_const)); // [value, value, undefined] depth=3
         chunk.emit(Instruction::StrictEqual); // [value, is_undef] depth=2
-        // JumpIfFalse PEEKS — does not pop. Jumps when is_undef=false (value is NOT undefined).
+                                              // JumpIfFalse PEEKS — does not pop. Jumps when is_undef=false (value is NOT undefined).
         let jump_not_undef = chunk.emit(Instruction::JumpIfFalse(usize::MAX)); // depth=2
 
         // Fall-through: IS undefined. [value, is_undef(=true)] depth=2
         chunk.emit(Instruction::Pop); // [value] depth=1  — remove is_undef
         chunk.emit(Instruction::Pop); // [] depth=0        — remove the undefined value
         self.compile_expression(default_expr, chunk, context)?; // [default_value] depth=1
+                                                                // Spec: infer function name when default is an anonymous function definition.
+        if let Some(name) = infer_name {
+            if is_anonymous_function_definition(default_expr) {
+                let name_idx = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::SetFunctionName(name_idx));
+            }
+        }
         let jump_end = chunk.emit(Instruction::Jump(usize::MAX));
 
         // NOT undefined. [value, is_undef(=false)] depth=2
@@ -2825,22 +3530,20 @@ impl Compiler {
                     }
                 }
             }
-            crate::ast::ForBinding::Target(target) => {
-                match target {
-                    Expression::Identifier(name) => {
-                        self.emit_store_identifier(name, chunk, context)?;
-                        chunk.emit(Instruction::Pop);
-                    }
-                    Expression::Array(_) | Expression::Object(_) => {
-                        self.compile_destructuring_assignment_target(target, chunk, context)?;
-                    }
-                    _ => {
-                        return Err(CompileError::unsupported(
-                            "for-of target must be a simple identifier, array, or object pattern",
-                        ));
-                    }
+            crate::ast::ForBinding::Target(target) => match target {
+                Expression::Identifier(name) => {
+                    self.emit_store_identifier(name, chunk, context)?;
+                    chunk.emit(Instruction::Pop);
                 }
-            }
+                Expression::Array(_) | Expression::Object(_) => {
+                    self.compile_destructuring_assignment_target(target, chunk, context)?;
+                }
+                _ => {
+                    return Err(CompileError::unsupported(
+                        "for-of target must be a simple identifier, array, or object pattern",
+                    ));
+                }
+            },
         }
 
         context.loops.push(LoopContext {
@@ -3024,6 +3727,7 @@ fn lexical_names(statements: &[Statement]) -> Vec<String> {
                 pattern,
                 ..
             } => binding_pattern_names(pattern),
+            Statement::ClassDeclaration(decl) => vec![decl.name.clone()],
             _ => Vec::new(),
         })
         .collect()
@@ -3077,8 +3781,119 @@ fn lexical_kind(statements: &[Statement], name: &str) -> Option<VariableKind> {
         {
             Some(*kind)
         }
+        Statement::ClassDeclaration(decl) if decl.name == name => Some(VariableKind::Let),
         _ => None,
     })
+}
+
+/// Returns `true` if `expr` is an "anonymous function definition" per ECMAScript:
+/// a function/arrow/generator/async expression or class expression WITHOUT an explicit name.
+/// Used for name-inference: `let f = expr` → `f.name = "f"`.
+fn is_anonymous_function_definition(expr: &Expression) -> bool {
+    match expr {
+        Expression::Function(lit) => lit.name.is_none(),
+        Expression::Class(cls) => cls.name.is_none(),
+        _ => false,
+    }
+}
+
+/// Collect all `var`-declared names from a statement list, recursing into
+/// nested blocks/if/loops/try, but NOT into nested function bodies.
+/// Used to hoist `var` declarations before executing a program or function.
+fn collect_var_names(statements: &[Statement], names: &mut Vec<String>) {
+    for stmt in statements {
+        collect_var_names_in(stmt, names);
+    }
+}
+
+fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
+    match stmt {
+        Statement::VariableDeclaration {
+            kind: crate::ast::VariableKind::Var,
+            declarations,
+        } => {
+            for decl in declarations {
+                if let Some(pat) = &decl.pattern {
+                    for n in binding_pattern_names(pat) {
+                        if !names.contains(&n) {
+                            names.push(n);
+                        }
+                    }
+                } else if !names.contains(&decl.name) {
+                    names.push(decl.name.clone());
+                }
+            }
+        }
+        Statement::Block(stmts) => collect_var_names(stmts, names),
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_var_names_in(consequent, names);
+            if let Some(alt) = alternate {
+                collect_var_names_in(alt, names);
+            }
+        }
+        Statement::While { body, .. } | Statement::DoWhile { body, .. } => {
+            collect_var_names_in(body, names)
+        }
+        Statement::For { init, body, .. } => {
+            if let Some(s) = init {
+                collect_var_names_in(s, names);
+            }
+            collect_var_names_in(body, names);
+        }
+        Statement::ForIn { left, body, .. } => {
+            if let crate::ast::ForBinding::Declaration {
+                kind: crate::ast::VariableKind::Var,
+                pattern,
+            } = left
+            {
+                for n in binding_pattern_names(pattern) {
+                    if !names.contains(&n) {
+                        names.push(n);
+                    }
+                }
+            }
+            collect_var_names_in(body, names);
+        }
+        Statement::ForOf { left, body, .. } => {
+            if let crate::ast::ForBinding::Declaration {
+                kind: crate::ast::VariableKind::Var,
+                pattern,
+            } = left
+            {
+                for n in binding_pattern_names(pattern) {
+                    if !names.contains(&n) {
+                        names.push(n);
+                    }
+                }
+            }
+            collect_var_names_in(body, names);
+        }
+        Statement::Try {
+            block,
+            handler,
+            finalizer,
+        } => {
+            collect_var_names(block, names);
+            if let Some(h) = handler {
+                collect_var_names(&h.body, names);
+            }
+            if let Some(f) = finalizer {
+                collect_var_names(f, names);
+            }
+        }
+        Statement::Labelled { body, .. } => collect_var_names_in(body, names),
+        Statement::Switch { cases, .. } => {
+            for case in cases {
+                collect_var_names(&case.consequent, names);
+            }
+        }
+        // FunctionDeclaration: don't recurse — nested vars are local to that function
+        _ => {}
+    }
 }
 
 fn completion_expression_index(statements: &[Statement]) -> Option<usize> {
@@ -3169,29 +3984,23 @@ mod tests {
         // GetMethod + CallWithThis is only emitted inside function bodies.
         let chunk = compile("function f() { return obj.method(1, 2); }");
         let fn_chunk = &chunk.functions[0].chunk;
-        assert!(
-            fn_chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::GetMethod(_)))
-        );
-        assert!(
-            fn_chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::CallWithThis(2)))
-        );
+        assert!(fn_chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::GetMethod(_))));
+        assert!(fn_chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::CallWithThis(2))));
     }
 
     #[test]
     fn top_level_method_call_preserves_receiver() {
         let chunk = compile("assert.sameValue(1, 1)");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|instruction| matches!(instruction, Instruction::GetMethod(_)))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::GetMethod(_))));
         assert!(chunk.instructions.contains(&Instruction::CallWithThis(2)));
     }
 
@@ -3208,12 +4017,10 @@ mod tests {
     #[test]
     fn function_declaration_emits_declare_function() {
         let chunk = compile("function add(a, b) { return a + b; }");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::DeclareFunction { .. }))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::DeclareFunction { .. })));
         assert!(!chunk.functions.is_empty());
     }
 
@@ -3221,13 +4028,11 @@ mod tests {
     fn function_body_uses_load_name_inside() {
         let chunk = compile("function add(a, b) { return a + b; }");
         let fn_template = &chunk.functions[0];
-        assert!(
-            fn_template
-                .chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::LoadName(_)))
-        );
+        assert!(fn_template
+            .chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::LoadName(_))));
     }
 
     #[test]
@@ -3244,25 +4049,21 @@ mod tests {
     fn return_statement_emits_return() {
         let chunk = compile("function f() { return 1; }");
         let fn_template = &chunk.functions[0];
-        assert!(
-            fn_template
-                .chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::Return))
-        );
+        assert!(fn_template
+            .chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::Return)));
     }
 
     #[test]
     fn empty_return_emits_return_undefined() {
         let chunk = compile("function f() { return; }");
         let fn_template = &chunk.functions[0];
-        assert!(
-            fn_template
-                .chunk
-                .instructions
-                .contains(&Instruction::ReturnUndefined)
-        );
+        assert!(fn_template
+            .chunk
+            .instructions
+            .contains(&Instruction::ReturnUndefined));
     }
 
     #[test]
@@ -3291,45 +4092,37 @@ mod tests {
     #[test]
     fn array_literal_emits_array_create() {
         let chunk = compile("[1, 2, 3]");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::ArrayCreate(3)))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ArrayCreate(3))));
     }
 
     #[test]
     fn empty_array_literal() {
         let chunk = compile("[]");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::ArrayCreate(0)))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ArrayCreate(0))));
     }
 
     #[test]
     fn object_literal_emits_object_create() {
         let chunk = compile("({ a: 1, b: 2 })");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::ObjectCreate(2)))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ObjectCreate(2))));
     }
 
     #[test]
     fn empty_object_literal() {
         let chunk = compile("({})");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::ObjectCreate(0)))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::ObjectCreate(0))));
     }
 
     #[test]
@@ -3347,23 +4140,19 @@ mod tests {
     #[test]
     fn static_member_assignment_emits_set_property() {
         let chunk = compile("obj.x = 5");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::SetProperty(_)))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::SetProperty(_))));
     }
 
     #[test]
     fn function_expression_emits_create_function() {
         let chunk = compile("(function() { })");
-        assert!(
-            chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::CreateFunction(_)))
-        );
+        assert!(chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::CreateFunction(_))));
     }
 
     #[test]
@@ -3380,12 +4169,10 @@ mod tests {
     fn function_var_uses_declare_local() {
         let chunk = compile("function f() { var x = 1; }");
         let fn_chunk = &chunk.functions[0].chunk;
-        assert!(
-            fn_chunk
-                .instructions
-                .iter()
-                .any(|i| matches!(i, Instruction::DeclareLocal(_)))
-        );
+        assert!(fn_chunk
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::DeclareLocal(_))));
     }
 
     #[test]

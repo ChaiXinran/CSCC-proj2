@@ -92,7 +92,8 @@ impl Parser {
         }
         let left = self.parse_conditional()?;
         if self.eat_operator("=") {
-            if !is_assignment_target(&left) {
+            // Array/Object literals can be reinterpreted as destructuring assignment patterns.
+            if !is_assignment_target(&left) && !is_destructuring_target(&left) {
                 return Err(self.error("invalid assignment target".into()));
             }
             self.check_strict_assignment_target(&left)?;
@@ -325,6 +326,12 @@ impl Parser {
                     self.error("cannot delete an unqualified identifier in strict mode".into())
                 );
             }
+            // Strict-mode early error: `delete expr.#privateName` (spec: MemberExpression.PrivateName).
+            if self.is_strict && is_private_member_access(&argument) {
+                return Err(
+                    self.error("cannot delete a private member access expression".into())
+                );
+            }
             return Ok(Expression::Unary {
                 operator: UnaryOperator::Delete,
                 argument: Box::new(argument),
@@ -393,12 +400,21 @@ impl Parser {
         };
         loop {
             if self.eat_punctuator('.') {
-                let property = self.expect_identifier_name()?;
-                expression = Expression::Member {
-                    object: Box::new(expression),
-                    property: Box::new(Expression::Identifier(property)),
-                    computed: false,
-                };
+                if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+                    self.advance();
+                    expression = Expression::Member {
+                        object: Box::new(expression),
+                        property: Box::new(Expression::PrivateName(name)),
+                        computed: false,
+                    };
+                } else {
+                    let property = self.expect_identifier_name()?;
+                    expression = Expression::Member {
+                        object: Box::new(expression),
+                        property: Box::new(Expression::Identifier(property)),
+                        computed: false,
+                    };
+                }
             } else if self.eat_punctuator('[') {
                 // Computed member access: object[expression]
                 let key = self.allowing_in(|parser| parser.parse_assignment())?;
@@ -434,12 +450,21 @@ impl Parser {
         }
         let mut callee = self.parse_primary()?;
         while self.eat_punctuator('.') {
-            let property = self.expect_identifier_name()?;
-            callee = Expression::Member {
-                object: Box::new(callee),
-                property: Box::new(Expression::Identifier(property)),
-                computed: false,
-            };
+            if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+                self.advance();
+                callee = Expression::Member {
+                    object: Box::new(callee),
+                    property: Box::new(Expression::PrivateName(name)),
+                    computed: false,
+                };
+            } else {
+                let property = self.expect_identifier_name()?;
+                callee = Expression::Member {
+                    object: Box::new(callee),
+                    property: Box::new(Expression::Identifier(property)),
+                    computed: false,
+                };
+            }
         }
         let arguments = if self.check_punctuator('(') {
             self.parse_arguments()?
@@ -1407,6 +1432,8 @@ impl Parser {
                         is_arrow: false,
                     },
                     is_static,
+                    is_getter: true,
+                    is_setter: false,
                 });
                 while self.eat_punctuator(';') {}
                 continue;
@@ -1441,6 +1468,8 @@ impl Parser {
                         is_arrow: false,
                     },
                     is_static,
+                    is_getter: false,
+                    is_setter: true,
                 });
                 while self.eat_punctuator(';') {}
                 continue;
@@ -1530,6 +1559,8 @@ impl Parser {
                         name: prop_name,
                         function,
                         is_static,
+                        is_getter: false,
+                        is_setter: false,
                     });
                 }
             } else {
@@ -1909,7 +1940,8 @@ impl Parser {
             | Expression::This
             | Expression::Super
             | Expression::NewTarget
-            | Expression::Identifier(_) => {}
+            | Expression::Identifier(_)
+            | Expression::PrivateName(_) => {}
         }
         let _ = in_super_call;
         Ok(())
@@ -2041,6 +2073,11 @@ fn is_assignment_target(expression: &Expression) -> bool {
     )
 }
 
+/// Returns true for array/object literals that can serve as destructuring assignment targets.
+fn is_destructuring_target(expression: &Expression) -> bool {
+    matches!(expression, Expression::Array(_) | Expression::Object(_))
+}
+
 /// Maps compound assignment lexemes onto [`AssignmentOperator`].
 fn compound_assignment_operator(operator: &str) -> Option<AssignmentOperator> {
     match operator {
@@ -2069,6 +2106,17 @@ fn update_operator(operator: &str) -> Option<UpdateOperator> {
         "++" => Some(UpdateOperator::Increment),
         "--" => Some(UpdateOperator::Decrement),
         _ => None,
+    }
+}
+
+/// Returns `true` if `expr` (or its recursive MemberExpression base) accesses a private name
+/// via non-computed member access — e.g. `expr.#x` or `(a.b).#x`.
+fn is_private_member_access(expr: &crate::ast::Expression) -> bool {
+    match expr {
+        crate::ast::Expression::Member { property, computed: false, .. } => {
+            matches!(property.as_ref(), crate::ast::Expression::PrivateName(_))
+        }
+        _ => false,
     }
 }
 

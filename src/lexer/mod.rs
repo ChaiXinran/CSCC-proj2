@@ -199,8 +199,22 @@ impl<'source> Lexer<'source> {
         let start = self.cursor.offset();
         self.cursor.bump(); // consume `#`
         let mut name = String::new();
-        while self.cursor.peek().is_some_and(is_identifier_part) {
-            name.push(self.cursor.bump().expect("identifier part exists"));
+        // Private names follow the same IdentifierName rules, including Unicode escapes.
+        loop {
+            if self.cursor.rest().starts_with("\\u") {
+                let saved = self.cursor.clone();
+                match self.read_identifier_escape(start) {
+                    Ok(ch) if is_identifier_part(ch) => name.push(ch),
+                    _ => {
+                        self.cursor = saved;
+                        break;
+                    }
+                }
+            } else if self.cursor.peek().is_some_and(is_identifier_part) {
+                name.push(self.cursor.bump().expect("identifier part exists"));
+            } else {
+                break;
+            }
         }
         let end = self.cursor.offset();
         Ok(Token::new(TokenKind::PrivateName(name), Span::new(start, end)))

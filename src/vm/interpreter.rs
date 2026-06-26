@@ -939,6 +939,44 @@ impl Vm {
                         PropertyDescriptor::accessor(getter, Some(setter), true, true),
                     )?;
                 }
+                Instruction::DefineClassMethod(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let value = self.pop_value()?;
+                    let object = context.require_object(self.peek_value()?, "define class method")?;
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::data_with(value, true, false, true),
+                    )?;
+                }
+                Instruction::DefineClassGetter(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let getter = self.pop_value()?;
+                    let object = context.require_object(self.peek_value()?, "define class getter")?;
+                    let setter = existing_accessor_setter(context, object, &name);
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::accessor(Some(getter), setter, false, true),
+                    )?;
+                }
+                Instruction::DefineClassSetter(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let setter = self.pop_value()?;
+                    let object = context.require_object(self.peek_value()?, "define class setter")?;
+                    let getter = existing_accessor_getter(context, object, &name);
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::accessor(getter, Some(setter), false, true),
+                    )?;
+                }
                 Instruction::SpreadObject => {
                     let spread_val = self.pop_value()?;
                     let target_val = self.peek_value()?.clone();
@@ -1037,6 +1075,50 @@ impl Vm {
                     let second = self.stack[depth - 1].clone();
                     self.stack.push(first);
                     self.stack.push(second);
+                }
+                Instruction::Swap => {
+                    let depth = self.stack.len();
+                    if depth < 2 {
+                        return Err(VmError::runtime("operand stack underflow"));
+                    }
+                    self.stack.swap(depth - 1, depth - 2);
+                }
+                Instruction::SetFunctionName(index) => {
+                    let inferred_name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let func_val = self.peek_value()?.clone();
+                    // Find the object id that carries the `name` property.
+                    let obj_id_opt = match &func_val {
+                        JsValue::Function(func_id) => context.function_object(*func_id),
+                        JsValue::Object(obj_id) => Some(*obj_id),
+                        _ => None,
+                    };
+                    if let Some(obj_id) = obj_id_opt {
+                        // Spec §9.3.9 SetFunctionName: infer only if the function's own "name"
+                        // is absent OR is a data property with the empty-string value.
+                        // An accessor (e.g. class { static get name(){} }) blocks inference.
+                        let should_set = match context.get_own_property(obj_id, "name") {
+                            None => true,
+                            Some(desc) => match &desc.kind {
+                                PropertyKind::Data { value, .. } => matches!(value, JsValue::String(s) if s.is_empty()),
+                                _ => false, // accessor blocks inference
+                            },
+                        };
+                        if should_set {
+                            if let Some(obj) = context.heap_mut().object_mut(obj_id) {
+                                obj.define_property(
+                                    "name",
+                                    PropertyDescriptor::data_with(
+                                        JsValue::String(inferred_name.into()),
+                                        false,
+                                        false,
+                                        true,
+                                    ),
+                                );
+                            }
+                        }
+                    }
                 }
                 Instruction::CreateLexicalEnvironment => {
                     context.push_environment(Some(context.current_environment()))?;
