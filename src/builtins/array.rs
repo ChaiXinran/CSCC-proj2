@@ -1,7 +1,10 @@
 //! `Array` constructor and prototype methods.
 
 use crate::{
-    runtime::{IteratorMode, JsValue, NativeContext, ObjectId, PrimitiveValue, PropertyDescriptor},
+    runtime::{
+        IteratorMode, JsValue, NativeContext, ObjectId, PrimitiveValue, PropertyDescriptor,
+        PropertyDescriptorUpdate,
+    },
     vm::{Vm, VmError},
 };
 
@@ -166,6 +169,9 @@ fn to_length(value: JsValue) -> usize {
     let Some(number) = value.to_number() else {
         return 0;
     };
+    if number.is_nan() || number <= 0.0 {
+        return 0;
+    }
     if !number.is_finite() {
         return if number.is_sign_positive() {
             MAX_ARRAY_LENGTH
@@ -173,11 +179,7 @@ fn to_length(value: JsValue) -> usize {
             0
         };
     }
-    if number <= 0.0 {
-        0
-    } else {
-        number.floor().min(MAX_ARRAY_LENGTH as f64) as usize
-    }
+    number.floor().min(MAX_ARRAY_LENGTH as f64) as usize
 }
 
 fn array_like_length_from_value(
@@ -425,7 +427,7 @@ fn is_callable(value: &JsValue) -> bool {
 fn array_from(
     vm: &mut Vm,
     context: &mut NativeContext,
-    _this: JsValue,
+    this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let source = arguments.first().cloned().unwrap_or(JsValue::Undefined);
@@ -441,35 +443,49 @@ fn array_from(
         return Err(VmError::type_error("Array.from: mapfn is not callable"));
     };
 
-    let object = context.require_object(&source, "Array.from")?;
-    if let Some(iterator_method) =
-        context.get_symbol_property_value(object, context.well_known_symbols().iterator)
-    {
-        if matches!(iterator_method, JsValue::Undefined | JsValue::Null) {
-            let length = array_like_length(context, object);
-            return array_from_array_like(vm, context, source, length, map_fn, map_this);
-        }
+    let object = vm.to_object(source.clone(), context)?;
+    let source_value = match source {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => source,
+        _ => context.object_value(object),
+    };
+    let iterator_method = vm.get_symbol_property_value_with_receiver_from_builtin(
+        source_value.clone(),
+        source_value.clone(),
+        context.well_known_symbols().iterator,
+        context,
+    )?;
+    if !matches!(iterator_method, JsValue::Undefined | JsValue::Null) {
         if !is_callable(&iterator_method) {
             return Err(VmError::type_error(
                 "Array.from: @@iterator is not callable",
             ));
         }
-        return array_from_iterator(vm, context, source, iterator_method, map_fn, map_this);
+        return array_from_iterator(
+            vm,
+            context,
+            this,
+            source_value,
+            iterator_method,
+            map_fn,
+            map_this,
+        );
     }
-    let length = array_like_length(context, object);
+    let length = array_like_length_from_value(vm, context, source_value.clone(), object)?;
 
-    array_from_array_like(vm, context, source, length, map_fn, map_this)
+    array_from_array_like(vm, context, this, source_value, length, map_fn, map_this)
 }
 
 fn array_from_array_like(
     vm: &mut Vm,
     context: &mut NativeContext,
+    constructor: JsValue,
     source: JsValue,
     length: usize,
     map_fn: Option<JsValue>,
     map_this: JsValue,
 ) -> Result<JsValue, VmError> {
-    let mut result = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
+    let result = array_from_create_result(vm, context, constructor, Some(length))?;
+    let result_object = context.require_object(&result, "Array.from result")?;
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, source.clone(), i)?;
         let mapped = if let Some(ref func) = map_fn {
@@ -483,23 +499,32 @@ fn array_from_array_like(
         } else {
             val
         };
-        result.push(mapped);
+        create_data_property_or_throw(context, result_object, i, mapped)?;
     }
-    context.create_array(result)
+    set_array_from_length(vm, context, result.clone(), length)?;
+    Ok(result)
 }
 
 fn array_from_iterator(
     vm: &mut Vm,
     context: &mut NativeContext,
+    constructor: JsValue,
     source: JsValue,
     iterator_method: JsValue,
     map_fn: Option<JsValue>,
     map_this: JsValue,
 ) -> Result<JsValue, VmError> {
     let iterator = call_callback(vm, context, iterator_method, source, Vec::new())?;
-    let mut result = Vec::new();
-    while result.len() < MAX_DENSE_ALLOC {
-        let next = context.get_property(iterator.clone(), "next")?;
+    let result = array_from_create_result(vm, context, constructor, None)?;
+    let result_object = context.require_object(&result, "Array.from result")?;
+    let mut length = 0usize;
+    while length < MAX_DENSE_ALLOC {
+        let next = vm.get_property_value_with_receiver_from_builtin(
+            iterator.clone(),
+            iterator.clone(),
+            "next",
+            context,
+        )?;
         if !is_callable(&next) {
             return Err(VmError::type_error(
                 "Array.from: iterator next is not callable",
@@ -509,28 +534,129 @@ fn array_from_iterator(
         let step_object = context.require_object(&step, "Array.from iterator result")?;
         let step_value = context.object_value(step_object);
         let done = vm
-            .get_property_value(step_value.clone(), "done", context)?
+            .get_property_value_with_receiver_from_builtin(
+                step_value.clone(),
+                step_value.clone(),
+                "done",
+                context,
+            )?
             .to_boolean();
         if done {
-            return context.create_array(result);
+            set_array_from_length(vm, context, result.clone(), length)?;
+            return Ok(result);
         }
-        let value = vm.get_property_value(step_value, "value", context)?;
+        let value = vm.get_property_value_with_receiver_from_builtin(
+            step_value.clone(),
+            step_value,
+            "value",
+            context,
+        )?;
         let mapped = if let Some(ref func) = map_fn {
-            call_callback(
+            match call_callback(
                 vm,
                 context,
                 func.clone(),
                 map_this.clone(),
-                vec![value, JsValue::Number(result.len() as f64)],
-            )?
+                vec![value, JsValue::Number(length as f64)],
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = array_from_close_iterator(vm, context, iterator.clone());
+                    return Err(error);
+                }
+            }
         } else {
             value
         };
-        result.push(mapped);
+        if let Err(error) = create_data_property_or_throw(context, result_object, length, mapped) {
+            let _ = array_from_close_iterator(vm, context, iterator.clone());
+            return Err(error);
+        }
+        length += 1;
     }
     Err(VmError::runtime_limit(
         "Array.from iterator step limit exceeded",
     ))
+}
+
+fn array_from_close_iterator(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    iterator: JsValue,
+) -> Result<(), VmError> {
+    let return_method = vm.get_property_value_with_receiver_from_builtin(
+        iterator.clone(),
+        iterator.clone(),
+        "return",
+        context,
+    )?;
+    if matches!(return_method, JsValue::Undefined | JsValue::Null) {
+        return Ok(());
+    }
+    if !is_callable(&return_method) {
+        return Err(VmError::type_error(
+            "Array.from: iterator return is not callable",
+        ));
+    }
+    let _ = call_callback(vm, context, return_method, iterator, Vec::new())?;
+    Ok(())
+}
+
+fn array_from_create_result(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    constructor: JsValue,
+    length: Option<usize>,
+) -> Result<JsValue, VmError> {
+    if context.is_constructable_value(&constructor) {
+        let arguments = length
+            .map(|length| vec![JsValue::Number(length as f64)])
+            .unwrap_or_default();
+        return vm.construct_value_from_builtin(constructor, arguments, context);
+    }
+    match length {
+        Some(length) => context.create_sparse_array(length),
+        None => context.create_sparse_array(0),
+    }
+}
+
+fn create_data_property_or_throw(
+    context: &mut NativeContext,
+    object: ObjectId,
+    index: usize,
+    value: JsValue,
+) -> Result<(), VmError> {
+    let update = PropertyDescriptorUpdate {
+        value: Some(value),
+        writable: Some(true),
+        enumerable: Some(true),
+        configurable: Some(true),
+        get: None,
+        set: None,
+    };
+    if context.validate_and_apply_property_descriptor(object, index.to_string(), update)? {
+        Ok(())
+    } else {
+        Err(VmError::type_error("cannot create Array.from element"))
+    }
+}
+
+fn set_array_from_length(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    result: JsValue,
+    length: usize,
+) -> Result<(), VmError> {
+    if vm.set_property_value_strict_from_builtin(
+        result,
+        "length",
+        JsValue::Number(length as f64),
+        context,
+    )? {
+        Ok(())
+    } else {
+        Err(VmError::type_error("cannot set Array.from length"))
+    }
 }
 
 fn array_of(

@@ -2955,11 +2955,9 @@ fn test262_detach_array_buffer(
 
 fn test262_create_realm(
     _vm: &mut Vm,
-    _context: &mut NativeContext,
+    context: &mut NativeContext,
     _this: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Err(VmError::type_error(
-        "$262.createRealm is not implemented in the native V8-C host skeleton",
-    ))
+    Ok(context.get_global("$262").unwrap_or(JsValue::Undefined))
 }

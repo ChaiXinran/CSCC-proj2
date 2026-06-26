@@ -194,6 +194,8 @@ pub enum Instruction {
     DefineDataProperty(u16),
     DefineGetter(u16),
     DefineSetter(u16),
+    DefineComputedGetter,
+    DefineComputedSetter,
     /// Like `DefineDataProperty` but uses `writable=true, enumerable=false, configurable=true`.
     /// Used for class instance/static methods (spec: non-enumerable, configurable).
     DefineClassMethod(u16),
@@ -423,6 +425,10 @@ impl Instruction {
             | Self::DefineClassSetter(_)
             | Self::SetObjectPrototype
             | Self::DefineElement(_) => StackEffect::with_required(2, 1, 0),
+
+            Self::DefineComputedGetter | Self::DefineComputedSetter => {
+                StackEffect::with_required(3, 3, 0)
+            }
 
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
 
