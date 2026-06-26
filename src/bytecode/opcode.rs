@@ -52,6 +52,8 @@ pub enum Instruction {
     StoreGlobal(u16),
 
     UnaryPlus,
+    Increment,
+    Decrement,
     Negate,
     LogicalNot,
     TypeOf,
@@ -155,6 +157,9 @@ pub enum Instruction {
     /// Pops `object` and `key`, pushes `object[key]`.
     /// Stack: [object, key] → [value]
     GetElement,
+    /// Reads a computed property and preserves the receiver for a method call.
+    /// Stack: [object, key] -> [method_value, object]
+    GetElementMethod,
 
     /// Reads a property by name from the top-of-stack object and rearranges
     /// the stack so the callee and `this` are in position for `CallWithThis`.
@@ -317,6 +322,8 @@ impl Instruction {
             Self::StoreGlobal(_)
             | Self::StoreName(_)
             | Self::UnaryPlus
+            | Self::Increment
+            | Self::Decrement
             | Self::Negate
             | Self::LogicalNot
             | Self::BitwiseNot
@@ -374,6 +381,7 @@ impl Instruction {
 
             // GetMethod: pops object, pushes (method, object) — net +1
             Self::GetMethod(_) => StackEffect::new(1, 2),
+            Self::GetElementMethod => StackEffect::new(2, 2),
 
             // SetProperty: [object, value] → [value]  (net -1)
             Self::SetProperty(_) => StackEffect::with_required(2, 2, 1),

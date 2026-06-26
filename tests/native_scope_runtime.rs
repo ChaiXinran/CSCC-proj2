@@ -48,6 +48,7 @@ fn runtime_can_allocate_function_values_with_captured_environment() {
         rest_param: None,
         chunk: empty_function_chunk(),
         environment: Some(captured),
+        is_generator: false,
     };
 
     let id = context.allocate_function(function).unwrap();

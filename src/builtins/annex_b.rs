@@ -252,7 +252,8 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, St
         ObjectKind::Ordinary
         | ObjectKind::Array { .. }
         | ObjectKind::PrimitiveWrapper(_)
-        | ObjectKind::Iterator { .. } => None,
+        | ObjectKind::Iterator { .. }
+        | ObjectKind::Generator { .. } => None,
     }
 }
 

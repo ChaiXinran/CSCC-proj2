@@ -5,7 +5,8 @@
 
 use crate::{
     runtime::{
-        JsObject, JsValue, NativeCall, NativeContext, ObjectId, PropertyDescriptor, PropertyKind,
+        IteratorKind, IteratorRecord, JsObject, JsValue, NativeCall, NativeContext, ObjectId,
+        PropertyDescriptor, PropertyKind,
     },
     vm::{Vm, VmError},
 };
@@ -383,19 +384,31 @@ fn install_iterator(context: &mut NativeContext) -> Result<IteratorIntrinsic, Vm
         context.well_known_symbols().species,
         PropertyDescriptor::accessor(Some(species_getter), None, false, true),
     )?;
+    let constructor_getter =
+        context.register_builtin("get constructor", 0, iterator_constructor_get, None)?;
+    let constructor_setter =
+        context.register_builtin("set constructor", 1, iterator_constructor_set, None)?;
     context.define_own_property(
         prototype,
         "constructor".into(),
-        method_descriptor(constructor.clone()),
+        PropertyDescriptor::accessor(Some(constructor_getter), Some(constructor_setter), false, true),
     )?;
     define_method(context, constructor_object, "from", 1, iterator_from)?;
     define_method(context, prototype, "next", 0, iterator_next)?;
-    let iterator_fn = define_method(context, prototype, "values", 0, iterator_identity)?;
+    define_method(context, prototype, "values", 0, iterator_identity)?;
+    let iterator_fn = context.register_builtin("[Symbol.iterator]", 0, iterator_identity, None)?;
     context.define_symbol_own_property(
         prototype,
         context.well_known_symbols().iterator,
         method_descriptor(iterator_fn),
     )?;
+    let dispose_fn = context.register_builtin("[Symbol.dispose]", 0, iterator_dispose, None)?;
+    context.define_symbol_own_property(
+        prototype,
+        context.well_known_symbols().dispose,
+        method_descriptor(dispose_fn),
+    )?;
+    install_array_iterator_method(context)?;
     for (name, length, call) in [
         ("toArray", 0, iterator_to_array as NativeCall),
         ("forEach", 1, iterator_for_each as NativeCall),
@@ -421,10 +434,14 @@ fn install_iterator(context: &mut NativeContext) -> Result<IteratorIntrinsic, Vm
             unsupported_iterator_helper,
         )?;
     }
+    let tag_getter =
+        context.register_builtin("get [Symbol.toStringTag]", 0, iterator_to_string_tag_get, None)?;
+    let tag_setter =
+        context.register_builtin("set [Symbol.toStringTag]", 1, iterator_to_string_tag_set, None)?;
     context.define_symbol_own_property(
         prototype,
         context.well_known_symbols().to_string_tag,
-        readonly_configurable_descriptor(JsValue::String("Iterator".into())),
+        PropertyDescriptor::accessor(Some(tag_getter), Some(tag_setter), false, true),
     )?;
     declare_standard_global(context, "Iterator", constructor)?;
     Ok(IteratorIntrinsic { prototype })
@@ -449,24 +466,60 @@ fn iterator_constructor_construct(
 }
 
 fn iterator_from(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if matches!(value, JsValue::String(_)) {
+        let iterator = context.create_iterator_object(value)?;
+        if let JsValue::Object(object) = iterator {
+            install_iterator_prototype_on_value(context, object)?;
+        }
+        return Ok(iterator);
+    }
+
     let object = context.require_object(&value, "Iterator.from")?;
+
+    let iterator_symbol = context.well_known_symbols().iterator;
+    if let Some(method) = context.get_symbol_property_value(object, iterator_symbol) {
+        if matches!(method, JsValue::Undefined | JsValue::Null) {
+            let next = context.get_property(value.clone(), "next")?;
+            if is_callable(&next) {
+                return create_js_iterator_wrapper(context, value);
+            }
+            return Err(VmError::type_error(
+                "Iterator.from requires an iterator object",
+            ));
+        }
+        if !is_callable(&method) {
+            return Err(VmError::type_error(
+                "Iterator.from Symbol.iterator is not callable",
+            ));
+        }
+        let iterator = vm.call_value_from_builtin(method, value.clone(), Vec::new(), context)?;
+        let iterator_object = context.require_object(&iterator, "Iterator.from result")?;
+        let next = context.get_property(iterator.clone(), "next")?;
+        if !is_callable(&next) {
+            return Err(VmError::type_error(
+                "Iterator.from result next is not callable",
+            ));
+        }
+        install_iterator_prototype_on_value(context, iterator_object)?;
+        return Ok(iterator);
+    }
+
+    if let Ok(iterator) = context.create_iterator_object(value.clone()) {
+        if let JsValue::Object(iterator_object) = iterator {
+            install_iterator_prototype_on_value(context, iterator_object)?;
+        }
+        return Ok(iterator);
+    }
+
     let next = context.get_property(value.clone(), "next")?;
     if is_callable(&next) {
-        return Ok(value);
-    }
-    if context
-        .get_symbol_property_value(object, context.well_known_symbols().iterator)
-        .is_some_and(|method| is_callable(&method))
-    {
-        return Err(VmError::type_error(
-            "Iterator.from Symbol.iterator dispatch is not implemented in V9-C skeletons",
-        ));
+        return create_js_iterator_wrapper(context, value);
     }
     Err(VmError::type_error(
         "Iterator.from requires an iterator object",
@@ -480,6 +533,123 @@ fn iterator_identity(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     Ok(this_value)
+}
+
+fn iterator_dispose(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let return_method = context.get_property(this_value.clone(), "return")?;
+    if matches!(return_method, JsValue::Undefined | JsValue::Null) {
+        return Ok(JsValue::Undefined);
+    }
+    if !is_callable(&return_method) {
+        return Err(VmError::type_error("iterator return is not callable"));
+    }
+    vm.call_value_from_builtin(return_method, this_value, Vec::new(), context)?;
+    Ok(JsValue::Undefined)
+}
+
+fn iterator_constructor_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    context
+        .get_global("Iterator")
+        .ok_or_else(|| VmError::runtime("Iterator constructor missing"))
+}
+
+fn iterator_constructor_set(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    setter_ignoring_iterator_prototype_string(context, this_value, "constructor", value)
+}
+
+fn iterator_to_string_tag_get(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(JsValue::String("Iterator".into()))
+}
+
+fn iterator_to_string_tag_set(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    setter_ignoring_iterator_prototype_symbol(
+        context,
+        this_value,
+        context.well_known_symbols().to_string_tag,
+        value,
+    )
+}
+
+fn setter_ignoring_iterator_prototype_string(
+    context: &mut NativeContext,
+    this_value: JsValue,
+    key: &str,
+    value: JsValue,
+) -> Result<JsValue, VmError> {
+    let object = context.require_object(&this_value, "set Iterator.prototype property")?;
+    if object == iterator_prototype_object(context)? {
+        return Err(VmError::type_error(
+            "cannot set Iterator.prototype intrinsic accessor",
+        ));
+    }
+    if context.get_own_property_descriptor(object, key).is_none() {
+        context.define_own_property(object, key.into(), PropertyDescriptor::data(value))?;
+    } else {
+        context.set_property(this_value, key, value)?;
+    }
+    Ok(JsValue::Undefined)
+}
+
+fn setter_ignoring_iterator_prototype_symbol(
+    context: &mut NativeContext,
+    this_value: JsValue,
+    symbol: crate::runtime::SymbolId,
+    value: JsValue,
+) -> Result<JsValue, VmError> {
+    let object = context.require_object(&this_value, "set Iterator.prototype symbol property")?;
+    if object == iterator_prototype_object(context)? {
+        return Err(VmError::type_error(
+            "cannot set Iterator.prototype intrinsic accessor",
+        ));
+    }
+    if context
+        .get_own_symbol_property_descriptor(object, symbol)
+        .is_none()
+    {
+        context.define_symbol_own_property(object, symbol, PropertyDescriptor::data(value))?;
+    } else {
+        context.set_symbol_property(object, symbol, value, true)?;
+    }
+    Ok(JsValue::Undefined)
+}
+
+fn iterator_prototype_object(context: &NativeContext) -> Result<ObjectId, VmError> {
+    let iterator_ctor = context
+        .get_global("Iterator")
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("Iterator constructor missing"))?;
+    context
+        .find_property_descriptor(iterator_ctor, "prototype")?
+        .and_then(|(_, descriptor)| descriptor.value_cloned())
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("Iterator prototype missing"))
 }
 
 fn unsupported_iterator_helper(
@@ -533,12 +703,39 @@ fn iterator_result(
 }
 
 fn iterator_next(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let iterator = context.require_object(&this_value, "Iterator.prototype.next")?;
+    if let Some(js_iterator) = context
+        .heap()
+        .object(iterator)
+        .and_then(|object| match &object.kind {
+            crate::runtime::ObjectKind::Iterator {
+                record:
+                    IteratorRecord {
+                        kind: IteratorKind::Js { iterator },
+                        ..
+                    },
+            } => Some(iterator.clone()),
+            _ => None,
+        })
+    {
+        let next = context.get_property(js_iterator.clone(), "next")?;
+        if !is_callable(&next) {
+            return Err(VmError::type_error("iterator next is not callable"));
+        }
+        return vm.call_value_from_builtin(next, js_iterator, Vec::new(), context);
+    }
+    if matches!(
+        context.heap().object(iterator).map(|object| &object.kind),
+        Some(crate::runtime::ObjectKind::Iterator { .. })
+    ) {
+        let (value, done) = context.step_iterator_object(this_value)?;
+        return iterator_result(context, value, done);
+    }
     if own_bool(context, iterator, ITERATOR_DONE).unwrap_or(false) {
         return iterator_result(context, JsValue::Undefined, true);
     }
@@ -569,6 +766,54 @@ fn iterator_next(
     }
     define_hidden(context, iterator, ITERATOR_DONE, JsValue::Boolean(true))?;
     iterator_result(context, JsValue::Undefined, true)
+}
+
+fn install_iterator_prototype_on_value(
+    context: &mut NativeContext,
+    object: ObjectId,
+) -> Result<(), VmError> {
+    let iterator_ctor = context
+        .get_global("Iterator")
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("Iterator constructor missing"))?;
+    let prototype = context
+        .find_property_descriptor(iterator_ctor, "prototype")?
+        .and_then(|(_, descriptor)| descriptor.value_cloned())
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("Iterator prototype missing"))?;
+    context.set_prototype_of(object, Some(prototype))?;
+    Ok(())
+}
+
+fn create_js_iterator_wrapper(
+    context: &mut NativeContext,
+    iterator: JsValue,
+) -> Result<JsValue, VmError> {
+    let object = JsObject::iterator(IteratorRecord::js(iterator));
+    let id = context
+        .heap_mut()
+        .allocate_object(object)
+        .ok_or_else(|| VmError::runtime("heap full: cannot allocate iterator wrapper"))?;
+    install_iterator_prototype_on_value(context, id)?;
+    Ok(JsValue::Object(id))
+}
+
+fn install_array_iterator_method(context: &mut NativeContext) -> Result<(), VmError> {
+    let Some(intrinsics) = context.intrinsics().cloned() else {
+        return Ok(());
+    };
+    let Some((_, descriptor)) = context.find_property_descriptor(intrinsics.array_prototype, "values")? else {
+        return Ok(());
+    };
+    let Some(values) = descriptor.value_cloned() else {
+        return Ok(());
+    };
+    context.define_symbol_own_property(
+        intrinsics.array_prototype,
+        context.well_known_symbols().iterator,
+        method_descriptor(values),
+    )?;
+    Ok(())
 }
 
 fn iterator_step(

@@ -1,7 +1,10 @@
 //! JavaScript objects and prototype links.
 
 use super::iterator::IteratorKind;
-use super::{IteratorRecord, JsValue, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer};
+use super::{
+    EnvironmentId, FunctionId, IteratorRecord, JsValue, PropertyDescriptor, PropertyMap, SymbolId,
+    Trace, Tracer,
+};
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -13,6 +16,7 @@ pub struct ObjectId(pub u32);
 pub enum PrimitiveValue {
     Boolean(bool),
     Number(f64),
+    BigInt(i128),
     String(String),
     Symbol(SymbolId),
 }
@@ -42,6 +46,30 @@ pub enum ObjectKind {
     RegExp { pattern: String, flags: String },
     /// Internal iterator object created by `GetIterator`. Not directly observable from JS.
     Iterator { record: IteratorRecord },
+    /// Generator object produced by calling a generator function.
+    Generator { record: GeneratorRecord },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum GeneratorState {
+    SuspendedStart,
+    SuspendedYield,
+    Executing,
+    Completed,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GeneratorRecord {
+    pub function: FunctionId,
+    pub environment: Option<EnvironmentId>,
+    pub this_value: JsValue,
+    pub arguments: Vec<JsValue>,
+    pub next_ip: usize,
+    pub state: GeneratorState,
+    pub stack: Vec<JsValue>,
+    pub delegate_values: Vec<JsValue>,
+    pub delegate_iterator: Option<JsValue>,
+    pub delegate_return: Option<JsValue>,
 }
 
 /// Ordinary object storage.
@@ -259,7 +287,8 @@ impl JsObject {
             ObjectKind::Ordinary
             | ObjectKind::PrimitiveWrapper(_)
             | ObjectKind::RegExp { .. }
-            | ObjectKind::Iterator { .. } => None,
+            | ObjectKind::Iterator { .. }
+            | ObjectKind::Generator { .. } => None,
         }
     }
 
@@ -272,7 +301,8 @@ impl JsObject {
             ObjectKind::Ordinary
             | ObjectKind::PrimitiveWrapper(_)
             | ObjectKind::RegExp { .. }
-            | ObjectKind::Iterator { .. } => None,
+            | ObjectKind::Iterator { .. }
+            | ObjectKind::Generator { .. } => None,
         }
     }
 
@@ -410,9 +440,34 @@ impl Trace for JsObject {
             }
             ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {}
             ObjectKind::Iterator { record } => {
-                // Trace the backing array/string so GC doesn't collect it.
-                if let IteratorKind::Array { object, .. } = &record.kind {
-                    object.trace(tracer);
+                // Trace the backing iterable/iterator so GC doesn't collect it.
+                match &record.kind {
+                    IteratorKind::Array { object, .. } | IteratorKind::Js { iterator: object } => {
+                        object.trace(tracer);
+                    }
+                    IteratorKind::String { .. } => {}
+                }
+            }
+            ObjectKind::Generator { record } => {
+                tracer.mark_function(record.function);
+                if let Some(environment) = record.environment {
+                    tracer.mark_environment(environment);
+                }
+                record.this_value.trace(tracer);
+                for argument in &record.arguments {
+                    argument.trace(tracer);
+                }
+                for value in &record.stack {
+                    value.trace(tracer);
+                }
+                for value in &record.delegate_values {
+                    value.trace(tracer);
+                }
+                if let Some(value) = &record.delegate_iterator {
+                    value.trace(tracer);
+                }
+                if let Some(value) = &record.delegate_return {
+                    value.trace(tracer);
                 }
             }
         }
@@ -440,6 +495,12 @@ impl JsObject {
             ObjectKind::PrimitiveWrapper(_) => std::mem::size_of::<PrimitiveValue>(),
             ObjectKind::RegExp { pattern, flags } => pattern.len().saturating_add(flags.len()),
             ObjectKind::Iterator { .. } => std::mem::size_of::<IteratorRecord>(),
+            ObjectKind::Generator { record } => std::mem::size_of::<GeneratorRecord>()
+                .saturating_add(record.arguments.capacity() * std::mem::size_of::<JsValue>())
+                .saturating_add(record.stack.capacity() * std::mem::size_of::<JsValue>())
+                .saturating_add(
+                    record.delegate_values.capacity() * std::mem::size_of::<JsValue>(),
+                ),
         };
         std::mem::size_of::<Self>()
             .saturating_add(kind_bytes)

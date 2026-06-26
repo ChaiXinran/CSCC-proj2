@@ -25,6 +25,7 @@ pub struct WellKnownSymbols {
     pub split: SymbolId,
     pub match_all: SymbolId,
     pub search: SymbolId,
+    pub dispose: SymbolId,
 }
 
 /// Global symbol store shared by one NativeContext isolate.
@@ -51,6 +52,7 @@ impl SymbolRegistry {
             "Symbol.split",              // 8
             "Symbol.matchAll",           // 9
             "Symbol.search",             // 10
+            "Symbol.dispose",            // 11
         ] {
             symbols.push(Symbol {
                 description: Some(desc.into()),
@@ -70,6 +72,7 @@ impl SymbolRegistry {
                 split: SymbolId(8),
                 match_all: SymbolId(9),
                 search: SymbolId(10),
+                dispose: SymbolId(11),
             },
             symbols,
         }

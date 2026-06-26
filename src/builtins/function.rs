@@ -140,6 +140,7 @@ fn create_dynamic_function(
         // Dynamic Function is created in the global scope; it must not capture
         // the caller's local lexical environment.
         environment: Some(context.global_environment()),
+        is_generator: false,
     })?;
     Ok(JsValue::Function(id))
 }

@@ -29,6 +29,7 @@ pub enum Constant {
     Null,
     Boolean(bool),
     Number(f64),
+    BigInt(i128),
     String(String),
 }
 
@@ -227,6 +228,7 @@ pub struct FunctionTemplate {
     /// Bytecode for the function body.
     pub chunk: Chunk,
     pub is_strict: bool,
+    pub is_generator: bool,
     pub environment_policy: EnvironmentCapturePolicy,
 }
 

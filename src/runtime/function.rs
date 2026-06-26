@@ -20,6 +20,7 @@ pub struct JsFunction {
     pub rest_param: Option<String>,
     pub chunk: Chunk,
     pub environment: Option<EnvironmentId>,
+    pub is_generator: bool,
 }
 
 /// Stable handle into the builtin function registry.

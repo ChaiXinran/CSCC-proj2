@@ -125,6 +125,69 @@ fn iterator_helpers_cover_eager_collection_iterators() {
 }
 
 #[test]
+fn iterator_from_wraps_arrays_and_iterables() {
+    assert_eq!(
+        native_eval(
+            "var fromArray = Array.from(Iterator.from([1, 2, 3])).join(','); \
+             var custom = {}; \
+             custom[Symbol.iterator] = function() { \
+               var i = 0; \
+               return { next: function() { i = i + 1; return { value: i, done: i > 2 }; } }; \
+             }; \
+             fromArray + ':' + Array.from(Iterator.from(custom)).join(',');"
+        ),
+        "1,2,3:1,2"
+    );
+}
+
+#[test]
+fn iterator_from_wraps_plain_iterators_and_nullish_iterator_methods() {
+    assert_eq!(
+        native_eval(
+            "function make(method) { \
+               var i = 0; \
+               var iter = { next: function() { return { value: i++, done: i > 4 }; } }; \
+               if (method !== 'absent') iter[Symbol.iterator] = method; \
+               return Array.from(Iterator.from(iter)).join(','); \
+             } \
+             var bad = false; \
+             try { Iterator.from({ next: function() {}, [Symbol.iterator]: 0 }); } \
+             catch (e) { bad = e.name === 'TypeError'; } \
+             make('absent') + ':' + make(null) + ':' + make(undefined) + ':' + bad;"
+        ),
+        "0,1,2,3:0,1,2,3:0,1,2,3:true"
+    );
+}
+
+#[test]
+fn array_iterator_exposes_iterator_prototype_symbol_iterator() {
+    assert_eq!(
+        native_eval(
+            "var iter = [1, 2][Symbol.iterator](); \
+             var iteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf(iter)); \
+             var fn = iteratorPrototype[Symbol.iterator]; \
+             fn.name + ':' + fn.call(5) + ':' + Array.from(iter).join(',');"
+        ),
+        "[Symbol.iterator]:5:1,2"
+    );
+}
+
+#[test]
+fn iterator_prototype_symbol_dispose_calls_return() {
+    assert_eq!(
+        native_eval(
+            "var iteratorPrototype = Object.getPrototypeOf(Object.getPrototypeOf([].values())); \
+             var iter = Object.create(iteratorPrototype); \
+             var called = false; \
+             iter.return = function() { called = true; return { done: true }; }; \
+             var result = iter[Symbol.dispose](); \
+             called + ':' + (result === undefined) + ':' + iter[Symbol.dispose].name;"
+        ),
+        "true:true:[Symbol.dispose]"
+    );
+}
+
+#[test]
 fn unsupported_iterator_pipeline_helpers_throw_explicit_type_errors() {
     assert_eq!(
         native_eval(

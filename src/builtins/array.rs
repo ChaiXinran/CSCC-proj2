@@ -1,7 +1,7 @@
 //! `Array` constructor and prototype methods.
 
 use crate::{
-    runtime::{JsValue, NativeContext, ObjectId, PropertyDescriptor},
+    runtime::{JsObject, JsValue, NativeContext, ObjectId, PropertyDescriptor},
     vm::{Vm, VmError},
 };
 
@@ -259,8 +259,33 @@ fn array_from(
     };
 
     let object = context.require_object(&source, "Array.from")?;
+    if let Some(iterator_method) =
+        context.get_symbol_property_value(object, context.well_known_symbols().iterator)
+    {
+        if matches!(iterator_method, JsValue::Undefined | JsValue::Null) {
+            let length = array_like_length(context, object);
+            return array_from_array_like(vm, context, source, length, map_fn, map_this);
+        }
+        if !is_callable(&iterator_method) {
+            return Err(VmError::type_error(
+                "Array.from: @@iterator is not callable",
+            ));
+        }
+        return array_from_iterator(vm, context, source, iterator_method, map_fn, map_this);
+    }
     let length = array_like_length(context, object);
 
+    array_from_array_like(vm, context, source, length, map_fn, map_this)
+}
+
+fn array_from_array_like(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    source: JsValue,
+    length: usize,
+    map_fn: Option<JsValue>,
+    map_this: JsValue,
+) -> Result<JsValue, VmError> {
     let mut result = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, source.clone(), i)?;
@@ -278,6 +303,53 @@ fn array_from(
         result.push(mapped);
     }
     context.create_array(result)
+}
+
+fn array_from_iterator(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    source: JsValue,
+    iterator_method: JsValue,
+    map_fn: Option<JsValue>,
+    map_this: JsValue,
+) -> Result<JsValue, VmError> {
+    let iterator = call_callback(
+        vm,
+        context,
+        iterator_method,
+        source,
+        Vec::new(),
+    )?;
+    let mut result = Vec::new();
+    while result.len() < MAX_DENSE_ALLOC {
+        let next = context.get_property(iterator.clone(), "next")?;
+        if !is_callable(&next) {
+            return Err(VmError::type_error("Array.from: iterator next is not callable"));
+        }
+        let step = call_callback(vm, context, next, iterator.clone(), Vec::new())?;
+        let step_object = context.require_object(&step, "Array.from iterator result")?;
+        let step_value = context.object_value(step_object);
+        let done = vm
+            .get_property_value(step_value.clone(), "done", context)?
+            .to_boolean();
+        if done {
+            return context.create_array(result);
+        }
+        let value = vm.get_property_value(step_value, "value", context)?;
+        let mapped = if let Some(ref func) = map_fn {
+            call_callback(
+                vm,
+                context,
+                func.clone(),
+                map_this.clone(),
+                vec![value, JsValue::Number(result.len() as f64)],
+            )?
+        } else {
+            value
+        };
+        result.push(mapped);
+    }
+    Err(VmError::runtime_limit("Array.from iterator step limit exceeded"))
 }
 
 fn array_of(
@@ -1049,19 +1121,49 @@ fn array_keys(
 }
 
 fn array_values(
-    vm: &mut Vm,
+    _vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.values")?;
-    let length = array_like_length(context, object);
-    let mut values = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
-    for i in 0..length.min(MAX_DENSE_ALLOC) {
-        let val = get_elem(vm, context, this_value.clone(), i)?;
-        values.push(val);
-    }
-    context.create_array(values)
+    context.require_object(&this_value, "Array.prototype.values")?;
+    let iterator = context.create_iterator_object(this_value)?;
+    install_array_iterator_prototype_if_available(context, &iterator)?;
+    Ok(iterator)
+}
+
+fn install_array_iterator_prototype_if_available(
+    context: &mut NativeContext,
+    iterator: &JsValue,
+) -> Result<(), VmError> {
+    let Some(iterator_object) = context.value_object(iterator) else {
+        return Ok(());
+    };
+    let Some(iterator_constructor) = context
+        .get_global("Iterator")
+        .and_then(|value| context.value_object(&value))
+    else {
+        return Ok(());
+    };
+    let Some(iterator_prototype) = context
+        .find_property_descriptor(iterator_constructor, "prototype")?
+        .and_then(|(_, descriptor)| descriptor.value_cloned())
+        .and_then(|value| context.value_object(&value))
+    else {
+        return Ok(());
+    };
+
+    // ponytail: allocate a tiny per-instance Array Iterator Prototype so
+    // Object.getPrototypeOf(Object.getPrototypeOf([].values())) reaches
+    // %IteratorPrototype%; a shared intrinsic can replace this later.
+    let mut array_iterator_prototype = JsObject::ordinary();
+    array_iterator_prototype.prototype = Some(iterator_prototype);
+    let array_iterator_prototype = context
+        .heap_mut()
+        .allocate_object(array_iterator_prototype)
+        .ok_or_else(|| VmError::runtime("heap full: cannot allocate array iterator prototype"))?;
+    context.set_prototype_of(iterator_object, Some(array_iterator_prototype))?;
+    Ok(())
 }
 
 fn array_entries(
