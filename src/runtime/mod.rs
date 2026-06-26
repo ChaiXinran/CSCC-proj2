@@ -41,7 +41,10 @@ pub use module::{
     ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus,
     normalize_module_path, resolve_module_specifier,
 };
-pub use object::{GeneratorRecord, GeneratorState, JsObject, ObjectId, ObjectKind, PrimitiveValue};
+pub use object::{
+    GeneratorRecord, GeneratorState, JsObject, ObjectId, ObjectKind, PrimitiveValue, PropertyKey,
+    ProxyRecord,
+};
 pub use property::{PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind};
 pub use property_map::{PropertyEntry, PropertyMap};
 pub use symbol::{Symbol, SymbolId, SymbolRegistry, WellKnownSymbols};

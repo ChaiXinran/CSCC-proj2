@@ -222,10 +222,12 @@ impl Parser {
         if self.is_async_context {
             match &tok.kind {
                 TokenKind::Keyword(Keyword::Await) => {
-                    return Err(self.error("`await` is not allowed as an identifier in async context".into()));
+                    return Err(self
+                        .error("`await` is not allowed as an identifier in async context".into()));
                 }
                 TokenKind::Identifier(n) if n == "await" => {
-                    return Err(self.error("`await` is not allowed as an identifier in async context".into()));
+                    return Err(self
+                        .error("`await` is not allowed as an identifier in async context".into()));
                 }
                 _ => {}
             }
@@ -234,10 +236,14 @@ impl Parser {
         if self.is_generator_context {
             match &tok.kind {
                 TokenKind::Keyword(Keyword::Yield) => {
-                    return Err(self.error("`yield` is not allowed as an identifier in generator context".into()));
+                    return Err(self.error(
+                        "`yield` is not allowed as an identifier in generator context".into(),
+                    ));
                 }
                 TokenKind::Identifier(n) if n == "yield" => {
-                    return Err(self.error("`yield` is not allowed as an identifier in generator context".into()));
+                    return Err(self.error(
+                        "`yield` is not allowed as an identifier in generator context".into(),
+                    ));
                 }
                 _ => {}
             }
@@ -347,12 +353,7 @@ fn describe(kind: &TokenKind) -> String {
 pub(super) fn is_strict_future_reserved(name: &str) -> bool {
     matches!(
         name,
-        "implements"
-            | "interface"
-            | "package"
-            | "private"
-            | "protected"
-            | "public"
+        "implements" | "interface" | "package" | "private" | "protected" | "public"
     )
 }
 

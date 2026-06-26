@@ -146,3 +146,76 @@ fn uint8_clamped_rounds_half_to_even() {
         JsValue::Number(255.0)
     );
 }
+
+#[test]
+fn bigint_typed_array_elements_use_bigint_values() {
+    let mut context = NativeContext::default();
+    let buffer = context.create_array_buffer(16).expect("create buffer");
+    let signed = context
+        .create_typed_array_view(buffer, TypedArrayElementKind::BigInt64, 0, 2)
+        .expect("create BigInt64 view");
+    let unsigned = context
+        .create_typed_array_view(buffer, TypedArrayElementKind::BigUint64, 0, 2)
+        .expect("create BigUint64 view");
+
+    context
+        .typed_array_store_element(signed, 0, JsValue::BigInt(-1))
+        .expect("store signed value");
+    context
+        .typed_array_store_element(unsigned, 1, JsValue::BigInt(0x0102_0304_0506_0708))
+        .expect("store unsigned value");
+
+    assert_eq!(
+        context.typed_array_load_element(signed, 0).unwrap(),
+        JsValue::BigInt(-1)
+    );
+    assert_eq!(
+        context.typed_array_load_element(unsigned, 0).unwrap(),
+        JsValue::BigInt(u64::MAX as i128)
+    );
+    assert_eq!(
+        context.typed_array_load_element(signed, 1).unwrap(),
+        JsValue::BigInt(0x0102_0304_0506_0708)
+    );
+}
+
+#[test]
+fn data_view_bigint_and_float16_share_buffer_storage() {
+    let mut context = NativeContext::default();
+    let buffer = context.create_array_buffer(10).expect("create buffer");
+    let data = context
+        .create_data_view(buffer, 0, 10)
+        .expect("create view");
+
+    context
+        .data_view_set(
+            data,
+            0,
+            TypedArrayElementKind::BigInt64,
+            JsValue::BigInt(-2),
+            false,
+        )
+        .expect("store BigInt64");
+    context
+        .data_view_set(
+            data,
+            8,
+            TypedArrayElementKind::Float16,
+            JsValue::Number(1.5),
+            false,
+        )
+        .expect("store Float16");
+
+    assert_eq!(
+        context
+            .data_view_get(data, 0, TypedArrayElementKind::BigInt64, false)
+            .unwrap(),
+        JsValue::BigInt(-2)
+    );
+    assert_eq!(
+        context
+            .data_view_get(data, 8, TypedArrayElementKind::Float16, false)
+            .unwrap(),
+        JsValue::Number(1.5)
+    );
+}

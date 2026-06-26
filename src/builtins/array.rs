@@ -411,13 +411,26 @@ fn array_is_array(
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let result = arguments
-        .first()
-        .and_then(|value| context.value_object(value))
-        .map(|object| context.is_array_object(object))
-        .transpose()?
-        .unwrap_or(false);
-    Ok(JsValue::Boolean(result))
+    Ok(JsValue::Boolean(is_array_value(
+        context,
+        arguments.first().unwrap_or(&JsValue::Undefined),
+    )?))
+}
+
+fn is_array_value(context: &NativeContext, value: &JsValue) -> Result<bool, VmError> {
+    let Some(object) = context.value_object(value) else {
+        return Ok(false);
+    };
+    if context.is_array_object(object)? {
+        return Ok(true);
+    }
+    let Some(record) = context.proxy_record(object) else {
+        return Ok(false);
+    };
+    if matches!(record.handler, JsValue::Null) {
+        return Err(VmError::type_error("proxy has been revoked"));
+    }
+    is_array_value(context, &record.target)
 }
 
 fn is_callable(value: &JsValue) -> bool {

@@ -209,7 +209,11 @@ fn js_number_to_property_key(n: f64) -> String {
         return "NaN".into();
     }
     if n.is_infinite() {
-        return if n > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+        return if n > 0.0 {
+            "Infinity".into()
+        } else {
+            "-Infinity".into()
+        };
     }
     let magnitude = n.abs();
     if !(1e-6..1e21).contains(&magnitude) {

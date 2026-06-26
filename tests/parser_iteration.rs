@@ -407,7 +407,10 @@ fn generator_return_passes_value_to_yield_star_delegate_return() {
          var result = it.return(41); \
          '' + received + '/' + result.value + '/' + result.done;",
     );
-    assert_eq!(result.expect("delegate return should receive value"), "41/42/true");
+    assert_eq!(
+        result.expect("delegate return should receive value"),
+        "41/42/true"
+    );
 }
 
 #[test]
@@ -429,7 +432,10 @@ fn generator_return_yields_when_delegate_return_is_not_done() {
          var b = it.return(41); \
          '' + a.value + '/' + a.done + '/' + b.value + '/' + b.done;",
     );
-    assert_eq!(result.expect("delegate return should be resumable"), "7/false/7/true");
+    assert_eq!(
+        result.expect("delegate return should be resumable"),
+        "7/false/7/true"
+    );
 }
 
 #[test]
@@ -468,7 +474,10 @@ fn generator_throw_resumes_after_delegate_done() {
          var result = it.throw(40); \
          '' + result.value + '/' + result.done;",
     );
-    assert_eq!(result.expect("delegate done should resume generator"), "42/true");
+    assert_eq!(
+        result.expect("delegate done should resume generator"),
+        "42/true"
+    );
 }
 
 #[test]

@@ -40,11 +40,23 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     define_method(context, constructor_object, "resolve", 1, promise_resolve)?;
     define_method(context, constructor_object, "reject", 1, promise_reject)?;
     define_method(context, constructor_object, "all", 1, promise_all)?;
-    define_method(context, constructor_object, "allSettled", 1, promise_all_settled)?;
+    define_method(
+        context,
+        constructor_object,
+        "allSettled",
+        1,
+        promise_all_settled,
+    )?;
     define_method(context, constructor_object, "any", 1, promise_any)?;
     define_method(context, constructor_object, "race", 1, promise_race)?;
     define_method(context, constructor_object, "try", 1, promise_try)?;
-    define_method(context, constructor_object, "withResolvers", 0, promise_with_resolvers)?;
+    define_method(
+        context,
+        constructor_object,
+        "withResolvers",
+        0,
+        promise_with_resolvers,
+    )?;
     let species_getter =
         context.register_builtin("get [Symbol.species]", 0, promise_species_get, None)?;
     context.define_symbol_own_property(
@@ -376,7 +388,10 @@ fn promise_then_with_finally(
         return Err(VmError::type_error("Promise method called on non-promise"));
     };
     let (result_object, result_promise) = create_promise_object(context)?;
-    let on_fulfilled = arguments.first().filter(|value| is_callable(value)).cloned();
+    let on_fulfilled = arguments
+        .first()
+        .filter(|value| is_callable(value))
+        .cloned();
     let on_rejected = if finally {
         on_fulfilled.clone()
     } else {
@@ -399,7 +414,11 @@ fn collect_simple_array_values(
     iterable: JsValue,
 ) -> Result<Vec<JsValue>, VmError> {
     let object = context.require_object(&iterable, "Promise iterable")?;
-    let Some(length) = context.heap().object(object).and_then(JsObject::array_length) else {
+    let Some(length) = context
+        .heap()
+        .object(object)
+        .and_then(JsObject::array_length)
+    else {
         return Err(VmError::type_error("Promise iterable must be an array"));
     };
     // ponytail: Fix2-B skeleton only handles concrete arrays. Upgrade path:

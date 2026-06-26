@@ -58,6 +58,7 @@ pub enum TypedArrayElementKind {
     Uint16,
     Int32,
     Uint32,
+    Float16,
     Float32,
     Float64,
     BigInt64,
@@ -69,7 +70,7 @@ impl TypedArrayElementKind {
     pub const fn bytes_per_element(self) -> usize {
         match self {
             Self::Int8 | Self::Uint8 | Self::Uint8Clamped => 1,
-            Self::Int16 | Self::Uint16 => 2,
+            Self::Int16 | Self::Uint16 | Self::Float16 => 2,
             Self::Int32 | Self::Uint32 | Self::Float32 => 4,
             Self::Float64 | Self::BigInt64 | Self::BigUint64 => 8,
         }

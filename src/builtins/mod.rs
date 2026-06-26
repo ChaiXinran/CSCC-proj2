@@ -5,6 +5,7 @@ mod function;
 mod json;
 mod object;
 mod promise;
+mod proxy;
 
 // C1/C2 pure algorithm modules. They contain no VM/runtime wiring; the thin
 // adapter layer in `std_primitives` bridges them into the runtime.
@@ -61,6 +62,14 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
 
     let mut function_prototype_object = JsObject::ordinary();
     function_prototype_object.prototype = Some(object_prototype);
+    function_prototype_object.define_property(
+        "length",
+        PropertyDescriptor::data_with(JsValue::Number(0.0), false, false, true),
+    );
+    function_prototype_object.define_property(
+        "name",
+        PropertyDescriptor::data_with(JsValue::String(String::new()), false, false, true),
+    );
     let function_prototype = context
         .heap_mut()
         .allocate_object(function_prototype_object)
@@ -256,6 +265,7 @@ fn test262_error_construct(
 /// which bridges the pure C1/C2 algorithm modules into the runtime.
 fn install_std_globals(context: &mut NativeContext) -> Result<(), VmError> {
     std_primitives::install(context)?;
+    proxy::install(context)?;
     binary_data::install(context)?;
     collections::install(context)?;
     promise::install(context)?;

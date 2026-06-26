@@ -15,6 +15,39 @@ pub fn install_function(context: &mut NativeContext) {
     else {
         return;
     };
+    let throw_type_error = context
+        .register_builtin("ThrowTypeError", 0, function_restricted_thrower, None)
+        .expect("install %ThrowTypeError%");
+    let legacy_caller_getter = context
+        .register_builtin("get caller", 0, function_legacy_caller_get, None)
+        .expect("install Function caller getter");
+    let legacy_arguments_getter = context
+        .register_builtin("get arguments", 0, function_legacy_arguments_get, None)
+        .expect("install Function arguments getter");
+    let legacy_setter = context
+        .register_builtin("set caller/arguments", 1, function_legacy_noop_set, None)
+        .expect("install Function caller/arguments setter");
+    context.set_function_restricted_thrower(throw_type_error.clone());
+    context.set_function_legacy_accessors(
+        legacy_caller_getter,
+        legacy_arguments_getter,
+        legacy_setter,
+    );
+    for name in ["caller", "arguments"] {
+        context
+            .define_own_property(
+                function_prototype,
+                name.into(),
+                PropertyDescriptor::accessor(
+                    Some(throw_type_error.clone()),
+                    Some(throw_type_error.clone()),
+                    false,
+                    true,
+                ),
+            )
+            .expect("define restricted Function.prototype property");
+    }
+
     let call = context
         .register_builtin("call", 1, function_prototype_call, None)
         .expect("install Function.prototype.call");
@@ -132,6 +165,7 @@ fn create_dynamic_function(
         chunk.functions.first().cloned().ok_or_else(|| {
             VmError::syntax_error("dynamic Function did not compile to a function")
         })?;
+    let is_strict = template.is_strict;
     let id = context.allocate_function(JsFunction {
         name: template.name.or_else(|| Some("anonymous".into())),
         params: template.params,
@@ -142,7 +176,55 @@ fn create_dynamic_function(
         environment: Some(context.global_environment()),
         is_generator: false,
     })?;
+    if is_strict {
+        context.mark_strict_function(id);
+        context.remove_own_function_legacy_properties(id)?;
+    }
     Ok(JsValue::Function(id))
+}
+
+fn function_restricted_thrower(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Err(VmError::type_error(
+        "caller and arguments are restricted function properties",
+    ))
+}
+
+fn function_legacy_caller_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    context.legacy_function_caller(&this)
+}
+
+fn function_legacy_arguments_get(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    if matches!(this, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
+        Ok(JsValue::Null)
+    } else {
+        Err(VmError::type_error(
+            "Function arguments getter receiver is not callable",
+        ))
+    }
+}
+
+fn function_legacy_noop_set(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(JsValue::Undefined)
 }
 
 fn dynamic_function_source_parts(

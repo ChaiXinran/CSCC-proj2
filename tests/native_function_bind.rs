@@ -141,6 +141,51 @@ fn dynamic_function_exposes_name_length_and_prototype_properties() {
 }
 
 #[test]
+fn function_prototype_exposes_standard_name_length_order() {
+    assert_eq!(
+        native_eval(
+            "var names = Object.getOwnPropertyNames(Function.prototype); \
+             var length = Object.getOwnPropertyDescriptor(Function.prototype, 'length'); \
+             var name = Object.getOwnPropertyDescriptor(Function.prototype, 'name'); \
+             names.indexOf('length') + ':' + names.indexOf('name') + ':' + \
+             length.value + ':' + length.writable + ':' + length.enumerable + ':' + length.configurable + ':' + \
+             name.value + ':' + name.writable + ':' + name.enumerable + ':' + name.configurable;"
+        ),
+        "0:1:0:false:false:true::false:false:true"
+    );
+}
+
+#[test]
+fn strict_functions_restrict_caller_and_arguments_properties() {
+    assert_eq!(
+        native_eval_strict(
+            "function f() {} \
+             var readCaller = false, writeCaller = false, readArguments = false, writeArguments = false; \
+             try { f.caller; } catch (e) { readCaller = e.constructor === TypeError; } \
+             try { f.caller = 1; } catch (e) { writeCaller = e.constructor === TypeError; } \
+             try { f.arguments; } catch (e) { readArguments = e.constructor === TypeError; } \
+             try { f.arguments = 1; } catch (e) { writeArguments = e.constructor === TypeError; } \
+             [readCaller, writeCaller, readArguments, writeArguments].join(':');"
+        ),
+        "true:true:true:true"
+    );
+}
+
+#[test]
+fn dynamic_strict_function_inherits_restricted_properties_without_own_slots() {
+    assert_eq!(
+        native_eval(
+            "var f = Function('\"use strict\";'); \
+             var readCaller = false, readArguments = false; \
+             try { f.caller; } catch (e) { readCaller = e.constructor === TypeError; } \
+             try { f.arguments; } catch (e) { readArguments = e.constructor === TypeError; } \
+             [f.hasOwnProperty('caller'), f.hasOwnProperty('arguments'), readCaller, readArguments].join(':');"
+        ),
+        "false:false:true:true"
+    );
+}
+
+#[test]
 fn dynamic_function_does_not_capture_local_environment() {
     assert_eq!(
         native_eval(

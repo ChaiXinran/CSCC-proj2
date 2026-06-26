@@ -88,15 +88,20 @@ impl Parser {
                 if matches!(
                     self.tokens.get(self.cursor + 1).map(|t| &t.kind),
                     Some(TokenKind::Punctuator(':'))
-                ) && self.label_identifier_is_valid()
-                => self.parse_labelled_statement(),
+                ) && self.label_identifier_is_valid() =>
+            {
+                self.parse_labelled_statement()
+            }
             // `await` is a valid label in non-module (script) mode.
             TokenKind::Keyword(Keyword::Await)
                 if !self.is_async_context
                     && matches!(
                         self.tokens.get(self.cursor + 1).map(|t| &t.kind),
                         Some(TokenKind::Punctuator(':'))
-                    ) => self.parse_labelled_statement(),
+                    ) =>
+            {
+                self.parse_labelled_statement()
+            }
             // `yield` is a valid label in non-strict, non-generator mode.
             TokenKind::Keyword(Keyword::Yield)
                 if !self.is_strict
@@ -104,7 +109,10 @@ impl Parser {
                     && matches!(
                         self.tokens.get(self.cursor + 1).map(|t| &t.kind),
                         Some(TokenKind::Punctuator(':'))
-                    ) => self.parse_labelled_statement(),
+                    ) =>
+            {
+                self.parse_labelled_statement()
+            }
             _ => self.parse_expression_statement(),
         }
     }
@@ -237,7 +245,9 @@ impl Parser {
                     }
                     // rest parameter must be last; trailing comma is a SyntaxError
                     if self.check_punctuator(',') {
-                        return Err(self.error("rest parameter must be last formal parameter".into()));
+                        return Err(
+                            self.error("rest parameter must be last formal parameter".into())
+                        );
                     }
                     break;
                 }
@@ -357,9 +367,9 @@ impl Parser {
             collect_param_bound_names(p, &mut names);
             for name in names {
                 if !seen.insert(name.clone()) {
-                    return Err(self.error(format!(
-                        "duplicate parameter name `{name}` is not allowed"
-                    )));
+                    return Err(
+                        self.error(format!("duplicate parameter name `{name}` is not allowed"))
+                    );
                 }
             }
         }
@@ -390,10 +400,7 @@ impl Parser {
     /// Validates that no parameter name is `eval`, `arguments`, or a strict-mode
     /// future reserved word. Called retroactively when a function body turns out
     /// to be strict (inner `"use strict"` directive).
-    pub(super) fn check_strict_params(
-        &self,
-        params: &[FunctionParam],
-    ) -> Result<(), ParseError> {
+    pub(super) fn check_strict_params(&self, params: &[FunctionParam]) -> Result<(), ParseError> {
         for p in params {
             let name = p.name();
             if matches!(name, "eval" | "arguments")
@@ -464,7 +471,9 @@ impl Parser {
                 if let Some(&span) = legacy_escape_spans.first() {
                     return Err(ParseError {
                         span,
-                        message: "octal escape sequences are not allowed in strict mode string literals".into(),
+                        message:
+                            "octal escape sequences are not allowed in strict mode string literals"
+                                .into(),
                     });
                 }
                 self.is_strict = true;
@@ -534,7 +543,11 @@ impl Parser {
             if kind == VariableKind::Const && initializer.is_none() {
                 return Err(self.error("`const` declarations require an initializer".into()));
             }
-            declarations.push(VariableDeclarator { name, pattern: None, initializer });
+            declarations.push(VariableDeclarator {
+                name,
+                pattern: None,
+                initializer,
+            });
             if !self.eat_punctuator(',') {
                 break;
             }
@@ -622,7 +635,8 @@ impl Parser {
                 });
             } else {
                 // static key: identifier (including keywords), string, or number
-                let (key_prop_name, shorthand_name, key_had_escape) = self.parse_object_binding_key()?;
+                let (key_prop_name, shorthand_name, key_had_escape) =
+                    self.parse_object_binding_key()?;
                 let (value, default) = if self.eat_punctuator(':') {
                     // `{ key: pattern }` or `{ key: pattern = default }`
                     let pat = self.parse_binding_pattern()?;
@@ -701,7 +715,9 @@ impl Parser {
     /// `shorthand_name` is `Some` only for plain-identifier keys that can serve
     /// as both key and shorthand binding target: `{ foo }` �?key `"foo"`, binding `"foo"`.
     /// Returns `(property_name, shorthand_binding_name, had_escape_sequence)`.
-    fn parse_object_binding_key(&mut self) -> Result<(PropertyName, Option<String>, bool), ParseError> {
+    fn parse_object_binding_key(
+        &mut self,
+    ) -> Result<(PropertyName, Option<String>, bool), ParseError> {
         let tok = self.peek().clone();
         let had_escape = tok.has_identifier_escape;
         match tok.kind {
@@ -715,11 +731,19 @@ impl Parser {
             }
             TokenKind::Keyword(kw) => {
                 self.advance();
-                Ok((PropertyName::Identifier(kw.as_str().into()), None, had_escape))
+                Ok((
+                    PropertyName::Identifier(kw.as_str().into()),
+                    None,
+                    had_escape,
+                ))
             }
             TokenKind::Identifier(name) => {
                 self.advance();
-                Ok((PropertyName::Identifier(name.clone()), Some(name), had_escape))
+                Ok((
+                    PropertyName::Identifier(name.clone()),
+                    Some(name),
+                    had_escape,
+                ))
             }
             _ => Err(self.error(format!(
                 "expected property name, got {}",
@@ -797,10 +821,7 @@ impl Parser {
         self.expect_punctuator(')')?;
         // Optional semicolon after `do-while`
         self.eat_punctuator(';');
-        Ok(Statement::DoWhile {
-            test,
-            body,
-        })
+        Ok(Statement::DoWhile { test, body })
     }
 
     /// Returns true if the tokens starting at `cursor` (after any label chains)
@@ -809,9 +830,9 @@ impl Parser {
         let mut pos = self.cursor;
         loop {
             match &self.tokens.get(pos).map(|t| &t.kind) {
-                Some(TokenKind::Keyword(
-                    Keyword::While | Keyword::For | Keyword::Do,
-                )) => return true,
+                Some(TokenKind::Keyword(Keyword::While | Keyword::For | Keyword::Do)) => {
+                    return true;
+                }
                 // Another label chain: identifier followed by ':'
                 Some(TokenKind::Identifier(_)) => {
                     if let Some(next) = self.tokens.get(pos + 1)
@@ -847,9 +868,9 @@ impl Parser {
             }
             // `let` and `static` are also not allowed as class names.
             if is_strict_future_reserved(name) || is_strict_future_reserved_keyword(name) {
-                return Err(self.error(format!(
-                    "`{name}` is not a valid class name in strict mode"
-                )));
+                return Err(
+                    self.error(format!("`{name}` is not a valid class name in strict mode"))
+                );
             }
         }
         // Delegates the rest (reserved words, `await` in module context, etc.) to `expect_identifier`.
@@ -913,14 +934,18 @@ impl Parser {
         // Lexical declarations (const/let) and certain declarations are not statements
         // and cannot appear in single-statement positions including label bodies.
         let decl_kind_err = match &body {
-            Statement::VariableDeclaration { kind: VariableKind::Let | VariableKind::Const, .. }
-            | Statement::DestructuringDeclaration { kind: VariableKind::Let | VariableKind::Const, .. } => {
-                Some("lexical declarations")
+            Statement::VariableDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                ..
             }
+            | Statement::DestructuringDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                ..
+            } => Some("lexical declarations"),
             Statement::ClassDeclaration(_) => Some("class declarations"),
-            Statement::FunctionDeclaration { is_generator: true, .. } => {
-                Some("generator function declarations")
-            }
+            Statement::FunctionDeclaration {
+                is_generator: true, ..
+            } => Some("generator function declarations"),
             Statement::FunctionDeclaration { is_async: true, .. } => {
                 Some("async function declarations")
             }
@@ -1131,7 +1156,11 @@ impl Parser {
             if kind == VariableKind::Const && initializer.is_none() {
                 return Err(self.error("`const` declarations require an initializer".into()));
             }
-            declarations.push(VariableDeclarator { name, pattern: None, initializer });
+            declarations.push(VariableDeclarator {
+                name,
+                pattern: None,
+                initializer,
+            });
             if !self.eat_punctuator(',') {
                 break;
             }
@@ -1190,13 +1219,17 @@ impl Parser {
         // but loop bodies have no such exemption — always reject bare function declarations.
         let is_loop = context == "loop";
         let kind_err = match &stmt {
-            Statement::VariableDeclaration { kind: VariableKind::Let | VariableKind::Const, .. }
-            | Statement::DestructuringDeclaration { kind: VariableKind::Let | VariableKind::Const, .. } => {
-                Some("lexical declarations")
+            Statement::VariableDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                ..
             }
-            Statement::FunctionDeclaration { is_generator: true, .. } => {
-                Some("generator function declarations")
-            }
+            | Statement::DestructuringDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                ..
+            } => Some("lexical declarations"),
+            Statement::FunctionDeclaration {
+                is_generator: true, ..
+            } => Some("generator function declarations"),
             Statement::FunctionDeclaration { is_async: true, .. } => {
                 Some("async function declarations")
             }
@@ -1238,16 +1271,16 @@ impl Parser {
         match &label {
             None => {
                 if self.loop_depth == 0 && self.switch_depth == 0 {
-                    return Err(self.error(
-                        "illegal `break` statement outside of a loop or switch".into(),
-                    ));
+                    return Err(
+                        self.error("illegal `break` statement outside of a loop or switch".into())
+                    );
                 }
             }
             Some(name) => {
                 if !self.label_stack.iter().any(|(l, _)| l == name) {
-                    return Err(self.error(format!(
-                        "undefined label `{name}` in `break` statement"
-                    )));
+                    return Err(
+                        self.error(format!("undefined label `{name}` in `break` statement"))
+                    );
                 }
             }
         }
@@ -1272,13 +1305,15 @@ impl Parser {
         match &label {
             None => {
                 if self.loop_depth == 0 {
-                    return Err(self.error(
-                        "illegal `continue` statement outside of a loop".into(),
-                    ));
+                    return Err(self.error("illegal `continue` statement outside of a loop".into()));
                 }
             }
             Some(name) => {
-                if !self.label_stack.iter().any(|(l, is_iter)| l == name && *is_iter) {
+                if !self
+                    .label_stack
+                    .iter()
+                    .any(|(l, is_iter)| l == name && *is_iter)
+                {
                     return Err(self.error(format!(
                         "undefined or non-iteration label `{name}` in `continue` statement"
                     )));
@@ -1412,7 +1447,10 @@ impl Parser {
             }
         }
         // Spec: SwitchStatement early error — var-declared names must not overlap lexical names.
-        for name in cases.iter().flat_map(|case| var_declared_names(&case.consequent)) {
+        for name in cases
+            .iter()
+            .flat_map(|case| var_declared_names(&case.consequent))
+        {
             if lexical_names.contains(name) {
                 return Err(self.error(format!(
                     "var `{name}` conflicts with a lexical declaration in switch"
@@ -1543,7 +1581,9 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
                 collect_var_declared_names(alternate, names);
             }
         }
-        Statement::While { body, .. } | Statement::DoWhile { body, .. } => collect_var_declared_names(body, names),
+        Statement::While { body, .. } | Statement::DoWhile { body, .. } => {
+            collect_var_declared_names(body, names)
+        }
         Statement::Labelled { body, .. } => collect_var_declared_names(body, names),
         Statement::Try {
             block,

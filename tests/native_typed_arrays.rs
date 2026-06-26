@@ -296,6 +296,96 @@ fn array_buffer_resize_and_transfer_methods_preserve_bytes() {
 }
 
 #[test]
+fn data_view_bigint64_methods_round_trip_shared_storage() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(16); \
+             var v = new DataView(b); \
+             v.setBigInt64(0, -1n, false); \
+             v.setBigUint64(8, 0x0102030405060708n, true); \
+             var u = new Uint8Array(b); \
+             [v.getBigInt64(0, false), \
+              v.getBigUint64(8, true).toString(16), \
+              u[0], u[8]].join(':');"
+        ),
+        "-1:102030405060708:255:8"
+    );
+}
+
+#[test]
+fn data_view_float16_methods_round_trip_half_precision_values() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(4); \
+             var v = new DataView(b); \
+             v.setFloat16(0, 1.5, false); \
+             v.setFloat16(2, -0, true); \
+             [v.getFloat16(0, false), 1 / v.getFloat16(2, true) === -Infinity].join(':');"
+        ),
+        "1.5:true"
+    );
+}
+
+#[test]
+fn data_view_to_index_truncates_offsets_and_uses_object_primitives() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(4); \
+             var v = new DataView(b); \
+             v.setUint8(0, 11); v.setUint8(1, 22); v.setUint8(2, 33); \
+             var obj = { valueOf: function() { return 2.9; } }; \
+             [v.getUint8(0.9), v.getUint8(1.9), v.getUint8(obj), v.getUint8(NaN)].join(':');"
+        ),
+        "11:22:33:11"
+    );
+}
+
+#[test]
+fn data_view_set_converts_value_before_range_and_detached_checks() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(1); \
+             var v = new DataView(b); \
+             var calls = []; \
+             var value = { valueOf: function() { calls.push('value'); return 7; } }; \
+             try { v.setInt8(100, value); } catch (e) { calls.push(e.constructor === RangeError); } \
+             b.transfer(); \
+             try { v.setInt8(0, value); } catch (e) { calls.push(e.constructor === TypeError); } \
+             calls.join(':');"
+        ),
+        "value:true:value:true"
+    );
+}
+
+#[test]
+fn shared_array_buffer_can_back_data_view_storage() {
+    assert_eq!(
+        native_eval(
+            "var b = new SharedArrayBuffer(4); \
+             var v1 = new DataView(b); \
+             var v2 = new DataView(b); \
+             v1.setUint8(0, 77); \
+             [b.byteLength, v2.getUint8(0), v1.buffer === b, Object.prototype.toString.call(b)].join(':');"
+        ),
+        "4:77:true:[object SharedArrayBuffer]"
+    );
+}
+
+#[test]
+fn bigint_typed_array_storage_uses_bigint_values() {
+    assert_eq!(
+        native_eval(
+            "var a = new BigInt64Array(2); \
+             a[0] = -1n; \
+             a[1] = 0x0102030405060708n; \
+             var b = new BigUint64Array(a.buffer); \
+             [a[0], a[1].toString(16), b[0].toString(16), typeof a[0]].join(':');"
+        ),
+        "-1:102030405060708:ffffffffffffffff:bigint"
+    );
+}
+
+#[test]
 fn intl_namespace_and_first_batch_constructors_are_installed() {
     assert_eq!(
         native_eval(

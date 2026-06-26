@@ -2219,8 +2219,7 @@ impl Compiler {
                     } = val_target
                     {
                         // Defaults only apply when value is undefined, not null.
-                        let skip_default =
-                            chunk.emit(Instruction::JumpIfNotUndefined(usize::MAX));
+                        let skip_default = chunk.emit(Instruction::JumpIfNotUndefined(usize::MAX));
                         chunk.emit(Instruction::Pop);
                         self.compile_expression(default_expr, chunk, context)?;
                         let after_default = chunk.current_offset();
