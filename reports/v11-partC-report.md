@@ -30,7 +30,8 @@ Primary directories:
 Status: basic V11-C functionality plus Object/Reflect descriptor bridge,
 ArrayBuffer/DataView/TypedArray storage, JS-visible Array/TypedArray
 iterator objects, and Array callback-method generic/hole semantics
-implemented.
+implemented. Fix2 follow-up now brings `Array.from` to a focused 47/47
+Test262 pass while preserving the Object/Reflect descriptor bridge.
 
 ## Change Log
 
@@ -42,6 +43,7 @@ implemented.
 | 2026-06-26 | Codex / C group | Wired ArrayBuffer/DataView/TypedArray to runtime byte storage, added live typed-array indexed properties and many prototype methods, implemented basic resizable/transfer/immutable ArrayBuffer operations, fixed computed symbol method calls, and repaired `in`/`instanceof` precedence | `src/builtins/binary_data.rs`, `src/runtime/buffer.rs`, `src/runtime/context.rs`, `src/runtime/object.rs`, `src/builtins/object.rs`, `src/builtins/json.rs`, `src/builtins/annex_b.rs`, `src/builtins/std_primitives.rs`, `src/bytecode/compiler.rs`, `src/bytecode/opcode.rs`, `src/vm/interpreter.rs`, `src/parser/expression.rs`, `tests/native_typed_arrays.rs`, C focused summary JSON/log files | `rustfmt --edition 2024` on touched Rust files; `cargo check --no-default-features --all-targets`; C/native regression tests; focused ArrayBuffer/DataView/TypedArray Test262 scans | ArrayBuffer focused scan: 170/221 pass (76.92%), up from 126/221. DataView focused scan: 297/561 pass (52.94%), up from 296/561. TypedArray focused scan: 651/1446 pass (45.02%), up from 350/1446. Full V11 scan not rerun after this pass. |
 | 2026-06-26 | Codex / C group | Replaced Array/TypedArray iterator snapshot arrays with JS-visible iterator objects, wired `Iterator.prototype.next` to runtime iterator records, and added length-tracking/OOB validation for resizable TypedArray views | `src/builtins/array.rs`, `src/builtins/binary_data.rs`, `src/builtins/collections.rs`, `src/runtime/buffer.rs`, `src/runtime/context.rs`, `src/runtime/iterator.rs`, `src/runtime/mod.rs`, `tests/native_typed_arrays.rs`, focused C summary JSON files | `rustfmt --edition 2024` on touched Rust files; `cargo check --no-default-features --all-targets`; `cargo test --no-default-features --test native_typed_arrays`; `cargo test --no-default-features --test native_binary_data`; `cargo test --no-default-features --test native_collections`; `cargo test --no-default-features --test native_iteration`; focused Array/TypedArray iterator scans; focused ArrayBuffer/DataView/TypedArray scans | `Array/prototype/values`: 9/12 pass, up from 7/12. `TypedArray/prototype/values`: 15/21, up from 10/21. `keys`: 13/19, up from 9/19. `entries`: 13/19, up from 10/19. Full TypedArray focused scan: 706/1446 pass (48.82%), up from 651/1446. ArrayBuffer/DataView focused scans remained 170/221 and 297/561. |
 | 2026-06-26 | Codex / C group | Updated Array callback methods to use ToObject/ToLength, skip holes with HasProperty, read inherited elements, preserve sparse map results, and support primitive string receivers | `src/builtins/array.rs`, `tests/native_array_methods.rs`, focused Array summary JSON files, `reports/v11-partC-report.md` | `rustfmt --edition 2024 src/builtins/array.rs tests/native_array_methods.rs`; `cargo check --no-default-features --all-targets`; `cargo test --no-default-features --test native_array_methods`; `cargo test --no-default-features --test native_typed_arrays`; `cargo test --no-default-features --test native_iteration`; `cargo test --no-default-features --test native_collections`; `cargo test --no-default-features --test native_object_keys`; `cargo test --no-default-features --test native_test262`; focused Array callback scans; focused Array scan | `Array/prototype/map`: 171/216 pass, failed count down from 66 to 45. `filter`: 206/242, down from 66 to 36. `reduce`: 228/260, down from 71 to 32. `reduceRight`: 226/260, down from 73 to 34. `forEach`: 166/190, down from 41 to 24. `every`: 194/218, down from 42 to 24. `some`: 196/219, down from 41 to 23. Full Array focused scan: 2169/3081 pass (70.40%), up from 1987/3081. |
+| 2026-06-26 | Codex / C group | Completed the Fix2 `Array.from` descriptor/property follow-up, added generator `@@iterator`, fixed `ToLength(NaN)`, accepted object literal shorthand needed by the focused suite, and replaced the Test262 `createRealm` hard error with a same-realm fallback | `src/builtins/array.rs`, `src/vm/interpreter.rs`, `src/parser/expression.rs`, `src/builtins/binary_data.rs`, `tests/native_array_methods.rs`, `tests/native_typed_arrays.rs`, focused Fix2 JSON summaries | `rustfmt --edition 2024` on touched files; `cargo check --no-default-features --all-targets`; `cargo test --no-default-features --test native_array_methods`; `cargo test --no-default-features --test parser_iteration`; `cargo test --no-default-features --test native_object_keys`; `cargo test --no-default-features --test native_stdlib`; `cargo test --no-default-features --test native_typed_arrays`; `cargo test --no-default-features --test native_test262`; `cargo test --no-default-features --test native_control_flow`; `cargo test --no-default-features --test bytecode_objects`; focused Test262 Array/from, Array, Object, Reflect, Object/assign scans | `Array/from`: 47/47 pass, up from 43/47 at start of this follow-up and 45/47 before shorthand/createRealm cleanup. Full Array scan: 2339/3081 pass (75.92%). Full Object scan: 3038/3411 pass (89.06%). Reflect scan: 143/153 pass; remaining 10 are Proxy-only. Object.assign scan: 34/38 pass; remaining 4 are Proxy-only. |
 
 ## Implemented Functionality
 
@@ -104,6 +106,19 @@ implemented.
 - Parser keyword binary precedence for `in` and `instanceof` now matches the
   relational precedence table, fixing cases such as
   `value instanceof Type !== true`.
+- `Array.from` now uses VM-aware `ToObject`, `LengthOfArrayLike`, iterator
+  property reads, constructor result creation, `CreateDataPropertyOrThrow`,
+  strict final `length` setting, and iterator closing on abrupt completions.
+- `ToLength` now treats `NaN` as `0`, fixing array-like values whose `length`
+  is missing or non-numeric.
+- Generator objects now expose `@@iterator` returning themselves, allowing
+  `Array.from(function*(){...}())` and related iterator consumers to use the
+  iterator path.
+- Object literal shorthand properties such as `{ length }` now parse and lower
+  as ordinary data properties with identifier values.
+- `$262.createRealm()` no longer hard-errors in the native Test262 host; it
+  returns the current `$262` host object as a same-realm fallback so non-strict
+  realm-prototype probes can continue.
 
 ## Test Results and Delta Analysis
 
@@ -399,6 +414,46 @@ Results after this sprint:
 - Full `--native-v11-scan` was not rerun in this pass; the locked full scan is
   still treated as a long-running final confirmation step.
 
+Fix2 `Array.from` follow-up validation:
+
+```text
+rustfmt --edition 2024 src/builtins/array.rs src/vm/interpreter.rs src/parser/expression.rs src/builtins/binary_data.rs tests/native_array_methods.rs tests/native_typed_arrays.rs
+cargo check --no-default-features --all-targets
+cargo test --no-default-features --test native_array_methods
+cargo test --no-default-features --test parser_iteration
+cargo test --no-default-features --test native_object_keys
+cargo test --no-default-features --test native_stdlib
+cargo test --no-default-features --test native_typed_arrays
+cargo test --no-default-features --test native_test262
+cargo test --no-default-features --test native_control_flow
+cargo test --no-default-features --test bytecode_objects
+cargo build --release --no-default-features
+target/release/agentjs.exe test262 --backend native --root test262 --suite test/built-ins/Array/from --jobs 4 --verbose --json reports/fix2-c-array-from-after7.json
+target/release/agentjs.exe test262 --backend native --root test262 --suite test/built-ins/Reflect --jobs 4 --verbose --json reports/fix2-c-reflect-after-final.json
+target/release/agentjs.exe test262 --backend native --root test262 --suite test/built-ins/Object/assign --jobs 4 --verbose --json reports/fix2-c-object-assign-after-final.json
+target/release/agentjs.exe test262 --backend native --root test262 --suite test/built-ins/Array --jobs 4 --json reports/fix2-c-array-after-final.json
+target/release/agentjs.exe test262 --backend native --root test262 --suite test/built-ins/Object --jobs 4 --json reports/fix2-c-object-after-final.json
+```
+
+Results:
+
+- `native_array_methods`: 16 passed, 0 failed.
+- `parser_iteration`: 23 passed, 0 failed.
+- `native_object_keys`: 15 passed, 0 failed.
+- `native_stdlib`: 27 passed, 0 failed.
+- `native_typed_arrays`: 24 passed, 0 failed.
+- `native_test262`: 15 passed, 0 failed.
+- `native_control_flow`: 6 passed, 0 failed.
+- `bytecode_objects`: 18 passed, 0 failed.
+- `cargo check --no-default-features --all-targets`: passed.
+- `Array/from`: 47 total, 47 passed, 0 failed, 100.00% conformance.
+- `Array`: 3,081 total, 2,339 passed, 742 failed, 75.9169% conformance.
+- `Object`: 3,411 total, 3,038 passed, 373 failed, 89.0648% conformance.
+- `Reflect`: 153 total, 143 passed, 10 failed, 93.46% conformance; remaining
+  failures are Proxy-related.
+- `Object/assign`: 38 total, 34 passed, 4 failed, 89.47% conformance; remaining
+  failures are Proxy-related.
+
 ## Open Risks / Coordination Notes
 
 - Coordinate with B before descriptor sweep changes depend on object-model
@@ -418,6 +473,8 @@ Results after this sprint:
 - SharedArrayBuffer, BigInt typed arrays, BigInt DataView methods, full
   species-constructor behavior, cross-realm prototype selection, and complete
   resizable/length-tracking TypedArray semantics remain open.
+- `$262.createRealm()` is currently a same-realm Test262 host fallback, not a
+  true isolated realm. Strict cross-realm identity/isolation tests remain open.
 - TypedArray iterator `next()` errors reached through bytecode `for...of`
   still surface as VM execution errors instead of JS-catchable exceptions in
   some shrink-mid-iteration Test262 cases. Fixing that likely belongs in the

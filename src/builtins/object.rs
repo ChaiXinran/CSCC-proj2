@@ -3,7 +3,7 @@
 use crate::{
     runtime::{
         JsObject, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-        PropertyDescriptorUpdate, PropertyKind, SymbolId, to_property_key,
+        PropertyDescriptorUpdate, PropertyKind, SymbolId,
     },
     vm::{Vm, VmError},
 };
@@ -214,10 +214,11 @@ fn object_define_property(
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let object = context.require_object(&target, "define property")?;
     let key_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    let key = vm.to_property_key_from_builtin(key_arg, context)?;
     let descriptor_value = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
     let descriptor_object = context.require_object(&descriptor_value, "read descriptor")?;
 
-    if let JsValue::Symbol(sym_id) = key_arg {
+    if let JsValue::Symbol(sym_id) = key {
         let update = descriptor_update_from_object(vm, context, descriptor_object)?;
         if context.validate_and_apply_symbol_property_descriptor(object, sym_id, update)? {
             return Ok(target);
@@ -226,7 +227,9 @@ fn object_define_property(
         }
     }
 
-    let key = to_property_key(&key_arg)?;
+    let JsValue::String(key) = key else {
+        unreachable!("ToPropertyKey returns a string or symbol")
+    };
     let update = descriptor_update_from_object(vm, context, descriptor_object)?;
     if context.validate_and_apply_property_descriptor(object, key, update)? {
         Ok(target)
@@ -244,6 +247,7 @@ fn object_get_own_property_descriptor(
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let object = vm.to_object(target, context)?;
     let descriptor = own_descriptor_for_key(
+        vm,
         context,
         object,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
@@ -255,15 +259,17 @@ fn object_get_own_property_descriptor(
 }
 
 fn own_descriptor_for_key(
-    context: &NativeContext,
+    vm: &mut Vm,
+    context: &mut NativeContext,
     object: ObjectId,
     key_arg: JsValue,
 ) -> Result<Option<PropertyDescriptor>, VmError> {
-    if let JsValue::Symbol(symbol) = key_arg {
-        Ok(context.get_own_symbol_property_descriptor(object, symbol))
-    } else {
-        let key = to_property_key(&key_arg)?;
-        Ok(context.get_own_property_descriptor(object, &key))
+    match vm.to_property_key_from_builtin(key_arg, context)? {
+        JsValue::Symbol(symbol) => Ok(context.get_own_symbol_property_descriptor(object, symbol)),
+        JsValue::String(key) => Ok(context.get_own_property_descriptor(object, &key)),
+        _ => {
+            unreachable!("ToPropertyKey returns a string or symbol")
+        }
     }
 }
 
@@ -359,8 +365,13 @@ fn descriptor_field(
     if !context.has_property(object, key)? {
         return Ok(None);
     }
-    vm.get_property_value(JsValue::Object(object), key, context)
-        .map(Some)
+    vm.get_property_value_with_receiver_from_builtin(
+        JsValue::Object(object),
+        JsValue::Object(object),
+        key,
+        context,
+    )
+    .map(Some)
 }
 
 fn optional_callable(value: JsValue, label: &str) -> Result<Option<JsValue>, VmError> {
@@ -426,6 +437,7 @@ fn object_has_own_property(
 ) -> Result<JsValue, VmError> {
     let object = vm.to_object(this_value, context)?;
     let descriptor = own_descriptor_for_key(
+        vm,
         context,
         object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
@@ -526,7 +538,7 @@ fn object_is_prototype_of(
 }
 
 fn object_property_is_enumerable(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
@@ -536,6 +548,7 @@ fn object_property_is_enumerable(
         Err(_) => return Ok(JsValue::Boolean(false)),
     };
     let descriptor = own_descriptor_for_key(
+        vm,
         context,
         object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
@@ -691,8 +704,20 @@ fn object_assign(
             {
                 continue;
             }
-            let value = vm.get_property_value(source_value.clone(), &key, context)?;
-            context.set_property_strict(target_value.clone(), key, value)?;
+            let value = vm.get_property_value_with_receiver_from_builtin(
+                source_value.clone(),
+                source_value.clone(),
+                &key,
+                context,
+            )?;
+            if !vm.set_property_value_strict_from_builtin(
+                target_value.clone(),
+                &key,
+                value,
+                context,
+            )? {
+                return Err(VmError::type_error(format!("cannot write property {key}")));
+            }
         }
 
         let symbols: Vec<_> = context
@@ -716,7 +741,13 @@ fn object_assign(
                 symbol,
                 context,
             )?;
-            if !context.set_symbol_property(target_id, symbol, value, true)? {
+            if !vm.set_symbol_property_value_with_receiver_from_builtin(
+                target_value.clone(),
+                target_value.clone(),
+                symbol,
+                value,
+                context,
+            )? {
                 return Err(VmError::type_error("cannot assign symbol property"));
             }
         }
@@ -929,6 +960,7 @@ fn object_has_own(
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let object = vm.to_object(target, context)?;
     let descriptor = own_descriptor_for_key(
+        vm,
         context,
         object,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
