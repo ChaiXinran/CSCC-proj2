@@ -31,6 +31,7 @@ pub(crate) enum IteratorKind {
     },
     Js {
         iterator: JsValue,
+        next_method: Option<JsValue>,
     },
 }
 
@@ -63,7 +64,20 @@ impl IteratorRecord {
 
     pub(crate) fn js(iterator: JsValue) -> Self {
         Self {
-            kind: IteratorKind::Js { iterator },
+            kind: IteratorKind::Js {
+                iterator,
+                next_method: None,
+            },
+            done: false,
+        }
+    }
+
+    pub(crate) fn js_with_next(iterator: JsValue, next_method: JsValue) -> Self {
+        Self {
+            kind: IteratorKind::Js {
+                iterator,
+                next_method: Some(next_method),
+            },
             done: false,
         }
     }

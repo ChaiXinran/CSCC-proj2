@@ -125,6 +125,20 @@ fn iterator_helpers_cover_eager_collection_iterators() {
 }
 
 #[test]
+fn iterator_static_concat_zip_and_zip_keyed_cover_basic_sequences() {
+    assert_eq!(
+        native_eval(
+            "var c = Iterator.concat([1, 2], 'ab').toArray(); \
+             var z = Iterator.zip([[1, 2], ['a', 'b']]).toArray(); \
+             var k = Iterator.zipKeyed({ x: [1], y: ['a'] }).next().value; \
+             c.join(',') + ':' + z[0][0] + z[0][1] + z[1][0] + z[1][1] + ':' + \
+             k.x + k.y + ':' + (Object.getPrototypeOf(k) === null);"
+        ),
+        "1,2,a,b:1a2b:1a:true"
+    );
+}
+
+#[test]
 fn iterator_from_wraps_arrays_and_iterables() {
     assert_eq!(
         native_eval(
@@ -188,14 +202,31 @@ fn iterator_prototype_symbol_dispose_calls_return() {
 }
 
 #[test]
-fn unsupported_iterator_pipeline_helpers_throw_explicit_type_errors() {
+fn iterator_pipeline_helpers_cover_basic_eager_results() {
     assert_eq!(
         native_eval(
-            "var caught = false; \
-             try { new Set([1]).values().map(function(value) { return value; }); } \
-             catch (e) { caught = e.name === 'TypeError'; } \
-             caught;"
+            "var mapped = new Set([1, 2, 3]).values().map(function(value) { return value * 2; }).toArray(); \
+             var filtered = new Set([1, 2, 3, 4]).values().filter(function(value) { return value % 2 === 0; }).toArray(); \
+             var taken = new Set([1, 2, 3]).values().take(2).toArray(); \
+             var dropped = new Set([1, 2, 3]).values().drop(1).toArray(); \
+             var reduced = new Set([1, 2, 3]).values().reduce(function(acc, value) { return acc + value; }, 0); \
+             mapped.join(',') + ':' + filtered.join(',') + ':' + taken.join(',') + ':' + dropped.join(',') + ':' + reduced;"
         ),
-        "true"
+        "2,4,6:2,4:1,2:2,3:6"
+    );
+}
+
+#[test]
+fn generator_objects_are_iterable() {
+    assert_eq!(
+        native_eval(
+            "function* prefixes(s) { \
+               for (var i = 0; i <= s.length; ++i) { yield s.slice(0, i); } \
+             } \
+             var out = ''; \
+             for (var prefix of prefixes('ab')) { out = out + '[' + prefix + ']'; } \
+             out;"
+        ),
+        "[][a][ab]"
     );
 }

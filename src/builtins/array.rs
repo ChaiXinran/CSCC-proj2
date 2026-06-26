@@ -443,6 +443,9 @@ fn array_from(
         return Err(VmError::type_error("Array.from: mapfn is not callable"));
     };
 
+    if matches!(source, JsValue::Null | JsValue::Undefined) {
+        return Err(VmError::type_error("cannot Array.from on nullish value"));
+    }
     let object = vm.to_object(source.clone(), context)?;
     let source_value = match source {
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => source,

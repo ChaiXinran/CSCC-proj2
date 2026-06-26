@@ -3,7 +3,7 @@
 use super::iterator::IteratorKind;
 use super::{
     ArrayBufferId, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsValue,
-    PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
+    PromiseId, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
 };
 
 /// Stable handle into the runtime heap.
@@ -65,6 +65,10 @@ pub enum ObjectKind {
     /// Generator object produced by calling a generator function.
     Generator {
         record: GeneratorRecord,
+    },
+    /// Promise object backed by the shared native Promise registry.
+    Promise {
+        promise: PromiseId,
     },
 }
 
@@ -338,7 +342,8 @@ impl JsObject {
             | ObjectKind::DataView { .. }
             | ObjectKind::TypedArray { .. }
             | ObjectKind::Iterator { .. }
-            | ObjectKind::Generator { .. } => None,
+            | ObjectKind::Generator { .. }
+            | ObjectKind::Promise { .. } => None,
         }
     }
 
@@ -355,7 +360,8 @@ impl JsObject {
             | ObjectKind::DataView { .. }
             | ObjectKind::TypedArray { .. }
             | ObjectKind::Iterator { .. }
-            | ObjectKind::Generator { .. } => None,
+            | ObjectKind::Generator { .. }
+            | ObjectKind::Promise { .. } => None,
         }
     }
 
@@ -506,12 +512,20 @@ impl Trace for JsObject {
             | ObjectKind::RegExp { .. }
             | ObjectKind::ArrayBuffer { .. }
             | ObjectKind::DataView { .. }
-            | ObjectKind::TypedArray { .. } => {}
+            | ObjectKind::TypedArray { .. }
+            | ObjectKind::Promise { .. } => {}
             ObjectKind::Iterator { record } => {
                 // Trace the backing iterable/iterator so GC doesn't collect it.
                 match &record.kind {
-                    IteratorKind::Array { object, .. } | IteratorKind::Js { iterator: object } => {
-                        object.trace(tracer);
+                    IteratorKind::Array { object, .. } => object.trace(tracer),
+                    IteratorKind::Js {
+                        iterator,
+                        next_method,
+                    } => {
+                        iterator.trace(tracer);
+                        if let Some(next_method) = next_method {
+                            next_method.trace(tracer);
+                        }
                     }
                     IteratorKind::String { .. } => {}
                 }
@@ -571,6 +585,7 @@ impl JsObject {
                 .saturating_add(record.arguments.capacity() * std::mem::size_of::<JsValue>())
                 .saturating_add(record.stack.capacity() * std::mem::size_of::<JsValue>())
                 .saturating_add(record.delegate_values.capacity() * std::mem::size_of::<JsValue>()),
+            ObjectKind::Promise { .. } => std::mem::size_of::<PromiseId>(),
         };
         std::mem::size_of::<Self>()
             .saturating_add(kind_bytes)
