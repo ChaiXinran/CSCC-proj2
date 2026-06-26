@@ -338,12 +338,14 @@ fn test262_host_object_is_available_only_when_requested() {
         .eval_source(
             "var b = new ArrayBuffer(4); \
              $262.detachArrayBuffer(b); \
-             ($262.global === globalThis) + ':' + $262.evalScript('1 + 2') + ':' + b.detached;",
+             ($262.global === globalThis) + ':' + \
+             ($262.createRealm().global === globalThis) + ':' + \
+             $262.evalScript('1 + 2') + ':' + b.detached;",
             ExecutionOptions::default(),
         )
         .expect("test262 host helpers should run");
 
-    assert_eq!(result, "true:3:true");
+    assert_eq!(result, "true:true:3:true");
     assert_eq!(native_eval("typeof $262"), "undefined");
 }
 

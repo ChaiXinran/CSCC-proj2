@@ -1074,12 +1074,43 @@ impl Vm {
                         PropertyDescriptor::accessor(getter, Some(setter), true, true),
                     )?;
                 }
+                Instruction::DefineComputedGetter => {
+                    let getter = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let object_value = self.pop_value()?;
+                    let object = context.require_object(&object_value, "define getter")?;
+                    self.define_computed_accessor(
+                        object,
+                        key,
+                        Some(getter),
+                        None,
+                        true,
+                        true,
+                        context,
+                    )?;
+                }
+                Instruction::DefineComputedSetter => {
+                    let setter = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let object_value = self.pop_value()?;
+                    let object = context.require_object(&object_value, "define setter")?;
+                    self.define_computed_accessor(
+                        object,
+                        key,
+                        None,
+                        Some(setter),
+                        true,
+                        true,
+                        context,
+                    )?;
+                }
                 Instruction::DefineClassMethod(index) => {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let value = self.pop_value()?;
-                    let object = context.require_object(self.peek_value()?, "define class method")?;
+                    let object =
+                        context.require_object(self.peek_value()?, "define class method")?;
                     context.define_own_property(
                         object,
                         name,
@@ -1091,7 +1122,8 @@ impl Vm {
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let getter = self.pop_value()?;
-                    let object = context.require_object(self.peek_value()?, "define class getter")?;
+                    let object =
+                        context.require_object(self.peek_value()?, "define class getter")?;
                     let setter = existing_accessor_setter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1104,7 +1136,8 @@ impl Vm {
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let setter = self.pop_value()?;
-                    let object = context.require_object(self.peek_value()?, "define class setter")?;
+                    let object =
+                        context.require_object(self.peek_value()?, "define class setter")?;
                     let getter = existing_accessor_getter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1247,7 +1280,9 @@ impl Vm {
                         let should_set = match context.get_own_property(obj_id, "name") {
                             None => true,
                             Some(desc) => match &desc.kind {
-                                PropertyKind::Data { value, .. } => matches!(value, JsValue::String(s) if s.is_empty()),
+                                PropertyKind::Data { value, .. } => {
+                                    matches!(value, JsValue::String(s) if s.is_empty())
+                                }
                                 _ => false, // accessor blocks inference
                             },
                         };
@@ -2347,6 +2382,22 @@ impl Vm {
         }
     }
 
+    pub(crate) fn construct_value_from_builtin_with_new_target(
+        &mut self,
+        constructor: JsValue,
+        arguments: Vec<JsValue>,
+        new_target: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match self.construct_value_with_new_target(constructor, arguments, new_target, context)? {
+            OperationResult::Value(value) => Ok(value),
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("JavaScript constructor threw"))
+            }
+        }
+    }
+
     pub(crate) fn set_property_value_from_builtin(
         &mut self,
         receiver: JsValue,
@@ -2371,6 +2422,39 @@ impl Vm {
             }
         }
         context.set(receiver, key, value, false)
+    }
+
+    pub(crate) fn set_property_value_strict_from_builtin(
+        &mut self,
+        receiver: JsValue,
+        key: &str,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<bool, VmError> {
+        let object = context.require_object(&receiver, "write property")?;
+        if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
+            match descriptor.kind {
+                PropertyKind::Accessor {
+                    set: Some(setter), ..
+                } => match self.call_value(setter, receiver.clone(), vec![value], context)? {
+                    OperationResult::Value(_) => return Ok(true),
+                    OperationResult::Throw(thrown) => {
+                        self.pending_exception = Some(thrown);
+                        return Err(VmError::runtime("JavaScript setter threw"));
+                    }
+                },
+                PropertyKind::Accessor { set: None, .. } => {
+                    return Err(VmError::type_error("property setter is undefined"));
+                }
+                PropertyKind::Data {
+                    writable: false, ..
+                } => {
+                    return Err(VmError::type_error("cannot write non-writable property"));
+                }
+                PropertyKind::Data { .. } => {}
+            }
+        }
+        context.set(receiver, key, value, true)
     }
 
     pub(crate) fn get_property_value_with_receiver_from_builtin(
@@ -2491,6 +2575,74 @@ impl Vm {
             }
         }
         context.define_symbol_own_property(receiver_object, symbol, PropertyDescriptor::data(value))
+    }
+
+    pub(crate) fn to_property_key_from_builtin(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        if matches!(value, JsValue::Symbol(_)) {
+            return Ok(value);
+        }
+        let primitive = if is_object_like(&value) {
+            self.to_primitive(value, PreferredType::String, context)?
+        } else {
+            value
+        };
+        if matches!(primitive, JsValue::Symbol(_)) {
+            return Ok(primitive);
+        }
+        Ok(JsValue::String(to_property_key(&primitive)?))
+    }
+
+    fn define_computed_accessor(
+        &mut self,
+        object: ObjectId,
+        key: JsValue,
+        getter: Option<JsValue>,
+        setter: Option<JsValue>,
+        enumerable: bool,
+        configurable: bool,
+        context: &mut NativeContext,
+    ) -> Result<(), VmError> {
+        match self.to_property_key_from_builtin(key, context)? {
+            JsValue::Symbol(symbol) => {
+                let current = context.get_own_symbol_property_descriptor(object, symbol);
+                let get = getter.or_else(|| {
+                    current
+                        .as_ref()
+                        .and_then(|descriptor| match &descriptor.kind {
+                            PropertyKind::Accessor { get, .. } => get.clone(),
+                            PropertyKind::Data { .. } => None,
+                        })
+                });
+                let set = setter.or_else(|| {
+                    current
+                        .as_ref()
+                        .and_then(|descriptor| match &descriptor.kind {
+                            PropertyKind::Accessor { set, .. } => set.clone(),
+                            PropertyKind::Data { .. } => None,
+                        })
+                });
+                context.define_symbol_own_property(
+                    object,
+                    symbol,
+                    PropertyDescriptor::accessor(get, set, enumerable, configurable),
+                )?;
+            }
+            JsValue::String(name) => {
+                let get = getter.or_else(|| existing_accessor_getter(context, object, &name));
+                let set = setter.or_else(|| existing_accessor_setter(context, object, &name));
+                context.define_own_property(
+                    object,
+                    name,
+                    PropertyDescriptor::accessor(get, set, enumerable, configurable),
+                )?;
+            }
+            _ => unreachable!("ToPropertyKey returns a string or symbol"),
+        }
+        Ok(())
     }
 
     fn abstract_equals(
@@ -2846,6 +2998,19 @@ impl Vm {
         key: &str,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
+        if let JsValue::Error(error) = &receiver {
+            let value = match key {
+                "message" => JsValue::String(error.message.clone()),
+                "name" => JsValue::String(native_error_constructor_name(&error.kind).into()),
+                "constructor" => context
+                    .find_builtin_by_name(native_error_constructor_name(&error.kind))
+                    .unwrap_or(JsValue::Undefined),
+                "stack" | "cause" => JsValue::Undefined,
+                _ => JsValue::Undefined,
+            };
+            return Ok(OperationResult::Value(value));
+        }
+
         // Primitive strings expose `length` and UTF-16 code-unit indexing
         // without boxing; method lookups fall through to String.prototype.
         if let JsValue::String(value) = &receiver {
@@ -3233,6 +3398,16 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
+        self.construct_value_with_new_target(constructor.clone(), arguments, constructor, context)
+    }
+
+    fn construct_value_with_new_target(
+        &mut self,
+        constructor: JsValue,
+        arguments: Vec<JsValue>,
+        new_target: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
         match constructor {
             JsValue::Function(function_id) => {
                 if context
@@ -3243,7 +3418,7 @@ impl Vm {
                         VmError::type_error("generator functions are not constructors"),
                     )));
                 }
-                let prototype = context.constructor_prototype(&JsValue::Function(function_id))?;
+                let prototype = context.constructor_prototype(&new_target)?;
                 let instance = context.ordinary_object_with_prototype(prototype)?;
                 match self.call_user_function(function_id, instance.clone(), arguments, context)? {
                     OperationResult::Value(result) if matches!(result, JsValue::Object(_)) => {
@@ -3266,27 +3441,26 @@ impl Vm {
                         let mut forwarded = bound.args.clone();
                         forwarded.extend(arguments);
                         let target = bound.target.clone();
-                        return self.construct_value(target, forwarded, context);
+                        return self.construct_value_with_new_target(
+                            target, forwarded, new_target, context,
+                        );
                     }
                     match def.construct {
-                        Some(construct) => {
-                            match construct(self, context, &arguments, JsValue::BuiltinFunction(id))
-                            {
-                                Ok(value) => Ok(OperationResult::Value(value)),
-                                Err(error) => match self.pending_exception.take() {
-                                    Some(value) => Ok(OperationResult::Throw(value)),
-                                    None => match error.kind {
-                                        VmErrorKind::Reference
-                                        | VmErrorKind::Type
-                                        | VmErrorKind::Syntax
-                                        | VmErrorKind::Range => {
-                                            Ok(OperationResult::Throw(vm_error_to_value(error)))
-                                        }
-                                        _ => Err(error),
-                                    },
+                        Some(construct) => match construct(self, context, &arguments, new_target) {
+                            Ok(value) => Ok(OperationResult::Value(value)),
+                            Err(error) => match self.pending_exception.take() {
+                                Some(value) => Ok(OperationResult::Throw(value)),
+                                None => match error.kind {
+                                    VmErrorKind::Reference
+                                    | VmErrorKind::Type
+                                    | VmErrorKind::Syntax
+                                    | VmErrorKind::Range => {
+                                        Ok(OperationResult::Throw(vm_error_to_value(error)))
+                                    }
+                                    _ => Err(error),
                                 },
-                            }
-                        }
+                            },
+                        },
                         None => Ok(OperationResult::Throw(vm_error_to_value(
                             VmError::type_error(format!("{} is not a constructor", def.name)),
                         ))),
@@ -3942,7 +4116,7 @@ fn native_error_constructor_name(kind: &NativeErrorKind) -> &'static str {
         NativeErrorKind::Range => "RangeError",
         NativeErrorKind::RuntimeLimit => "RangeError",
         NativeErrorKind::Error => "Error",
-        NativeErrorKind::Test262 => "Error",
+        NativeErrorKind::Test262 => "Test262Error",
     }
 }
 

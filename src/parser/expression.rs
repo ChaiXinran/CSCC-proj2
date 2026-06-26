@@ -337,9 +337,7 @@ impl Parser {
             }
             // Strict-mode early error: `delete expr.#privateName` (spec: MemberExpression.PrivateName).
             if self.is_strict && is_private_member_access(&argument) {
-                return Err(
-                    self.error("cannot delete a private member access expression".into())
-                );
+                return Err(self.error("cannot delete a private member access expression".into()));
             }
             return Ok(Expression::Unary {
                 operator: UnaryOperator::Delete,
@@ -917,6 +915,25 @@ impl Parser {
                     is_arrow: false,
                 }),
             });
+        }
+
+        if !self.check_punctuator(':') {
+            if let PropertyName::Identifier(name) = &key {
+                let shorthand = name.clone();
+                if is_reserved_identifier_name(&shorthand)
+                    || (self.is_strict
+                        && (is_strict_future_reserved(&shorthand)
+                            || is_strict_future_reserved_keyword(&shorthand)))
+                {
+                    return Err(self.error(format!(
+                        "reserved word `{shorthand}` cannot be used as shorthand property"
+                    )));
+                }
+                return Ok(ObjectProperty::Data {
+                    key,
+                    value: Expression::Identifier(shorthand),
+                });
+            }
         }
 
         self.expect_punctuator(':')?;
@@ -2178,7 +2195,11 @@ fn update_operator(operator: &str) -> Option<UpdateOperator> {
 /// via non-computed member access — e.g. `expr.#x` or `(a.b).#x`.
 fn is_private_member_access(expr: &crate::ast::Expression) -> bool {
     match expr {
-        crate::ast::Expression::Member { property, computed: false, .. } => {
+        crate::ast::Expression::Member {
+            property,
+            computed: false,
+            ..
+        } => {
             matches!(property.as_ref(), crate::ast::Expression::PrivateName(_))
         }
         _ => false,
@@ -2777,6 +2798,20 @@ mod tests {
                 value: Expression::Function(FunctionLiteral { params, .. }),
                 ..
             } if params.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parses_object_property_shorthand() {
+        let Expression::Object(properties) = parse_expression("({ length })") else {
+            panic!("expected object literal");
+        };
+        assert!(matches!(
+            &properties[0],
+            ObjectProperty::Data {
+                key: PropertyName::Identifier(key),
+                value: Expression::Identifier(value),
+            } if key == "length" && value == "length"
         ));
     }
 

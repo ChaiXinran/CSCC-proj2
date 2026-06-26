@@ -3417,7 +3417,8 @@ fn error_kind_name(kind: &NativeErrorKind) -> &'static str {
         NativeErrorKind::Reference => "ReferenceError",
         NativeErrorKind::Syntax => "SyntaxError",
         NativeErrorKind::Range | NativeErrorKind::RuntimeLimit => "RangeError",
-        NativeErrorKind::Error | NativeErrorKind::Test262 => "Error",
+        NativeErrorKind::Error => "Error",
+        NativeErrorKind::Test262 => "Test262Error",
     }
 }
 
@@ -3430,6 +3431,7 @@ fn native_error_is_instance_of(kind: &NativeErrorKind, constructor_name: &str) -
         "SyntaxError" => matches!(kind, NativeErrorKind::Syntax),
         "ReferenceError" => matches!(kind, NativeErrorKind::Reference),
         "RangeError" => matches!(kind, NativeErrorKind::Range),
+        "Test262Error" => matches!(kind, NativeErrorKind::Test262),
         _ => false,
     }
 }

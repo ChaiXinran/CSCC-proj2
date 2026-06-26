@@ -2816,23 +2816,42 @@ impl Compiler {
                     chunk.emit(Instruction::Pop);
                 }
                 ObjectProperty::Getter { key, body } => {
-                    self.compile_accessor_function(&[], body, chunk, context)?;
-                    let key = self.add_name(&property_key(key), chunk)?;
-                    chunk.emit(Instruction::DefineGetter(key));
+                    if let PropertyName::Computed(expr) = key {
+                        chunk.emit(Instruction::Duplicate);
+                        self.compile_expression(expr, chunk, context)?;
+                        self.compile_accessor_function(&[], body, chunk, context)?;
+                        chunk.emit(Instruction::DefineComputedGetter);
+                    } else {
+                        self.compile_accessor_function(&[], body, chunk, context)?;
+                        let key = self.add_name(&property_key(key), chunk)?;
+                        chunk.emit(Instruction::DefineGetter(key));
+                    }
                 }
                 ObjectProperty::Setter {
                     key,
                     parameter,
                     body,
                 } => {
-                    self.compile_accessor_function(
-                        std::slice::from_ref(parameter),
-                        body,
-                        chunk,
-                        context,
-                    )?;
-                    let key = self.add_name(&property_key(key), chunk)?;
-                    chunk.emit(Instruction::DefineSetter(key));
+                    if let PropertyName::Computed(expr) = key {
+                        chunk.emit(Instruction::Duplicate);
+                        self.compile_expression(expr, chunk, context)?;
+                        self.compile_accessor_function(
+                            std::slice::from_ref(parameter),
+                            body,
+                            chunk,
+                            context,
+                        )?;
+                        chunk.emit(Instruction::DefineComputedSetter);
+                    } else {
+                        self.compile_accessor_function(
+                            std::slice::from_ref(parameter),
+                            body,
+                            chunk,
+                            context,
+                        )?;
+                        let key = self.add_name(&property_key(key), chunk)?;
+                        chunk.emit(Instruction::DefineSetter(key));
+                    }
                 }
                 ObjectProperty::PrototypeSetter { value } => {
                     self.compile_expression(value, chunk, context)?;

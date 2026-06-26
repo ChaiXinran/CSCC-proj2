@@ -149,3 +149,76 @@ fn array_slice_defines_own_result_properties() {
         "true:1"
     );
 }
+
+#[test]
+fn array_from_consumes_iterators_with_mapping_arguments() {
+    assert_eq!(
+        native_eval(
+            "var seen = []; \
+             var iterator = Object.create({ \
+               next: function() { \
+                 this.i = (this.i || 0) + 1; \
+                 return this.i > 2 ? { done: true } : { done: false, value: 'v' + this.i }; \
+               } \
+             }); \
+             var items = {}; \
+             items[Symbol.iterator] = function() { return iterator; }; \
+             var result = Array.from(items, function(value, index) { seen.push(value + index); return value + ':' + index; }); \
+             result.join('|') + ':' + seen.join('|') + ':' + result.length;"
+        ),
+        "v1:0|v2:1:v10|v21:2"
+    );
+}
+
+#[test]
+fn array_from_honors_custom_constructor_and_length_setter() {
+    assert_eq!(
+        native_eval(
+            "function C(length) { this.constructedLength = length; } \
+             C.prototype = { set length(value) { this.finalLength = value; } }; \
+             var result = Array.from.call(C, { 0: 'a', 1: 'b', length: 2 }); \
+             (result instanceof C) + ':' + result.constructedLength + ':' + result[0] + result[1] + ':' + result.finalLength;"
+        ),
+        "true:2:ab:2"
+    );
+}
+
+#[test]
+fn array_from_reads_primitive_string_array_like_length() {
+    assert_eq!(
+        native_eval("Array.from('Test').join('') + ':' + Array.from('Test').length;"),
+        "Test:4"
+    );
+}
+
+#[test]
+fn array_from_tolength_nan_is_zero() {
+    assert_eq!(
+        native_eval("Array.from({ 0: 'x', length: NaN }).length;"),
+        "0"
+    );
+}
+
+#[test]
+fn array_from_accepts_object_property_shorthand_length() {
+    assert_eq!(
+        native_eval("var length = 5; Array.from({ length }).length;"),
+        "5"
+    );
+}
+
+#[test]
+fn array_from_generator_overwrites_configurable_non_writable_result_property() {
+    assert_eq!(
+        native_eval(
+            "var items = function* () { yield 2; }; \
+             var A = function() { \
+               Object.defineProperty(this, '0', { value: 1, writable: false, enumerable: false, configurable: true }); \
+             }; \
+             var res = Array.from.call(A, items()); \
+             var d = Object.getOwnPropertyDescriptor(res, '0'); \
+             d.value + ':' + d.writable + ':' + d.enumerable + ':' + d.configurable;"
+        ),
+        "2:true:true:true"
+    );
+}
