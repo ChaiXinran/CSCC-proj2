@@ -13,7 +13,7 @@ use crate::runtime::{
     JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
     PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, to_property_key,
 };
-use crate::vm::{Vm, VmError};
+use crate::vm::{Vm, VmError, VmErrorKind};
 
 /// Installs the standard-library globals backed by the C1/C2 modules.
 pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
@@ -2965,8 +2965,8 @@ fn reflect_is_extensible(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    context.require_object(&target, "Reflect.isExtensible")?;
-    Ok(JsValue::Boolean(true))
+    let object = context.require_object(&target, "Reflect.isExtensible")?;
+    Ok(JsValue::Boolean(context.is_extensible(object)?))
 }
 
 fn reflect_own_keys(
@@ -3002,8 +3002,8 @@ fn reflect_prevent_extensions(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    context.require_object(&target, "Reflect.preventExtensions")?;
-    Ok(JsValue::Boolean(true))
+    let object = context.require_object(&target, "Reflect.preventExtensions")?;
+    Ok(JsValue::Boolean(context.prevent_extensions(object)?))
 }
 
 fn reflect_set(
@@ -3042,9 +3042,16 @@ fn reflect_set_prototype_of(
         JsValue::Null => None,
         value => Some(context.require_object(&value, "Reflect.setPrototypeOf")?),
     };
-    Ok(JsValue::Boolean(
-        context.set_prototype_of(object, prototype)?,
-    ))
+    match context.set_prototype_of(object, prototype) {
+        Ok(result) => Ok(JsValue::Boolean(result)),
+        Err(error)
+            if error.kind == VmErrorKind::Type
+                && error.message.contains("prototype cycle rejected") =>
+        {
+            Ok(JsValue::Boolean(false))
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn array_like_to_vec(
@@ -3239,8 +3246,26 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
     // Install Symbol.toStringTag on existing built-in prototypes so that
     // Object.prototype.toString returns the correct "[object X]" tag.
     install_to_string_tags(context, wk.to_string_tag)?;
+    install_array_iterator_alias(context, wk.iterator)?;
 
     context.declare_global("Symbol", symbol_fn);
+    Ok(())
+}
+
+fn install_array_iterator_alias(
+    context: &mut NativeContext,
+    iterator: crate::runtime::SymbolId,
+) -> Result<(), VmError> {
+    let Some(array_prototype) = context.array_prototype() else {
+        return Ok(());
+    };
+    let Some(values) = context
+        .get_own_property_descriptor(array_prototype, "values")
+        .and_then(|descriptor| descriptor.value_cloned())
+    else {
+        return Ok(());
+    };
+    context.define_symbol_own_property(array_prototype, iterator, method_descriptor(values))?;
     Ok(())
 }
 

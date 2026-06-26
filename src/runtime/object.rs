@@ -1,7 +1,10 @@
 //! JavaScript objects and prototype links.
 
 use super::iterator::IteratorKind;
-use super::{IteratorRecord, JsValue, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer};
+use super::{
+    ArrayBufferId, DataViewId, IteratorRecord, JsValue, PropertyDescriptor, PropertyMap, SymbolId,
+    Trace, Tracer, TypedArrayViewId,
+};
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -39,13 +42,29 @@ pub enum ObjectKind {
     PrimitiveWrapper(PrimitiveValue),
     /// Regular expression object. The `pattern` and `flags` are the source strings.
     /// Used by `String.prototype.match`, `search`, `replace`, `split`, etc. to detect regexp args.
-    RegExp { pattern: String, flags: String },
+    RegExp {
+        pattern: String,
+        flags: String,
+    },
+    ArrayBuffer {
+        buffer: ArrayBufferId,
+    },
+    DataView {
+        view: DataViewId,
+    },
+    TypedArray {
+        view: TypedArrayViewId,
+        length: usize,
+        name: String,
+    },
     /// Internal iterator object created by `GetIterator`. Not directly observable from JS.
-    Iterator { record: IteratorRecord },
+    Iterator {
+        record: IteratorRecord,
+    },
 }
 
 /// Ordinary object storage.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct JsObject {
     pub prototype: Option<ObjectId>,
     pub kind: ObjectKind,
@@ -53,6 +72,19 @@ pub struct JsObject {
     /// Symbol-keyed own properties stored separately from the string property map.
     /// Insertion order is preserved; lookup is linear but the expected count is small.
     pub symbol_properties: Vec<(SymbolId, PropertyDescriptor)>,
+    pub extensible: bool,
+}
+
+impl Default for JsObject {
+    fn default() -> Self {
+        Self {
+            prototype: None,
+            kind: ObjectKind::default(),
+            properties: PropertyMap::default(),
+            symbol_properties: Vec::new(),
+            extensible: true,
+        }
+    }
 }
 
 impl JsObject {
@@ -77,6 +109,7 @@ impl JsObject {
             },
             properties: PropertyMap::default(),
             symbol_properties: Vec::new(),
+            extensible: true,
         }
     }
 
@@ -91,6 +124,7 @@ impl JsObject {
             },
             properties: PropertyMap::default(),
             symbol_properties: Vec::new(),
+            extensible: true,
         }
     }
 
@@ -101,6 +135,7 @@ impl JsObject {
             kind: ObjectKind::Iterator { record },
             properties: PropertyMap::default(),
             symbol_properties: Vec::new(),
+            extensible: true,
         }
     }
 
@@ -222,6 +257,19 @@ impl JsObject {
 
     #[must_use]
     pub fn has_own_property(&self, name: &str) -> bool {
+        if let ObjectKind::TypedArray { length, .. } = &self.kind
+            && let Some(index) = array_index(name)
+        {
+            return index < *length;
+        }
+        if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &self.kind {
+            if name == "length" {
+                return true;
+            }
+            if let Some(index) = array_index(name) {
+                return index < value.encode_utf16().count();
+            }
+        }
         if let ObjectKind::Array { elements, .. } = &self.kind {
             if name == "length" {
                 return true;
@@ -259,6 +307,9 @@ impl JsObject {
             ObjectKind::Ordinary
             | ObjectKind::PrimitiveWrapper(_)
             | ObjectKind::RegExp { .. }
+            | ObjectKind::ArrayBuffer { .. }
+            | ObjectKind::DataView { .. }
+            | ObjectKind::TypedArray { .. }
             | ObjectKind::Iterator { .. } => None,
         }
     }
@@ -272,6 +323,9 @@ impl JsObject {
             ObjectKind::Ordinary
             | ObjectKind::PrimitiveWrapper(_)
             | ObjectKind::RegExp { .. }
+            | ObjectKind::ArrayBuffer { .. }
+            | ObjectKind::DataView { .. }
+            | ObjectKind::TypedArray { .. }
             | ObjectKind::Iterator { .. } => None,
         }
     }
@@ -373,6 +427,12 @@ impl JsObject {
                     .filter(|(_, value)| value.is_some())
                     .map(|(index, _)| index.to_string()),
             );
+            keys.push("length".into());
+        } else if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &self.kind {
+            keys.extend((0..value.encode_utf16().count()).map(|index| index.to_string()));
+            keys.push("length".into());
+        } else if let ObjectKind::TypedArray { length, .. } = &self.kind {
+            keys.extend((0..(*length).min(MAX_DENSE_SIZE)).map(|index| index.to_string()));
         }
         keys.extend(self.properties.keys());
         keys
@@ -391,6 +451,10 @@ impl JsObject {
                     .filter(|(_, value)| value.is_some())
                     .map(|(index, _)| index.to_string()),
             );
+        } else if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &self.kind {
+            keys.extend((0..value.encode_utf16().count()).map(|index| index.to_string()));
+        } else if let ObjectKind::TypedArray { length, .. } = &self.kind {
+            keys.extend((0..(*length).min(MAX_DENSE_SIZE)).map(|index| index.to_string()));
         }
         keys.extend(self.properties.enumerable_keys());
         keys
@@ -408,7 +472,12 @@ impl Trace for JsObject {
                     descriptor.trace(tracer);
                 }
             }
-            ObjectKind::Ordinary | ObjectKind::PrimitiveWrapper(_) | ObjectKind::RegExp { .. } => {}
+            ObjectKind::Ordinary
+            | ObjectKind::PrimitiveWrapper(_)
+            | ObjectKind::RegExp { .. }
+            | ObjectKind::ArrayBuffer { .. }
+            | ObjectKind::DataView { .. }
+            | ObjectKind::TypedArray { .. } => {}
             ObjectKind::Iterator { record } => {
                 // Trace the backing array/string so GC doesn't collect it.
                 if let IteratorKind::Array { object, .. } = &record.kind {
@@ -439,6 +508,10 @@ impl JsObject {
             ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) => value.len(),
             ObjectKind::PrimitiveWrapper(_) => std::mem::size_of::<PrimitiveValue>(),
             ObjectKind::RegExp { pattern, flags } => pattern.len().saturating_add(flags.len()),
+            ObjectKind::ArrayBuffer { .. } | ObjectKind::DataView { .. } => {
+                std::mem::size_of::<usize>()
+            }
+            ObjectKind::TypedArray { name, .. } => name.len().saturating_add(16),
             ObjectKind::Iterator { .. } => std::mem::size_of::<IteratorRecord>(),
         };
         std::mem::size_of::<Self>()

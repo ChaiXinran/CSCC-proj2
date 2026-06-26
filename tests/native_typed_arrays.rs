@@ -77,14 +77,221 @@ fn data_view_constructor_exposes_skeleton_metadata() {
 }
 
 #[test]
-fn unsupported_typed_array_storage_methods_throw_explicit_type_errors() {
+fn typed_array_storage_methods_and_index_access_are_live() {
     assert_eq!(
         native_eval(
-            "var caught = false; \
-             try { new Uint8Array(2).set([1]); } catch (e) { caught = e.name === 'TypeError'; } \
-             caught;"
+            "var u = new Uint8Array([1, 2, 3]); \
+             u[1] = 260; \
+             u.set([9, 8], 1); \
+             [u[0], u[1], u[2], u.includes(8), u.indexOf(9), u.slice(1).join('-')].join(':');"
+        ),
+        "1:9:8:true:1:9-8"
+    );
+}
+
+#[test]
+fn typed_array_set_boxes_primitive_array_like_sources() {
+    assert_eq!(
+        native_eval(
+            "var u = new Uint8Array([1, 2, 3, 4, 5]); \
+             u.set('678', 1); \
+             var n = new Uint8Array([1, 2, 3]); \
+             n.set(0); \
+             u.join(',') + ':' + n.join(',');"
+        ),
+        "1,6,7,8,5:1,2,3"
+    );
+}
+
+#[test]
+fn data_view_reads_and_writes_shared_array_buffer_storage() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(4); \
+             var v = new DataView(b); \
+             v.setUint16(0, 0x1234, false); \
+             var u = new Uint8Array(b); \
+             [v.getUint16(0, false), u[0], u[1], new Uint16Array(b)[0]].join(':');"
+        ),
+        "4660:18:52:13330"
+    );
+}
+
+#[test]
+fn data_view_undefined_byte_length_uses_remaining_buffer() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(6); \
+             var v = new DataView(b, 2, undefined); \
+             v.byteOffset + ':' + v.byteLength;"
+        ),
+        "2:4"
+    );
+}
+
+#[test]
+fn data_view_accessors_and_methods_reject_detached_buffers() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(4); \
+             var v = new DataView(b); \
+             b.transfer(); \
+             var lengthThrow = false; \
+             var getThrow = false; \
+             try { v.byteLength; } catch (e) { lengthThrow = e instanceof TypeError; } \
+             try { v.getUint8(99); } catch (e) { getThrow = e instanceof TypeError; } \
+             (v.buffer === b) + ':' + lengthThrow + ':' + getThrow;",
+        ),
+        "true:true:true"
+    );
+}
+
+#[test]
+fn typed_array_constructor_and_from_consume_iterable_sources() {
+    assert_eq!(
+        native_eval(
+            "var src = [1, 2, 3]; \
+             var iterable = {}; \
+             iterable[Symbol.iterator] = function() { return src[Symbol.iterator](); }; \
+             var u = new Uint8Array(iterable); \
+             var v = Uint8Array.from(iterable, function(x) { return x + 1; }); \
+             u.join(',') + ':' + v.join(',') + ':' + \
+             (Array.prototype[Symbol.iterator] === Array.prototype.values);"
+        ),
+        "1,2,3:2,3,4:true"
+    );
+}
+
+#[test]
+fn array_iterator_objects_are_js_visible_and_live() {
+    assert_eq!(
+        native_eval(
+            "var a = []; \
+             var it = a.values(); \
+             a.push('x'); \
+             var first = it.next(); \
+             var second = it.next(); \
+             typeof it.next + ':' + first.value + ':' + first.done + ':' + \
+             (second.value === undefined) + ':' + second.done;"
+        ),
+        "function:x:false:true:true"
+    );
+}
+
+#[test]
+fn typed_array_iterator_objects_expose_keys_values_and_entries() {
+    assert_eq!(
+        native_eval(
+            "var u = new Uint8Array([7, 8]); \
+             var values = u.values(); \
+             var keys = u.keys(); \
+             var entries = u.entries(); \
+             var firstEntry = entries.next().value; \
+             var secondEntry = entries.next().value; \
+             values.next().value + ':' + values.next().value + ':' + \
+             keys.next().value + ':' + keys.next().value + ':' + \
+             firstEntry[0] + ':' + firstEntry[1] + ':' + \
+             secondEntry[0] + ':' + secondEntry[1] + ':' + \
+             entries.next().done;"
+        ),
+        "7:8:0:1:0:7:1:8:true"
+    );
+}
+
+#[test]
+fn typed_array_and_array_iterators_share_iterator_prototype() {
+    assert_eq!(
+        native_eval(
+            "var typed = new Uint8Array([1]).values(); \
+             var array = [1][Symbol.iterator](); \
+             (Object.getPrototypeOf(typed) === Object.getPrototypeOf(array)) + ':' + \
+             (typed[Symbol.iterator]() === typed);"
+        ),
+        "true:true"
+    );
+}
+
+#[test]
+fn typed_array_views_track_resizable_array_buffer_bounds() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(3, { maxByteLength: 5 }); \
+             var tracking = new Uint8Array(b); \
+             var fixed = new Uint8Array(b, 1, 2); \
+             b.resize(5); \
+             var grown = tracking.length + ':' + tracking.byteLength + ':' + tracking.byteOffset; \
+             b.resize(1); \
+             var clipped = fixed.length + ':' + fixed.byteLength + ':' + fixed.byteOffset; \
+             grown + ':' + clipped;"
+        ),
+        "5:5:0:0:0:0"
+    );
+}
+
+#[test]
+fn typed_array_iterators_stay_exhausted_after_resizable_buffer_regrows() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(3, { maxByteLength: 5 }); \
+             var u = new Uint8Array(b); \
+             u[0] = 11; u[1] = 22; u[2] = 33; \
+             var it = u.values(); \
+             var first = it.next(); \
+             b.resize(0); \
+             var exhausted = it.next(); \
+             b.resize(5); \
+             var stillExhausted = it.next(); \
+             first.value + ':' + first.done + ':' + \
+             (exhausted.value === undefined) + ':' + exhausted.done + ':' + \
+             (stillExhausted.value === undefined) + ':' + stillExhausted.done;"
+        ),
+        "11:false:true:true:true:true"
+    );
+}
+
+#[test]
+fn fixed_length_typed_array_iterator_throws_after_resizable_buffer_shrinks_out_of_bounds() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(4, { maxByteLength: 4 }); \
+             var u = new Uint8Array(b, 0, 4); \
+             var it = u.values(); \
+             it.next(); it.next(); \
+             b.resize(3); \
+             var result; \
+             try { it.next(); result = 'no-throw'; } catch (e) { result = e instanceof TypeError; } \
+             result;"
         ),
         "true"
+    );
+}
+
+#[test]
+fn array_buffer_slice_copies_backing_bytes() {
+    assert_eq!(
+        native_eval(
+            "var u = new Uint8Array([5, 6, 7, 8]); \
+             var copy = u.buffer.slice(1, 3); \
+             var c = new Uint8Array(copy); \
+             c.join(',') + ':' + copy.byteLength;"
+        ),
+        "6,7:2"
+    );
+}
+
+#[test]
+fn array_buffer_resize_and_transfer_methods_preserve_bytes() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(2, { maxByteLength: 4 }); \
+             var u = new Uint8Array(b); \
+             u[0] = 11; u[1] = 12; \
+             b.resize(4); \
+             var moved = b.transferToImmutable(); \
+             [b.detached, moved.immutable, moved.resizable, moved.byteLength, \
+              new Uint8Array(moved).join(',')].join(':');"
+        ),
+        "true:true:false:4:11,12,0,0"
     );
 }
 
@@ -138,4 +345,41 @@ fn test262_host_object_is_available_only_when_requested() {
 
     assert_eq!(result, "true:3:true");
     assert_eq!(native_eval("typeof $262"), "undefined");
+}
+
+#[test]
+fn test262_assert_harness_keeps_builtin_constructors_constructable() {
+    let mut runtime = NativeRuntime::new(RuntimeConfig {
+        install_test262_host: true,
+        ..RuntimeConfig::default()
+    });
+
+    runtime
+        .eval_source(
+            include_str!("../test262/harness/assert.js"),
+            ExecutionOptions::default(),
+        )
+        .expect("assert.js should evaluate");
+
+    let result = runtime
+        .eval_source(
+            "(new Array() instanceof Array) + ':' + (({}) instanceof Object)",
+            ExecutionOptions::default(),
+        )
+        .expect("builtin constructors should remain constructable");
+
+    assert_eq!(result, "true:true");
+
+    runtime
+        .eval_source(
+            include_str!("../test262/test/language/expressions/array/S11.1.4_A2.js"),
+            ExecutionOptions::default(),
+        )
+        .expect("array literal instanceof Test262 case should pass");
+    runtime
+        .eval_source(
+            include_str!("../test262/test/language/expressions/instanceof/S11.8.6_A2.1_T1.js"),
+            ExecutionOptions::default(),
+        )
+        .expect("Object instanceof Test262 case should pass");
 }

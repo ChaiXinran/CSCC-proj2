@@ -65,6 +65,9 @@ fn internalize_json_property(
                 ObjectKind::Ordinary
                 | ObjectKind::PrimitiveWrapper(_)
                 | ObjectKind::RegExp { .. }
+                | ObjectKind::ArrayBuffer { .. }
+                | ObjectKind::DataView { .. }
+                | ObjectKind::TypedArray { .. }
                 | ObjectKind::Iterator { .. } => object_value.own_property_keys(),
             }
         };
@@ -686,10 +689,15 @@ fn stringify_object(
             crate::runtime::PrimitiveValue::String(value) => quote_json_string(value),
             crate::runtime::PrimitiveValue::Symbol(_) => "{}".into(),
         },
-        ObjectKind::Ordinary | ObjectKind::RegExp { .. } | ObjectKind::Iterator { .. } => {
+        ObjectKind::Ordinary
+        | ObjectKind::RegExp { .. }
+        | ObjectKind::ArrayBuffer { .. }
+        | ObjectKind::DataView { .. }
+        | ObjectKind::TypedArray { .. }
+        | ObjectKind::Iterator { .. } => {
             let mut parts = Vec::new();
             for key in object_value.own_property_keys() {
-                let Some(descriptor) = object_value.own_property(&key) else {
+                let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
                     continue;
                 };
                 if !descriptor.enumerable {

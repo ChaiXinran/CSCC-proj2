@@ -5,7 +5,8 @@
 
 use crate::{
     runtime::{
-        JsObject, JsValue, NativeCall, NativeContext, ObjectId, PropertyDescriptor, PropertyKind,
+        JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PropertyDescriptor,
+        PropertyKind,
     },
     vm::{Vm, VmError},
 };
@@ -539,6 +540,14 @@ fn iterator_next(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let iterator = context.require_object(&this_value, "Iterator.prototype.next")?;
+    let is_runtime_iterator = context
+        .heap()
+        .object(iterator)
+        .is_some_and(|object| matches!(&object.kind, ObjectKind::Iterator { .. }));
+    if is_runtime_iterator {
+        let (value, done) = context.step_iterator_object(this_value)?;
+        return iterator_result(context, value, done);
+    }
     if own_bool(context, iterator, ITERATOR_DONE).unwrap_or(false) {
         return iterator_result(context, JsValue::Undefined, true);
     }

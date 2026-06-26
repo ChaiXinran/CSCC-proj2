@@ -162,6 +162,11 @@ pub enum Instruction {
     /// Stack: [object] → [method_value, object]
     GetMethod(u16),
 
+    /// Reads a computed property and rearranges the stack so the callee and
+    /// `this` are in position for `CallWithThis`.
+    /// Stack: [object, key] -> [method_value, object]
+    GetElementMethod,
+
     /// Sets a named property on an object, preserving the value as the
     /// assignment result. Stack layout: `[object, value]`.
     /// Stack: [object, value] → [value]
@@ -352,7 +357,9 @@ impl Instruction {
             | Self::CreateRegExp => StackEffect::new(2, 1),
 
             // observe top (no stack change)
-            Self::JumpIfFalse(_) | Self::JumpIfTrue(_) | Self::JumpIfNotNullish(_) => StackEffect::with_required(1, 0, 0),
+            Self::JumpIfFalse(_) | Self::JumpIfTrue(_) | Self::JumpIfNotNullish(_) => {
+                StackEffect::with_required(1, 0, 0)
+            }
 
             // no stack effect
             Self::Jump(_)
@@ -374,6 +381,9 @@ impl Instruction {
 
             // GetMethod: pops object, pushes (method, object) — net +1
             Self::GetMethod(_) => StackEffect::new(1, 2),
+
+            // GetElementMethod: [object, key] -> [method, object]
+            Self::GetElementMethod => StackEffect::with_required(2, 2, 2),
 
             // SetProperty: [object, value] → [value]  (net -1)
             Self::SetProperty(_) => StackEffect::with_required(2, 2, 1),
@@ -397,7 +407,9 @@ impl Instruction {
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
 
             // ArrayPush: [array, value] → [array]
-            Self::ArrayPush | Self::SpreadIntoArray | Self::SpreadObject => StackEffect::with_required(2, 1, 0),
+            Self::ArrayPush | Self::SpreadIntoArray | Self::SpreadObject => {
+                StackEffect::with_required(2, 1, 0)
+            }
 
             // SpreadCall/SpreadConstruct: variable pops, push 1
             Self::SpreadCall(n) | Self::SpreadConstruct(n) => {
@@ -436,9 +448,10 @@ impl Instruction {
     #[must_use]
     pub const fn jump_target(self) -> Option<usize> {
         match self {
-            Self::JumpIfFalse(target) | Self::JumpIfTrue(target) | Self::JumpIfNotNullish(target) | Self::Jump(target) => {
-                Some(target)
-            }
+            Self::JumpIfFalse(target)
+            | Self::JumpIfTrue(target)
+            | Self::JumpIfNotNullish(target)
+            | Self::Jump(target) => Some(target),
             _ => None,
         }
     }

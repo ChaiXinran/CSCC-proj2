@@ -24,7 +24,10 @@ use crate::{
         ObjectProperty, PropertyName, Statement, TemplateLiteral, UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
-    parser::{ParseError, Parser, describe, is_keyword_name, is_reserved_identifier_name, is_strict_future_reserved, is_strict_future_reserved_keyword},
+    parser::{
+        ParseError, Parser, describe, is_keyword_name, is_reserved_identifier_name,
+        is_strict_future_reserved, is_strict_future_reserved_keyword,
+    },
 };
 
 impl Parser {
@@ -125,9 +128,7 @@ impl Parser {
         if self.is_strict {
             if let Expression::Identifier(name) = expr {
                 if name == "eval" || name == "arguments" {
-                    return Err(self.error(format!(
-                        "cannot assign to '{name}' in strict mode"
-                    )));
+                    return Err(self.error(format!("cannot assign to '{name}' in strict mode")));
                 }
             }
         }
@@ -262,7 +263,11 @@ impl Parser {
             }
             self.advance();
             // `**` is right-associative: right operand uses same precedence
-            let right_min = if operator == "**" { precedence } else { precedence + 1 };
+            let right_min = if operator == "**" {
+                precedence
+            } else {
+                precedence + 1
+            };
             let right = self.parse_binary(right_min)?;
             left = combine(&operator, left, right);
         }
@@ -277,8 +282,12 @@ impl Parser {
             // `in` and `instanceof` are keyword binary operators at relational precedence.
             // `in` is suppressed inside a `for` header (`no_in`) so the header can be
             // disambiguated as a for-in statement.
-            TokenKind::Keyword(Keyword::In) if !self.no_in => Some((4, "in".into())),
-            TokenKind::Keyword(Keyword::InstanceOf) => Some((4, "instanceof".into())),
+            TokenKind::Keyword(Keyword::In) if !self.no_in => {
+                binary_precedence("in").map(|p| (p, "in".into()))
+            }
+            TokenKind::Keyword(Keyword::InstanceOf) => {
+                binary_precedence("instanceof").map(|p| (p, "instanceof".into()))
+            }
             _ => None,
         }
     }
@@ -529,21 +538,17 @@ impl Parser {
                 }
                 // In strict mode, future reserved words cannot be used as identifier references.
                 if self.is_strict && is_strict_future_reserved(name) {
-                    return Err(self.error(format!(
-                        "`{name}` is a reserved word in strict mode"
-                    )));
+                    return Err(self.error(format!("`{name}` is a reserved word in strict mode")));
                 }
                 // Unicode-escaped forms of context-reserved words (e.g. `await`
                 // resolving to `await`) are SyntaxErrors in the relevant context.
                 if self.is_async_context && name == "await" {
-                    return Err(self.error(
-                        "`await` is not allowed as an identifier in async context".into(),
-                    ));
+                    return Err(self
+                        .error("`await` is not allowed as an identifier in async context".into()));
                 }
                 if (self.is_generator_context || self.is_strict) && name == "yield" {
-                    return Err(self.error(
-                        "`yield` is not allowed as an identifier in this context".into(),
-                    ));
+                    return Err(self
+                        .error("`yield` is not allowed as an identifier in this context".into()));
                 }
                 // V9-A: `async` is a contextual keyword when followed (on the same line)
                 // by `function`, `(`, or a simple identifier — in that case try to parse
@@ -1035,9 +1040,9 @@ impl Parser {
         if effective_strict {
             if let Some(ref n) = name {
                 if matches!(n.as_str(), "eval" | "arguments") || is_strict_future_reserved(n) {
-                    return Err(self.error(format!(
-                        "function name `{n}` is not allowed in strict mode"
-                    )));
+                    return Err(
+                        self.error(format!("function name `{n}` is not allowed in strict mode"))
+                    );
                 }
             }
             if !is_generator && !self.is_strict {
@@ -1267,7 +1272,8 @@ impl Parser {
         elements: &mut Vec<ClassElement>,
     ) -> Result<(), ParseError> {
         // Track seen private names to detect duplicates.
-        let mut seen_private_names: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seen_private_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         while !self.check_punctuator('}') && !self.at_eof() {
             // Optional `static` keyword.
@@ -1282,10 +1288,7 @@ impl Parser {
                 let next = self.tokens.get(self.cursor + 1);
                 let next_is_key = next.is_some_and(|t| {
                     !t.line_terminator_before
-                        && !matches!(
-                            t.kind,
-                            TokenKind::Punctuator(';' | '(' | '}')
-                        )
+                        && !matches!(t.kind, TokenKind::Punctuator(';' | '(' | '}'))
                 });
                 if next_is_key {
                     self.advance(); // consume `async`
@@ -1298,8 +1301,10 @@ impl Parser {
             };
 
             // Check for `get`/`set` accessor keywords.
-            let is_getter = !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
-            let is_setter = !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
+            let is_getter =
+                !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
+            let is_setter =
+                !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
 
             // For get/set: peek at the token after to distinguish `get(){}` (method named
             // "get") from `get foo(){}` (getter). Treat as accessor only when next-next
@@ -1308,10 +1313,7 @@ impl Parser {
                 let next = self.tokens.get(self.cursor + 1);
                 next.is_some_and(|t| {
                     !t.line_terminator_before
-                        && !matches!(
-                            t.kind,
-                            TokenKind::Punctuator('(' | ';' | '}' | '=')
-                        )
+                        && !matches!(t.kind, TokenKind::Punctuator('(' | ';' | '}' | '='))
                 })
             };
             if is_accessor {
@@ -1386,7 +1388,8 @@ impl Parser {
             // Accessor getter: `get name() { body }` — no params.
             if is_getter && is_accessor {
                 // Early error: `get constructor(){}` and `static get prototype(){}` are forbidden.
-                if Self::is_forbidden_method_name(&prop_name, is_static, false, false, true, false) {
+                if Self::is_forbidden_method_name(&prop_name, is_static, false, false, true, false)
+                {
                     return Err(self.error(format!(
                         "`{}` is not a valid class method name in this position",
                         prop_name.to_key_string()
@@ -1414,7 +1417,8 @@ impl Parser {
 
             // Accessor setter: `set name(param) { body }` — one param.
             if is_setter && is_accessor {
-                if Self::is_forbidden_method_name(&prop_name, is_static, false, false, false, true) {
+                if Self::is_forbidden_method_name(&prop_name, is_static, false, false, false, true)
+                {
                     return Err(self.error(format!(
                         "`{}` is not a valid class method name in this position",
                         prop_name.to_key_string()
@@ -1469,9 +1473,9 @@ impl Parser {
                     && matches!(&prop_name,
                         PropertyName::Identifier(n) | PropertyName::String(n) if n == "prototype")
                 {
-                    return Err(self.error(
-                        "a static class method may not be named `prototype`".into(),
-                    ));
+                    return Err(
+                        self.error("a static class method may not be named `prototype`".into())
+                    );
                 }
 
                 // Early error: private method named "#constructor".
@@ -1643,7 +1647,11 @@ impl Parser {
                 }
                 Ok(())
             }
-            Statement::If { test, consequent, alternate } => {
+            Statement::If {
+                test,
+                consequent,
+                alternate,
+            } => {
                 self.check_super_call_expr(test)?;
                 self.check_super_call_stmt(consequent)?;
                 if let Some(alt) = alternate {
@@ -1655,24 +1663,47 @@ impl Parser {
                 self.check_super_call_expr(test)?;
                 self.check_super_call_stmt(body)
             }
-            Statement::For { init, test, update, body } => {
+            Statement::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
                 if let Some(e) = init.as_ref().and_then(|i| {
-                    if let Statement::Expression(e) = i.as_ref() { Some(e) } else { None }
+                    if let Statement::Expression(e) = i.as_ref() {
+                        Some(e)
+                    } else {
+                        None
+                    }
                 }) {
                     self.check_super_call_expr(e)?;
                 }
-                if let Some(e) = test { self.check_super_call_expr(e)?; }
-                if let Some(e) = update { self.check_super_call_expr(e)?; }
+                if let Some(e) = test {
+                    self.check_super_call_expr(e)?;
+                }
+                if let Some(e) = update {
+                    self.check_super_call_expr(e)?;
+                }
                 self.check_super_call_stmt(body)
             }
             Statement::Throw(e) => self.check_super_call_expr(e),
-            Statement::Try { block, handler, finalizer } => {
-                for s in block { self.check_super_call_stmt(s)?; }
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => {
+                for s in block {
+                    self.check_super_call_stmt(s)?;
+                }
                 if let Some(clause) = handler {
-                    for s in &clause.body { self.check_super_call_stmt(s)?; }
+                    for s in &clause.body {
+                        self.check_super_call_stmt(s)?;
+                    }
                 }
                 if let Some(fin) = finalizer {
-                    for s in fin { self.check_super_call_stmt(s)?; }
+                    for s in fin {
+                        self.check_super_call_stmt(s)?;
+                    }
                 }
                 Ok(())
             }
@@ -1729,11 +1760,17 @@ impl Parser {
             Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
                 self.check_super_call_expr(argument)
             }
-            Expression::Member { object, property, .. } => {
+            Expression::Member {
+                object, property, ..
+            } => {
                 self.check_super_call_expr(object)?;
                 self.check_super_call_expr(property)
             }
-            Expression::Conditional { test, consequent, alternate } => {
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
                 self.check_super_call_expr(test)?;
                 self.check_super_call_expr(consequent)?;
                 self.check_super_call_expr(alternate)
@@ -1780,7 +1817,9 @@ impl Parser {
             }
             Expression::Spread(e)
             | Expression::Await(e)
-            | Expression::Yield { argument: Some(e), .. } => self.check_super_call_expr(e),
+            | Expression::Yield {
+                argument: Some(e), ..
+            } => self.check_super_call_expr(e),
             _ => Ok(()),
         }
     }
@@ -1836,12 +1875,23 @@ impl Parser {
             }
             Expression::Binary { left, right, .. }
             | Expression::Logical { left, right, .. }
-            | Expression::Assignment { target: left, value: right }
-            | Expression::CompoundAssignment { target: left, value: right, .. } => {
+            | Expression::Assignment {
+                target: left,
+                value: right,
+            }
+            | Expression::CompoundAssignment {
+                target: left,
+                value: right,
+                ..
+            } => {
                 self.walk_field_init(left, false)?;
                 self.walk_field_init(right, false)?;
             }
-            Expression::Conditional { test, consequent, alternate } => {
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
                 self.walk_field_init(test, false)?;
                 self.walk_field_init(consequent, false)?;
                 self.walk_field_init(alternate, false)?;
@@ -1856,7 +1906,9 @@ impl Parser {
                     }
                 }
             }
-            Expression::Member { object, property, .. } => {
+            Expression::Member {
+                object, property, ..
+            } => {
                 self.walk_field_init(object, false)?;
                 self.walk_field_init(property, false)?;
             }
@@ -1918,9 +1970,9 @@ impl Parser {
     fn walk_field_init_stmt(&self, stmt: &crate::ast::Statement) -> Result<(), ParseError> {
         use crate::ast::Statement;
         match stmt {
-            Statement::Expression(e)
-            | Statement::Return(Some(e))
-            | Statement::Throw(e) => self.walk_field_init(e, false),
+            Statement::Expression(e) | Statement::Return(Some(e)) | Statement::Throw(e) => {
+                self.walk_field_init(e, false)
+            }
             Statement::Block(stmts) => {
                 for s in stmts {
                     self.walk_field_init_stmt(s)?;
@@ -1935,7 +1987,11 @@ impl Parser {
                 }
                 Ok(())
             }
-            Statement::If { test, consequent, alternate } => {
+            Statement::If {
+                test,
+                consequent,
+                alternate,
+            } => {
                 self.walk_field_init(test, false)?;
                 self.walk_field_init_stmt(consequent)?;
                 if let Some(alt) = alternate {
@@ -1947,9 +2003,18 @@ impl Parser {
                 self.walk_field_init(test, false)?;
                 self.walk_field_init_stmt(body)
             }
-            Statement::For { init: _, test, update, body } => {
-                if let Some(e) = test { self.walk_field_init(e, false)?; }
-                if let Some(e) = update { self.walk_field_init(e, false)?; }
+            Statement::For {
+                init: _,
+                test,
+                update,
+                body,
+            } => {
+                if let Some(e) = test {
+                    self.walk_field_init(e, false)?;
+                }
+                if let Some(e) = update {
+                    self.walk_field_init(e, false)?;
+                }
                 self.walk_field_init_stmt(body)
             }
             Statement::FunctionDeclaration { .. } => Ok(()),
@@ -2564,6 +2629,23 @@ mod tests {
             *left,
             Expression::Binary {
                 operator: BinaryOperator::Add,
+                ..
+            }
+        ));
+
+        let expr = parse_expression("value instanceof Type !== true");
+        let Expression::Binary {
+            operator: BinaryOperator::StrictNotEqual,
+            left,
+            ..
+        } = expr
+        else {
+            panic!("expected strict inequality at top level");
+        };
+        assert!(matches!(
+            *left,
+            Expression::Binary {
+                operator: BinaryOperator::InstanceOf,
                 ..
             }
         ));

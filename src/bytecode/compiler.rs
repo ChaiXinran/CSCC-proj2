@@ -139,9 +139,12 @@ impl Compiler {
             Statement::VariableDeclaration { kind, declarations } => {
                 for declarator in declarations {
                     if let Some(pattern) = &declarator.pattern {
-                        let init = declarator.initializer.as_ref().ok_or_else(|| CompileError {
-                            message: "destructuring declaration requires an initializer".into(),
-                        })?;
+                        let init = declarator
+                            .initializer
+                            .as_ref()
+                            .ok_or_else(|| CompileError {
+                                message: "destructuring declaration requires an initializer".into(),
+                            })?;
                         self.compile_expression(init, chunk, context)?;
                         self.compile_binding_pattern(*kind, pattern, chunk, context)?;
                     } else {
@@ -596,7 +599,9 @@ impl Compiler {
         let test_offset = chunk.current_offset();
         let loop_ctx = context.loops.pop().expect("do-while loop context");
         for jump in loop_ctx.continue_jumps {
-            chunk.patch_jump(jump, test_offset).map_err(CompileError::from_chunk)?;
+            chunk
+                .patch_jump(jump, test_offset)
+                .map_err(CompileError::from_chunk)?;
         }
 
         // do-while: evaluate test; if false pop and exit; else pop and loop.
@@ -610,13 +615,17 @@ impl Compiler {
         chunk.emit(Instruction::Pop); // pop truthy test value, then loop
         chunk.emit(Instruction::Jump(loop_start));
         let loop_end_pop = chunk.current_offset();
-        chunk.patch_jump(exit_jump, loop_end_pop).map_err(CompileError::from_chunk)?;
+        chunk
+            .patch_jump(exit_jump, loop_end_pop)
+            .map_err(CompileError::from_chunk)?;
         chunk.emit(Instruction::Pop); // pop falsy test value
         let loop_end = chunk.current_offset();
 
         let break_context = context.breakables.pop().expect("do-while break context");
         for jump in break_context.break_jumps {
-            chunk.patch_jump(jump, loop_end).map_err(CompileError::from_chunk)?;
+            chunk
+                .patch_jump(jump, loop_end)
+                .map_err(CompileError::from_chunk)?;
         }
         Ok(())
     }
@@ -732,7 +741,9 @@ impl Compiler {
                     if let Some(pattern) = &declarator.pattern {
                         // Destructuring declarator: compile RHS then bind pattern
                         match &declarator.initializer {
-                            Some(expression) => self.compile_expression(expression, chunk, context)?,
+                            Some(expression) => {
+                                self.compile_expression(expression, chunk, context)?
+                            }
                             None => {
                                 let undefined = chunk
                                     .add_constant(Constant::Undefined)
@@ -743,7 +754,9 @@ impl Compiler {
                         self.compile_binding_pattern(VariableKind::Let, pattern, chunk, context)?;
                     } else {
                         match &declarator.initializer {
-                            Some(expression) => self.compile_expression(expression, chunk, context)?,
+                            Some(expression) => {
+                                self.compile_expression(expression, chunk, context)?
+                            }
                             None => {
                                 let undefined = chunk
                                     .add_constant(Constant::Undefined)
@@ -899,31 +912,27 @@ impl Compiler {
         chunk.emit(Instruction::LoadName(cursor_index));
         chunk.emit(Instruction::GetElement);
         match left {
-            crate::ast::ForBinding::Declaration { kind, pattern } => {
-                match (kind, pattern) {
-                    (_, crate::ast::BindingPattern::Identifier(name)) => {
-                        let idx = self.add_name(name, chunk)?;
-                        chunk.emit(Instruction::StoreName(idx));
-                        chunk.emit(Instruction::Pop);
-                    }
-                    (k, pat) => {
-                        self.compile_binding_pattern(*k, pat, chunk, context)?;
-                    }
+            crate::ast::ForBinding::Declaration { kind, pattern } => match (kind, pattern) {
+                (_, crate::ast::BindingPattern::Identifier(name)) => {
+                    let idx = self.add_name(name, chunk)?;
+                    chunk.emit(Instruction::StoreName(idx));
+                    chunk.emit(Instruction::Pop);
                 }
-            }
-            crate::ast::ForBinding::Target(target) => {
-                match target {
-                    Expression::Identifier(name) => {
-                        self.emit_store_identifier(name, chunk, context)?;
-                        chunk.emit(Instruction::Pop);
-                    }
-                    _ => {
-                        return Err(CompileError::unsupported(
-                            "for-in target must be a variable or a simple identifier",
-                        ));
-                    }
+                (k, pat) => {
+                    self.compile_binding_pattern(*k, pat, chunk, context)?;
                 }
-            }
+            },
+            crate::ast::ForBinding::Target(target) => match target {
+                Expression::Identifier(name) => {
+                    self.emit_store_identifier(name, chunk, context)?;
+                    chunk.emit(Instruction::Pop);
+                }
+                _ => {
+                    return Err(CompileError::unsupported(
+                        "for-in target must be a variable or a simple identifier",
+                    ));
+                }
+            },
         }
 
         context.loops.push(LoopContext {
@@ -1651,7 +1660,9 @@ impl Compiler {
             BinaryOperator::GreaterThanOrEqual => Instruction::GreaterThanOrEqual,
             BinaryOperator::In => Instruction::HasProperty,
             BinaryOperator::InstanceOf => Instruction::InstanceOf,
-            BinaryOperator::LogicalAnd | BinaryOperator::LogicalOr | BinaryOperator::NullishCoalescing => unreachable!(),
+            BinaryOperator::LogicalAnd
+            | BinaryOperator::LogicalOr
+            | BinaryOperator::NullishCoalescing => unreachable!(),
         };
 
         self.compile_expression(left, chunk, context)?;
@@ -1778,7 +1789,13 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         if let Some(instruction) = compound_assignment_instruction(operator) {
-            return self.compile_compound_assignment_arithmetic(instruction, target, value, chunk, context);
+            return self.compile_compound_assignment_arithmetic(
+                instruction,
+                target,
+                value,
+                chunk,
+                context,
+            );
         }
         // Logical compound assignments: &&=, ||=, ??=
         // Semantics: load target; if short-circuit condition met, jump to end (keep current value);
@@ -1801,7 +1818,9 @@ impl Compiler {
         chunk.emit(Instruction::Pop);
         self.compile_expression(value, chunk, context)?;
         self.emit_store_target(target, chunk, context)?;
-        chunk.patch_jump(jump_instr, chunk.current_offset()).map_err(CompileError::from_chunk)?;
+        chunk
+            .patch_jump(jump_instr, chunk.current_offset())
+            .map_err(CompileError::from_chunk)?;
         Ok(())
     }
 
@@ -1867,7 +1886,9 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         match target {
             Expression::Identifier(name) => self.compile_identifier(name, chunk, context),
-            _ => Err(CompileError::unsupported("non-identifier target for logical compound assignment")),
+            _ => Err(CompileError::unsupported(
+                "non-identifier target for logical compound assignment",
+            )),
         }
     }
 
@@ -1879,7 +1900,9 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         match target {
             Expression::Identifier(name) => self.emit_store_identifier(name, chunk, context),
-            _ => Err(CompileError::unsupported("non-identifier target for logical compound assignment")),
+            _ => Err(CompileError::unsupported(
+                "non-identifier target for logical compound assignment",
+            )),
         }
     }
 
@@ -1948,6 +1971,46 @@ impl Compiler {
             if has_spread {
                 let (n_regular, spread_expr) =
                     self.split_trailing_spread(arguments, "method call")?;
+                let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                    message: "too many call arguments".into(),
+                })?;
+                for arg in &arguments[..n_regular] {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                self.compile_expression(spread_expr, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(n));
+            } else {
+                let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    message: "call argument count exceeds the u16 bytecode range".into(),
+                })?;
+                for arg in arguments {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                chunk.emit(Instruction::CallWithThis(argument_count));
+            }
+            return Ok(());
+        }
+
+        // Computed member calls also preserve their receiver as `this`.
+        if let Expression::Member {
+            object,
+            property,
+            computed: true,
+        } = callee
+        {
+            self.compile_expression(object, chunk, context)?;
+            self.compile_expression(property, chunk, context)?;
+            chunk.emit(Instruction::GetElementMethod);
+
+            if has_spread {
+                let (n_regular, spread_expr) =
+                    self.split_trailing_spread(arguments, "computed method call")?;
                 let n = u16::try_from(n_regular).map_err(|_| CompileError {
                     message: "too many call arguments".into(),
                 })?;
@@ -2825,22 +2888,20 @@ impl Compiler {
                     }
                 }
             }
-            crate::ast::ForBinding::Target(target) => {
-                match target {
-                    Expression::Identifier(name) => {
-                        self.emit_store_identifier(name, chunk, context)?;
-                        chunk.emit(Instruction::Pop);
-                    }
-                    Expression::Array(_) | Expression::Object(_) => {
-                        self.compile_destructuring_assignment_target(target, chunk, context)?;
-                    }
-                    _ => {
-                        return Err(CompileError::unsupported(
-                            "for-of target must be a simple identifier, array, or object pattern",
-                        ));
-                    }
+            crate::ast::ForBinding::Target(target) => match target {
+                Expression::Identifier(name) => {
+                    self.emit_store_identifier(name, chunk, context)?;
+                    chunk.emit(Instruction::Pop);
                 }
-            }
+                Expression::Array(_) | Expression::Object(_) => {
+                    self.compile_destructuring_assignment_target(target, chunk, context)?;
+                }
+                _ => {
+                    return Err(CompileError::unsupported(
+                        "for-of target must be a simple identifier, array, or object pattern",
+                    ));
+                }
+            },
         }
 
         context.loops.push(LoopContext {

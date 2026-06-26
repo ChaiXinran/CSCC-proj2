@@ -252,6 +252,9 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, St
         ObjectKind::Ordinary
         | ObjectKind::Array { .. }
         | ObjectKind::PrimitiveWrapper(_)
+        | ObjectKind::ArrayBuffer { .. }
+        | ObjectKind::DataView { .. }
+        | ObjectKind::TypedArray { .. }
         | ObjectKind::Iterator { .. } => None,
     }
 }
@@ -269,6 +272,11 @@ fn regexp_boolean_get(
     this_value: &JsValue,
     flag: char,
 ) -> Result<JsValue, VmError> {
+    if let Some(object) = context.value_object(this_value)
+        && context.regexp_prototype() == Some(object)
+    {
+        return Ok(JsValue::Boolean(false));
+    }
     let (_, _, flags) = require_regexp(context, this_value)?;
     Ok(JsValue::Boolean(flags.contains(flag)))
 }
@@ -346,13 +354,34 @@ fn regexp_unicode_sets_get(
 }
 
 fn regexp_flags_get(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_, _, flags) = require_regexp(context, &this_value)?;
-    Ok(JsValue::String(sort_regexp_flags(&flags)))
+    let object = context.require_object(&this_value, "RegExp.prototype.flags")?;
+    if context.regexp_prototype() == Some(object) {
+        return Ok(JsValue::String(String::new()));
+    }
+    let mut flags = String::new();
+    for (name, flag) in [
+        ("hasIndices", 'd'),
+        ("global", 'g'),
+        ("ignoreCase", 'i'),
+        ("multiline", 'm'),
+        ("dotAll", 's'),
+        ("unicode", 'u'),
+        ("unicodeSets", 'v'),
+        ("sticky", 'y'),
+    ] {
+        if vm
+            .get_property_value(this_value.clone(), name, context)?
+            .to_boolean()
+        {
+            flags.push(flag);
+        }
+    }
+    Ok(JsValue::String(flags))
 }
 
 fn regexp_source_get(
@@ -361,6 +390,11 @@ fn regexp_source_get(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    if let Some(object) = context.value_object(&this_value)
+        && context.regexp_prototype() == Some(object)
+    {
+        return Ok(JsValue::String("(?:)".into()));
+    }
     let (_, pattern, _) = require_regexp(context, &this_value)?;
     Ok(JsValue::String(escape_regexp_source(&pattern)))
 }

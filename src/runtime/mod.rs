@@ -31,7 +31,7 @@ pub use function::{
 };
 pub use gc::{CallFrameRoots, CollectionStats, Collector, HeapStats, RootSet, Trace, Tracer};
 pub use heap::Heap;
-pub use iterator::IteratorRecord;
+pub use iterator::{IteratorMode, IteratorRecord};
 pub use job::{
     Job, JobQueue, NativeJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
 };

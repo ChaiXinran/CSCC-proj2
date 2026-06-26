@@ -2,6 +2,13 @@
 
 use super::JsValue;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IteratorMode {
+    Key,
+    Value,
+    KeyAndValue,
+}
+
 /// Minimal iterator record used by runtime helpers before full Iterator
 /// builtins are installed.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +23,7 @@ pub(crate) enum IteratorKind {
         object: JsValue,
         index: usize,
         length: usize,
+        mode: IteratorMode,
     },
     String {
         chars: Vec<String>,
@@ -25,11 +33,16 @@ pub(crate) enum IteratorKind {
 
 impl IteratorRecord {
     pub(crate) fn array(object: JsValue, length: usize) -> Self {
+        Self::array_with_mode(object, length, IteratorMode::Value)
+    }
+
+    pub(crate) fn array_with_mode(object: JsValue, length: usize, mode: IteratorMode) -> Self {
         Self {
             kind: IteratorKind::Array {
                 object,
                 index: 0,
                 length,
+                mode,
             },
             done: false,
         }

@@ -466,7 +466,12 @@ impl Vm {
                     self.validate_jump_target(target, chunk, current_instruction)?;
                     let top = self.peek_value()?;
                     if !matches!(top, JsValue::Null | JsValue::Undefined) {
-                        self.jump_to(target, current_instruction, context, &mut instruction_pointer)?;
+                        self.jump_to(
+                            target,
+                            current_instruction,
+                            context,
+                            &mut instruction_pointer,
+                        )?;
                     }
                 }
                 Instruction::Jump(target) => {
@@ -849,6 +854,26 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::GetElementMethod => {
+                    let key = self.pop_value()?;
+                    let object = self.pop_value()?;
+                    let result = if let JsValue::Symbol(sym_id) = key {
+                        self.get_symbol_property_value_completion(object.clone(), sym_id, context)?
+                    } else {
+                        let key = to_property_key(&key)?;
+                        self.get_property_value_completion(object.clone(), &key, context)?
+                    };
+                    match result {
+                        OperationResult::Value(method) => {
+                            self.stack.push(method);
+                            self.stack.push(object);
+                        }
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
                 Instruction::SetProperty(index) => {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
@@ -990,10 +1015,16 @@ impl Vm {
                     }
                 }
                 Instruction::DeleteElement => {
-                    let key = to_property_key(&self.pop_value()?)?;
+                    let key = self.pop_value()?;
                     let value = self.pop_value()?;
                     let object = context.require_object(&value, "delete property")?;
-                    match context.delete_property(object, &key, context.strict()) {
+                    let deleted = if let JsValue::Symbol(symbol) = key {
+                        context.delete_symbol_property(object, symbol, context.strict())
+                    } else {
+                        let key = to_property_key(&key)?;
+                        context.delete_property(object, &key, context.strict())
+                    };
+                    match deleted {
                         Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
                         Err(error)
                             if matches!(
@@ -1010,9 +1041,14 @@ impl Vm {
                 Instruction::HasProperty => {
                     let value = self.pop_value()?;
                     let object = context.require_object(&value, "test property")?;
-                    let key = to_property_key(&self.pop_value()?)?;
-                    self.stack
-                        .push(JsValue::Boolean(context.has_property(object, &key)?));
+                    let key = self.pop_value()?;
+                    let has = if let JsValue::Symbol(symbol) = key {
+                        context.has_symbol_property(object, symbol)?
+                    } else {
+                        let key = to_property_key(&key)?;
+                        context.has_property(object, &key)?
+                    };
+                    self.stack.push(JsValue::Boolean(has));
                 }
                 Instruction::InstanceOf => {
                     let constructor = self.pop_value()?;
@@ -1743,7 +1779,11 @@ impl Vm {
     }
 
     #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn to_int32(&mut self, value: JsValue, context: &mut NativeContext) -> Result<i32, VmError> {
+    pub(crate) fn to_int32(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<i32, VmError> {
         let n = self.to_number(value, context)?;
         if n.is_nan() || n.is_infinite() || n == 0.0 {
             return Ok(0);
@@ -1752,7 +1792,11 @@ impl Vm {
     }
 
     #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn to_uint32(&mut self, value: JsValue, context: &mut NativeContext) -> Result<u32, VmError> {
+    pub(crate) fn to_uint32(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<u32, VmError> {
         let n = self.to_number(value, context)?;
         if n.is_nan() || n.is_infinite() || n == 0.0 {
             return Ok(0);

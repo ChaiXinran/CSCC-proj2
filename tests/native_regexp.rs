@@ -25,6 +25,30 @@ fn regexp_static_escape_and_descriptor_refinements_are_installed() {
 }
 
 #[test]
+fn regexp_flags_getter_is_generic_and_ordered() {
+    assert_eq!(
+        native_eval(
+            "var get = Object.getOwnPropertyDescriptor(RegExp.prototype, 'flags').get; \
+             var calls = ''; \
+             var generic = { \
+               get hasIndices() { calls += 'd'; return 1; }, \
+               get global() { calls += 'g'; return 0; }, \
+               get ignoreCase() { calls += 'i'; return true; }, \
+               get multiline() { calls += 'm'; return ''; }, \
+               get dotAll() { calls += 's'; return {}; }, \
+               get unicode() { calls += 'u'; return false; }, \
+               get unicodeSets() { calls += 'v'; return 0; }, \
+               get sticky() { calls += 'y'; return 'yes'; } \
+             }; \
+             get.call(generic) + ':' + calls + ':' + \
+             get.call(RegExp.prototype) + ':' + \
+             Object.getOwnPropertyDescriptor(RegExp.prototype, 'source').get.call(RegExp.prototype);"
+        ),
+        "disy:dgimsuvy::(?:)"
+    );
+}
+
+#[test]
 fn regexp_exec_and_test_use_to_string_and_last_index() {
     assert_eq!(
         native_eval(

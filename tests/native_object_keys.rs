@@ -140,3 +140,65 @@ fn reflect_get_and_set_use_explicit_receiver() {
         "42:true:1:2:true:3:4:true:5"
     );
 }
+
+#[test]
+fn object_static_methods_box_primitive_strings() {
+    assert_eq!(
+        native_eval(
+            "var keys = Object.keys('ab').join('|'); \
+             var names = Object.getOwnPropertyNames('ab').join('|'); \
+             var assigned = Object.assign({}, 'xy'); \
+             keys + ':' + names + ':' + assigned[0] + assigned[1];"
+        ),
+        "0|1:0|1|length:xy"
+    );
+}
+
+#[test]
+fn object_and_reflect_track_extensibility() {
+    assert_eq!(
+        native_eval(
+            "var o = {}; \
+             var before = Object.isExtensible(o); \
+             var reflected = Reflect.preventExtensions(o); \
+             var after = Reflect.isExtensible(o); \
+             var defined = Reflect.defineProperty(o, 'x', { value: 1 }); \
+             o.y = 2; \
+             before + ':' + reflected + ':' + after + ':' + defined + ':' + ('y' in o);"
+        ),
+        "true:true:false:false:false"
+    );
+}
+
+#[test]
+fn object_assign_uses_strict_set_and_copies_symbols() {
+    assert_eq!(
+        native_eval(
+            "var s = Symbol('s'); \
+             var source = { a: 1 }; \
+             source[s] = 2; \
+             var target = {}; \
+             Object.assign(target, source); \
+             Object.preventExtensions(target); \
+             var threw = false; \
+             try { Object.assign(target, { b: 3 }); } catch (e) { threw = e.name === 'TypeError'; } \
+             target.a + ':' + target[s] + ':' + threw;"
+        ),
+        "1:2:true"
+    );
+}
+
+#[test]
+fn reflect_set_prototype_of_reports_false_for_impossible_changes() {
+    assert_eq!(
+        native_eval(
+            "var target = {}; \
+             var proto = {}; \
+             Object.preventExtensions(target); \
+             var same = Reflect.setPrototypeOf(target, Object.getPrototypeOf(target)); \
+             var changed = Reflect.setPrototypeOf(target, proto); \
+             same + ':' + changed;"
+        ),
+        "true:false"
+    );
+}

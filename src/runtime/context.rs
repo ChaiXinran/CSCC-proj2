@@ -8,11 +8,12 @@ use std::{
 use super::{
     ArrayBufferId, ArrayBufferRecord, BoundFunction, BuiltinFunction, BuiltinId, CollectionStats,
     Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId, Heap, HeapStats,
-    IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue, NativeCall, NativeConstruct,
-    NativeErrorKind, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PromiseId, PromiseJob,
-    PromiseReaction, PromiseRecord, PromiseState, PropertyDescriptor, PropertyDescriptorUpdate,
-    PropertyKind, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
-    TypedArrayViewId, WellKnownSymbols, iterator::IteratorKind, object::array_index,
+    IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue, NativeCall,
+    NativeConstruct, NativeErrorKind, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PromiseId,
+    PromiseJob, PromiseReaction, PromiseRecord, PromiseState, PropertyDescriptor,
+    PropertyDescriptorUpdate, PropertyKind, RootSet, SymbolId, SymbolRegistry,
+    TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols,
+    iterator::IteratorKind, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 
@@ -498,6 +499,13 @@ impl NativeContext {
         symbol: SymbolId,
         descriptor: PropertyDescriptor,
     ) -> Result<bool, crate::vm::VmError> {
+        if self
+            .get_own_symbol_property_descriptor(object, symbol)
+            .is_none()
+            && !self.is_extensible(object)?
+        {
+            return Ok(false);
+        }
         let obj = self
             .heap
             .object_mut(object)
@@ -516,6 +524,9 @@ impl NativeContext {
             return Err(VmError::type_error("invalid mixed property descriptor"));
         }
         let current = self.get_own_symbol_property_descriptor(object, symbol);
+        if current.is_none() && !self.is_extensible(object)? {
+            return Ok(false);
+        }
         let Some(descriptor) = validate_and_apply_descriptor_update(current, update) else {
             return Ok(false);
         };
@@ -638,7 +649,13 @@ impl NativeContext {
             }
         }
 
-        self.define_symbol_own_property(object, symbol, PropertyDescriptor::data(value))
+        let defined =
+            self.define_symbol_own_property(object, symbol, PropertyDescriptor::data(value))?;
+        if defined {
+            Ok(true)
+        } else {
+            strict_error_or_false(strict, "object is not extensible")
+        }
     }
 
     pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
@@ -787,7 +804,8 @@ impl NativeContext {
     /// string keys followed by inherited ones, de-duplicated, walking the
     /// prototype chain.
     pub fn own_enumerable_keys(&self, object: ObjectId) -> Vec<String> {
-        self.heap.object(object)
+        self.heap
+            .object(object)
             .map(|o| o.enumerable_own_keys())
             .unwrap_or_default()
     }
@@ -1272,6 +1290,25 @@ impl NativeContext {
         key: String,
         descriptor: PropertyDescriptor,
     ) -> Result<bool, VmError> {
+        if let Some(index) = array_index(&key)
+            && let Some((view, length)) = self.typed_array_indexed_view(object)
+        {
+            if index >= length {
+                return Ok(false);
+            }
+            let PropertyKind::Data { value, .. } = descriptor.kind else {
+                return Ok(false);
+            };
+            self.typed_array_store_element(view, index, value)?;
+            return Ok(true);
+        }
+
+        if self.get_own_property_descriptor(object, &key).is_none()
+            && !self.is_extensible(object)?
+        {
+            return Ok(false);
+        }
+
         if self.is_array_object(object)? {
             if key == "length" {
                 return self.define_array_length_property(object, descriptor);
@@ -1304,6 +1341,9 @@ impl NativeContext {
         }
 
         let current = self.get_own_property_descriptor(object, &key);
+        if current.is_none() && !self.is_extensible(object)? {
+            return Ok(false);
+        }
         let Some(descriptor) = validate_and_apply_descriptor_update(current, update) else {
             return Ok(false);
         };
@@ -1321,24 +1361,51 @@ impl NativeContext {
         object: ObjectId,
         key: &str,
     ) -> Option<PropertyDescriptor> {
-        let object = self.heap.object(object)?;
+        let object_value = self.heap.object(object)?;
         if key == "length"
-            && let Some(length) = object.array_length()
+            && let Some(length) = object_value.array_length()
         {
             return Some(PropertyDescriptor::data_with(
                 JsValue::Number(length as f64),
-                object.array_length_writable().unwrap_or(false),
+                object_value.array_length_writable().unwrap_or(false),
                 false,
                 false,
             ));
         }
+        if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &object_value.kind {
+            if key == "length" {
+                return Some(PropertyDescriptor::data_with(
+                    JsValue::Number(value.encode_utf16().count() as f64),
+                    false,
+                    false,
+                    false,
+                ));
+            }
+            if let Some(index) = array_index(key)
+                && let Some(unit) = value.encode_utf16().nth(index)
+            {
+                return Some(PropertyDescriptor::data_with(
+                    JsValue::String(String::from_utf16_lossy(&[unit])),
+                    false,
+                    true,
+                    false,
+                ));
+            }
+        }
         if let Some(index) = array_index(key)
-            && matches!(object.kind, ObjectKind::Array { .. })
-            && let Some(descriptor) = object.array_element_descriptor(index)
+            && matches!(object_value.kind, ObjectKind::Array { .. })
+            && let Some(descriptor) = object_value.array_element_descriptor(index)
         {
             return Some(descriptor);
         }
-        object.own_property(key).cloned()
+        if let Some(index) = array_index(key)
+            && let Some((view, length)) = self.typed_array_indexed_view(object)
+            && index < length
+            && let Ok(value) = self.typed_array_load_element(view, index)
+        {
+            return Some(PropertyDescriptor::data_with(value, true, true, true));
+        }
+        object_value.own_property(key).cloned()
     }
 
     pub fn delete_property(
@@ -1349,6 +1416,13 @@ impl NativeContext {
     ) -> Result<bool, VmError> {
         if key == "length" && self.is_array_object(object)? {
             return strict_error_or_false(strict, "cannot delete array length");
+        }
+
+        if let Some(index) = array_index(key)
+            && let Some((_, length)) = self.typed_array_indexed_view(object)
+            && index < length
+        {
+            return strict_error_or_false(strict, "cannot delete typed array element");
         }
 
         if let Some(descriptor) = self.get_own_property_descriptor(object, key)
@@ -1391,11 +1465,34 @@ impl NativeContext {
         self.heap.object(object)?.prototype
     }
 
+    pub fn is_extensible(&self, object: ObjectId) -> Result<bool, VmError> {
+        let object = self
+            .heap
+            .object(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        Ok(object.extensible)
+    }
+
+    pub fn prevent_extensions(&mut self, object: ObjectId) -> Result<bool, VmError> {
+        let object = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        object.extensible = false;
+        Ok(true)
+    }
+
     pub fn set_prototype_of(
         &mut self,
         object: ObjectId,
         prototype: Option<ObjectId>,
     ) -> Result<bool, VmError> {
+        if self.get_prototype_of(object) == prototype {
+            return Ok(true);
+        }
+        if !self.is_extensible(object)? {
+            return Ok(false);
+        }
         if prototype == Some(object) {
             return Err(VmError::type_error("prototype cycle rejected"));
         }
@@ -1545,6 +1642,12 @@ impl NativeContext {
     }
 
     pub fn get_element(&mut self, object: JsValue, key: JsValue) -> Result<JsValue, VmError> {
+        if let JsValue::Symbol(symbol) = key {
+            let object = self.require_object(&object, "read property")?;
+            return Ok(self
+                .get_symbol_property_value(object, symbol)
+                .unwrap_or(JsValue::Undefined));
+        }
         let key = to_property_key(&key)?;
         self.get_property(object, &key)
     }
@@ -1554,7 +1657,9 @@ impl NativeContext {
             JsValue::String(string) => Ok(IteratorRecord::string(string)),
             value => {
                 let object = self.require_object(&value, "iterate")?;
-                if self.is_array_object(object)? {
+                if let Some((_, length)) = self.typed_array_indexed_view(object) {
+                    Ok(IteratorRecord::array(value, length))
+                } else if self.is_array_object(object)? {
                     let length = self
                         .heap
                         .object(object)
@@ -1580,14 +1685,27 @@ impl NativeContext {
                 object,
                 index,
                 length,
+                mode,
             } => {
-                if *index >= *length {
+                let current_length = self
+                    .array_like_iterator_length(object)?
+                    .unwrap_or(*length)
+                    .min(MAX_ARRAY_LENGTH);
+                if *index >= current_length {
                     iterator.done = true;
                     return Ok(None);
                 }
-                let key = JsValue::Number(*index as f64);
+                let current_index = *index;
                 *index += 1;
-                self.get_element(object.clone(), key).map(Some)
+                let key = JsValue::Number(current_index as f64);
+                match mode {
+                    IteratorMode::Key => Ok(Some(key)),
+                    IteratorMode::Value => self.get_element(object.clone(), key).map(Some),
+                    IteratorMode::KeyAndValue => {
+                        let value = self.get_element(object.clone(), key.clone())?;
+                        self.create_array(vec![key, value]).map(Some)
+                    }
+                }
             }
             IteratorKind::String { chars, index } => {
                 if *index >= chars.len() {
@@ -1601,6 +1719,44 @@ impl NativeContext {
         }
     }
 
+    fn array_like_iterator_length(&self, value: &JsValue) -> Result<Option<usize>, VmError> {
+        let Some(object) = self.value_object(value) else {
+            return Ok(None);
+        };
+        let Some(object_value) = self.heap.object(object) else {
+            return Ok(None);
+        };
+        if let Some((view_id, length)) = self.typed_array_indexed_view(object) {
+            let view = self
+                .typed_array_view(view_id)
+                .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?;
+            let record = self
+                .array_buffer_record(view.buffer)
+                .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+            if record.detached {
+                return Err(VmError::type_error("ArrayBuffer is detached"));
+            }
+            if self.typed_array_current_length(view).is_none() {
+                return Err(VmError::type_error("TypedArray is out of bounds"));
+            }
+            return Ok(Some(length));
+        }
+        if let Some(length) = object_value.array_length() {
+            return Ok(Some(length));
+        }
+        Ok(object_value
+            .own_property("length")
+            .and_then(|descriptor| descriptor.value_cloned())
+            .and_then(|value| value.to_number())
+            .map(|length| {
+                if !length.is_finite() || length <= 0.0 {
+                    0
+                } else {
+                    length.floor().min(MAX_ARRAY_LENGTH as f64) as usize
+                }
+            }))
+    }
+
     pub fn iterator_close(&mut self, iterator: &mut IteratorRecord) -> Result<(), VmError> {
         iterator.done = true;
         Ok(())
@@ -1609,8 +1765,37 @@ impl NativeContext {
     /// Create a heap-allocated iterator object from an iterable value.
     /// Returns a `JsValue::Object` that `IteratorNext` / `IteratorClose` can use.
     pub fn create_iterator_object(&mut self, iterable: JsValue) -> Result<JsValue, VmError> {
+        if let Some(object) = self.value_object(&iterable)
+            && self
+                .heap()
+                .object(object)
+                .is_some_and(|object| matches!(&object.kind, ObjectKind::Iterator { .. }))
+        {
+            return Ok(iterable);
+        }
         let record = self.get_iterator(iterable)?;
         let obj = JsObject::iterator(record);
+        let id = self
+            .heap_mut()
+            .allocate_object(obj)
+            .ok_or_else(|| VmError::runtime("heap full: cannot allocate iterator object"))?;
+        Ok(JsValue::Object(id))
+    }
+
+    /// Create a heap-allocated array-like iterator object with a JS-visible prototype.
+    pub fn create_array_iterator_object(
+        &mut self,
+        iterable: JsValue,
+        length: usize,
+        mode: IteratorMode,
+        prototype: Option<ObjectId>,
+    ) -> Result<JsValue, VmError> {
+        let mut obj = JsObject::iterator(IteratorRecord::array_with_mode(
+            iterable,
+            length.min(MAX_ARRAY_LENGTH),
+            mode,
+        ));
+        obj.prototype = prototype;
         let id = self
             .heap_mut()
             .allocate_object(obj)
@@ -1675,6 +1860,11 @@ impl NativeContext {
         key: JsValue,
         value: JsValue,
     ) -> Result<JsValue, VmError> {
+        if let JsValue::Symbol(symbol) = key {
+            let object_id = self.require_object(&object, "write property")?;
+            self.set_symbol_property(object_id, symbol, value.clone(), self.strict)?;
+            return Ok(value);
+        }
         let key = to_property_key(&key)?;
         self.set_property(object, key, value)
     }
@@ -1702,6 +1892,13 @@ impl NativeContext {
         key: JsValue,
         value: JsValue,
     ) -> Result<JsValue, VmError> {
+        if let JsValue::Symbol(symbol) = key {
+            let object_id = self.require_object(&object, "write property")?;
+            if self.set_symbol_property(object_id, symbol, value.clone(), true)? {
+                return Ok(value);
+            }
+            return Err(VmError::type_error("cannot write symbol property"));
+        }
         let key = to_property_key(&key)?;
         self.set_property_strict(object, key, value)
     }
@@ -1713,6 +1910,16 @@ impl NativeContext {
         value: JsValue,
         strict: bool,
     ) -> Result<bool, VmError> {
+        if let Some(index) = array_index(key)
+            && let Some((view, length)) = self.typed_array_indexed_view(object)
+        {
+            if index >= length {
+                return strict_error_or_false(strict, "typed array index is out of range");
+            }
+            self.typed_array_store_element(view, index, value)?;
+            return Ok(true);
+        }
+
         if key == "length" && self.is_array_object(object)? {
             let length = self.array_length_from_value(value)?;
             return self.set_array_length(object, length);
@@ -1770,7 +1977,13 @@ impl NativeContext {
             }
         }
 
-        self.define_own_property(object, key.into(), PropertyDescriptor::data(value))
+        let defined =
+            self.define_own_property(object, key.into(), PropertyDescriptor::data(value))?;
+        if defined {
+            Ok(true)
+        } else {
+            strict_error_or_false(strict, "object is not extensible")
+        }
     }
 
     pub(crate) fn find_property_descriptor(
@@ -1829,6 +2042,78 @@ impl NativeContext {
                 .kind,
             ObjectKind::Array { .. }
         ))
+    }
+
+    pub(crate) fn array_buffer_id_for_object(&self, object: ObjectId) -> Option<ArrayBufferId> {
+        match self.heap.object(object)?.kind {
+            ObjectKind::ArrayBuffer { buffer } => Some(buffer),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn data_view_id_for_object(&self, object: ObjectId) -> Option<DataViewId> {
+        match self.heap.object(object)?.kind {
+            ObjectKind::DataView { view } => Some(view),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn typed_array_indexed_view(
+        &self,
+        object: ObjectId,
+    ) -> Option<(TypedArrayViewId, usize)> {
+        match &self.heap.object(object)?.kind {
+            ObjectKind::TypedArray { view, .. } => {
+                let current_length = self
+                    .typed_array_view(*view)
+                    .and_then(|view| self.typed_array_current_length(view))
+                    .unwrap_or(0);
+                Some((*view, current_length))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn typed_array_name_for_object(&self, object: ObjectId) -> Option<&str> {
+        match &self.heap.object(object)?.kind {
+            ObjectKind::TypedArray { name, .. } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    fn typed_array_current_length(&self, view: &TypedArrayView) -> Option<usize> {
+        let record = self.array_buffer_record(view.buffer)?;
+        if record.detached || view.byte_offset > record.bytes.len() {
+            return None;
+        }
+        let bytes_per_element = view.element_kind.bytes_per_element();
+        if view.length_tracking {
+            return Some((record.bytes.len() - view.byte_offset) / bytes_per_element);
+        }
+        let byte_length = view.fixed_byte_length()?;
+        if view
+            .byte_offset
+            .checked_add(byte_length)
+            .is_none_or(|end| end > record.bytes.len())
+        {
+            None
+        } else {
+            Some(view.length)
+        }
+    }
+
+    pub fn validate_typed_array_view(&self, view: TypedArrayViewId) -> Result<usize, VmError> {
+        let view = self
+            .typed_array_view(view)
+            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?;
+        let record = self
+            .array_buffer_record(view.buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        self.typed_array_current_length(view)
+            .ok_or_else(|| VmError::type_error("TypedArray is out of bounds"))
     }
 
     fn define_array_index_property(
@@ -2070,15 +2355,40 @@ impl NativeContext {
     }
 
     pub fn create_array_buffer(&mut self, byte_length: usize) -> Result<ArrayBufferId, VmError> {
+        self.create_array_buffer_with_options(byte_length, byte_length, false, false)
+    }
+
+    pub fn create_array_buffer_with_options(
+        &mut self,
+        byte_length: usize,
+        max_byte_length: usize,
+        resizable: bool,
+        immutable: bool,
+    ) -> Result<ArrayBufferId, VmError> {
         if byte_length > MAX_ARRAY_BUFFER_BYTE_LENGTH {
             return Err(VmError::runtime_limit(
                 "ArrayBuffer allocation limit exceeded",
             ));
         }
+        if max_byte_length > MAX_ARRAY_BUFFER_BYTE_LENGTH {
+            return Err(VmError::runtime_limit(
+                "ArrayBuffer maxByteLength limit exceeded",
+            ));
+        }
+        if byte_length > max_byte_length {
+            return Err(VmError::range(
+                "ArrayBuffer byteLength exceeds maxByteLength",
+            ));
+        }
         self.ensure_heap_capacity(byte_length)?;
         let index = u32::try_from(self.array_buffers.len())
             .map_err(|_| VmError::runtime("ArrayBuffer registry full"))?;
-        self.array_buffers.push(ArrayBufferRecord::new(byte_length));
+        self.array_buffers.push(ArrayBufferRecord::with_options(
+            byte_length,
+            max_byte_length,
+            resizable,
+            immutable,
+        ));
         Ok(ArrayBufferId(index))
     }
 
@@ -2100,6 +2410,31 @@ impl NativeContext {
             .detached)
     }
 
+    pub fn is_array_buffer_immutable(&self, buffer: ArrayBufferId) -> Result<bool, VmError> {
+        Ok(self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?
+            .immutable)
+    }
+
+    pub fn array_buffer_max_byte_length(&self, buffer: ArrayBufferId) -> Result<usize, VmError> {
+        let record = self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        Ok(if record.detached {
+            0
+        } else {
+            record.max_byte_length
+        })
+    }
+
+    pub fn is_array_buffer_resizable(&self, buffer: ArrayBufferId) -> Result<bool, VmError> {
+        let record = self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        Ok(!record.detached && record.resizable)
+    }
+
     pub fn detach_array_buffer(&mut self, buffer: ArrayBufferId) -> Result<(), VmError> {
         let record = self
             .array_buffers
@@ -2110,12 +2445,123 @@ impl NativeContext {
         Ok(())
     }
 
+    pub fn resize_array_buffer(
+        &mut self,
+        buffer: ArrayBufferId,
+        new_byte_length: usize,
+    ) -> Result<(), VmError> {
+        let record = self
+            .array_buffers
+            .get_mut(buffer.0 as usize)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        if record.immutable {
+            return Err(VmError::type_error("ArrayBuffer is immutable"));
+        }
+        if !record.resizable {
+            return Err(VmError::type_error("ArrayBuffer is not resizable"));
+        }
+        if new_byte_length > record.max_byte_length {
+            return Err(VmError::range("ArrayBuffer resize exceeds maxByteLength"));
+        }
+        if new_byte_length > MAX_ARRAY_BUFFER_BYTE_LENGTH {
+            return Err(VmError::runtime_limit(
+                "ArrayBuffer allocation limit exceeded",
+            ));
+        }
+        record.bytes.resize(new_byte_length, 0);
+        Ok(())
+    }
+
+    pub fn mark_array_buffer_immutable(&mut self, buffer: ArrayBufferId) -> Result<(), VmError> {
+        let record = self
+            .array_buffers
+            .get_mut(buffer.0 as usize)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        record.immutable = true;
+        record.resizable = false;
+        record.max_byte_length = record.bytes.len();
+        Ok(())
+    }
+
+    pub fn clone_array_buffer_range(
+        &mut self,
+        buffer: ArrayBufferId,
+        start: usize,
+        end: usize,
+    ) -> Result<ArrayBufferId, VmError> {
+        self.clone_array_buffer_range_with_immutable(buffer, start, end, false)
+    }
+
+    pub fn clone_array_buffer_range_with_immutable(
+        &mut self,
+        buffer: ArrayBufferId,
+        start: usize,
+        end: usize,
+        immutable: bool,
+    ) -> Result<ArrayBufferId, VmError> {
+        let bytes = self.read_buffer_bytes(buffer, start, end.saturating_sub(start))?;
+        let copy = bytes.to_vec();
+        let target = self.create_array_buffer(copy.len())?;
+        self.write_buffer_bytes(target, 0, &copy)?;
+        if immutable {
+            self.mark_array_buffer_immutable(target)?;
+        }
+        Ok(target)
+    }
+
+    pub fn transfer_array_buffer(
+        &mut self,
+        buffer: ArrayBufferId,
+        new_byte_length: Option<usize>,
+        immutable: bool,
+    ) -> Result<ArrayBufferId, VmError> {
+        let record = self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        let new_len = new_byte_length.unwrap_or(record.bytes.len());
+        if new_len > MAX_ARRAY_BUFFER_BYTE_LENGTH {
+            return Err(VmError::runtime_limit(
+                "ArrayBuffer allocation limit exceeded",
+            ));
+        }
+        let mut copy = vec![0; new_len];
+        let copy_len = copy.len().min(record.bytes.len());
+        copy[..copy_len].copy_from_slice(&record.bytes[..copy_len]);
+        let target = self.create_array_buffer(new_len)?;
+        self.write_buffer_bytes(target, 0, &copy)?;
+        if immutable {
+            self.mark_array_buffer_immutable(target)?;
+        }
+        self.detach_array_buffer(buffer)?;
+        Ok(target)
+    }
+
     pub fn create_typed_array_view(
         &mut self,
         buffer: ArrayBufferId,
         element_kind: TypedArrayElementKind,
         byte_offset: usize,
         length: usize,
+    ) -> Result<TypedArrayViewId, VmError> {
+        self.create_typed_array_view_with_tracking(buffer, element_kind, byte_offset, length, false)
+    }
+
+    pub fn create_typed_array_view_with_tracking(
+        &mut self,
+        buffer: ArrayBufferId,
+        element_kind: TypedArrayElementKind,
+        byte_offset: usize,
+        length: usize,
+        length_tracking: bool,
     ) -> Result<TypedArrayViewId, VmError> {
         let byte_length = checked_view_byte_length(length, element_kind.bytes_per_element())?;
         if !byte_offset.is_multiple_of(element_kind.bytes_per_element()) {
@@ -2130,6 +2576,7 @@ impl NativeContext {
             buffer,
             byte_offset,
             length,
+            length_tracking,
             element_kind,
         });
         Ok(TypedArrayViewId(index))
@@ -2140,10 +2587,26 @@ impl NativeContext {
     }
 
     pub fn typed_array_byte_length(&self, view: TypedArrayViewId) -> Result<usize, VmError> {
-        self.typed_array_view(view)
-            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
-            .byte_length()
+        let view = self
+            .typed_array_view(view)
+            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?;
+        let Some(length) = self.typed_array_current_length(view) else {
+            return Ok(0);
+        };
+        length
+            .checked_mul(view.element_kind.bytes_per_element())
             .ok_or_else(|| VmError::runtime_limit("TypedArray byteLength overflow"))
+    }
+
+    pub fn typed_array_byte_offset(&self, view: TypedArrayViewId) -> Result<usize, VmError> {
+        let view = self
+            .typed_array_view(view)
+            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?;
+        if self.typed_array_current_length(view).is_some() {
+            Ok(view.byte_offset)
+        } else {
+            Ok(0)
+        }
     }
 
     pub fn typed_array_load_element(
@@ -2151,10 +2614,12 @@ impl NativeContext {
         view: TypedArrayViewId,
         index: usize,
     ) -> Result<JsValue, VmError> {
+        let view_id = view;
         let view = self
-            .typed_array_view(view)
+            .typed_array_view(view_id)
             .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?;
-        if index >= view.length {
+        let length = self.validate_typed_array_view(view_id)?;
+        if index >= length {
             return Err(VmError::range("TypedArray index is out of range"));
         }
         let byte_offset = typed_array_element_offset(view, index)?;
@@ -2176,11 +2641,13 @@ impl NativeContext {
         index: usize,
         value: JsValue,
     ) -> Result<(), VmError> {
+        let view_id = view;
         let view = self
-            .typed_array_view(view)
+            .typed_array_view(view_id)
             .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
             .clone();
-        if index >= view.length {
+        let length = self.validate_typed_array_view(view_id)?;
+        if index >= length {
             return Err(VmError::range("TypedArray index is out of range"));
         }
         let byte_offset = typed_array_element_offset(&view, index)?;
@@ -2224,6 +2691,9 @@ impl NativeContext {
                 "BigInt DataView elements are not implemented",
             ));
         }
+        if self.is_array_buffer_detached(view.buffer)? {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
         let width = element_kind.bytes_per_element();
         if request_index
             .checked_add(width)
@@ -2259,6 +2729,9 @@ impl NativeContext {
             return Err(VmError::type_error(
                 "BigInt DataView elements are not implemented",
             ));
+        }
+        if self.is_array_buffer_detached(view.buffer)? {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
         }
         let width = element_kind.bytes_per_element();
         if request_index
@@ -2332,6 +2805,9 @@ impl NativeContext {
             .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
         if record.detached {
             return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        if record.immutable {
+            return Err(VmError::type_error("ArrayBuffer is immutable"));
         }
         let end = byte_offset
             .checked_add(bytes.len())

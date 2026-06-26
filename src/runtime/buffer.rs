@@ -9,14 +9,30 @@ pub struct ArrayBufferId(pub u32);
 pub struct ArrayBufferRecord {
     pub bytes: Vec<u8>,
     pub detached: bool,
+    pub max_byte_length: usize,
+    pub resizable: bool,
+    pub immutable: bool,
 }
 
 impl ArrayBufferRecord {
     #[must_use]
     pub fn new(byte_length: usize) -> Self {
+        Self::with_options(byte_length, byte_length, false, false)
+    }
+
+    #[must_use]
+    pub fn with_options(
+        byte_length: usize,
+        max_byte_length: usize,
+        resizable: bool,
+        immutable: bool,
+    ) -> Self {
         Self {
             bytes: vec![0; byte_length],
             detached: false,
+            max_byte_length,
+            resizable,
+            immutable,
         }
     }
 
@@ -71,12 +87,13 @@ pub struct TypedArrayView {
     pub buffer: ArrayBufferId,
     pub byte_offset: usize,
     pub length: usize,
+    pub length_tracking: bool,
     pub element_kind: TypedArrayElementKind,
 }
 
 impl TypedArrayView {
     #[must_use]
-    pub fn byte_length(&self) -> Option<usize> {
+    pub fn fixed_byte_length(&self) -> Option<usize> {
         self.length
             .checked_mul(self.element_kind.bytes_per_element())
     }
