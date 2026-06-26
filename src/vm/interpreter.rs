@@ -287,11 +287,26 @@ impl Vm {
                     match context.get_global(name) {
                         Some(value) => self.stack.push(value),
                         None => {
-                            let error = VmError::reference(format!(
-                                "{name} is not defined at instruction {current_instruction}"
-                            ));
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                            // Spec: global environment's object record checks the global object.
+                            // Properties set via `this.x = v` are reachable as global identifiers.
+                            let global_id = context.global_object();
+                            let name_s = name.to_string();
+                            if context.get_own_property(global_id, &name_s).is_some() {
+                                let global_obj = context.global_this_value();
+                                match context.get_property(global_obj, &name_s) {
+                                    Ok(value) => self.stack.push(value),
+                                    Err(error) => {
+                                        abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                        discard_saved_finally = true;
+                                    }
+                                }
+                            } else {
+                                let error = VmError::reference(format!(
+                                    "{name} is not defined at instruction {current_instruction}"
+                                ));
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
@@ -530,6 +545,18 @@ impl Vm {
                     self.validate_jump_target(target, chunk, current_instruction)?;
                     let top = self.peek_value()?;
                     if !matches!(top, JsValue::Null | JsValue::Undefined) {
+                        self.jump_to(
+                            target,
+                            current_instruction,
+                            context,
+                            &mut instruction_pointer,
+                        )?;
+                    }
+                }
+                Instruction::JumpIfNotUndefined(target) => {
+                    self.validate_jump_target(target, chunk, current_instruction)?;
+                    let top = self.peek_value()?;
+                    if !matches!(top, JsValue::Undefined) {
                         self.jump_to(
                             target,
                             current_instruction,
@@ -1094,6 +1121,48 @@ impl Vm {
                         name,
                         PropertyDescriptor::accessor(getter, Some(setter), false, true),
                     )?;
+                }
+                Instruction::DefineClassMethodComputed => {
+                    let value = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let name = to_property_key(&key)?;
+                    let object = context.require_object(self.peek_value()?, "define class method (computed)")?;
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::data_with(value, true, false, true),
+                    )?;
+                }
+                Instruction::DefineClassGetterComputed => {
+                    let getter = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let name = to_property_key(&key)?;
+                    let object = context.require_object(self.peek_value()?, "define class getter (computed)")?;
+                    let setter = existing_accessor_setter(context, object, &name);
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::accessor(Some(getter), setter, false, true),
+                    )?;
+                }
+                Instruction::DefineClassSetterComputed => {
+                    let setter = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let name = to_property_key(&key)?;
+                    let object = context.require_object(self.peek_value()?, "define class setter (computed)")?;
+                    let getter = existing_accessor_getter(context, object, &name);
+                    context.define_own_property(
+                        object,
+                        name,
+                        PropertyDescriptor::accessor(getter, Some(setter), false, true),
+                    )?;
+                }
+                Instruction::DefineDataPropertyComputed => {
+                    let value = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let name = to_property_key(&key)?;
+                    let object = context.require_object(self.peek_value()?, "define data property (computed)")?;
+                    context.define_own_property(object, name, PropertyDescriptor::data(value))?;
                 }
                 Instruction::SpreadObject => {
                     let spread_val = self.pop_value()?;

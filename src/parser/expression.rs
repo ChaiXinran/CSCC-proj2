@@ -70,6 +70,7 @@ impl Parser {
                 && !matches!(
                     self.peek().kind,
                     TokenKind::Punctuator(';')
+                        | TokenKind::Punctuator(',')
                         | TokenKind::Punctuator(')')
                         | TokenKind::Punctuator(']')
                         | TokenKind::Punctuator('}')
@@ -884,6 +885,8 @@ impl Parser {
         }
 
         // General property: parse the key first, then decide.
+        // Track whether the token was a plain `Identifier` (not a keyword) for shorthand.
+        let key_from_ident_token = matches!(self.peek().kind, TokenKind::Identifier(_));
         let key = self.parse_property_name()?;
 
         // `__proto__: value` — PrototypeSetter (only the non-computed shorthand)
@@ -917,6 +920,41 @@ impl Parser {
                     is_arrow: false,
                 }),
             });
+        }
+
+        // Shorthand property: `{name}` or `{name = default}`.
+        // Only when: token was Identifier (not keyword), and name is not a reserved word.
+        if key_from_ident_token {
+            if let PropertyName::Identifier(ref ident) = key {
+                let ident_is_valid = !is_reserved_identifier_name(ident)
+                    && !(self.is_strict
+                        && (ident == "eval"
+                            || ident == "arguments"
+                            || is_strict_future_reserved(ident)
+                            || is_strict_future_reserved_keyword(ident)))
+                    && !(self.is_generator_context && ident == "yield")
+                    && !(self.is_async_context && ident == "await");
+                if ident_is_valid && !self.check_punctuator(':') {
+                    let ident = ident.clone();
+                    let default_expr = if self.eat_operator("=") {
+                        Some(self.parse_assignment()?)
+                    } else {
+                        None
+                    };
+                    let value = if let Some(def) = default_expr {
+                        Expression::Assignment {
+                            target: Box::new(Expression::Identifier(ident.clone())),
+                            value: Box::new(def),
+                        }
+                    } else {
+                        Expression::Identifier(ident.clone())
+                    };
+                    return Ok(ObjectProperty::Data {
+                        key: PropertyName::Identifier(ident),
+                        value,
+                    });
+                }
+            }
         }
 
         self.expect_punctuator(':')?;
@@ -1297,10 +1335,20 @@ impl Parser {
         elements: &mut Vec<ClassElement>,
     ) -> Result<(), ParseError> {
         // Track seen private names to detect duplicates.
+        // Getters and setters with the same name form a valid accessor pair.
         let mut seen_private_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut seen_private_getters: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        let mut seen_private_setters: std::collections::HashSet<String> =
             std::collections::HashSet::new();
 
         while !self.check_punctuator('}') && !self.at_eof() {
+            // Skip empty class elements (bare semicolons).
+            if self.eat_punctuator(';') {
+                continue;
+            }
+
             // Optional `static` keyword.
             let is_static = self.eat_keyword(Keyword::Static);
 
@@ -1352,9 +1400,19 @@ impl Parser {
             let prop_name = self.parse_class_member_name()?;
 
             // Private name duplicate check.
+            // Getter + setter with the same name is a valid accessor pair.
             if let PropertyName::PrivateName(pn) = &prop_name {
-                let key = format!("{}#{}", if is_static { "s" } else { "i" }, pn);
-                if !seen_private_names.insert(key) {
+                let prefix = if is_static { "s" } else { "i" };
+                let key = format!("{}#{}", prefix, pn);
+                if is_accessor && is_getter {
+                    if !seen_private_getters.insert(key) {
+                        return Err(self.error(format!("duplicate private getter `#{pn}`")));
+                    }
+                } else if is_accessor && is_setter {
+                    if !seen_private_setters.insert(key) {
+                        return Err(self.error(format!("duplicate private setter `#{pn}`")));
+                    }
+                } else if !seen_private_names.insert(key) {
                     return Err(self.error(format!("duplicate private name `#{pn}`")));
                 }
                 // `#constructor` is forbidden (per spec, in any position).

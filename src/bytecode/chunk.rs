@@ -310,6 +310,7 @@ impl Chunk {
             Instruction::JumpIfFalse(current)
             | Instruction::JumpIfTrue(current)
             | Instruction::JumpIfNotNullish(current)
+            | Instruction::JumpIfNotUndefined(current)
             | Instruction::Jump(current) => {
                 *current = target;
                 Ok(())

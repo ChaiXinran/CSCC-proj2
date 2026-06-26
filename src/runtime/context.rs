@@ -940,7 +940,14 @@ impl NativeContext {
             let Some(environment) = self.heap.environment_mut(self.global_environment) else {
                 return false;
             };
-            environment.set_mutable_binding(name, value.clone()).is_ok()
+            if environment.set_mutable_binding(name, value.clone()).is_ok() {
+                true
+            } else if !self.strict {
+                // Non-strict: create global binding if it doesn't exist (implicit global).
+                environment.create_binding(name.to_string(), value.clone(), true)
+            } else {
+                false
+            }
         };
         if ok {
             let _ = self.define_own_property(
@@ -1065,6 +1072,11 @@ impl NativeContext {
                 environment.outer
             };
             current = outer;
+        }
+        // Non-strict: unresolvable reference creates a global binding (PutValue spec step).
+        // Add to global environment so resolve_binding_value can find it later.
+        if !self.strict {
+            return self.declare_binding(self.global_environment, name, value, true);
         }
         Err(VmError::reference(format!("{name} is not defined")))
     }
@@ -1754,6 +1766,17 @@ impl NativeContext {
                 }) = self.heap.object(object)
                 {
                     Ok(IteratorRecord::string(string.clone()))
+                } else if let Some(length) = self
+                    .heap
+                    .object(object)
+                    .and_then(|obj| obj.own_property("length"))
+                    .and_then(|d| d.value_cloned())
+                    .and_then(|v| v.to_number())
+                    .map(|n| n.max(0.0).min(u32::MAX as f64) as usize)
+                {
+                    // Array-like object: has a numeric `length` property.
+                    // Handles `arguments`, DOM NodeList, etc.
+                    Ok(IteratorRecord::array(value, length))
                 } else {
                     Err(VmError::type_error("value is not iterable"))
                 }
@@ -1856,13 +1879,22 @@ impl NativeContext {
     /// Create a heap-allocated iterator object from an iterable value.
     /// Returns a `JsValue::Object` that `IteratorNext` / `IteratorClose` can use.
     pub fn create_iterator_object(&mut self, iterable: JsValue) -> Result<JsValue, VmError> {
-        if let Some(object) = self.value_object(&iterable)
-            && self
-                .heap()
-                .object(object)
-                .is_some_and(|object| matches!(&object.kind, ObjectKind::Iterator { .. }))
-        {
-            return Ok(iterable);
+        if let Some(object) = self.value_object(&iterable) {
+            let kind = self.heap().object(object).map(|o| &o.kind);
+            match kind {
+                Some(ObjectKind::Iterator { .. }) => return Ok(iterable),
+                Some(ObjectKind::Generator { .. }) => {
+                    // Generators are their own iterators: wrap in a JS IteratorRecord
+                    // that calls .next() on the generator object.
+                    let record = IteratorRecord::js(iterable);
+                    let obj = JsObject::iterator(record);
+                    let id = self.heap_mut().allocate_object(obj).ok_or_else(|| {
+                        VmError::runtime("heap full: cannot allocate generator iterator")
+                    })?;
+                    return Ok(JsValue::Object(id));
+                }
+                _ => {}
+            }
         }
         let record = self.get_iterator(iterable)?;
         let obj = JsObject::iterator(record);

@@ -99,12 +99,10 @@ impl<'source> Lexer<'source> {
                     self.read_operator_or_punctuator()?
                 }
             } else if ch == '#'
-                && self
-                    .cursor
-                    .rest()
-                    .chars()
-                    .nth(1)
-                    .is_some_and(is_identifier_start)
+                && self.cursor.rest().get(1..).is_some_and(|after| {
+                    after.starts_with("\\u")
+                        || after.chars().next().is_some_and(is_identifier_start)
+                })
             {
                 self.read_private_name()?
             } else if is_identifier_start(ch)

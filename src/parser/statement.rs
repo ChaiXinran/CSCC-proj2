@@ -137,9 +137,11 @@ impl Parser {
     fn parse_function_declaration(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `function`
         let is_generator = self.eat_operator("*");
+        // Parse the name in the OUTER (non-generator) context so that `yield` is
+        // a valid binding identifier for `function* yield()` in non-strict mode.
+        let name = self.expect_identifier()?;
         let outer_generator = self.is_generator_context;
         self.is_generator_context = is_generator;
-        let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
         let is_nspl = Self::params_are_non_simple(&params);
         let body_strict = self.peek_body_has_use_strict();

@@ -93,6 +93,8 @@ pub enum Instruction {
     JumpIfTrue(usize),
     /// Observes, but does not remove, the top stack value; jumps if NOT null or undefined.
     JumpIfNotNullish(usize),
+    /// Observes, but does not remove, the top stack value; jumps if NOT undefined (null does NOT trigger).
+    JumpIfNotUndefined(usize),
     /// Unconditionally transfers control to an absolute instruction offset.
     Jump(usize),
 
@@ -201,6 +203,16 @@ pub enum Instruction {
     DefineClassGetter(u16),
     /// Like `DefineSetter` but uses `enumerable=false, configurable=true` for class accessors.
     DefineClassSetter(u16),
+    /// Computed-key class method: Stack `[obj, key, fn]` → `[obj]`.
+    /// Defines `obj[key] = fn` with class-method descriptor (non-enumerable, configurable).
+    DefineClassMethodComputed,
+    /// Computed-key class getter: Stack `[obj, key, fn]` → `[obj]`.
+    DefineClassGetterComputed,
+    /// Computed-key class setter: Stack `[obj, key, fn]` → `[obj]`.
+    DefineClassSetterComputed,
+    /// Computed-key data property: Stack `[obj, key, val]` → `[obj]`.
+    /// Defines obj[key] = val with {writable, enumerable, configurable}.
+    DefineDataPropertyComputed,
     SetObjectPrototype,
     DefineElement(u32),
     DeleteProperty(u16),
@@ -374,9 +386,10 @@ impl Instruction {
             | Self::CreateRegExp => StackEffect::new(2, 1),
 
             // observe top (no stack change)
-            Self::JumpIfFalse(_) | Self::JumpIfTrue(_) | Self::JumpIfNotNullish(_) => {
-                StackEffect::with_required(1, 0, 0)
-            }
+            Self::JumpIfFalse(_)
+            | Self::JumpIfTrue(_)
+            | Self::JumpIfNotNullish(_)
+            | Self::JumpIfNotUndefined(_) => StackEffect::with_required(1, 0, 0),
 
             // no stack effect
             Self::Jump(_)
@@ -423,6 +436,12 @@ impl Instruction {
             | Self::DefineClassSetter(_)
             | Self::SetObjectPrototype
             | Self::DefineElement(_) => StackEffect::with_required(2, 1, 0),
+
+            // Computed-key class members and data: [obj, key, val] → [obj]  (pop val+key, peek obj)
+            Self::DefineClassMethodComputed
+            | Self::DefineClassGetterComputed
+            | Self::DefineClassSetterComputed
+            | Self::DefineDataPropertyComputed => StackEffect::with_required(3, 2, 0),
 
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
 
@@ -471,6 +490,7 @@ impl Instruction {
             Self::JumpIfFalse(target)
             | Self::JumpIfTrue(target)
             | Self::JumpIfNotNullish(target)
+            | Self::JumpIfNotUndefined(target)
             | Self::Jump(target) => Some(target),
             _ => None,
         }

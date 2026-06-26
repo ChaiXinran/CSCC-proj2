@@ -2023,8 +2023,8 @@ impl Compiler {
                         value: default_expr,
                     } = target_expr
                     {
-                        // [value]; if value is undefined, use default instead.
-                        let skip_default = chunk.emit(Instruction::JumpIfNotNullish(usize::MAX));
+                        // [value]; if value is undefined, use default instead (null does NOT trigger).
+                        let skip_default = chunk.emit(Instruction::JumpIfNotUndefined(usize::MAX));
                         chunk.emit(Instruction::Pop); // pop undefined
                         self.compile_expression(default_expr, chunk, context)?;
                         let after_default = chunk.current_offset();
@@ -2223,7 +2223,9 @@ impl Compiler {
                         value: default_expr,
                     } = val_target
                     {
-                        let skip_default = chunk.emit(Instruction::JumpIfNotNullish(usize::MAX));
+                        // Defaults only apply when value is undefined, not null.
+                        let skip_default =
+                            chunk.emit(Instruction::JumpIfNotUndefined(usize::MAX));
                         chunk.emit(Instruction::Pop);
                         self.compile_expression(default_expr, chunk, context)?;
                         let after_default = chunk.current_offset();
@@ -3052,16 +3054,109 @@ impl Compiler {
             }
         });
 
+        // Collect public instance fields for field initializer injection.
+        // Computed fields use synthetic bindings evaluated at class-definition time.
+        struct InstanceField {
+            /// The property name to define on `this` (None = computed via binding).
+            static_name: Option<String>,
+            /// Name of the synthetic binding holding the computed key (for computed fields).
+            computed_binding: Option<String>,
+            initializer: Option<Expression>,
+        }
+
+        let mut computed_field_env = false; // whether we opened a class-scope env for computed keys
+        let mut instance_field_specs: Vec<InstanceField> = Vec::new();
+
+        // First pass: collect computed instance field key expressions and emit env setup.
+        for (field_idx, element) in elements.iter().enumerate() {
+            if let ClassElement::Field {
+                name: prop_name,
+                is_static: false,
+                initializer,
+            } = element
+            {
+                if matches!(prop_name, crate::ast::PropertyName::PrivateName(_)) {
+                    continue;
+                }
+                if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                    // Open a synthetic lexical scope once (so the constructor can capture it).
+                    if !computed_field_env {
+                        chunk.emit(Instruction::CreateLexicalEnvironment);
+                        computed_field_env = true;
+                    }
+                    let binding_name = format!("__cfield_key_{field_idx}__");
+                    let bidx = self.add_name(&binding_name, chunk)?;
+                    chunk.emit(Instruction::CreateMutableBinding(bidx as u16));
+                    self.compile_expression(key_expr, chunk, context)?; // push key
+                    chunk.emit(Instruction::InitializeBinding(bidx as u16)); // pop key → store
+                    instance_field_specs.push(InstanceField {
+                        static_name: None,
+                        computed_binding: Some(binding_name),
+                        initializer: initializer.as_ref().map(|b| *b.clone()),
+                    });
+                } else {
+                    let key = prop_name.to_key_string();
+                    if !key.starts_with('#') {
+                        instance_field_specs.push(InstanceField {
+                            static_name: Some(key),
+                            computed_binding: None,
+                            initializer: initializer.as_ref().map(|b| *b.clone()),
+                        });
+                    }
+                }
+            }
+        }
+
+        // Synthesize field-init statements prepended to constructor body.
+        let field_init_stmts: Vec<Statement> = instance_field_specs
+            .into_iter()
+            .map(|spec| {
+                let value = spec
+                    .initializer
+                    .unwrap_or(Expression::Literal(Literal::Undefined));
+                if let Some(static_name) = spec.static_name {
+                    // Non-computed: `this.fieldName = value`
+                    Statement::Expression(Expression::Assignment {
+                        target: Box::new(Expression::Member {
+                            object: Box::new(Expression::This),
+                            property: Box::new(Expression::Identifier(static_name)),
+                            computed: false,
+                        }),
+                        value: Box::new(value),
+                    })
+                } else {
+                    // Computed: `this[__cfield_key_N__] = value`
+                    let binding = spec.computed_binding.unwrap();
+                    Statement::Expression(Expression::Assignment {
+                        target: Box::new(Expression::Member {
+                            object: Box::new(Expression::This),
+                            property: Box::new(Expression::Identifier(binding)),
+                            computed: true,
+                        }),
+                        value: Box::new(value),
+                    })
+                }
+            })
+            .collect();
+
         // Emit constructor function.
         let ctor_body = if let Some(lit) = ctor_literal {
-            lit.clone()
+            if field_init_stmts.is_empty() {
+                lit.clone()
+            } else {
+                let mut body = lit.clone();
+                let mut new_stmts = field_init_stmts;
+                new_stmts.extend(body.body.statements.drain(..));
+                body.body.statements = new_stmts;
+                body
+            }
         } else {
-            // Synthesize an empty default constructor.
+            // Synthesize a default constructor with field initializations.
             FunctionLiteral {
                 name: name.map(String::from),
                 params: vec![],
                 body: FunctionBody {
-                    statements: vec![],
+                    statements: field_init_stmts,
                     is_strict: false,
                 },
                 is_async: false,
@@ -3095,10 +3190,11 @@ impl Compiler {
                 is_setter,
             } = element
             {
+                let fn_name = prop_name.to_key_string();
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
                 let fn_template = FunctionTemplate {
-                    name: Some(prop_name.to_key_string()),
+                    name: Some(fn_name.clone()),
                     params: fn_compiled.params,
                     rest_param: fn_compiled.rest_param,
                     chunk: fn_compiled.chunk,
@@ -3109,14 +3205,28 @@ impl Compiler {
                 let fn_idx = chunk
                     .add_function(fn_template)
                     .map_err(CompileError::from_chunk)?;
-                chunk.emit(Instruction::CreateFunction(fn_idx));
-                let key = self.add_name(&prop_name.to_key_string(), chunk)?;
-                if *is_getter {
-                    chunk.emit(Instruction::DefineClassGetter(key));
-                } else if *is_setter {
-                    chunk.emit(Instruction::DefineClassSetter(key));
+                if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                    // Computed key: evaluate expression, then create fn, then define.
+                    // Stack before: [ctor, ctor_copy]
+                    self.compile_expression(key_expr, chunk, context)?; // [ctor, ctor_copy, key]
+                    chunk.emit(Instruction::CreateFunction(fn_idx)); // [ctor, ctor_copy, key, fn]
+                    if *is_getter {
+                        chunk.emit(Instruction::DefineClassGetterComputed);
+                    } else if *is_setter {
+                        chunk.emit(Instruction::DefineClassSetterComputed);
+                    } else {
+                        chunk.emit(Instruction::DefineClassMethodComputed);
+                    }
                 } else {
-                    chunk.emit(Instruction::DefineClassMethod(key));
+                    chunk.emit(Instruction::CreateFunction(fn_idx));
+                    let key = self.add_name(&fn_name, chunk)?;
+                    if *is_getter {
+                        chunk.emit(Instruction::DefineClassGetter(key));
+                    } else if *is_setter {
+                        chunk.emit(Instruction::DefineClassSetter(key));
+                    } else {
+                        chunk.emit(Instruction::DefineClassMethod(key));
+                    }
                 }
                 // [ctor, ctor_copy]
             }
@@ -3143,10 +3253,11 @@ impl Compiler {
                     is_getter,
                     is_setter,
                 } => {
+                    let fn_name = prop_name.to_key_string();
                     let fn_compiled =
                         self.compile_function_body(&function.params, &function.body, context)?;
                     let fn_template = FunctionTemplate {
-                        name: Some(prop_name.to_key_string()),
+                        name: Some(fn_name.clone()),
                         params: fn_compiled.params,
                         rest_param: fn_compiled.rest_param,
                         chunk: fn_compiled.chunk,
@@ -3157,33 +3268,29 @@ impl Compiler {
                     let fn_idx = chunk
                         .add_function(fn_template)
                         .map_err(CompileError::from_chunk)?;
-                    chunk.emit(Instruction::CreateFunction(fn_idx));
-                    let key = self.add_name(&prop_name.to_key_string(), chunk)?;
-                    if *is_getter {
-                        chunk.emit(Instruction::DefineClassGetter(key));
-                    } else if *is_setter {
-                        chunk.emit(Instruction::DefineClassSetter(key));
+                    if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                        // Computed key: evaluate before creating function.
+                        self.compile_expression(key_expr, chunk, context)?; // [.., proto, key]
+                        chunk.emit(Instruction::CreateFunction(fn_idx)); // [.., proto, key, fn]
+                        if *is_getter {
+                            chunk.emit(Instruction::DefineClassGetterComputed);
+                        } else if *is_setter {
+                            chunk.emit(Instruction::DefineClassSetterComputed);
+                        } else {
+                            chunk.emit(Instruction::DefineClassMethodComputed);
+                        }
                     } else {
-                        chunk.emit(Instruction::DefineClassMethod(key));
+                        chunk.emit(Instruction::CreateFunction(fn_idx));
+                        let key = self.add_name(&fn_name, chunk)?;
+                        if *is_getter {
+                            chunk.emit(Instruction::DefineClassGetter(key));
+                        } else if *is_setter {
+                            chunk.emit(Instruction::DefineClassSetter(key));
+                        } else {
+                            chunk.emit(Instruction::DefineClassMethod(key));
+                        }
                     }
                     // [.., proto]
-                }
-                // Instance fields — stub: initialize to undefined or the given expression.
-                ClassElement::Field {
-                    name: prop_name,
-                    is_static: false,
-                    initializer,
-                } => {
-                    // Skip private fields for now — they require per-instance init
-                    // at `new` time, which we don't support yet.
-                    if matches!(prop_name, crate::ast::PropertyName::PrivateName(_)) {
-                        continue;
-                    }
-                    // Public instance fields are ignored at class-definition time in this
-                    // stub — they should be set on `this` in the constructor. We skip them
-                    // rather than erroring out so that class bodies with fields parse and
-                    // compile without crashing.
-                    let _ = initializer;
                 }
                 _ => {}
             }
@@ -3195,6 +3302,45 @@ impl Compiler {
         let proto_key = self.add_name("prototype", chunk)?;
         chunk.emit(Instruction::DefineDataProperty(proto_key)); // [ctor, ctor_copy]
         chunk.emit(Instruction::Pop); // [ctor]
+
+        // Pop the computed-field-key scope if we opened one.
+        if computed_field_env {
+            chunk.emit(Instruction::PopEnvironment);
+        }
+
+        // Static fields — initialized on the constructor after the class is created.
+        // Stack: [ctor]
+        for element in elements {
+            if let ClassElement::Field {
+                name: prop_name,
+                is_static: true,
+                initializer,
+            } = element
+            {
+                let init_val = initializer
+                    .as_ref()
+                    .map_or(Expression::Literal(Literal::Undefined), |b| *b.clone());
+                // Stack: [ctor]
+                chunk.emit(Instruction::Duplicate); // [ctor, ctor]
+                if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                    // Computed static field: evaluate key at class definition time.
+                    self.compile_expression(key_expr, chunk, context)?; // [ctor, ctor, key]
+                    self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, key, val]
+                    chunk.emit(Instruction::DefineDataPropertyComputed); // [ctor, ctor]
+                } else {
+                    let key = prop_name.to_key_string();
+                    if key.starts_with('#') {
+                        chunk.emit(Instruction::Pop); // remove the Duplicate
+                        continue; // skip private fields
+                    }
+                    self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, val]
+                    let key_idx = self.add_name(&key, chunk)?;
+                    chunk.emit(Instruction::DefineDataProperty(key_idx)); // [ctor, ctor]
+                }
+                chunk.emit(Instruction::Pop); // [ctor]
+            }
+        }
+
         Ok(())
     }
 
@@ -3577,24 +3723,23 @@ impl Compiler {
         chunk.emit(Instruction::Pop); // pop is_done=false
 
         // Assign the iteration value to the loop variable.
-        // For mutable (let/var) declarations, use StoreName so that every iteration
-        // re-assigns the same (already-initialized) binding instead of failing with
-        // "already initialized" on the second pass.
+        // For let/var, the binding was pre-initialized before the loop; use StoreName
+        // (write to existing binding) so every iteration re-assigns without "already
+        // initialized" errors.  For const, we need a fresh per-iteration scope.
         match left {
             crate::ast::ForBinding::Declaration { kind, pattern } => {
-                match (kind, pattern) {
-                    (
-                        VariableKind::Let | VariableKind::Var,
-                        crate::ast::BindingPattern::Identifier(name),
-                    ) => {
-                        // Use StoreName: the binding was pre-initialized to undefined above.
-                        self.emit_store_identifier(name, chunk, context)?;
-                        chunk.emit(Instruction::Pop); // StoreName pushes the value back; discard it.
+                match kind {
+                    VariableKind::Let | VariableKind::Var => {
+                        // Pre-initialized above; just store.
+                        self.compile_binding_pattern_store(pattern, chunk, context)?;
                     }
-                    _ => {
-                        // Const or complex pattern: use compile_binding_pattern.
-                        // Const creates a fresh immutable binding per-iteration (first iteration only
-                        // works today; per-iteration const scope requires V10-D).
+                    VariableKind::Const => {
+                        // Const needs a fresh binding each iteration: push scope, create +
+                        // initialize immutable binding, then pop after the body.
+                        // We do that by calling compile_binding_pattern which emits
+                        // CreateImmutableBinding + InitializeBinding — but only inside a
+                        // per-iteration scope that we push/pop around the body.
+                        // Here we just do the initialization; the scope wrap is applied below.
                         self.compile_binding_pattern(*kind, pattern, chunk, context)?;
                     }
                 }
@@ -3673,64 +3818,15 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         match target {
             Expression::Array(elements) => {
-                for (i, elem) in elements.iter().enumerate() {
-                    match elem {
-                        crate::ast::ArrayElement::Hole => continue,
-                        crate::ast::ArrayElement::Expression(expr) => {
-                            chunk.emit(Instruction::Duplicate);
-                            let idx_c = chunk
-                                .add_constant(Constant::String(i.to_string()))
-                                .map_err(CompileError::from_chunk)?;
-                            chunk.emit(Instruction::Constant(idx_c));
-                            chunk.emit(Instruction::GetElement);
-                            match expr {
-                                Expression::Identifier(name) => {
-                                    self.emit_store_identifier(name, chunk, context)?;
-                                    chunk.emit(Instruction::Pop);
-                                }
-                                Expression::Array(_) | Expression::Object(_) => {
-                                    self.compile_destructuring_assignment_target(
-                                        expr, chunk, context,
-                                    )?;
-                                }
-                                _ => {
-                                    return Err(CompileError::unsupported(
-                                        "complex destructuring assignment target not supported",
-                                    ));
-                                }
-                            }
-                        }
-                        crate::ast::ArrayElement::Spread(_) => {
-                            return Err(CompileError::unsupported(
-                                "spread in destructuring assignment target not supported",
-                            ));
-                        }
-                    }
-                }
+                // Delegate to the full iterator-protocol array destructuring assignment,
+                // which handles holes, defaults, and rest spread.  It leaves the rhs on
+                // the stack (assignment-expression result), so we pop it here.
+                self.compile_array_destructuring_assignment(elements, chunk, context)?;
                 chunk.emit(Instruction::Pop);
                 Ok(())
             }
             Expression::Object(props) => {
-                for prop in props {
-                    match prop {
-                        crate::ast::ObjectProperty::Data {
-                            key,
-                            value: Expression::Identifier(target_name),
-                        } => {
-                            chunk.emit(Instruction::Duplicate);
-                            let key_str = key.to_key_string();
-                            let key_idx = self.add_name(&key_str, chunk)?;
-                            chunk.emit(Instruction::GetProperty(key_idx));
-                            self.emit_store_identifier(target_name, chunk, context)?;
-                            chunk.emit(Instruction::Pop);
-                        }
-                        _ => {
-                            return Err(CompileError::unsupported(
-                                "complex object destructuring assignment target not supported",
-                            ));
-                        }
-                    }
-                }
+                self.compile_object_destructuring_assignment(props, chunk, context)?;
                 chunk.emit(Instruction::Pop);
                 Ok(())
             }

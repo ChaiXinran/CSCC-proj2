@@ -200,6 +200,30 @@ pub enum PropertyName {
     Computed(Box<Expression>),
 }
 
+/// Convert a numeric property key to the ECMAScript canonical string (ToString algorithm).
+fn js_number_to_property_key(n: f64) -> String {
+    if n.fract() == 0.0 && n.is_finite() && n >= 0.0 && n < 9.007_199_254_740_992e15 {
+        return format!("{}", n as i64);
+    }
+    if n.is_nan() {
+        return "NaN".into();
+    }
+    if n.is_infinite() {
+        return if n > 0.0 { "Infinity".into() } else { "-Infinity".into() };
+    }
+    let magnitude = n.abs();
+    if !(1e-6..1e21).contains(&magnitude) {
+        // Scientific notation.
+        let sign = if n.is_sign_negative() { "-" } else { "" };
+        let raw = format!("{:e}", n.abs());
+        if let Some((mantissa, exp)) = raw.split_once('e') {
+            let exp_i = exp.parse::<i32>().unwrap_or(0);
+            return format!("{sign}{mantissa}e{exp_i:+}");
+        }
+    }
+    n.to_string()
+}
+
 impl PropertyName {
     /// Converts the property name to the string key used in the object's
     /// property table.
@@ -207,13 +231,7 @@ impl PropertyName {
         match self {
             Self::Identifier(name) | Self::String(name) => name.clone(),
             Self::PrivateName(name) => format!("#{name}"),
-            Self::Number(n) => {
-                if n.fract() == 0.0 && n.is_finite() {
-                    format!("{}", *n as i64)
-                } else {
-                    format!("{n}")
-                }
-            }
+            Self::Number(n) => js_number_to_property_key(*n),
             Self::Computed(_) => "__computed__".into(),
         }
     }
