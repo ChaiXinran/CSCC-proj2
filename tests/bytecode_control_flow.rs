@@ -209,7 +209,7 @@ fn compiler_patches_break_after_false_condition_cleanup() {
     let program = Program {
         body: vec![Statement::While {
             test: boolean(true),
-            body: Box::new(Statement::Break),
+            body: Box::new(Statement::Break(None)),
         }],
     };
 
@@ -233,7 +233,7 @@ fn compiler_targets_continue_at_the_current_loop_test() {
     let program = Program {
         body: vec![Statement::While {
             test: boolean(true),
-            body: Box::new(Statement::Continue),
+            body: Box::new(Statement::Continue(None)),
         }],
     };
 
@@ -254,7 +254,7 @@ fn compiler_targets_continue_at_the_current_loop_test() {
 
 #[test]
 fn compiler_rejects_loop_control_outside_a_loop() {
-    for statement in [Statement::Break, Statement::Continue] {
+    for statement in [Statement::Break(None), Statement::Continue(None)] {
         let error = Compiler::new()
             .compile_program(&Program {
                 body: vec![statement],
@@ -318,7 +318,7 @@ fn nested_loop_break_is_patched_to_the_innermost_loop_end() {
             test: boolean(true),
             body: Box::new(Statement::While {
                 test: boolean(true),
-                body: Box::new(Statement::Break),
+                body: Box::new(Statement::Break(None)),
             }),
         }],
     };

@@ -89,8 +89,16 @@ pub enum Statement {
         test: Expression,
         body: Box<Statement>,
     },
-    Break,
-    Continue,
+    DoWhile {
+        test: Expression,
+        body: Box<Statement>,
+    },
+    Labelled {
+        label: String,
+        body: Box<Statement>,
+    },
+    Break(Option<String>),
+    Continue(Option<String>),
     Throw(Expression),
     Try {
         block: Vec<Statement>,

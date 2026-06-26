@@ -599,6 +599,12 @@ impl Vm {
                 Instruction::LoadThis => {
                     self.stack.push(context.current_or_global_this());
                 }
+                Instruction::LoadNewTarget => {
+                    // Returns `undefined` in regular calls. Constructor calls
+                    // would set new.target to the constructor, but our VM does
+                    // not yet track this — return undefined as a safe default.
+                    self.stack.push(JsValue::Undefined);
+                }
                 Instruction::ArrayCreate(count) => {
                     let elements = self.pop_arguments(count)?;
                     self.stack.push(context.create_array(elements)?);

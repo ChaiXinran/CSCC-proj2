@@ -307,6 +307,7 @@ impl Chunk {
         match instruction {
             Instruction::JumpIfFalse(current)
             | Instruction::JumpIfTrue(current)
+            | Instruction::JumpIfNotNullish(current)
             | Instruction::Jump(current) => {
                 *current = target;
                 Ok(())

@@ -139,6 +139,11 @@ pub enum Instruction {
     /// Stack: [] → [this_value]
     LoadThis,
 
+    /// Pushes the `new.target` value of the current call frame.
+    /// Returns `undefined` in regular calls; the constructor function in `new` calls.
+    /// Stack: [] → [new_target]
+    LoadNewTarget,
+
     /// Pops `n` elements (left-to-right order on stack) and creates an array.
     /// Stack: [e0, e1, ..., en-1] → [array]
     ArrayCreate(u16),
@@ -292,6 +297,7 @@ impl Instruction {
             | Self::LoadName(_)
             | Self::TypeOfName(_)
             | Self::LoadThis
+            | Self::LoadNewTarget
             | Self::ObjectCreateEmpty
             | Self::ArrayCreateSparse(_)
             | Self::LoadException => StackEffect::new(0, 1),

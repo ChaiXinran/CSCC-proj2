@@ -24,7 +24,7 @@ use crate::{
         ObjectProperty, PropertyName, Statement, TemplateLiteral, UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
-    parser::{ParseError, Parser, describe, is_reserved_identifier_name},
+    parser::{ParseError, Parser, describe, is_keyword_name, is_reserved_identifier_name, is_strict_future_reserved, is_strict_future_reserved_keyword},
 };
 
 impl Parser {
@@ -95,6 +95,7 @@ impl Parser {
             if !is_assignment_target(&left) {
                 return Err(self.error("invalid assignment target".into()));
             }
+            self.check_strict_assignment_target(&left)?;
             let value = self.parse_assignment()?;
             Ok(Expression::Assignment {
                 target: Box::new(left),
@@ -106,6 +107,7 @@ impl Parser {
             if !is_assignment_target(&left) {
                 return Err(self.error("invalid assignment target".into()));
             }
+            self.check_strict_assignment_target(&left)?;
             self.advance();
             let value = self.parse_assignment()?;
             Ok(Expression::CompoundAssignment {
@@ -118,21 +120,63 @@ impl Parser {
         }
     }
 
+    /// In strict mode, `eval` and `arguments` cannot be assignment targets.
+    fn check_strict_assignment_target(&self, expr: &Expression) -> Result<(), ParseError> {
+        if self.is_strict {
+            if let Expression::Identifier(name) = expr {
+                if name == "eval" || name == "arguments" {
+                    return Err(self.error(format!(
+                        "cannot assign to '{name}' in strict mode"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn try_parse_arrow_function(&mut self) -> Result<Option<Expression>, ParseError> {
         let saved = self.cursor;
+        // Helper closure to detect `next-token-is =>` without line terminator.
+        let next_is_arrow = |tokens: &[crate::lexer::Token], cursor: usize| {
+            matches!(
+                tokens.get(cursor + 1),
+                Some(crate::lexer::Token {
+                    kind: TokenKind::Operator(op),
+                    line_terminator_before: false,
+                    ..
+                }) if op == "=>"
+            )
+        };
         let params = match self.peek().kind.clone() {
-            TokenKind::Identifier(name)
-                if matches!(
-                    self.tokens.get(self.cursor + 1),
-                    Some(crate::lexer::Token {
-                        kind: TokenKind::Operator(operator),
-                        line_terminator_before: false,
-                        ..
-                    }) if operator == "=>"
-                ) =>
-            {
+            TokenKind::Identifier(name) if next_is_arrow(&self.tokens, self.cursor) => {
+                // In strict mode, binding identifiers like `eval` and `arguments`
+                // are forbidden as arrow function parameter names.
+                if self.is_strict
+                    && (matches!(name.as_str(), "eval" | "arguments")
+                        || is_strict_future_reserved(&name))
+                {
+                    return Err(self.error(format!(
+                        "`{name}` cannot be used as a parameter name in strict mode"
+                    )));
+                }
                 self.advance();
                 vec![FunctionParam::Simple(name)]
+            }
+            // `yield` as a single arrow param is valid in non-strict, non-generator context.
+            TokenKind::Keyword(Keyword::Yield)
+                if !self.is_strict
+                    && !self.is_generator_context
+                    && next_is_arrow(&self.tokens, self.cursor) =>
+            {
+                self.advance();
+                vec![FunctionParam::Simple("yield".into())]
+            }
+            // `await` as a single arrow param is valid in non-async context.
+            TokenKind::Keyword(Keyword::Await)
+                if !self.is_async_context && next_is_arrow(&self.tokens, self.cursor) =>
+            {
+                self.advance();
+                vec![FunctionParam::Simple("await".into())]
             }
             TokenKind::Punctuator('(') => {
                 let Ok(params) = self.parse_param_list() else {
@@ -158,8 +202,10 @@ impl Parser {
                     .into(),
             ));
         }
-        if self.is_strict || body_strict || is_nspl {
-            self.check_duplicate_params(&params)?;
+        // Arrow functions always require unique formal parameters (UniqueFormalParameters).
+        self.check_duplicate_params(&params)?;
+        if self.is_strict || body_strict {
+            self.check_strict_params(&params)?;
         }
 
         let body = if self.check_punctuator('{') {
@@ -205,6 +251,15 @@ impl Parser {
             if precedence < min_binding_power {
                 break;
             }
+            // Spec: it is a SyntaxError if the left operand of `**` is a
+            // UnaryExpression with a prefix unary operator (not an update expr).
+            if operator == "**" {
+                if let Expression::Unary { .. } = &left {
+                    return Err(self.error(
+                        "unary expression cannot be used directly as left operand of `**`; wrap in parentheses".into(),
+                    ));
+                }
+            }
             self.advance();
             // `**` is right-associative: right operand uses same precedence
             let right_min = if operator == "**" { precedence } else { precedence + 1 };
@@ -242,6 +297,7 @@ impl Parser {
             if !is_assignment_target(&argument) {
                 return Err(self.error("invalid operand for `++`/`--`".into()));
             }
+            self.check_strict_assignment_target(&argument)?;
             return Ok(Expression::Update {
                 operator,
                 prefix: true,
@@ -317,6 +373,7 @@ impl Parser {
             if !is_assignment_target(&expression) {
                 return Err(self.error("invalid operand for `++`/`--`".into()));
             }
+            self.check_strict_assignment_target(&expression)?;
             self.advance();
             return Ok(Expression::Update {
                 operator,
@@ -367,6 +424,14 @@ impl Parser {
     /// Parses `new callee` and `new callee(args)`.
     fn parse_new(&mut self) -> Result<Expression, ParseError> {
         self.advance(); // `new`
+        // `new.target` is a MetaProperty — handle before trying to parse a callee.
+        if self.eat_punctuator('.') {
+            let prop = self.expect_identifier_name()?;
+            if prop == "target" {
+                return Ok(Expression::NewTarget);
+            }
+            return Err(self.error(format!("`new.{prop}` is not a valid meta-property")));
+        }
         let mut callee = self.parse_primary()?;
         while self.eat_punctuator('.') {
             let property = self.expect_identifier_name()?;
@@ -419,6 +484,12 @@ impl Parser {
         let token = self.peek().clone();
         match token.kind {
             TokenKind::Number(value) => {
+                if self.is_strict && token.has_legacy_numeric {
+                    return Err(ParseError {
+                        span: token.span,
+                        message: "legacy octal and non-octal decimal integer literals are not allowed in strict mode".into(),
+                    });
+                }
                 self.advance();
                 Ok(Expression::Literal(Literal::Number(value)))
             }
@@ -445,6 +516,34 @@ impl Parser {
                     return Err(
                         self.error(format!("reserved word `{name}` cannot be an identifier"))
                     );
+                }
+                // An escaped identifier whose StringValue is a keyword is always
+                // a SyntaxError (e.g. `let` = `let`).
+                if token.has_identifier_escape
+                    && (is_keyword_name(name)
+                        || (self.is_strict && is_strict_future_reserved_keyword(name)))
+                {
+                    return Err(self.error(format!(
+                        "identifier escape sequence resolves to reserved word `{name}`"
+                    )));
+                }
+                // In strict mode, future reserved words cannot be used as identifier references.
+                if self.is_strict && is_strict_future_reserved(name) {
+                    return Err(self.error(format!(
+                        "`{name}` is a reserved word in strict mode"
+                    )));
+                }
+                // Unicode-escaped forms of context-reserved words (e.g. `await`
+                // resolving to `await`) are SyntaxErrors in the relevant context.
+                if self.is_async_context && name == "await" {
+                    return Err(self.error(
+                        "`await` is not allowed as an identifier in async context".into(),
+                    ));
+                }
+                if (self.is_generator_context || self.is_strict) && name == "yield" {
+                    return Err(self.error(
+                        "`yield` is not allowed as an identifier in this context".into(),
+                    ));
                 }
                 // V9-A: `async` is a contextual keyword when followed (on the same line)
                 // by `function`, `(`, or a simple identifier — in that case try to parse
@@ -528,6 +627,13 @@ impl Parser {
             TokenKind::Keyword(Keyword::Await) if !self.is_async_context => {
                 self.advance();
                 Ok(Expression::Identifier("await".into()))
+            }
+            // `let` is not a reserved word; in sloppy mode it can appear as an
+            // identifier expression in contexts where it is not starting a
+            // lexical declaration (e.g. after ASI disambiguation in statement.rs).
+            TokenKind::Keyword(Keyword::Let) if !self.is_strict => {
+                self.advance();
+                Ok(Expression::Identifier("let".into()))
             }
             other => Err(self.error(format!("unexpected {}", describe(&other)))),
         }
@@ -730,6 +836,13 @@ impl Parser {
                     let param_name = self.expect_identifier()?;
                     self.expect_punctuator(')')?;
                     let body = self.parse_function_body()?;
+                    // Retroactive strict check: if the setter body is strict,
+                    // `eval` and `arguments` are forbidden as parameter names.
+                    if body.is_strict && matches!(param_name.as_str(), "eval" | "arguments") {
+                        return Err(self.error(format!(
+                            "`{param_name}` cannot be used as a parameter name in strict mode"
+                        )));
+                    }
                     return Ok(ObjectProperty::Setter {
                         key,
                         parameter: FunctionParam::Simple(param_name),
@@ -917,6 +1030,24 @@ impl Parser {
         }
         let body = self.parse_function_body()?;
         self.is_generator_context = outer_generator;
+        // Retroactive strict checks: if the body is strict, validate name and params.
+        let effective_strict = self.is_strict || body.is_strict;
+        if effective_strict {
+            if let Some(ref n) = name {
+                if matches!(n.as_str(), "eval" | "arguments") || is_strict_future_reserved(n) {
+                    return Err(self.error(format!(
+                        "function name `{n}` is not allowed in strict mode"
+                    )));
+                }
+            }
+            if !is_generator && !self.is_strict {
+                // Outer context wasn't strict, but body is — re-check params.
+                self.check_duplicate_params(&params)?;
+                self.check_strict_params(&params)?;
+            }
+        }
+        // Check for param/lexical conflicts.
+        self.validate_params_vs_lexical(&params, &body.statements)?;
         Ok(Expression::Function(FunctionLiteral {
             name,
             params,
@@ -962,6 +1093,8 @@ impl Parser {
             let body = self.parse_function_body()?;
             self.is_async_context = outer_async;
             self.is_generator_context = outer_generator;
+            // Check for param/lexical conflicts.
+            self.validate_params_vs_lexical(&params, &body.statements)?;
             return Ok(Expression::Function(FunctionLiteral {
                 name,
                 params,
@@ -1775,6 +1908,7 @@ impl Parser {
             Expression::Literal(_)
             | Expression::This
             | Expression::Super
+            | Expression::NewTarget
             | Expression::Identifier(_) => {}
         }
         let _ = in_super_call;

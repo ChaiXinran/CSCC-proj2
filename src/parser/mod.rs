@@ -81,6 +81,11 @@ pub struct Parser {
     /// Whether the innermost enclosing function is a generator. Used to reject
     /// `yield` as a binding identifier in generator parameter lists and bodies.
     pub(super) is_generator_context: bool,
+    /// Stack of active labels. Each entry is `(label_name, is_iteration)` where
+    /// `is_iteration` is true when the label directly or transitively labels a
+    /// `while`, `for`, `for-in`, or `do-while` statement. Used to validate
+    /// `break label` and `continue label` references.
+    pub(super) label_stack: Vec<(String, bool)>,
 }
 
 impl Parser {
@@ -102,6 +107,7 @@ impl Parser {
             is_strict: false,
             is_async_context: false,
             is_generator_context: false,
+            label_stack: Vec::new(),
         }
     }
 
@@ -255,8 +261,12 @@ impl Parser {
             if is_reserved_identifier_name(name) {
                 return Err(self.error(format!("reserved word `{name}` cannot be an identifier")));
             }
-            // In strict mode, `arguments` and `eval` cannot be used as binding identifiers.
-            if self.is_strict && matches!(name.as_str(), "arguments" | "eval") {
+            // In strict mode, `arguments`, `eval`, and future reserved words
+            // cannot be used as binding identifiers.
+            if self.is_strict
+                && (matches!(name.as_str(), "arguments" | "eval")
+                    || is_strict_future_reserved(name))
+            {
                 return Err(self.error(format!(
                     "`{name}` cannot be used as a binding identifier in strict mode"
                 )));
@@ -330,6 +340,36 @@ fn describe(kind: &TokenKind) -> String {
         TokenKind::TemplateMiddle(_) => "template literal middle".into(),
         TokenKind::TemplateTail(_) => "template literal tail".into(),
     }
+}
+
+/// Returns true if `name` is a future reserved word in strict mode
+/// that is tokenized as an `Identifier` (not a keyword).
+pub(super) fn is_strict_future_reserved(name: &str) -> bool {
+    matches!(
+        name,
+        "implements"
+            | "interface"
+            | "package"
+            | "private"
+            | "protected"
+            | "public"
+    )
+}
+
+/// Returns true if `name` is a strict-mode reserved word that IS
+/// tokenized as a keyword in our lexer (e.g. `let`, `static`, `yield`).
+/// Used for checking escaped identifier sequences.
+pub(super) fn is_strict_future_reserved_keyword(name: &str) -> bool {
+    matches!(name, "let" | "static" | "yield")
+}
+
+/// Returns true if `name` is unconditionally reserved in all modes/contexts.
+/// Used for checking escaped identifier sequences — an escaped form of a
+/// reserved word (e.g. `case` = `case`) is always a SyntaxError.
+/// Contextual keywords (`yield`, `await`, `async`, `let`, `static`, `of`)
+/// are NOT included here; they are handled by context-specific checks.
+pub(super) fn is_keyword_name(name: &str) -> bool {
+    is_reserved_identifier_name(name)
 }
 
 pub(super) fn is_reserved_identifier_name(name: &str) -> bool {

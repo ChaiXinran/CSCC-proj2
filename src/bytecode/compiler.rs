@@ -178,8 +178,8 @@ impl Compiler {
             Statement::ForIn { left, right, body } => {
                 self.compile_for_in(left, right, body, chunk, context)
             }
-            Statement::Break => self.compile_break(chunk, context),
-            Statement::Continue => self.compile_continue(chunk, context),
+            Statement::Break(_) => self.compile_break(chunk, context),
+            Statement::Continue(_) => self.compile_continue(chunk, context),
             Statement::Throw(expression) => {
                 self.compile_expression(expression, chunk, context)?;
                 chunk.emit(Instruction::Throw);
@@ -220,6 +220,8 @@ impl Compiler {
                 body,
                 is_await,
             } => self.compile_for_of(left, right, body, *is_await, chunk, context),
+            Statement::DoWhile { test, body } => self.compile_do_while(test, body, chunk, context),
+            Statement::Labelled { body, .. } => self.compile_statement(body, chunk, context, false),
         }
     }
 
@@ -561,6 +563,60 @@ impl Compiler {
             chunk
                 .patch_jump(jump, loop_end)
                 .map_err(CompileError::from_chunk)?;
+        }
+        Ok(())
+    }
+
+    fn compile_do_while(
+        &mut self,
+        test: &Expression,
+        body: &Statement,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let loop_start = chunk.current_offset();
+
+        context.loops.push(LoopContext {
+            continue_target: None, // patched after body
+            continue_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+        context.breakables.push(BreakContext {
+            break_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+        });
+
+        if let Err(error) = self.compile_statement(body, chunk, context, false) {
+            context.loops.pop();
+            context.breakables.pop();
+            return Err(error);
+        }
+
+        // `continue` jumps here (beginning of the test)
+        let test_offset = chunk.current_offset();
+        let loop_ctx = context.loops.pop().expect("do-while loop context");
+        for jump in loop_ctx.continue_jumps {
+            chunk.patch_jump(jump, test_offset).map_err(CompileError::from_chunk)?;
+        }
+
+        // do-while: evaluate test; if false pop and exit; else pop and loop.
+        // break jumps past the test entirely (no test value on stack at that point).
+        // Structure:
+        //   eval test → JumpIfFalse(loop_end_pop) → Pop → Jump(loop_start)
+        //   loop_end_pop: Pop   ← falsy condition exit (pops test value)
+        //   loop_end:           ← break exit (nothing to pop)
+        self.compile_expression(test, chunk, context)?;
+        let exit_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
+        chunk.emit(Instruction::Pop); // pop truthy test value, then loop
+        chunk.emit(Instruction::Jump(loop_start));
+        let loop_end_pop = chunk.current_offset();
+        chunk.patch_jump(exit_jump, loop_end_pop).map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Pop); // pop falsy test value
+        let loop_end = chunk.current_offset();
+
+        let break_context = context.breakables.pop().expect("do-while break context");
+        for jump in break_context.break_jumps {
+            chunk.patch_jump(jump, loop_end).map_err(CompileError::from_chunk)?;
         }
         Ok(())
     }
@@ -1401,6 +1457,13 @@ impl Compiler {
                 } else {
                     chunk.emit(Instruction::YieldValue);
                 }
+                Ok(())
+            }
+            Expression::NewTarget => {
+                // Emit the `new.target` meta-property. In non-constructor calls this
+                // is `undefined`; in constructor calls it holds the constructor function.
+                // We emit a dedicated instruction so the VM can inspect the call frame.
+                chunk.emit(Instruction::LoadNewTarget);
                 Ok(())
             }
             Expression::Await(value) => {

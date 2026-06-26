@@ -80,7 +80,7 @@ fn parses_switch_cases_default_and_fallthrough() {
     );
     assert!(matches!(
         cases[1].consequent.as_slice(),
-        [Statement::Expression(_), Statement::Break]
+        [Statement::Expression(_), Statement::Break(_)]
     ));
     assert!(cases[2].test.is_none());
 }

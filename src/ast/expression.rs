@@ -415,6 +415,9 @@ pub enum Expression {
     },
     /// `await expr` inside an async function.
     Await(Box<Expression>),
+    /// `new.target` — the constructor or function that was invoked with `new`.
+    /// Returns `undefined` in regular calls; the constructor function in `new` calls.
+    NewTarget,
     /// Comma operator: evaluates each expression and returns the last.
     Sequence(Vec<Expression>),
 }

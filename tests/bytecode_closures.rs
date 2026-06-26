@@ -82,7 +82,7 @@ fn compiler_lowers_switch_to_generic_comparison_and_jumps() {
             cases: vec![
                 SwitchCase {
                     test: Some(number(1.0)),
-                    consequent: vec![Statement::Break],
+                    consequent: vec![Statement::Break(None)],
                 },
                 SwitchCase {
                     test: Some(number(2.0)),

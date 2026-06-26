@@ -565,7 +565,7 @@ fn while_body_allows_break() {
         parse_stmt(tokens),
         Statement::While {
             test: Expression::Literal(Literal::Number(1.0)),
-            body: Box::new(Statement::Block(vec![Statement::Break])),
+            body: Box::new(Statement::Block(vec![Statement::Break(None)])),
         }
     );
 }

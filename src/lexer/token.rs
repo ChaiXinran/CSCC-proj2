@@ -153,6 +153,10 @@ pub struct Token {
     /// cannot serve as contextual keywords such as `async` or `let`, even when
     /// their decoded value matches the keyword spelling.
     pub has_identifier_escape: bool,
+    /// Set on `Number` tokens that are legacy octal integer literals (`012`)
+    /// or non-octal decimal integer literals (`08`). Both are forbidden in
+    /// strict mode and the parser rejects them after determining strict context.
+    pub has_legacy_numeric: bool,
 }
 
 impl Token {
@@ -168,6 +172,7 @@ impl Token {
             line_terminator_before: false,
             has_legacy_escape: false,
             has_identifier_escape: false,
+            has_legacy_numeric: false,
         }
     }
 
@@ -184,6 +189,7 @@ impl Token {
             line_terminator_before,
             has_legacy_escape: false,
             has_identifier_escape: false,
+            has_legacy_numeric: false,
         }
     }
 }

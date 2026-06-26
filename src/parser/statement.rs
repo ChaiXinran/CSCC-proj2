@@ -21,6 +21,34 @@ impl Parser {
                 Ok(Statement::Empty)
             }
             TokenKind::Punctuator('{') => self.parse_block(),
+            // `let` in sloppy mode may be used as an identifier when followed
+            // by a line terminator (ASI terminates it as an expression statement).
+            // `let [` always starts a destructuring declaration regardless.
+            TokenKind::Keyword(Keyword::Let)
+                if !self.is_strict
+                    && self
+                        .tokens
+                        .get(self.cursor + 1)
+                        .is_some_and(|t| t.line_terminator_before)
+                    // If the next token is `await` in an async context or `yield`
+                    // in a generator/strict context, ASI does not apply — the
+                    // parser must attempt a let-binding (which will fail), producing
+                    // a SyntaxError per ECMAScript.
+                    && !(matches!(
+                        self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                        Some(TokenKind::Keyword(Keyword::Await))
+                    ) && self.is_async_context)
+                    && !(matches!(
+                        self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                        Some(TokenKind::Keyword(Keyword::Yield))
+                    ) && (self.is_strict || self.is_generator_context))
+                    && !matches!(
+                        self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                        Some(TokenKind::Punctuator('['))
+                    ) =>
+            {
+                self.parse_expression_statement()
+            }
             TokenKind::Keyword(Keyword::Var | Keyword::Let | Keyword::Const) => {
                 self.parse_variable_declaration()
             }
@@ -45,6 +73,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Return) => self.parse_return(),
             TokenKind::Keyword(Keyword::If) => self.parse_if(),
             TokenKind::Keyword(Keyword::While) => self.parse_while(),
+            TokenKind::Keyword(Keyword::Do) => self.parse_do_while(),
             TokenKind::Keyword(Keyword::For) => self.parse_for(),
             TokenKind::Keyword(Keyword::Break) => self.parse_break(),
             TokenKind::Keyword(Keyword::Continue) => self.parse_continue(),
@@ -52,6 +81,30 @@ impl Parser {
             TokenKind::Keyword(Keyword::Try) => self.parse_try(),
             TokenKind::Keyword(Keyword::Switch) => self.parse_switch(),
             TokenKind::Keyword(Keyword::Class) => self.parse_class_declaration(),
+            // Labelled statement: identifier followed by `:`.
+            // `await` and `yield` are valid labels in appropriate contexts,
+            // but not when they are reserved in the current context (e.g. async/generator).
+            TokenKind::Identifier(_)
+                if matches!(
+                    self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                    Some(TokenKind::Punctuator(':'))
+                ) && self.label_identifier_is_valid()
+                => self.parse_labelled_statement(),
+            // `await` is a valid label in non-module (script) mode.
+            TokenKind::Keyword(Keyword::Await)
+                if !self.is_async_context
+                    && matches!(
+                        self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                        Some(TokenKind::Punctuator(':'))
+                    ) => self.parse_labelled_statement(),
+            // `yield` is a valid label in non-strict, non-generator mode.
+            TokenKind::Keyword(Keyword::Yield)
+                if !self.is_strict
+                    && !self.is_generator_context
+                    && matches!(
+                        self.tokens.get(self.cursor + 1).map(|t| &t.kind),
+                        Some(TokenKind::Punctuator(':'))
+                    ) => self.parse_labelled_statement(),
             _ => self.parse_expression_statement(),
         }
     }
@@ -102,8 +155,21 @@ impl Parser {
         if is_generator || self.is_strict || body_strict || is_nspl {
             self.check_duplicate_params(&params)?;
         }
+        // Strict param names forbidden in strict mode or when body is strict.
+        if (self.is_strict || body_strict) && !is_generator {
+            self.check_strict_params(&params)?;
+            if matches!(name.as_str(), "eval" | "arguments")
+                || crate::parser::is_strict_future_reserved(&name)
+            {
+                return Err(self.error(format!(
+                    "function name `{name}` is not allowed in strict mode"
+                )));
+            }
+        }
         let body = self.parse_function_body()?;
         self.is_generator_context = outer_generator;
+        // Check for param/lexical conflicts (BoundNames vs LexicallyDeclaredNames).
+        self.validate_params_vs_lexical(&params, &body.statements)?;
         Ok(Statement::FunctionDeclaration {
             name,
             params,
@@ -138,6 +204,8 @@ impl Parser {
         let body = self.parse_function_body()?;
         self.is_async_context = outer_async;
         self.is_generator_context = outer_generator;
+        // Check for param/lexical conflicts.
+        self.validate_params_vs_lexical(&params, &body.statements)?;
         Ok(Statement::FunctionDeclaration {
             name,
             params,
@@ -209,6 +277,7 @@ impl Parser {
         let outer_loop_depth = self.loop_depth;
         let outer_switch_depth = self.switch_depth;
         let outer_strict = self.is_strict;
+        let outer_labels = std::mem::take(&mut self.label_stack);
         self.loop_depth = 0;
         self.switch_depth = 0;
         self.function_depth += 1;
@@ -227,6 +296,7 @@ impl Parser {
         self.loop_depth = outer_loop_depth;
         self.switch_depth = outer_switch_depth;
         self.is_strict = outer_strict;
+        self.label_stack = outer_labels;
         result?;
         self.validate_lexical_declarations(&statements)?;
         Ok(FunctionBody {
@@ -272,9 +342,31 @@ impl Parser {
         })
     }
 
-    /// Checks for duplicate simple parameter names in a strict-mode parameter
-    /// list. Returns `Err` if a name appears more than once.
+    /// Checks for duplicate bound names across all parameters, including those
+    /// inside destructuring patterns. Arrow functions always require this check
+    /// (UniqueFormalParameters); strict-mode / generator functions do too.
     pub(super) fn check_duplicate_params(
+        &self,
+        params: &[FunctionParam],
+    ) -> Result<(), ParseError> {
+        let mut seen: HashSet<String> = HashSet::new();
+        for p in params {
+            let mut names: Vec<String> = Vec::new();
+            collect_param_bound_names(p, &mut names);
+            for name in names {
+                if !seen.insert(name.clone()) {
+                    return Err(self.error(format!(
+                        "duplicate parameter name `{name}` is not allowed"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    /// Old flat-only version (kept to satisfy the borrow checker).
+    fn _check_duplicate_params_flat_only(
         &self,
         params: &[FunctionParam],
     ) -> Result<(), ParseError> {
@@ -282,11 +374,31 @@ impl Parser {
         for p in params {
             let name = p.name();
             if name.is_empty() {
-                continue; // pattern params �?no simple name to check
+                continue;
             }
             if !seen.insert(name) {
                 return Err(self.error(format!(
                     "duplicate parameter name `{name}` is not allowed in strict mode"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates that no parameter name is `eval`, `arguments`, or a strict-mode
+    /// future reserved word. Called retroactively when a function body turns out
+    /// to be strict (inner `"use strict"` directive).
+    pub(super) fn check_strict_params(
+        &self,
+        params: &[FunctionParam],
+    ) -> Result<(), ParseError> {
+        for p in params {
+            let name = p.name();
+            if matches!(name, "eval" | "arguments")
+                || crate::parser::is_strict_future_reserved(name)
+            {
+                return Err(self.error(format!(
+                    "`{name}` cannot be used as a parameter name in strict mode"
                 )));
             }
         }
@@ -299,6 +411,8 @@ impl Parser {
     /// start of a script). Only `ExpressionStatement(StringLiteral)` nodes
     /// optionally followed by a semicolon are directive candidates.
     pub(super) fn consume_directive_prologue(&mut self) -> Result<(), ParseError> {
+        // Track legacy-escape tokens seen before "use strict" is encountered.
+        let mut legacy_escape_spans: Vec<crate::lexer::Span> = Vec::new();
         loop {
             // A directive is a String literal token followed by an optional `;`.
             let tok = self.peek().clone();
@@ -306,8 +420,7 @@ impl Parser {
                 break;
             };
             // Peek ahead: the token AFTER the string must be a `;`, `}`, a
-            // line terminator boundary, or EOF �?otherwise this isn't a
-            // directive.
+            // line terminator boundary, or EOF -- otherwise this isn't a directive.
             let next_is_directive_end = {
                 let after = self.tokens.get(self.cursor + 1);
                 match after {
@@ -327,7 +440,7 @@ impl Parser {
             }
             let is_use_strict = value == "use strict";
             // Strict-mode early error: once strict mode is active, any string
-            // literal �?even one still inside the directive prologue �?must not
+            // literal -- even one still inside the directive prologue -- must not
             // contain a legacy escape sequence.
             if self.is_strict && tok.has_legacy_escape {
                 return Err(ParseError {
@@ -337,15 +450,26 @@ impl Parser {
                             .into(),
                 });
             }
+            // If not yet strict, track legacy-escape spans so we can retroactively
+            // reject them if "use strict" appears later in the prologue.
+            if !self.is_strict && tok.has_legacy_escape {
+                legacy_escape_spans.push(tok.span);
+            }
             self.advance(); // consume string token
             self.eat_punctuator(';');
             if is_use_strict {
+                // "use strict" found: any earlier legacy-escape string is now illegal.
+                if let Some(&span) = legacy_escape_spans.first() {
+                    return Err(ParseError {
+                        span,
+                        message: "octal escape sequences are not allowed in strict mode string literals".into(),
+                    });
+                }
                 self.is_strict = true;
             }
         }
         Ok(())
     }
-
     /// Parses `return;` or `return expression;`.
     ///
     /// ECMAScript treats a line terminator between `return` and its expression
@@ -496,7 +620,7 @@ impl Parser {
                 });
             } else {
                 // static key: identifier (including keywords), string, or number
-                let (key_prop_name, shorthand_name) = self.parse_object_binding_key()?;
+                let (key_prop_name, shorthand_name, key_had_escape) = self.parse_object_binding_key()?;
                 let (value, default) = if self.eat_punctuator(':') {
                     // `{ key: pattern }` or `{ key: pattern = default }`
                     let pat = self.parse_binding_pattern()?;
@@ -523,6 +647,26 @@ impl Parser {
                     if self.is_strict && matches!(shorthand.as_str(), "arguments" | "eval") {
                         return Err(self.error(format!(
                             "`{shorthand}` cannot be used as a binding identifier in strict mode"
+                        )));
+                    }
+                    // In strict mode, future-reserved words and strict-future keywords
+                    // cannot be shorthand binding identifiers.
+                    if self.is_strict
+                        && (crate::parser::is_strict_future_reserved(&shorthand)
+                            || crate::parser::is_strict_future_reserved_keyword(&shorthand))
+                    {
+                        return Err(self.error(format!(
+                            "`{shorthand}` cannot be used as a binding identifier in strict mode"
+                        )));
+                    }
+                    // An identifier escape that resolves to a strict-future-reserved word
+                    // is also forbidden in strict mode.
+                    if key_had_escape
+                        && self.is_strict
+                        && crate::parser::is_strict_future_reserved_keyword(&shorthand)
+                    {
+                        return Err(self.error(format!(
+                            "identifier escape sequence resolves to reserved word `{shorthand}`"
                         )));
                     }
                     let def = if self.eat_operator("=") {
@@ -554,24 +698,26 @@ impl Parser {
     /// Returns `(PropertyName, Option<shorthand_binding_name>)`.
     /// `shorthand_name` is `Some` only for plain-identifier keys that can serve
     /// as both key and shorthand binding target: `{ foo }` �?key `"foo"`, binding `"foo"`.
-    fn parse_object_binding_key(&mut self) -> Result<(PropertyName, Option<String>), ParseError> {
+    /// Returns `(property_name, shorthand_binding_name, had_escape_sequence)`.
+    fn parse_object_binding_key(&mut self) -> Result<(PropertyName, Option<String>, bool), ParseError> {
         let tok = self.peek().clone();
+        let had_escape = tok.has_identifier_escape;
         match tok.kind {
             TokenKind::String(s) => {
                 self.advance();
-                Ok((PropertyName::String(s), None))
+                Ok((PropertyName::String(s), None, false))
             }
             TokenKind::Number(n) => {
                 self.advance();
-                Ok((PropertyName::Number(n), None))
+                Ok((PropertyName::Number(n), None, false))
             }
             TokenKind::Keyword(kw) => {
                 self.advance();
-                Ok((PropertyName::Identifier(kw.as_str().into()), None))
+                Ok((PropertyName::Identifier(kw.as_str().into()), None, had_escape))
             }
             TokenKind::Identifier(name) => {
                 self.advance();
-                Ok((PropertyName::Identifier(name.clone()), Some(name)))
+                Ok((PropertyName::Identifier(name.clone()), Some(name), had_escape))
             }
             _ => Err(self.error(format!(
                 "expected property name, got {}",
@@ -583,7 +729,13 @@ impl Parser {
     /// Parses a class declaration: `class Name { ... }`.
     fn parse_class_declaration(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `class`
-        let name = self.expect_identifier()?;
+        // Class names are always in strict mode; reject strict-future reserved words
+        // and escaped-identifier forms thereof.
+        let outer_strict = self.is_strict;
+        self.is_strict = true;
+        let name_result = self.expect_class_name();
+        self.is_strict = outer_strict;
+        let name = name_result?;
         let super_class = if self.eat_keyword(Keyword::Extends) {
             Some(self.parse_assignment()?)
         } else {
@@ -627,6 +779,159 @@ impl Parser {
         Ok(Statement::While {
             test,
             body: self.parse_loop_body()?,
+        })
+    }
+
+    /// Parses `do body while (test);`.
+    fn parse_do_while(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `do`
+        let body = self.parse_loop_body()?;
+        if !self.check_keyword(Keyword::While) {
+            return Err(self.error("expected `while` after `do` body".into()));
+        }
+        self.advance(); // `while`
+        self.expect_punctuator('(')?;
+        let test = self.parse_expression()?;
+        self.expect_punctuator(')')?;
+        // Optional semicolon after `do-while`
+        self.eat_punctuator(';');
+        Ok(Statement::DoWhile {
+            test,
+            body,
+        })
+    }
+
+    /// Returns true if the tokens starting at `cursor` (after any label chains)
+    /// begin an IterationStatement keyword.
+    fn peek_iteration_after_labels(&self) -> bool {
+        let mut pos = self.cursor;
+        loop {
+            match &self.tokens.get(pos).map(|t| &t.kind) {
+                Some(TokenKind::Keyword(
+                    Keyword::While | Keyword::For | Keyword::Do,
+                )) => return true,
+                // Another label chain: identifier followed by ':'
+                Some(TokenKind::Identifier(_)) => {
+                    if let Some(next) = self.tokens.get(pos + 1)
+                        && matches!(next.kind, TokenKind::Punctuator(':'))
+                    {
+                        pos += 2;
+                        continue;
+                    }
+                    return false;
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Parses a class name identifier, enforcing strict-mode rules plus
+    /// rejecting `let`, `static`, and `yield` (which are reserved in class contexts)
+    /// and their escaped forms.
+    fn expect_class_name(&mut self) -> Result<String, ParseError> {
+        use crate::parser::{is_strict_future_reserved, is_strict_future_reserved_keyword};
+        let tok = self.peek().clone();
+        // `yield` is a keyword that must be rejected as a class name.
+        if matches!(tok.kind, TokenKind::Keyword(Keyword::Yield)) {
+            return Err(self.error("`yield` cannot be used as a class name".into()));
+        }
+        // `static` and `let` are Identifiers/Keywords that resolve to restricted names.
+        if let TokenKind::Identifier(ref name) = tok.kind {
+            // Check escaped forms resolving to strict-future keywords (let, static, yield).
+            if tok.has_identifier_escape && is_strict_future_reserved_keyword(name) {
+                return Err(self.error(format!(
+                    "identifier escape sequence resolves to reserved word `{name}`"
+                )));
+            }
+            // `let` and `static` are also not allowed as class names.
+            if is_strict_future_reserved(name) || is_strict_future_reserved_keyword(name) {
+                return Err(self.error(format!(
+                    "`{name}` is not a valid class name in strict mode"
+                )));
+            }
+        }
+        // Delegates the rest (reserved words, `await` in module context, etc.) to `expect_identifier`.
+        self.expect_identifier()
+    }
+
+    /// Returns true if the current Identifier token is a valid LabelIdentifier
+    /// in the current context (`await` is reserved in async; `yield` in strict/generator).
+    fn label_identifier_is_valid(&self) -> bool {
+        if let TokenKind::Identifier(name) = &self.peek().kind {
+            if name == "await" && self.is_async_context {
+                return false;
+            }
+            if name == "yield" && (self.is_strict || self.is_generator_context) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Parses `label: statement`.
+    fn parse_labelled_statement(&mut self) -> Result<Statement, ParseError> {
+        let label = match self.peek().kind.clone() {
+            TokenKind::Identifier(name) => {
+                self.advance();
+                name
+            }
+            // `await` and `yield` may be used as labels in appropriate contexts
+            // (checked in parse_statement before calling this method).
+            TokenKind::Keyword(Keyword::Await) => {
+                self.advance();
+                "await".into()
+            }
+            TokenKind::Keyword(Keyword::Yield) => {
+                self.advance();
+                "yield".into()
+            }
+            _ => unreachable!("checked before calling"),
+        };
+        self.expect_punctuator(':')?;
+        // Determine if this label wraps an IterationStatement (allows `continue label`)
+        let is_iteration = self.peek_iteration_after_labels();
+        self.label_stack.push((label.clone(), is_iteration));
+        let body = self.parse_statement()?;
+        self.label_stack.pop();
+        // Spec: IsLabelledFunction must be false for all labelled statements; in strict mode
+        // even a bare function declaration wrapped by a label is a SyntaxError.
+        // In sloppy mode, only transitively-labelled function declarations are rejected.
+        if self.is_strict && matches!(body, Statement::FunctionDeclaration { .. }) {
+            return Err(self.error(
+                "function declarations are not allowed as labelled statement bodies in strict mode"
+                    .into(),
+            ));
+        }
+        if is_labelled_function(&body) {
+            return Err(self.error(
+                "labelled function declarations are not allowed in labelled statement bodies"
+                    .into(),
+            ));
+        }
+        // Lexical declarations (const/let) and certain declarations are not statements
+        // and cannot appear in single-statement positions including label bodies.
+        let decl_kind_err = match &body {
+            Statement::VariableDeclaration { kind: VariableKind::Let | VariableKind::Const, .. }
+            | Statement::DestructuringDeclaration { kind: VariableKind::Let | VariableKind::Const, .. } => {
+                Some("lexical declarations")
+            }
+            Statement::ClassDeclaration(_) => Some("class declarations"),
+            Statement::FunctionDeclaration { is_generator: true, .. } => {
+                Some("generator function declarations")
+            }
+            Statement::FunctionDeclaration { is_async: true, .. } => {
+                Some("async function declarations")
+            }
+            _ => None,
+        };
+        if let Some(kind) = decl_kind_err {
+            return Err(self.error(format!(
+                "{kind} are not allowed in labelled statement bodies"
+            )));
+        }
+        Ok(Statement::Labelled {
+            label,
+            body: Box::new(body),
         })
     }
 
@@ -877,27 +1182,109 @@ impl Parser {
                 "function declarations are not allowed as {context} single-statement bodies in strict mode"
             )));
         }
-        self.parse_statement()
+        let stmt = self.parse_statement()?;
+        // Spec: IsLabelledFunction must be false for all single-statement bodies.
+        // Annex B.3.4 exempts plain function declarations in `if` bodies in sloppy mode,
+        // but loop bodies have no such exemption — always reject bare function declarations.
+        let is_loop = context == "loop";
+        let kind_err = match &stmt {
+            Statement::VariableDeclaration { kind: VariableKind::Let | VariableKind::Const, .. }
+            | Statement::DestructuringDeclaration { kind: VariableKind::Let | VariableKind::Const, .. } => {
+                Some("lexical declarations")
+            }
+            Statement::FunctionDeclaration { is_generator: true, .. } => {
+                Some("generator function declarations")
+            }
+            Statement::FunctionDeclaration { is_async: true, .. } => {
+                Some("async function declarations")
+            }
+            Statement::FunctionDeclaration { .. } if is_loop => {
+                // Loop bodies: function declarations are always forbidden (no Annex B exception)
+                Some("function declarations")
+            }
+            Statement::ClassDeclaration(_) => Some("class declarations"),
+            _ => None,
+        };
+        if let Some(kind) = kind_err {
+            return Err(self.error(format!(
+                "{kind} are not allowed as {context} single-statement bodies"
+            )));
+        }
+        // Labelled function declarations are forbidden in all single-statement positions.
+        if is_labelled_function(&stmt) {
+            return Err(self.error(format!(
+                "labelled function declarations are not allowed as {context} single-statement bodies"
+            )));
+        }
+        Ok(stmt)
     }
 
-    /// Parses `break;`, rejecting it outside any loop or switch.
+    /// Parses `break [label];`, rejecting it outside any loop or switch.
     fn parse_break(&mut self) -> Result<Statement, ParseError> {
-        if self.loop_depth == 0 && self.switch_depth == 0 {
-            return Err(self.error("illegal `break` statement outside of a loop or switch".into()));
-        }
         self.advance(); // `break`
+        // Optional label: only if no line terminator before the identifier
+        let label = if !self.peek().line_terminator_before {
+            if let TokenKind::Identifier(name) = self.peek().kind.clone() {
+                self.advance();
+                Some(name)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        match &label {
+            None => {
+                if self.loop_depth == 0 && self.switch_depth == 0 {
+                    return Err(self.error(
+                        "illegal `break` statement outside of a loop or switch".into(),
+                    ));
+                }
+            }
+            Some(name) => {
+                if !self.label_stack.iter().any(|(l, _)| l == name) {
+                    return Err(self.error(format!(
+                        "undefined label `{name}` in `break` statement"
+                    )));
+                }
+            }
+        }
         self.expect_semicolon()?;
-        Ok(Statement::Break)
+        Ok(Statement::Break(label))
     }
 
-    /// Parses `continue;`, rejecting it outside any loop.
+    /// Parses `continue [label];`, rejecting it outside any loop.
     fn parse_continue(&mut self) -> Result<Statement, ParseError> {
-        if self.loop_depth == 0 {
-            return Err(self.error("illegal `continue` statement outside of a loop".into()));
-        }
         self.advance(); // `continue`
+        // Optional label: only if no line terminator before the identifier
+        let label = if !self.peek().line_terminator_before {
+            if let TokenKind::Identifier(name) = self.peek().kind.clone() {
+                self.advance();
+                Some(name)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        match &label {
+            None => {
+                if self.loop_depth == 0 {
+                    return Err(self.error(
+                        "illegal `continue` statement outside of a loop".into(),
+                    ));
+                }
+            }
+            Some(name) => {
+                if !self.label_stack.iter().any(|(l, is_iter)| l == name && *is_iter) {
+                    return Err(self.error(format!(
+                        "undefined or non-iteration label `{name}` in `continue` statement"
+                    )));
+                }
+            }
+        }
         self.expect_semicolon()?;
-        Ok(Statement::Continue)
+        Ok(Statement::Continue(label))
     }
 
     /// Parses `throw expression;`.
@@ -1046,6 +1433,25 @@ impl Parser {
         Ok(())
     }
 
+    /// Validates that no formal parameter name is also declared with `let`/`const`
+    /// in the function body (the BoundNames/LexicallyDeclaredNames early error).
+    pub(super) fn validate_params_vs_lexical(
+        &self,
+        params: &[FunctionParam],
+        body_statements: &[Statement],
+    ) -> Result<(), ParseError> {
+        let lexical: HashSet<&str> = direct_lexical_names(body_statements).into_iter().collect();
+        for p in params {
+            let name = p.name();
+            if !name.is_empty() && lexical.contains(name) {
+                return Err(self.error(format!(
+                    "parameter `{name}` conflicts with a lexical declaration in the function body"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn parse_expression_statement(&mut self) -> Result<Statement, ParseError> {
         if self.at_eof() {
             return Err(self.error(format!(
@@ -1056,6 +1462,20 @@ impl Parser {
         let expression = self.parse_expression()?;
         self.expect_semicolon()?;
         Ok(Statement::Expression(expression))
+    }
+}
+
+/// Returns true if `stmt` is a LabelledStatement that (transitively) wraps a
+/// FunctionDeclaration. Annex B allows bare function declarations in sloppy mode
+/// single-statement bodies; however the LabelledFunction early error (IsLabelledFunction
+/// via a label) applies regardless of mode.
+fn is_labelled_function(stmt: &Statement) -> bool {
+    match stmt {
+        Statement::Labelled { body, .. } => {
+            matches!(body.as_ref(), Statement::FunctionDeclaration { .. })
+                || is_labelled_function(body)
+        }
+        _ => false,
     }
 }
 
@@ -1070,7 +1490,13 @@ fn direct_lexical_names(statements: &[Statement]) -> Vec<&str> {
                 .iter()
                 .map(|declaration| declaration.name.as_str())
                 .collect::<Vec<_>>(),
+            Statement::DestructuringDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                pattern,
+                ..
+            } => binding_pattern_name_strs(pattern),
             Statement::FunctionDeclaration { name, .. } => vec![name.as_str()],
+            Statement::ClassDeclaration(cls) => vec![cls.name.as_str()],
             _ => Vec::new(),
         })
         .collect()
@@ -1107,7 +1533,8 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
                 collect_var_declared_names(alternate, names);
             }
         }
-        Statement::While { body, .. } => collect_var_declared_names(body, names),
+        Statement::While { body, .. } | Statement::DoWhile { body, .. } => collect_var_declared_names(body, names),
+        Statement::Labelled { body, .. } => collect_var_declared_names(body, names),
         Statement::Try {
             block,
             handler,
@@ -1163,12 +1590,84 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
         | Statement::Empty
         | Statement::Expression(_)
         | Statement::Return(_)
-        | Statement::Break
-        | Statement::Continue
+        | Statement::Break(_)
+        | Statement::Continue(_)
         | Statement::Throw(_)
         | Statement::VariableDeclaration { .. }
         | Statement::ClassDeclaration(_)
         | Statement::DestructuringDeclaration { .. } => {}
+    }
+}
+
+/// Collects all bound identifiers from a function parameter, including names
+/// nested inside destructuring patterns. Used by `check_duplicate_params`.
+fn collect_param_bound_names(param: &FunctionParam, names: &mut Vec<String>) {
+    match param {
+        FunctionParam::Simple(name) | FunctionParam::Rest(name) => {
+            names.push(name.clone());
+        }
+        FunctionParam::Default(name, _) => {
+            names.push(name.clone());
+        }
+        FunctionParam::Pattern(pattern, _) => {
+            collect_binding_pattern_names(pattern, names);
+        }
+        FunctionParam::RestPattern(pattern) => {
+            collect_binding_pattern_names(pattern, names);
+        }
+    }
+}
+
+fn binding_pattern_name_strs(pattern: &crate::ast::BindingPattern) -> Vec<&str> {
+    use crate::ast::BindingPattern;
+    match pattern {
+        BindingPattern::Identifier(name) => vec![name.as_str()],
+        BindingPattern::Array { elements, rest } => {
+            let mut names: Vec<&str> = elements
+                .iter()
+                .flatten()
+                .flat_map(|elem| binding_pattern_name_strs(&elem.pattern))
+                .collect();
+            if let Some(rest_pat) = rest {
+                names.extend(binding_pattern_name_strs(rest_pat));
+            }
+            names
+        }
+        BindingPattern::Object { props, rest } => {
+            let mut names: Vec<&str> = props
+                .iter()
+                .flat_map(|prop| binding_pattern_name_strs(&prop.value))
+                .collect();
+            if let Some(rest_pat) = rest {
+                names.extend(binding_pattern_name_strs(rest_pat));
+            }
+            names
+        }
+    }
+}
+
+fn collect_binding_pattern_names(pattern: &crate::ast::BindingPattern, names: &mut Vec<String>) {
+    use crate::ast::BindingPattern;
+    match pattern {
+        BindingPattern::Identifier(name) => {
+            names.push(name.clone());
+        }
+        BindingPattern::Array { elements, rest } => {
+            for elem in elements.iter().flatten() {
+                collect_binding_pattern_names(&elem.pattern, names);
+            }
+            if let Some(rest_pat) = rest {
+                collect_binding_pattern_names(rest_pat, names);
+            }
+        }
+        BindingPattern::Object { props, rest } => {
+            for prop in props {
+                collect_binding_pattern_names(&prop.value, names);
+            }
+            if let Some(rest_pat) = rest {
+                collect_binding_pattern_names(rest_pat, names);
+            }
+        }
     }
 }
 
@@ -1301,7 +1800,7 @@ mod tests {
         };
         assert_eq!(
             body.as_ref(),
-            &Statement::Block(vec![Statement::Break, Statement::Continue])
+            &Statement::Block(vec![Statement::Break(None), Statement::Continue(None)])
         );
     }
 

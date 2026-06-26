@@ -375,6 +375,13 @@ impl<'source> Lexer<'source> {
         }
 
         let end = self.cursor.offset();
+        // Detect legacy octal (012) and non-octal decimal (08, 09) integer literals.
+        // These start with `0` and have more than one digit with no radix prefix.
+        // They are valid in sloppy mode but SyntaxErrors in strict mode.
+        let is_legacy_numeric = is_integer_literal
+            && integer_raw.len() > 1
+            && integer_raw.starts_with('0')
+            && !integer_raw.starts_with("0_");
         let value = text.parse::<f64>().map_err(|_| LexError {
             span: Span::new(start, end),
             message: format!("invalid number literal `{text}`"),
@@ -393,7 +400,9 @@ impl<'source> Lexer<'source> {
                 Span::new(start, self.cursor.offset()),
             ));
         }
-        Ok(Token::new(TokenKind::Number(value), Span::new(start, end)))
+        let mut tok = Token::new(TokenKind::Number(value), Span::new(start, end));
+        tok.has_legacy_numeric = is_legacy_numeric;
+        Ok(tok)
     }
 
     fn read_number_digits(&mut self, radix: u32, literal_start: usize) -> Result<String, LexError> {
