@@ -108,10 +108,21 @@ impl Compiler {
         // Hoist function declarations to the top of the program scope.
         for statement in &program.body {
             if let Statement::FunctionDeclaration {
-                name, params, body, ..
+                name,
+                params,
+                body,
+                is_generator,
+                ..
             } = statement
             {
-                self.compile_function_declaration(name, params, body, &mut chunk, &mut context)?;
+                self.compile_function_declaration(
+                    name,
+                    params,
+                    body,
+                    *is_generator,
+                    &mut chunk,
+                    &mut context,
+                )?;
             }
         }
 
@@ -208,8 +219,12 @@ impl Compiler {
             }
             Statement::Return(value) => self.compile_return(value.as_ref(), chunk, context),
             Statement::FunctionDeclaration {
-                name, params, body, ..
-            } => self.compile_function_declaration(name, params, body, chunk, context),
+                name,
+                params,
+                body,
+                is_generator,
+                ..
+            } => self.compile_function_declaration(name, params, body, *is_generator, chunk, context),
             Statement::Try {
                 block,
                 handler,
@@ -278,10 +293,14 @@ impl Compiler {
         // Hoist function declarations to the top of the current scope.
         for statement in statements {
             if let Statement::FunctionDeclaration {
-                name, params, body, ..
+                name,
+                params,
+                body,
+                is_generator,
+                ..
             } = statement
             {
-                self.compile_function_declaration(name, params, body, chunk, context)?;
+                self.compile_function_declaration(name, params, body, *is_generator, chunk, context)?;
             }
         }
         for statement in statements {
@@ -1021,8 +1040,9 @@ impl Compiler {
     /// Compiles `++x` / `x++` / `--x` / `x--`.
     ///
     /// Supports identifier operands and static/computed member expression
-    /// operands. The operand is coerced to a number (`ToNumber` / `UnaryPlus`)
-    /// before the step, matching the ECMAScript specification.
+    /// operands. Numeric coercion is handled by VM `Increment` / `Decrement`,
+    /// so BigInt operands keep BigInt arithmetic while numbers keep Number
+    /// arithmetic.
     fn compile_update(
         &mut self,
         operator: UpdateOperator,
@@ -1032,24 +1052,18 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         let step = match operator {
-            UpdateOperator::Increment => Instruction::Add,
-            UpdateOperator::Decrement => Instruction::Subtract,
+            UpdateOperator::Increment => Instruction::Increment,
+            UpdateOperator::Decrement => Instruction::Decrement,
         };
-        let one = chunk
-            .add_constant(Constant::Number(1.0))
-            .map_err(CompileError::from_chunk)?;
 
         match argument {
             Expression::Identifier(name) => {
                 self.compile_identifier(name, chunk, context)?;
-                chunk.emit(Instruction::UnaryPlus); // ToNumber(old)
                 if prefix {
-                    chunk.emit(Instruction::Constant(one));
                     chunk.emit(step);
                     self.emit_store_identifier(name, chunk, context)?;
                 } else {
                     chunk.emit(Instruction::Duplicate);
-                    chunk.emit(Instruction::Constant(one));
                     chunk.emit(step);
                     self.emit_store_identifier(name, chunk, context)?;
                     chunk.emit(Instruction::Pop);
@@ -1070,28 +1084,23 @@ impl Compiler {
                     }
                 };
                 let prop_index = self.add_name(&prop_name, chunk)?;
-                // Stack before step: [obj, old_num]
+                // Stack before step: [obj, old]
                 self.compile_expression(object, chunk, context)?;
                 chunk.emit(Instruction::Duplicate); // [obj, obj]
                 chunk.emit(Instruction::GetProperty(prop_index)); // [obj, old]
-                chunk.emit(Instruction::UnaryPlus); // [obj, old_num]
                 if prefix {
-                    // Result = new: [obj, old_num, 1] → [obj, new] → SetProperty → [new]
-                    chunk.emit(Instruction::Constant(one));
+                    // Result = new: [obj, old] -> [obj, new] -> SetProperty -> [new]
                     chunk.emit(step);
                     chunk.emit(Instruction::SetProperty(prop_index));
                 } else {
-                    // Result = old: use DuplicatePair to save [obj, old_num], compute new,
-                    // SetProperty, pop new, pop extra obj  → leaves old_num.
-                    // Stack trace: [obj, old_num]
-                    //   DuplicatePair → [obj, old_num, obj, old_num]
-                    //   Constant(1)   → [obj, old_num, obj, old_num, 1]
-                    //   step          → [obj, old_num, obj, new]
-                    //   SetProperty   → [obj, old_num, new]   (SetProperty: [o,v]→[v])
-                    //   Pop           → [obj, old_num]
-                    //   Pop           → [old_num]
+                    // Result = old: save [obj, old], compute/store new, then leave old.
+                    // Stack trace: [obj, old]
+                    //   DuplicatePair -> [obj, old, obj, old]
+                    //   step          -> [obj, old, obj, new]
+                    //   SetProperty   -> [obj, old, new]
+                    //   Pop           -> [obj, old]
+                    //   Pop           -> [old]
                     chunk.emit(Instruction::DuplicatePair);
-                    chunk.emit(Instruction::Constant(one));
                     chunk.emit(step);
                     chunk.emit(Instruction::SetProperty(prop_index));
                     chunk.emit(Instruction::Pop);
@@ -1103,15 +1112,13 @@ impl Compiler {
                 property,
                 computed: true,
             } => {
-                // Stack before step: [obj, key, old_num]
+                // Stack before step: [obj, key, old]
                 self.compile_expression(object, chunk, context)?;
                 self.compile_expression(property, chunk, context)?;
                 chunk.emit(Instruction::DuplicatePair); // [obj, key, obj, key]
                 chunk.emit(Instruction::GetElement); // [obj, key, old]
-                chunk.emit(Instruction::UnaryPlus); // [obj, key, old_num]
                 if prefix {
-                    // [obj, key, old_num, 1] → [obj, key, new] → SetElement → [new]
-                    chunk.emit(Instruction::Constant(one));
+                    // [obj, key, old] -> [obj, key, new] -> SetElement -> [new]
                     chunk.emit(step);
                     chunk.emit(Instruction::SetElement);
                 } else {
@@ -1245,7 +1252,6 @@ impl Compiler {
                     // Swap          → [old_num, obj_s]
                     // Pop           → [old_num] ✓
                     chunk.emit(Instruction::Duplicate);
-                    chunk.emit(Instruction::Constant(one));
                     chunk.emit(step);
                     self.compile_expression(object, chunk, context)?;
                     chunk.emit(Instruction::Swap);
@@ -1309,6 +1315,7 @@ impl Compiler {
         name: &str,
         params: &[crate::ast::FunctionParam],
         body: &FunctionBody,
+        is_generator: bool,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
@@ -1319,6 +1326,7 @@ impl Compiler {
             rest_param: fn_chunk.rest_param,
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
+            is_generator,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -1491,6 +1499,7 @@ impl Compiler {
                 name,
                 params,
                 body: inner_body,
+                is_generator,
                 ..
             } = statement
             {
@@ -1498,6 +1507,7 @@ impl Compiler {
                     name,
                     params,
                     inner_body,
+                    *is_generator,
                     &mut fn_chunk,
                     &mut fn_context,
                 )?;
@@ -1660,11 +1670,7 @@ impl Compiler {
             Literal::Null => Constant::Null,
             Literal::Boolean(value) => Constant::Boolean(*value),
             Literal::Number(value) => Constant::Number(*value),
-            Literal::BigInt(raw) => {
-                return Err(CompileError::unsupported(format_args!(
-                    "BigInt literal `{raw}` until V10-C installs BigInt runtime semantics"
-                )));
-            }
+            Literal::BigInt(raw) => Constant::BigInt(parse_bigint_literal(raw)?),
             Literal::String(value) => Constant::String(value.clone()),
             Literal::RegExp { .. } => unreachable!(),
         };
@@ -2493,21 +2499,26 @@ impl Compiler {
         if let Expression::Member {
             object,
             property,
-            computed: false,
+            computed,
         } = callee
         {
-            let method_name = match property.as_ref() {
-                Expression::Identifier(name) => name.clone(),
-                Expression::PrivateName(name) => format!("#{name}"),
-                _ => {
-                    return Err(CompileError::unsupported(
-                        "computed method call (use obj['method']() separately)",
-                    ));
-                }
-            };
             self.compile_expression(object, chunk, context)?;
-            let method_index = self.add_name(&method_name, chunk)?;
-            chunk.emit(Instruction::GetMethod(method_index));
+            if *computed {
+                self.compile_expression(property, chunk, context)?;
+                chunk.emit(Instruction::GetElementMethod);
+            } else {
+                let method_name = match property.as_ref() {
+                    Expression::Identifier(name) => name.clone(),
+                    Expression::PrivateName(name) => format!("#{name}"),
+                    _ => {
+                        return Err(CompileError::unsupported(format!(
+                            "non-identifier method property {property:?}"
+                        )));
+                    }
+                };
+                let method_index = self.add_name(&method_name, chunk)?;
+                chunk.emit(Instruction::GetMethod(method_index));
+            }
 
             if has_spread {
                 let (n_regular, spread_expr) =
@@ -2859,6 +2870,7 @@ impl Compiler {
             rest_param: compiled.rest_param,
             chunk: compiled.chunk,
             is_strict: compiled.is_strict,
+            is_generator: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let index = chunk
@@ -3011,6 +3023,7 @@ impl Compiler {
             rest_param: ctor_fn.rest_param,
             chunk: ctor_fn.chunk,
             is_strict: ctor_fn.is_strict,
+            is_generator: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let ctor_idx = chunk
@@ -3037,6 +3050,7 @@ impl Compiler {
                     rest_param: fn_compiled.rest_param,
                     chunk: fn_compiled.chunk,
                     is_strict: fn_compiled.is_strict,
+                    is_generator: function.is_generator,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
                 let fn_idx = chunk
@@ -3084,6 +3098,7 @@ impl Compiler {
                         rest_param: fn_compiled.rest_param,
                         chunk: fn_compiled.chunk,
                         is_strict: fn_compiled.is_strict,
+                        is_generator: function.is_generator,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
                     let fn_idx = chunk
@@ -3411,6 +3426,7 @@ impl Compiler {
             rest_param: fn_chunk.rest_param,
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
+            is_generator: literal.is_generator,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -3670,6 +3686,31 @@ impl Compiler {
             )),
         }
     }
+}
+
+fn parse_bigint_literal(raw: &str) -> Result<i128, CompileError> {
+    let literal = raw
+        .strip_suffix('n')
+        .ok_or_else(|| CompileError::unsupported(format_args!("invalid BigInt literal `{raw}`")))?;
+    let (digits, radix) = literal
+        .strip_prefix("0x")
+        .or_else(|| literal.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            literal
+                .strip_prefix("0b")
+                .or_else(|| literal.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            literal
+                .strip_prefix("0o")
+                .or_else(|| literal.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })
+        .unwrap_or((literal, 10));
+    i128::from_str_radix(&digits.replace('_', ""), radix)
+        .map_err(|_| CompileError::unsupported(format_args!("BigInt literal `{raw}` is outside the native i128 range")))
 }
 
 /// Intermediate result returned from `compile_function_body`.

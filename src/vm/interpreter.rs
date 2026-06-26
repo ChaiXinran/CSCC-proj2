@@ -7,7 +7,8 @@ use crate::{
         Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
     },
     runtime::{
-        FunctionId, JsFunction, JsValue, NativeContext, NativeErrorKind, ObjectId, PreferredType,
+        FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord, JsFunction,
+        JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind, PreferredType,
         PrimitiveValue, PropertyDescriptor, PropertyKind, SymbolId, to_property_key,
     },
     vm::{CallFrame, Completion},
@@ -112,6 +113,12 @@ enum OperationResult {
     Throw(JsValue),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum IteratorStepResult {
+    Value { value: JsValue, done: bool },
+    Throw(JsValue),
+}
+
 #[derive(Debug, Clone, Copy)]
 struct RunBaseline {
     stack_depth: usize,
@@ -158,6 +165,9 @@ impl Vm {
         }
         match result? {
             Completion::Normal(value) | Completion::Return(value) => Ok(value),
+            Completion::Yield { .. } | Completion::YieldDelegate { .. } => Err(VmError::runtime(
+                "yield completion escaped outside a generator",
+            )),
             Completion::Throw(value) => {
                 self.stack.clear();
                 self.pending_exception = None;
@@ -206,6 +216,9 @@ impl Vm {
 
         match result? {
             Completion::Normal(value) | Completion::Return(value) => Ok(value),
+            Completion::Yield { .. } | Completion::YieldDelegate { .. } => Err(VmError::runtime(
+                "yield completion escaped outside a generator",
+            )),
             Completion::Throw(value) => Err(throw_value(value)),
             Completion::Break(label) => Err(VmError::runtime(format!(
                 "break completion in eval context{}",
@@ -223,13 +236,22 @@ impl Vm {
         chunk: &Chunk,
         context: &mut NativeContext,
     ) -> Result<Completion, VmError> {
+        self.run_completion_from(chunk, context, 0)
+    }
+
+    fn run_completion_from(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+        start_ip: usize,
+    ) -> Result<Completion, VmError> {
         let analysis = chunk
             .analyze_stack()
             .map_err(|error| VmError::runtime(format!("invalid bytecode stack: {error}")))?;
         context.check_stack_depth(self.stack.len().saturating_add(analysis.max_depth))?;
         self.stack.reserve(analysis.max_depth);
 
-        let mut instruction_pointer = 0;
+        let mut instruction_pointer = start_ip;
         let baseline = RunBaseline {
             stack_depth: self.stack.len(),
             environment_depth: context.environment_depth(),
@@ -291,8 +313,22 @@ impl Vm {
                     let value = self.to_number(value, context)?;
                     self.stack.push(JsValue::Number(value));
                 }
+                Instruction::Increment => {
+                    let value = self.pop_value()?;
+                    let value = increment_numeric(self, context, value)?;
+                    self.stack.push(value);
+                }
+                Instruction::Decrement => {
+                    let value = self.pop_value()?;
+                    let value = decrement_numeric(self, context, value)?;
+                    self.stack.push(value);
+                }
                 Instruction::Negate => {
                     let value = self.pop_value()?;
+                    if let JsValue::BigInt(value) = value {
+                        self.stack.push(JsValue::BigInt(-value));
+                        continue;
+                    }
                     let value = self.to_number(value, context)?;
                     self.stack.push(JsValue::Number(-value));
                 }
@@ -309,6 +345,14 @@ impl Vm {
                 Instruction::Subtract => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
+                    if let Some(value) =
+                        bigint_binary(left.clone(), right.clone(), |left, right| {
+                            left.checked_sub(right)
+                        })?
+                    {
+                        self.stack.push(value);
+                        continue;
+                    }
                     let right = self.to_number(right, context)?;
                     let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left - right));
@@ -316,6 +360,14 @@ impl Vm {
                 Instruction::Multiply => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
+                    if let Some(value) =
+                        bigint_binary(left.clone(), right.clone(), |left, right| {
+                            left.checked_mul(right)
+                        })?
+                    {
+                        self.stack.push(value);
+                        continue;
+                    }
                     let right = self.to_number(right, context)?;
                     let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left * right));
@@ -323,6 +375,10 @@ impl Vm {
                 Instruction::Divide => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
+                    if let Some(value) = bigint_divide(left.clone(), right.clone())? {
+                        self.stack.push(value);
+                        continue;
+                    }
                     let right = self.to_number(right, context)?;
                     let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left / right));
@@ -330,6 +386,10 @@ impl Vm {
                 Instruction::Remainder => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
+                    if let Some(value) = bigint_remainder(left.clone(), right.clone())? {
+                        self.stack.push(value);
+                        continue;
+                    }
                     let right = self.to_number(right, context)?;
                     let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left % right));
@@ -337,6 +397,10 @@ impl Vm {
                 Instruction::Exponentiation => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
+                    if let Some(value) = bigint_exponentiation(left.clone(), right.clone())? {
+                        self.stack.push(value);
+                        continue;
+                    }
                     let right = self.to_number(right, context)?;
                     let left = self.to_number(left, context)?;
                     self.stack.push(JsValue::Number(left.powf(right)));
@@ -641,6 +705,38 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::GetElementMethod => {
+                    let key = self.pop_value()?;
+                    let object = self.pop_value()?;
+                    let value = if let JsValue::Symbol(sym_id) = &key {
+                        match self.get_symbol_property_value_completion(
+                            object.clone(),
+                            *sym_id,
+                            context,
+                        )? {
+                            OperationResult::Value(value) => Some(value),
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                                None
+                            }
+                        }
+                    } else {
+                        let key = to_property_key(&key)?;
+                        match self.get_property_value_completion(object.clone(), &key, context)? {
+                            OperationResult::Value(value) => Some(value),
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                                None
+                            }
+                        }
+                    };
+                    if let Some(value) = value {
+                        self.stack.push(value);
+                        self.stack.push(object);
+                    }
+                }
                 Instruction::CreateRegExp => {
                     let flags = match self.pop_value()? {
                         JsValue::String(s) => s,
@@ -763,15 +859,27 @@ impl Vm {
                 // Iterator protocol — wired to IteratorRecord helpers in NativeContext.
                 Instruction::GetIterator => {
                     let iterable = self.pop_value()?;
-                    let iterator = context.create_iterator_object(iterable)?;
-                    self.stack.push(iterator);
+                    match self.create_iterator_object(iterable, context)? {
+                        OperationResult::Value(iterator) => self.stack.push(iterator),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::IteratorNext => {
                     let iterator = self.pop_value()?;
-                    let (value, done) = context.step_iterator_object(iterator)?;
-                    // Push value first, then done-flag on top (JumpIfTrue peeks the top).
-                    self.stack.push(value);
-                    self.stack.push(JsValue::Boolean(done));
+                    match self.step_iterator_object(iterator, context)? {
+                        IteratorStepResult::Value { value, done } => {
+                            // Push value first, then done-flag on top (JumpIfTrue peeks the top).
+                            self.stack.push(value);
+                            self.stack.push(JsValue::Boolean(done));
+                        }
+                        IteratorStepResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::IteratorClose => {
                     let iterator = self.pop_value()?;
@@ -780,25 +888,42 @@ impl Vm {
 
                 // V9-A stubs: generator support (B group provides full implementation)
                 Instruction::CreateGenerator(function) => {
-                    // Validate the function index so B can implement the body later.
-                    let _ = chunk.functions.get(function as usize).ok_or_else(|| {
-                        VmError::runtime(format!(
-                            "CreateGenerator: function index {function} out of range"
-                        ))
-                    })?;
-                    return Err(VmError::runtime(
-                        "generators not yet implemented (V9-B pending)",
-                    ));
+                    let value = self.create_function(chunk, function, context)?;
+                    self.stack.push(value);
                 }
                 Instruction::YieldValue => {
-                    let _value = self.pop_value()?;
-                    return Err(VmError::runtime("yield not yet implemented (V9-B pending)"));
+                    let value = self.pop_value()?;
+                    return Ok(Completion::Yield {
+                        value,
+                        next_ip: instruction_pointer,
+                    });
                 }
                 Instruction::YieldDelegate => {
-                    let _iterable = self.pop_value()?;
-                    return Err(VmError::runtime(
-                        "yield* not yet implemented (V9-B pending)",
-                    ));
+                    let iterable = self.pop_value()?;
+                    let iterator = match self.create_iterator_object(iterable, context)? {
+                        OperationResult::Value(iterator) => iterator,
+                        OperationResult::Throw(value) => return Ok(Completion::Throw(value)),
+                    };
+                    let iterator_root_depth = self.stack.len();
+                    self.stack.push(iterator.clone());
+                    match self.step_iterator_object(iterator.clone(), context)? {
+                        IteratorStepResult::Value { value, done } => {
+                            self.stack.truncate(iterator_root_depth);
+                            if done {
+                                self.stack.push(value);
+                            } else {
+                                return Ok(Completion::YieldDelegate {
+                                    iterator,
+                                    value,
+                                    next_ip: instruction_pointer,
+                                });
+                            }
+                        }
+                        IteratorStepResult::Throw(value) => {
+                            self.stack.truncate(iterator_root_depth);
+                            return Ok(Completion::Throw(value));
+                        }
+                    }
                 }
 
                 // V9-A stubs: async support (B group provides full implementation)
@@ -1028,10 +1153,16 @@ impl Vm {
                     }
                 }
                 Instruction::DeleteElement => {
-                    let key = to_property_key(&self.pop_value()?)?;
+                    let key = self.pop_value()?;
                     let value = self.pop_value()?;
                     let object = context.require_object(&value, "delete property")?;
-                    match context.delete_property(object, &key, context.strict()) {
+                    let result = if let JsValue::Symbol(symbol) = key {
+                        context.delete_symbol_property(object, symbol, context.strict())
+                    } else {
+                        let key = to_property_key(&key)?;
+                        context.delete_property(object, &key, context.strict())
+                    };
+                    match result {
                         Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
                         Err(error)
                             if matches!(
@@ -1296,11 +1427,282 @@ impl Vm {
             rest_param: template.rest_param,
             chunk: template.chunk,
             environment,
+            is_generator: template.is_generator,
         })?;
         if template.is_strict {
             context.mark_strict_function(id);
         }
         Ok(JsValue::Function(id))
+    }
+
+    fn create_generator_object(
+        &mut self,
+        function: FunctionId,
+        this_value: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let record = GeneratorRecord {
+            function,
+            environment: None,
+            this_value,
+            arguments,
+            next_ip: 0,
+            state: GeneratorState::SuspendedStart,
+            stack: Vec::new(),
+            delegate_values: Vec::new(),
+            delegate_iterator: None,
+            delegate_return: None,
+        };
+        let mut object = JsObject::ordinary();
+        object.prototype = context.object_prototype();
+        object.kind = ObjectKind::Generator { record };
+        let object = context
+            .heap_mut()
+            .allocate_object(object)
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+
+        let next = context.register_builtin("Generator.prototype.next", 1, generator_next, None)?;
+        let return_ =
+            context.register_builtin("Generator.prototype.return", 1, generator_return, None)?;
+        let throw = context.register_builtin("Generator.prototype.throw", 1, generator_throw, None)?;
+        context.define_own_property(
+            object,
+            "next".into(),
+            PropertyDescriptor::data_with(next, true, false, true),
+        )?;
+        context.define_own_property(
+            object,
+            "return".into(),
+            PropertyDescriptor::data_with(return_, true, false, true),
+        )?;
+        context.define_own_property(
+            object,
+            "throw".into(),
+            PropertyDescriptor::data_with(throw, true, false, true),
+        )?;
+        Ok(JsValue::Object(object))
+    }
+
+    fn resume_generator(
+        &mut self,
+        generator: JsValue,
+        sent_value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let object = context.require_object(&generator, "Generator.prototype.next")?;
+        let mut record = match context.heap().object(object).map(|object| &object.kind) {
+            Some(ObjectKind::Generator { record }) => record.clone(),
+            _ => return Err(VmError::type_error("Generator method called on non-generator")),
+        };
+
+        match record.state {
+            GeneratorState::Completed => {
+                return generator_result(context, JsValue::Undefined, true);
+            }
+            GeneratorState::Executing => {
+                return Err(VmError::type_error("generator is already executing"));
+            }
+            GeneratorState::SuspendedStart | GeneratorState::SuspendedYield => {}
+        }
+
+        if !record.delegate_values.is_empty() {
+            let value = record.delegate_values.remove(0);
+            self.write_generator_record(context, object, record)?;
+            return generator_result(context, value, false);
+        }
+        if let Some(iterator) = record.delegate_iterator.clone() {
+            match self.step_iterator_object(iterator, context)? {
+                IteratorStepResult::Value { value, done } => {
+                    if done {
+                        record.delegate_iterator = None;
+                        record.delegate_return = Some(value);
+                    } else {
+                        self.write_generator_record(context, object, record)?;
+                        return generator_result(context, value, false);
+                    }
+                }
+                IteratorStepResult::Throw(value) => {
+                    record.state = GeneratorState::Completed;
+                    record.stack.clear();
+                    record.delegate_values.clear();
+                    record.delegate_iterator = None;
+                    record.delegate_return = None;
+                    self.write_generator_record(context, object, record)?;
+                    self.pending_exception = Some(value);
+                    return Err(VmError::runtime("generator delegate threw"));
+                }
+            }
+        }
+
+        let function = context
+            .function(record.function)
+            .cloned()
+            .ok_or_else(|| VmError::runtime("missing generator function"))?;
+        let caller_environment_depth = context.environment_depth();
+        let stack_base = self.stack.len();
+        let environment = if let Some(environment) = record.environment {
+            context.push_existing_environment(environment)?;
+            environment
+        } else {
+            let environment = context.push_environment(function.environment)?;
+            self.bind_function_environment(
+                record.function,
+                &function,
+                environment,
+                &record.arguments,
+                record.this_value.clone(),
+                context,
+            )?;
+            record.environment = Some(environment);
+            environment
+        };
+
+        let suspended_start = matches!(record.state, GeneratorState::SuspendedStart);
+        record.state = GeneratorState::Executing;
+        self.write_generator_record(context, object, record.clone())?;
+
+        self.stack.extend(record.stack.iter().cloned());
+        if let Some(return_value) = record.delegate_return.take() {
+            self.stack.push(return_value);
+        } else if !suspended_start {
+            self.stack.push(sent_value);
+        }
+
+        let frame = CallFrame::new(
+            Some(record.function),
+            record.next_ip,
+            environment,
+            record.this_value.clone(),
+            stack_base,
+        );
+        context.push_call_frame(frame)?;
+        let result = self.run_completion_from(&function.chunk, context, record.next_ip);
+        let saved_stack = self.stack[stack_base..].to_vec();
+        self.stack.truncate(stack_base);
+        let frame_result = context.pop_call_frame();
+        let environment_result = context.restore_environment_depth(caller_environment_depth);
+        frame_result?;
+        environment_result?;
+
+        match result? {
+            Completion::Yield { value, next_ip } => {
+                record.next_ip = next_ip;
+                record.state = GeneratorState::SuspendedYield;
+                record.stack = saved_stack;
+                self.write_generator_record(context, object, record)?;
+                generator_result(context, value, false)
+            }
+            Completion::YieldDelegate {
+                iterator,
+                value,
+                next_ip,
+            } => {
+                record.next_ip = next_ip;
+                record.state = GeneratorState::SuspendedYield;
+                record.stack = saved_stack;
+                record.delegate_iterator = Some(iterator);
+                self.write_generator_record(context, object, record)?;
+                generator_result(context, value, false)
+            }
+            Completion::Normal(value) | Completion::Return(value) => {
+                record.state = GeneratorState::Completed;
+                record.stack.clear();
+                record.delegate_values.clear();
+                record.delegate_iterator = None;
+                record.delegate_return = None;
+                self.write_generator_record(context, object, record)?;
+                generator_result(context, value, true)
+            }
+            Completion::Throw(value) => {
+                record.state = GeneratorState::Completed;
+                record.stack.clear();
+                record.delegate_values.clear();
+                record.delegate_iterator = None;
+                record.delegate_return = None;
+                self.write_generator_record(context, object, record)?;
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("generator body threw"))
+            }
+            Completion::Break(label) => Err(VmError::runtime(format!(
+                "unhandled break completion{}",
+                label_suffix(label.as_deref())
+            ))),
+            Completion::Continue(label) => Err(VmError::runtime(format!(
+                "unhandled continue completion{}",
+                label_suffix(label.as_deref())
+            ))),
+        }
+    }
+
+    fn write_generator_record(
+        &mut self,
+        context: &mut NativeContext,
+        object: ObjectId,
+        record: GeneratorRecord,
+    ) -> Result<(), VmError> {
+        let Some(object) = context.heap_mut().object_mut(object) else {
+            return Err(VmError::runtime("missing generator object"));
+        };
+        object.kind = ObjectKind::Generator { record };
+        Ok(())
+    }
+
+    fn bind_function_environment(
+        &mut self,
+        function_id: FunctionId,
+        function: &JsFunction,
+        environment: crate::runtime::EnvironmentId,
+        arguments: &[JsValue],
+        this_value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<(), VmError> {
+        for (index, parameter) in function.params.iter().enumerate() {
+            let value = arguments.get(index).cloned().unwrap_or(JsValue::Undefined);
+            context.declare_binding(environment, parameter.clone(), value, true)?;
+        }
+
+        if let Some(rest_name) = &function.rest_param {
+            let rest_values = arguments
+                .get(function.params.len()..)
+                .unwrap_or(&[])
+                .to_vec();
+            let rest_array = context.create_array(rest_values)?;
+            context.declare_binding(environment, rest_name.clone(), rest_array, true)?;
+        }
+
+        if let Some(name) = &function.name {
+            context.declare_binding(environment, name.clone(), JsValue::Function(function_id), true)?;
+        }
+
+        let has_explicit_arguments = function.params.iter().any(|p| p == "arguments")
+            || function.rest_param.as_deref() == Some("arguments")
+            || function.name.as_deref() == Some("arguments");
+        if has_explicit_arguments {
+            return Ok(());
+        }
+
+        let proto = context.object_prototype();
+        let arguments_obj = context.ordinary_object_with_prototype(proto)?;
+        let JsValue::Object(arguments_id) = arguments_obj else {
+            unreachable!("ordinary_object_with_prototype always returns Object")
+        };
+        for (i, arg) in arguments.iter().enumerate() {
+            context.define_own_property(
+                arguments_id,
+                i.to_string(),
+                PropertyDescriptor::data(arg.clone()),
+            )?;
+        }
+        context.define_own_property(
+            arguments_id,
+            "length".into(),
+            PropertyDescriptor::data_with(JsValue::Number(arguments.len() as f64), true, false, true),
+        )?;
+        context.declare_binding(environment, "arguments", JsValue::Object(arguments_id), true)?;
+
+        let _ = this_value;
+        Ok(())
     }
 
     fn instance_of_value(
@@ -1456,6 +1858,124 @@ impl Vm {
             )?);
         }
         Ok(values)
+    }
+
+    fn create_iterator_object(
+        &mut self,
+        iterable: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        match context.create_iterator_object(iterable.clone()) {
+            Ok(iterator) => return Ok(OperationResult::Value(iterator)),
+            Err(error) if matches!(error.kind, VmErrorKind::Type) => {}
+            Err(error) => return Err(error),
+        }
+
+        let iterator_symbol = context.well_known_symbols().iterator;
+        let method = match self.get_symbol_property_value_completion(
+            iterable.clone(),
+            iterator_symbol,
+            context,
+        )? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(OperationResult::Throw(value)),
+        };
+        if matches!(method, JsValue::Undefined | JsValue::Null) {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("value is not iterable"),
+            )));
+        }
+        if !is_callable_value(&method) {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("iterator method is not callable"),
+            )));
+        }
+        let iterator = match self.call_value(method, iterable, Vec::new(), context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(OperationResult::Throw(value)),
+        };
+        if !is_object_like(&iterator) {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("iterator method returned a non-object"),
+            )));
+        }
+        let object = JsObject::iterator(IteratorRecord::js(iterator));
+        let id = context
+            .heap_mut()
+            .allocate_object(object)
+            .ok_or_else(|| VmError::runtime("heap full: cannot allocate iterator object"))?;
+        Ok(OperationResult::Value(JsValue::Object(id)))
+    }
+
+    fn step_iterator_object(
+        &mut self,
+        iterator_val: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<IteratorStepResult, VmError> {
+        let id = match &iterator_val {
+            JsValue::Object(id) => *id,
+            _ => {
+                return Ok(IteratorStepResult::Throw(vm_error_to_value(
+                    VmError::type_error("value is not an iterator object"),
+                )));
+            }
+        };
+        let kind = {
+            let object = context
+                .heap()
+                .object(id)
+                .ok_or_else(|| VmError::runtime("invalid iterator object"))?;
+            match &object.kind {
+                ObjectKind::Iterator { record } => record.kind.clone(),
+                _ => {
+                    return Ok(IteratorStepResult::Throw(vm_error_to_value(
+                        VmError::type_error("object is not an iterator"),
+                    )));
+                }
+            }
+        };
+
+        match kind {
+            IteratorKind::Array { .. } | IteratorKind::String { .. } => {
+                let (value, done) = context.step_iterator_object(iterator_val)?;
+                Ok(IteratorStepResult::Value { value, done })
+            }
+            IteratorKind::Js { iterator } => self.step_js_iterator(iterator, context),
+        }
+    }
+
+    fn step_js_iterator(
+        &mut self,
+        iterator: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<IteratorStepResult, VmError> {
+        let next = match self.get_property_value_completion(iterator.clone(), "next", context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        if !is_callable_value(&next) {
+            return Ok(IteratorStepResult::Throw(vm_error_to_value(
+                VmError::type_error("iterator next is not callable"),
+            )));
+        }
+        let result = match self.call_value(next, iterator, Vec::new(), context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        if !is_object_like(&result) {
+            return Ok(IteratorStepResult::Throw(vm_error_to_value(
+                VmError::type_error("iterator next returned a non-object"),
+            )));
+        }
+        let done = match self.get_property_value_completion(result.clone(), "done", context)? {
+            OperationResult::Value(value) => value.to_boolean(),
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        let value = match self.get_property_value_completion(result, "value", context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        Ok(IteratorStepResult::Value { value, done })
     }
 
     pub(crate) fn call_value_from_builtin(
@@ -1659,6 +2179,18 @@ impl Vm {
                 return Ok(JsValue::Number(self.to_number(left, context)?)
                     .strict_equals(&JsValue::Number(*right)));
             }
+            (JsValue::BigInt(left), JsValue::Number(right)) => {
+                return Ok(number_equals_bigint(*right, *left));
+            }
+            (JsValue::Number(left), JsValue::BigInt(right)) => {
+                return Ok(number_equals_bigint(*left, *right));
+            }
+            (JsValue::BigInt(left), JsValue::String(right)) => {
+                return Ok(parse_bigint_string(right).is_some_and(|right| *left == right));
+            }
+            (JsValue::String(left), JsValue::BigInt(right)) => {
+                return Ok(parse_bigint_string(left).is_some_and(|left| left == *right));
+            }
             (JsValue::Boolean(_), _) => {
                 let left = JsValue::Number(self.to_number(left, context)?);
                 return self.abstract_equals(left, right, context);
@@ -1812,6 +2344,9 @@ impl Vm {
             JsValue::Boolean(b) => Ok(if b { 1.0 } else { 0.0 }),
             JsValue::Number(n) => Ok(n),
             JsValue::String(ref s) => Ok(coerce_string_to_number(s)),
+            JsValue::BigInt(_) => Err(VmError::type_error(
+                "Cannot convert a BigInt value to a number",
+            )),
             // Symbols cannot be converted to numbers — ECMAScript raises a TypeError.
             JsValue::Symbol(_) => Err(VmError::type_error(
                 "Cannot convert a Symbol value to a number",
@@ -1854,6 +2389,7 @@ impl Vm {
             JsValue::Null => Ok("null".into()),
             JsValue::Boolean(b) => Ok(b.to_string()),
             JsValue::Number(n) => Ok(coerce_number_to_string(n)),
+            JsValue::BigInt(n) => Ok(n.to_string()),
             JsValue::String(s) => Ok(s),
             // Symbols cannot be implicitly converted to strings — TypeError.
             JsValue::Symbol(_) => Err(VmError::type_error(
@@ -1909,6 +2445,22 @@ impl Vm {
                     .number_prototype()
                     .ok_or_else(|| VmError::runtime("Number prototype not installed"))?;
                 let wrapper = context.create_primitive_wrapper(PrimitiveValue::Number(n), proto)?;
+                context.require_object(&wrapper, "ToObject")
+            }
+            JsValue::BigInt(n) => {
+                let proto = context
+                    .get_global("BigInt")
+                    .and_then(|ctor| context.value_object(&ctor))
+                    .and_then(|ctor_obj| {
+                        context
+                            .find_property_descriptor(ctor_obj, "prototype")
+                            .ok()
+                            .flatten()
+                            .and_then(|(_, descriptor)| descriptor.value_cloned())
+                            .and_then(|value| context.value_object(&value))
+                    })
+                    .ok_or_else(|| VmError::runtime("BigInt prototype not installed"))?;
+                let wrapper = context.create_primitive_wrapper(PrimitiveValue::BigInt(n), proto)?;
                 context.require_object(&wrapper, "ToObject")
             }
             JsValue::String(s) => {
@@ -2021,6 +2573,18 @@ impl Vm {
             JsValue::Number(_) => context
                 .number_prototype()
                 .ok_or_else(|| VmError::type_error("cannot read property on number")),
+            JsValue::BigInt(_) => context
+                .get_global("BigInt")
+                .and_then(|ctor| context.value_object(&ctor))
+                .and_then(|ctor_obj| {
+                    context
+                        .find_property_descriptor(ctor_obj, "prototype")
+                        .ok()
+                        .flatten()
+                        .and_then(|(_, d)| d.value_cloned())
+                        .and_then(|v| context.value_object(&v))
+                })
+                .ok_or_else(|| VmError::type_error("cannot read property on bigint")),
             JsValue::Boolean(_) => context
                 .boolean_prototype()
                 .ok_or_else(|| VmError::type_error("cannot read property on boolean")),
@@ -2181,6 +2745,11 @@ impl Vm {
         } else {
             this_value
         };
+        if function.is_generator {
+            return self
+                .create_generator_object(function_id, this_value, arguments, context)
+                .map(OperationResult::Value);
+        }
         let stack_base = self.stack.len();
         let caller_environment_depth = context.environment_depth();
         let environment = context.push_environment(function.environment)?;
@@ -2295,6 +2864,9 @@ impl Vm {
                     Completion::Normal(value) | Completion::Return(value) => {
                         Ok(OperationResult::Value(value))
                     }
+                    Completion::Yield { .. } | Completion::YieldDelegate { .. } => Err(VmError::runtime(
+                        "yield completion escaped outside a generator",
+                    )),
                     Completion::Throw(value) => Ok(OperationResult::Throw(value)),
                     Completion::Break(label) => Err(VmError::runtime(format!(
                         "unhandled break completion{}",
@@ -2317,6 +2889,14 @@ impl Vm {
     ) -> Result<OperationResult, VmError> {
         match constructor {
             JsValue::Function(function_id) => {
+                if context
+                    .function(function_id)
+                    .is_some_and(|function| function.is_generator)
+                {
+                    return Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error("generator functions are not constructors"),
+                    )));
+                }
                 let prototype = context.constructor_prototype(&JsValue::Function(function_id))?;
                 let instance = context.ordinary_object_with_prototype(prototype)?;
                 match self.call_user_function(function_id, instance.clone(), arguments, context)? {
@@ -2465,6 +3045,7 @@ fn find_handler(
         | Completion::Break(_)
         | Completion::Continue(_)
         | Completion::Normal(_) => kind == HandlerKind::Finally,
+        Completion::Yield { .. } | Completion::YieldDelegate { .. } => false,
     };
 
     chunk
@@ -2494,6 +3075,7 @@ fn constant_to_value(constant: &Constant) -> JsValue {
         Constant::Null => JsValue::Null,
         Constant::Boolean(value) => JsValue::Boolean(*value),
         Constant::Number(value) => JsValue::Number(*value),
+        Constant::BigInt(value) => JsValue::BigInt(*value),
         Constant::String(value) => JsValue::String(value.clone()),
     }
 }
@@ -2511,10 +3093,91 @@ fn add_values(
         let right = vm.to_string_coerce(right, context)?;
         return Ok(JsValue::String(format!("{left}{right}")));
     }
+    if let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) {
+        return left
+            .checked_add(*right)
+            .map(JsValue::BigInt)
+            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range"));
+    }
+    if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
+        return Err(VmError::type_error(
+            "Cannot mix BigInt and other types in arithmetic",
+        ));
+    }
 
     let left = vm.to_number(left, context)?;
     let right = vm.to_number(right, context)?;
     Ok(JsValue::Number(left + right))
+}
+
+fn generator_next(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let sent = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    vm.resume_generator(this_value, sent, context)
+}
+
+fn generator_return(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = context.require_object(&this_value, "Generator.prototype.return")?;
+    let mut record = match context.heap().object(object).map(|object| &object.kind) {
+        Some(ObjectKind::Generator { record }) => record.clone(),
+        _ => return Err(VmError::type_error("Generator method called on non-generator")),
+    };
+    record.state = GeneratorState::Completed;
+    record.stack.clear();
+    record.delegate_values.clear();
+    record.delegate_iterator = None;
+    record.delegate_return = None;
+    let Some(object) = context.heap_mut().object_mut(object) else {
+        return Err(VmError::runtime("missing generator object"));
+    };
+    object.kind = ObjectKind::Generator { record };
+    generator_result(context, value, true)
+}
+
+fn generator_throw(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = context.require_object(&this_value, "Generator.prototype.throw")?;
+    let mut record = match context.heap().object(object).map(|object| &object.kind) {
+        Some(ObjectKind::Generator { record }) => record.clone(),
+        _ => return Err(VmError::type_error("Generator method called on non-generator")),
+    };
+    record.state = GeneratorState::Completed;
+    record.stack.clear();
+    record.delegate_values.clear();
+    record.delegate_iterator = None;
+    record.delegate_return = None;
+    let Some(object) = context.heap_mut().object_mut(object) else {
+        return Err(VmError::runtime("missing generator object"));
+    };
+    object.kind = ObjectKind::Generator { record };
+    vm.pending_exception = Some(value);
+    Err(VmError::runtime("generator throw"))
+}
+
+fn generator_result(
+    context: &mut NativeContext,
+    value: JsValue,
+    done: bool,
+) -> Result<JsValue, VmError> {
+    context.create_object([
+        ("value".to_string(), value),
+        ("done".to_string(), JsValue::Boolean(done)),
+    ])
 }
 
 fn compare_values(
@@ -2529,6 +3192,29 @@ fn compare_values(
     if let (JsValue::String(left), JsValue::String(right)) = (&left, &right) {
         return Ok(predicate(left.cmp(right)));
     }
+    if let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) {
+        return Ok(predicate(left.cmp(right)));
+    }
+    if let (JsValue::BigInt(left), JsValue::Number(right)) = (&left, &right) {
+        return Ok(compare_bigint_number(*left, *right).is_some_and(predicate));
+    }
+    if let (JsValue::Number(left), JsValue::BigInt(right)) = (&left, &right) {
+        return Ok(compare_bigint_number(*right, *left).is_some_and(|ordering| {
+            predicate(ordering.reverse())
+        }));
+    }
+    if let (JsValue::BigInt(left), JsValue::String(right)) = (&left, &right) {
+        let Some(right) = parse_bigint_string(right) else {
+            return Ok(false);
+        };
+        return Ok(predicate(left.cmp(&right)));
+    }
+    if let (JsValue::String(left), JsValue::BigInt(right)) = (&left, &right) {
+        let Some(left) = parse_bigint_string(left) else {
+            return Ok(false);
+        };
+        return Ok(predicate(left.cmp(right)));
+    }
 
     let left = vm.to_number(left, context)?;
     let right = vm.to_number(right, context)?;
@@ -2537,6 +3223,132 @@ fn compare_values(
         return Ok(false);
     };
     Ok(predicate(ordering))
+}
+
+fn bigint_binary(
+    left: JsValue,
+    right: JsValue,
+    operation: impl FnOnce(i128, i128) -> Option<i128>,
+) -> Result<Option<JsValue>, VmError> {
+    match (left, right) {
+        (JsValue::BigInt(left), JsValue::BigInt(right)) => operation(left, right)
+            .map(|value| Some(JsValue::BigInt(value)))
+            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
+        (JsValue::BigInt(_), _) | (_, JsValue::BigInt(_)) => Err(VmError::type_error(
+            "Cannot mix BigInt and other types in arithmetic",
+        )),
+        _ => Ok(None),
+    }
+}
+
+fn bigint_divide(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
+    bigint_binary(left, right, |left, right| {
+        if right == 0 {
+            None
+        } else {
+            left.checked_div(right)
+        }
+    })
+}
+
+fn bigint_remainder(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
+    bigint_binary(left, right, |left, right| {
+        if right == 0 {
+            None
+        } else {
+            left.checked_rem(right)
+        }
+    })
+}
+
+fn bigint_exponentiation(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
+    match (left, right) {
+        (JsValue::BigInt(_), JsValue::BigInt(right)) if right < 0 => {
+            Err(VmError::range("BigInt exponent must be non-negative"))
+        }
+        (JsValue::BigInt(left), JsValue::BigInt(right)) => u32::try_from(right)
+            .ok()
+            .and_then(|right| left.checked_pow(right))
+            .map(|value| Some(JsValue::BigInt(value)))
+            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
+        (JsValue::BigInt(_), _) | (_, JsValue::BigInt(_)) => Err(VmError::type_error(
+            "Cannot mix BigInt and other types in arithmetic",
+        )),
+        _ => Ok(None),
+    }
+}
+
+fn increment_numeric(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<JsValue, VmError> {
+    match value {
+        JsValue::BigInt(value) => value
+            .checked_add(1)
+            .map(JsValue::BigInt)
+            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
+        value => Ok(JsValue::Number(vm.to_number(value, context)? + 1.0)),
+    }
+}
+
+fn decrement_numeric(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<JsValue, VmError> {
+    match value {
+        JsValue::BigInt(value) => value
+            .checked_sub(1)
+            .map(JsValue::BigInt)
+            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
+        value => Ok(JsValue::Number(vm.to_number(value, context)? - 1.0)),
+    }
+}
+
+fn number_equals_bigint(number: f64, bigint: i128) -> bool {
+    number.is_finite() && number.fract() == 0.0 && number == bigint as f64
+}
+
+fn compare_bigint_number(bigint: i128, number: f64) -> Option<std::cmp::Ordering> {
+    if !number.is_finite() {
+        return if number.is_nan() {
+            None
+        } else if number.is_sign_positive() {
+            Some(std::cmp::Ordering::Less)
+        } else {
+            Some(std::cmp::Ordering::Greater)
+        };
+    }
+    (bigint as f64).partial_cmp(&number)
+}
+
+fn parse_bigint_string(input: &str) -> Option<i128> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || trimmed.starts_with('+') || trimmed.starts_with('-') {
+        return None;
+    }
+    let (digits, radix) = trimmed
+        .strip_prefix("0x")
+        .or_else(|| trimmed.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            trimmed
+                .strip_prefix("0b")
+                .or_else(|| trimmed.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            trimmed
+                .strip_prefix("0o")
+                .or_else(|| trimmed.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })
+        .unwrap_or((trimmed, 10));
+    if digits.is_empty() {
+        return None;
+    }
+    i128::from_str_radix(digits, radix).ok()
 }
 
 fn throw_value(value: JsValue) -> VmError {

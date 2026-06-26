@@ -31,6 +31,7 @@ pub use function::{
 };
 pub use gc::{CallFrameRoots, CollectionStats, Collector, HeapStats, RootSet, Trace, Tracer};
 pub use heap::Heap;
+pub(crate) use iterator::IteratorKind;
 pub use iterator::IteratorRecord;
 pub use job::{
     Job, JobQueue, NativeJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
@@ -39,7 +40,7 @@ pub use module::{
     ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus,
     normalize_module_path, resolve_module_specifier,
 };
-pub use object::{JsObject, ObjectId, ObjectKind, PrimitiveValue};
+pub use object::{GeneratorRecord, GeneratorState, JsObject, ObjectId, ObjectKind, PrimitiveValue};
 pub use property::{PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind};
 pub use property_map::{PropertyEntry, PropertyMap};
 pub use symbol::{Symbol, SymbolId, SymbolRegistry, WellKnownSymbols};

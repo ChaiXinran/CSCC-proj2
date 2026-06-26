@@ -21,6 +21,9 @@ pub(crate) enum IteratorKind {
         chars: Vec<String>,
         index: usize,
     },
+    Js {
+        iterator: JsValue,
+    },
 }
 
 impl IteratorRecord {
@@ -41,6 +44,13 @@ impl IteratorRecord {
                 chars: value.chars().map(String::from).collect(),
                 index: 0,
             },
+            done: false,
+        }
+    }
+
+    pub(crate) fn js(iterator: JsValue) -> Self {
+        Self {
+            kind: IteratorKind::Js { iterator },
             done: false,
         }
     }

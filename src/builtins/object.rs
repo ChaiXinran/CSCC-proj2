@@ -439,6 +439,7 @@ fn object_to_string(
         JsValue::Undefined => "Undefined",
         JsValue::Boolean(_) => "Boolean",
         JsValue::Number(_) => "Number",
+        JsValue::BigInt(_) => "BigInt",
         JsValue::String(_) => "String",
         JsValue::Symbol(_) => "Symbol",
         JsValue::Function(_) | JsValue::BuiltinFunction(_) => "Function",
@@ -463,12 +464,14 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Array { .. } => "Array",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Boolean(_)) => "Boolean",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Number(_)) => "Number",
+        ObjectKind::PrimitiveWrapper(PrimitiveValue::BigInt(_)) => "BigInt",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::String(_)) => "String",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Symbol(_)) => "Symbol",
         ObjectKind::RegExp { .. } => "RegExp",
         ObjectKind::Ordinary if context.is_error_object(object) => "Error",
         ObjectKind::Ordinary => "Object",
         ObjectKind::Iterator { .. } => "Object",
+        ObjectKind::Generator { .. } => "Generator",
     })
 }
 
@@ -687,16 +690,38 @@ fn object_freeze(
             .ok_or_else(|| VmError::runtime("missing object"))?
             .own_property_keys();
         for key in keys {
-            if context.get_own_property_descriptor(*object, &key).is_none() {
+            let Some(descriptor) = context.get_own_property_descriptor(*object, &key) else {
                 continue;
-            }
+            };
             let update = PropertyDescriptorUpdate {
-                writable: Some(false),
                 configurable: Some(false),
+                writable: matches!(descriptor.kind, PropertyKind::Data { .. }).then_some(false),
                 ..PropertyDescriptorUpdate::default()
             };
             context
                 .validate_and_apply_property_descriptor(*object, key, update)
+                .ok();
+        }
+        let symbol_keys: Vec<_> = context
+            .heap()
+            .object(*object)
+            .ok_or_else(|| VmError::runtime("missing object"))?
+            .symbol_properties
+            .iter()
+            .map(|(symbol, _)| *symbol)
+            .collect();
+        for symbol in symbol_keys {
+            let Some(descriptor) = context.get_own_symbol_property_descriptor(*object, symbol)
+            else {
+                continue;
+            };
+            let update = PropertyDescriptorUpdate {
+                configurable: Some(false),
+                writable: matches!(descriptor.kind, PropertyKind::Data { .. }).then_some(false),
+                ..PropertyDescriptorUpdate::default()
+            };
+            context
+                .validate_and_apply_symbol_property_descriptor(*object, symbol, update)
                 .ok();
         }
     }

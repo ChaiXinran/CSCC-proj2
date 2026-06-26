@@ -66,6 +66,19 @@ fn string_repeat_with_negative_count_throws_catchable_range_error() {
 // ── Number.prototype + statics ───────────────────────────────────────────────
 
 #[test]
+fn bigint_minimal_runtime_semantics() {
+    assert_eq!(native_eval("typeof 1n"), "bigint");
+    assert_eq!(native_eval("(1n + 2n) * 3n"), "9");
+    assert_eq!(
+        native_eval("BigInt.prototype.toString.call(BigInt('0x10'), 2)"),
+        "10000"
+    );
+    assert_eq!(native_eval("BigInt.asIntN(4, 15n)"), "-1");
+    assert_eq!(native_eval("Object(7n).valueOf() === 7n"), "true");
+    assert_eq!(native_eval("var i = 10n; i++; i"), "11");
+}
+
+#[test]
 fn number_to_string_supports_radix() {
     assert_eq!(native_eval("(255).toString(16)"), "ff");
     assert_eq!(native_eval("(255).toString()"), "255");

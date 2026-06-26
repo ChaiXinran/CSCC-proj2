@@ -65,7 +65,8 @@ fn internalize_json_property(
                 ObjectKind::Ordinary
                 | ObjectKind::PrimitiveWrapper(_)
                 | ObjectKind::RegExp { .. }
-                | ObjectKind::Iterator { .. } => object_value.own_property_keys(),
+                | ObjectKind::Iterator { .. }
+                | ObjectKind::Generator { .. } => object_value.own_property_keys(),
             }
         };
         for property in keys {
@@ -151,7 +152,12 @@ fn build_property_list(
                 Some(PrimitiveValue::String(_) | PrimitiveValue::Number(_)) => {
                     Some(vm.to_string_coerce(value, context)?)
                 }
-                Some(PrimitiveValue::Boolean(_) | PrimitiveValue::Symbol(_)) | None => None,
+                Some(
+                    PrimitiveValue::Boolean(_)
+                    | PrimitiveValue::BigInt(_)
+                    | PrimitiveValue::Symbol(_),
+                )
+                | None => None,
             },
             _ => None,
         };
@@ -171,7 +177,12 @@ fn build_gap(space: JsValue, vm: &mut Vm, context: &mut NativeContext) -> Result
             Some(PrimitiveValue::String(_)) => {
                 JsValue::String(vm.to_string_coerce(space, context)?)
             }
-            Some(PrimitiveValue::Boolean(_) | PrimitiveValue::Symbol(_)) | None => space,
+            Some(
+                PrimitiveValue::Boolean(_)
+                | PrimitiveValue::BigInt(_)
+                | PrimitiveValue::Symbol(_),
+            )
+            | None => space,
         }
     } else {
         space
@@ -237,6 +248,7 @@ impl StringifyState<'_> {
                         self.vm
                             .to_string_coerce(JsValue::Object(object), self.context)?,
                     ),
+                    PrimitiveValue::BigInt(_) => JsValue::Object(object),
                     PrimitiveValue::Symbol(_) => JsValue::Object(object),
                 };
             } else {
@@ -250,6 +262,7 @@ impl StringifyState<'_> {
             | JsValue::Symbol(_)
             | JsValue::Function(_)
             | JsValue::BuiltinFunction(_) => Ok(None),
+            JsValue::BigInt(_) => Err(VmError::type_error("Cannot serialize BigInt value")),
             JsValue::Null => Ok(Some("null".into())),
             JsValue::Boolean(value) => Ok(Some(value.to_string())),
             JsValue::Number(value) => Ok(Some(if value.is_finite() {
@@ -628,6 +641,7 @@ fn stringify_value(
         | JsValue::Symbol(_)
         | JsValue::Function(_)
         | JsValue::BuiltinFunction(_) => Ok(in_array.then(|| "null".into())),
+        JsValue::BigInt(_) => Err(VmError::type_error("Cannot serialize BigInt value")),
         JsValue::Null => Ok(Some("null".into())),
         JsValue::Boolean(value) => Ok(Some(value.to_string())),
         JsValue::Number(value) => Ok(Some(if value.is_finite() {
@@ -684,9 +698,13 @@ fn stringify_object(
                 }
             }
             crate::runtime::PrimitiveValue::String(value) => quote_json_string(value),
+            crate::runtime::PrimitiveValue::BigInt(_) => "{}".into(),
             crate::runtime::PrimitiveValue::Symbol(_) => "{}".into(),
         },
-        ObjectKind::Ordinary | ObjectKind::RegExp { .. } | ObjectKind::Iterator { .. } => {
+        ObjectKind::Ordinary
+        | ObjectKind::RegExp { .. }
+        | ObjectKind::Iterator { .. }
+        | ObjectKind::Generator { .. } => {
             let mut parts = Vec::new();
             for key in object_value.own_property_keys() {
                 let Some(descriptor) = object_value.own_property(&key) else {

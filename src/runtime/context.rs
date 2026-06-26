@@ -846,6 +846,15 @@ impl NativeContext {
         Ok(id)
     }
 
+    pub fn push_existing_environment(&mut self, id: EnvironmentId) -> Result<(), VmError> {
+        if self.heap.environment(id).is_none() {
+            return Err(VmError::runtime("missing lexical environment"));
+        }
+        self.environment_stack.push(self.current_environment);
+        self.current_environment = id;
+        Ok(())
+    }
+
     pub fn pop_environment(&mut self) -> Result<(), VmError> {
         let previous = self
             .environment_stack
@@ -1241,7 +1250,7 @@ impl NativeContext {
             };
         }
 
-        let object = self.require_object(&receiver, "read property")?;
+        let object = self.property_lookup_object(&receiver)?;
         let Some((_, descriptor)) = self.find_property_descriptor(object, key)? else {
             return Ok(JsValue::Undefined);
         };
@@ -1252,6 +1261,68 @@ impl NativeContext {
             PropertyKind::Accessor { get: Some(_), .. } => Err(VmError::type_error(
                 "accessor getter invocation requires the VM call path",
             )),
+        }
+    }
+
+    fn property_lookup_object(&mut self, receiver: &JsValue) -> Result<ObjectId, VmError> {
+        match receiver {
+            JsValue::Boolean(value) => {
+                let prototype = self
+                    .boolean_prototype()
+                    .ok_or_else(|| VmError::runtime("Boolean prototype not installed"))?;
+                let wrapper =
+                    self.create_primitive_wrapper(PrimitiveValue::Boolean(*value), prototype)?;
+                self.require_object(&wrapper, "read property")
+            }
+            JsValue::Number(value) => {
+                let prototype = self
+                    .number_prototype()
+                    .ok_or_else(|| VmError::runtime("Number prototype not installed"))?;
+                let wrapper =
+                    self.create_primitive_wrapper(PrimitiveValue::Number(*value), prototype)?;
+                self.require_object(&wrapper, "read property")
+            }
+            JsValue::BigInt(value) => {
+                let prototype = self
+                    .get_global("BigInt")
+                    .and_then(|constructor| self.value_object(&constructor))
+                    .and_then(|constructor| {
+                        self.find_property_descriptor(constructor, "prototype")
+                            .ok()
+                            .flatten()
+                            .and_then(|(_, descriptor)| descriptor.value_cloned())
+                            .and_then(|value| self.value_object(&value))
+                    })
+                    .ok_or_else(|| VmError::runtime("BigInt prototype not installed"))?;
+                let wrapper =
+                    self.create_primitive_wrapper(PrimitiveValue::BigInt(*value), prototype)?;
+                self.require_object(&wrapper, "read property")
+            }
+            JsValue::String(value) => {
+                let prototype = self
+                    .string_prototype()
+                    .ok_or_else(|| VmError::runtime("String prototype not installed"))?;
+                let wrapper = self
+                    .create_primitive_wrapper(PrimitiveValue::String(value.clone()), prototype)?;
+                self.require_object(&wrapper, "read property")
+            }
+            JsValue::Symbol(value) => {
+                let prototype = self
+                    .get_global("Symbol")
+                    .and_then(|constructor| self.value_object(&constructor))
+                    .and_then(|constructor| {
+                        self.find_property_descriptor(constructor, "prototype")
+                            .ok()
+                            .flatten()
+                            .and_then(|(_, descriptor)| descriptor.value_cloned())
+                            .and_then(|value| self.value_object(&value))
+                    })
+                    .ok_or_else(|| VmError::runtime("Symbol prototype not installed"))?;
+                let wrapper =
+                    self.create_primitive_wrapper(PrimitiveValue::Symbol(*value), prototype)?;
+                self.require_object(&wrapper, "read property")
+            }
+            _ => self.require_object(receiver, "read property"),
         }
     }
 
@@ -1561,6 +1632,12 @@ impl NativeContext {
                         .and_then(JsObject::array_length)
                         .ok_or_else(|| VmError::runtime("missing array object"))?;
                     Ok(IteratorRecord::array(value, length))
+                } else if let Some(JsObject {
+                    kind: ObjectKind::PrimitiveWrapper(PrimitiveValue::String(string)),
+                    ..
+                }) = self.heap.object(object)
+                {
+                    Ok(IteratorRecord::string(string.clone()))
                 } else {
                     Err(VmError::type_error("value is not iterable"))
                 }
@@ -1598,6 +1675,9 @@ impl NativeContext {
                 *index += 1;
                 Ok(Some(value))
             }
+            IteratorKind::Js { .. } => Err(VmError::runtime(
+                "JS iterator records must be advanced by the VM",
+            )),
         }
     }
 
@@ -2502,6 +2582,7 @@ fn value_references_live_heap(value: &JsValue, heap: &Heap) -> bool {
         | JsValue::Null
         | JsValue::Boolean(_)
         | JsValue::Number(_)
+        | JsValue::BigInt(_)
         | JsValue::String(_)
         | JsValue::Symbol(_)
         | JsValue::BuiltinFunction(_)
@@ -2518,6 +2599,7 @@ pub fn sort_regexp_flags(flags: &str) -> String {
 pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
     match value {
         JsValue::String(value) => Ok(value.clone()),
+        JsValue::BigInt(value) => Ok(value.to_string()),
         JsValue::Number(value) if value.fract() == 0.0 => Ok(format!("{value:.0}")),
         JsValue::Number(value) => Ok(value.to_string()),
         JsValue::Boolean(value) => Ok(value.to_string()),
