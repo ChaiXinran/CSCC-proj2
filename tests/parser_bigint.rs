@@ -38,13 +38,16 @@ fn bigint_literals_preserve_raw_source_text() {
 }
 
 #[test]
-fn bigint_literals_do_not_compile_as_numbers() {
+fn bigint_literals_compile_as_bigint_constants() {
     let program = parse("1n;");
-    let error = Compiler::new()
+    let chunk = Compiler::new()
         .compile_program(&program)
-        .expect_err("BigInt runtime semantics are not installed yet");
+        .expect("BigInt runtime semantics are installed");
 
-    assert!(error.message.contains("BigInt literal `1n`"));
+    assert!(matches!(
+        chunk.constants.first(),
+        Some(agentjs::bytecode::Constant::BigInt(1))
+    ));
 }
 
 #[test]

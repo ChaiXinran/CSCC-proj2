@@ -3,7 +3,7 @@
 use crate::{
     runtime::{
         JsObject, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-        PropertyDescriptorUpdate, PropertyKind, to_property_key,
+        PropertyDescriptorUpdate, PropertyKind, SymbolId, to_property_key,
     },
     vm::{Vm, VmError},
 };
@@ -454,6 +454,7 @@ fn object_to_string(
         JsValue::Undefined => "Undefined",
         JsValue::Boolean(_) => "Boolean",
         JsValue::Number(_) => "Number",
+        JsValue::BigInt(_) => "BigInt",
         JsValue::String(_) => "String",
         JsValue::Symbol(_) => "Symbol",
         JsValue::Function(_) | JsValue::BuiltinFunction(_) => "Function",
@@ -478,6 +479,7 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Array { .. } => "Array",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Boolean(_)) => "Boolean",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Number(_)) => "Number",
+        ObjectKind::PrimitiveWrapper(PrimitiveValue::BigInt(_)) => "BigInt",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::String(_)) => "String",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Symbol(_)) => "Symbol",
         ObjectKind::RegExp { .. } => "RegExp",
@@ -487,6 +489,7 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Ordinary if context.is_error_object(object) => "Error",
         ObjectKind::Ordinary => "Object",
         ObjectKind::Iterator { .. } => "Object",
+        ObjectKind::Generator { .. } => "Generator",
     })
 }
 
@@ -721,6 +724,17 @@ fn object_assign(
     Ok(target_value)
 }
 
+fn own_symbol_keys(context: &NativeContext, object: ObjectId) -> Result<Vec<SymbolId>, VmError> {
+    Ok(context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing object"))?
+        .symbol_properties
+        .iter()
+        .map(|(symbol, _)| *symbol)
+        .collect())
+}
+
 fn object_freeze(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -735,16 +749,30 @@ fn object_freeze(
             .ok_or_else(|| VmError::runtime("missing object"))?
             .own_property_keys();
         for key in keys {
-            if context.get_own_property_descriptor(*object, &key).is_none() {
+            let Some(descriptor) = context.get_own_property_descriptor(*object, &key) else {
                 continue;
-            }
+            };
             let update = PropertyDescriptorUpdate {
-                writable: Some(false),
                 configurable: Some(false),
+                writable: matches!(descriptor.kind, PropertyKind::Data { .. }).then_some(false),
                 ..PropertyDescriptorUpdate::default()
             };
             context
                 .validate_and_apply_property_descriptor(*object, key, update)
+                .ok();
+        }
+        for symbol in own_symbol_keys(context, *object)? {
+            let Some(descriptor) = context.get_own_symbol_property_descriptor(*object, symbol)
+            else {
+                continue;
+            };
+            let update = PropertyDescriptorUpdate {
+                configurable: Some(false),
+                writable: matches!(descriptor.kind, PropertyKind::Data { .. }).then_some(false),
+                ..PropertyDescriptorUpdate::default()
+            };
+            context
+                .validate_and_apply_symbol_property_descriptor(*object, symbol, update)
                 .ok();
         }
         context.prevent_extensions(*object)?;
@@ -772,6 +800,15 @@ fn object_seal(
             };
             context
                 .validate_and_apply_property_descriptor(*object, key, update)
+                .ok();
+        }
+        for symbol in own_symbol_keys(context, *object)? {
+            let update = PropertyDescriptorUpdate {
+                configurable: Some(false),
+                ..PropertyDescriptorUpdate::default()
+            };
+            context
+                .validate_and_apply_symbol_property_descriptor(*object, symbol, update)
                 .ok();
         }
         context.prevent_extensions(*object)?;
@@ -833,6 +870,16 @@ fn object_is_frozen(
             return Ok(JsValue::Boolean(false));
         }
     }
+    for symbol in own_symbol_keys(context, object)? {
+        if context
+            .get_own_symbol_property_descriptor(object, symbol)
+            .is_some_and(|d| {
+                d.configurable || matches!(d.kind, PropertyKind::Data { writable: true, .. })
+            })
+        {
+            return Ok(JsValue::Boolean(false));
+        }
+    }
     Ok(JsValue::Boolean(true))
 }
 
@@ -857,6 +904,14 @@ fn object_is_sealed(
     for key in keys {
         if context
             .get_own_property_descriptor(object, &key)
+            .is_some_and(|d| d.configurable)
+        {
+            return Ok(JsValue::Boolean(false));
+        }
+    }
+    for symbol in own_symbol_keys(context, object)? {
+        if context
+            .get_own_symbol_property_descriptor(object, symbol)
             .is_some_and(|d| d.configurable)
         {
             return Ok(JsValue::Boolean(false));

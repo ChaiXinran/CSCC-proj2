@@ -40,6 +40,7 @@ pub enum JsValue {
     Null,
     Boolean(bool),
     Number(f64),
+    BigInt(i128),
     String(String),
     /// An ECMAScript Symbol primitive. Symbols cannot be implicitly coerced to
     /// strings or numbers; doing so raises a TypeError.
@@ -58,6 +59,7 @@ impl JsValue {
             Self::Undefined | Self::Null => false,
             Self::Boolean(value) => *value,
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
+            Self::BigInt(value) => *value != 0,
             Self::String(value) => !value.is_empty(),
             // Symbols, objects, functions, and errors are always truthy.
             Self::Symbol(_)
@@ -77,6 +79,7 @@ impl JsValue {
             Self::Boolean(false) => Some(0.0),
             Self::Number(value) => Some(*value),
             Self::String(value) => Some(string_to_number(value)),
+            Self::BigInt(_) => None,
             // Symbol, Object, Function, Error: caller must go through ToPrimitive.
             Self::Symbol(_)
             | Self::Object(_)
@@ -95,6 +98,7 @@ impl JsValue {
             Self::Null => Some("null".into()),
             Self::Boolean(value) => Some(value.to_string()),
             Self::Number(value) => Some(number_to_string(*value)),
+            Self::BigInt(value) => Some(value.to_string()),
             Self::String(value) => Some(value.clone()),
             // Symbol cannot be implicitly converted to a string (TypeError).
             Self::Symbol(_) => None,
@@ -113,6 +117,7 @@ impl JsValue {
             Self::Null | Self::Object(_) | Self::Error(_) => "object",
             Self::Boolean(_) => "boolean",
             Self::Number(_) => "number",
+            Self::BigInt(_) => "bigint",
             Self::String(_) => "string",
             Self::Symbol(_) => "symbol",
             Self::Function(_) | Self::BuiltinFunction(_) => "function",
@@ -127,6 +132,7 @@ impl JsValue {
             (Self::Number(left), Self::Number(right)) => {
                 !left.is_nan() && !right.is_nan() && left == right
             }
+            (Self::BigInt(left), Self::BigInt(right)) => left == right,
             (Self::String(left), Self::String(right)) => left == right,
             // Two symbols are equal only if they share the same id.
             (Self::Symbol(left), Self::Symbol(right)) => left == right,
@@ -164,6 +170,7 @@ impl Trace for JsValue {
             | Self::Null
             | Self::Boolean(_)
             | Self::Number(_)
+            | Self::BigInt(_)
             | Self::String(_)
             | Self::Symbol(_)
             | Self::BuiltinFunction(_)

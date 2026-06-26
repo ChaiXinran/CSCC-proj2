@@ -52,6 +52,8 @@ pub enum Instruction {
     StoreGlobal(u16),
 
     UnaryPlus,
+    Increment,
+    Decrement,
     Negate,
     LogicalNot,
     TypeOf,
@@ -155,7 +157,6 @@ pub enum Instruction {
     /// Pops `object` and `key`, pushes `object[key]`.
     /// Stack: [object, key] → [value]
     GetElement,
-
     /// Reads a property by name from the top-of-stack object and rearranges
     /// the stack so the callee and `this` are in position for `CallWithThis`.
     /// Pops `object`, pushes `method_value` then `object` back.
@@ -322,6 +323,8 @@ impl Instruction {
             Self::StoreGlobal(_)
             | Self::StoreName(_)
             | Self::UnaryPlus
+            | Self::Increment
+            | Self::Decrement
             | Self::Negate
             | Self::LogicalNot
             | Self::BitwiseNot

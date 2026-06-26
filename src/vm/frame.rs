@@ -36,6 +36,12 @@ impl CallFrame {
 pub enum Completion {
     Normal(JsValue),
     Return(JsValue),
+    Yield { value: JsValue, next_ip: usize },
+    YieldDelegate {
+        iterator: JsValue,
+        value: JsValue,
+        next_ip: usize,
+    },
     Throw(JsValue),
     Break(Option<String>),
     Continue(Option<String>),

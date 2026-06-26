@@ -19,6 +19,7 @@ use crate::vm::{Vm, VmError, VmErrorKind};
 pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_error(context)?;
     install_number(context)?;
+    install_bigint(context)?;
     install_boolean(context)?;
     install_string(context)?;
     install_math(context)?;
@@ -689,7 +690,10 @@ fn number_call(
     if arguments.is_empty() {
         return Ok(JsValue::Number(number::number_call(None)));
     }
-    let value = vm.to_number(arg(arguments, 0), context)?;
+    let value = match arg(arguments, 0) {
+        JsValue::BigInt(value) => value as f64,
+        value => vm.to_number(value, context)?,
+    };
     Ok(JsValue::Number(number::number_call(Some(value))))
 }
 
@@ -702,7 +706,10 @@ fn number_construct(
     let value = if arguments.is_empty() {
         0.0
     } else {
-        vm.to_number(arg(arguments, 0), context)?
+        match arg(arguments, 0) {
+            JsValue::BigInt(value) => value as f64,
+            value => vm.to_number(value, context)?,
+        }
     };
     let prototype = context
         .constructor_prototype(&new_target)?
@@ -860,6 +867,297 @@ fn number_is_safe_integer(
 }
 
 // ── Boolean ──────────────────────────────────────────────────────────────────
+
+fn install_bigint(context: &mut NativeContext) -> Result<(), VmError> {
+    let object_prototype = context
+        .object_prototype()
+        .ok_or_else(|| VmError::runtime("object prototype missing"))?;
+    let mut prototype_object = JsObject::ordinary();
+    prototype_object.prototype = Some(object_prototype);
+    prototype_object.kind = ObjectKind::PrimitiveWrapper(PrimitiveValue::BigInt(0));
+    let prototype = context
+        .heap_mut()
+        .allocate_object(prototype_object)
+        .ok_or_else(|| VmError::runtime_limit("heap exhausted"))?;
+
+    let constructor = context.register_builtin("BigInt", 1, bigint_call, Some(bigint_construct))?;
+    let JsValue::BuiltinFunction(id) = &constructor else {
+        unreachable!()
+    };
+    let backing = context.builtin(*id).unwrap().object;
+    context.define_own_property(
+        backing,
+        "prototype".into(),
+        constant_descriptor(JsValue::Object(prototype)),
+    )?;
+    context.define_own_property(
+        prototype,
+        "constructor".into(),
+        method_descriptor(constructor.clone()),
+    )?;
+    define_method(context, prototype, "toString", 0, bigint_to_string)?;
+    define_method(context, prototype, "toLocaleString", 0, bigint_to_locale_string)?;
+    define_method(context, prototype, "valueOf", 0, bigint_value_of)?;
+    context.define_symbol_own_property(
+        prototype,
+        context.well_known_symbols().to_string_tag,
+        PropertyDescriptor::data_with(JsValue::String("BigInt".into()), false, false, true),
+    )?;
+    define_method(context, backing, "asIntN", 2, bigint_as_int_n)?;
+    define_method(context, backing, "asUintN", 2, bigint_as_uint_n)?;
+    context.declare_global("BigInt", constructor);
+    context.define_own_property(
+        context.global_object(),
+        "BigInt".into(),
+        PropertyDescriptor::data_with(
+            context
+                .get_global("BigInt")
+                .ok_or_else(|| VmError::runtime("BigInt global missing"))?,
+            true,
+            false,
+            true,
+        ),
+    )?;
+    Ok(())
+}
+
+fn bigint_call(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(JsValue::BigInt(to_bigint_constructor(
+        vm,
+        context,
+        arg(arguments, 0),
+    )?))
+}
+
+fn bigint_construct(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _arguments: &[JsValue],
+    _new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    Err(VmError::type_error("BigInt is not a constructor"))
+}
+
+fn bigint_value_of(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(JsValue::BigInt(this_bigint(context, &this)?))
+}
+
+fn bigint_to_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_bigint(context, &this)?;
+    let radix = match arguments.first() {
+        None | Some(JsValue::Undefined) => 10,
+        Some(_) => vm.to_number(arg(arguments, 0), context)?.trunc() as i32,
+    };
+    if !(2..=36).contains(&radix) {
+        return Err(VmError::range("radix must be between 2 and 36"));
+    }
+    Ok(JsValue::String(bigint_to_radix_string(value, radix as u32)))
+}
+
+fn bigint_to_locale_string(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_bigint(context, &this)?;
+    Ok(JsValue::String(value.to_string()))
+}
+
+fn bigint_as_int_n(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let bits = to_index_for_bigint_bits(vm, context, arg(arguments, 0))?;
+    let value = to_bigint(vm, context, arg(arguments, 1))?;
+    Ok(JsValue::BigInt(bigint_as_int_n_value(bits, value)))
+}
+
+fn bigint_as_uint_n(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let bits = to_index_for_bigint_bits(vm, context, arg(arguments, 0))?;
+    let value = to_bigint(vm, context, arg(arguments, 1))?;
+    Ok(JsValue::BigInt(bigint_as_uint_n_value(bits, value)))
+}
+
+fn this_bigint(context: &NativeContext, this: &JsValue) -> Result<i128, VmError> {
+    if let JsValue::BigInt(value) = this {
+        return Ok(*value);
+    }
+    if let Some(object) = context.value_object(this)
+        && let Some(PrimitiveValue::BigInt(value)) = context.primitive_value(object)
+    {
+        return Ok(*value);
+    }
+    Err(VmError::type_error(
+        "BigInt.prototype method called on a non-BigInt",
+    ))
+}
+
+fn to_bigint(vm: &mut Vm, context: &mut NativeContext, value: JsValue) -> Result<i128, VmError> {
+    match value {
+        JsValue::BigInt(value) => Ok(value),
+        JsValue::Boolean(value) => Ok(i128::from(value)),
+        JsValue::String(value) => parse_bigint_string(&value)
+            .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            let primitive = vm.to_primitive(value, crate::runtime::PreferredType::Number, context)?;
+            to_bigint(vm, context, primitive)
+        }
+        _ => Err(VmError::type_error("Cannot convert value to BigInt")),
+    }
+}
+
+fn to_bigint_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<i128, VmError> {
+    match value {
+        JsValue::Number(value) if value.is_finite() && value.fract() == 0.0 => Ok(value as i128),
+        JsValue::Number(_) => Err(VmError::range("Cannot convert non-integer number to BigInt")),
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            let primitive = vm.to_primitive(value, crate::runtime::PreferredType::Number, context)?;
+            to_bigint_constructor(vm, context, primitive)
+        }
+        other => to_bigint(vm, context, other),
+    }
+}
+
+fn to_index_for_bigint_bits(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<u32, VmError> {
+    let value = vm.to_number(value, context)?;
+    if value.is_nan() {
+        return Ok(0);
+    }
+    if !value.is_finite() || value > 9_007_199_254_740_991.0 {
+        return Err(VmError::range("BigInt bits index out of range"));
+    }
+    let value = value.trunc();
+    if value < 0.0 {
+        return Err(VmError::range("BigInt bits index out of range"));
+    }
+    Ok(value.min(f64::from(u32::MAX)) as u32)
+}
+
+fn parse_bigint_string(input: &str) -> Option<i128> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Some(0);
+    }
+    let (negative, unsigned) = if let Some(rest) = trimmed.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = trimmed.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, trimmed)
+    };
+    if (negative || trimmed.starts_with('+'))
+        && (unsigned.starts_with("0x")
+            || unsigned.starts_with("0X")
+            || unsigned.starts_with("0b")
+            || unsigned.starts_with("0B")
+            || unsigned.starts_with("0o")
+            || unsigned.starts_with("0O"))
+    {
+        return None;
+    }
+    let (digits, radix) = unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            unsigned
+                .strip_prefix("0b")
+                .or_else(|| unsigned.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            unsigned
+                .strip_prefix("0o")
+                .or_else(|| unsigned.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })
+        .unwrap_or((unsigned, 10));
+    if digits.is_empty() {
+        return None;
+    }
+    let value = i128::from_str_radix(digits, radix).ok()?;
+    Some(if negative { -value } else { value })
+}
+
+fn bigint_to_radix_string(value: i128, radix: u32) -> String {
+    if value == 0 {
+        return "0".into();
+    }
+    let negative = value < 0;
+    let mut value = value.unsigned_abs();
+    let mut digits = Vec::new();
+    while value > 0 {
+        let digit = (value % u128::from(radix)) as u8;
+        digits.push(if digit < 10 {
+            char::from(b'0' + digit)
+        } else {
+            char::from(b'a' + digit - 10)
+        });
+        value /= u128::from(radix);
+    }
+    if negative {
+        digits.push('-');
+    }
+    digits.iter().rev().collect()
+}
+
+fn bigint_as_uint_n_value(bits: u32, value: i128) -> i128 {
+    if bits == 0 {
+        return 0;
+    }
+    if bits >= 127 {
+        return value;
+    }
+    let modulo = 1_i128 << bits;
+    value.rem_euclid(modulo)
+}
+
+fn bigint_as_int_n_value(bits: u32, value: i128) -> i128 {
+    if bits == 0 {
+        return 0;
+    }
+    if bits >= 127 {
+        return value;
+    }
+    let unsigned = bigint_as_uint_n_value(bits, value);
+    let sign = 1_i128 << (bits - 1);
+    if unsigned >= sign {
+        unsigned - (1_i128 << bits)
+    } else {
+        unsigned
+    }
+}
 
 fn install_boolean(context: &mut NativeContext) -> Result<(), VmError> {
     let prototype = context
@@ -1034,6 +1332,9 @@ fn string_call(
 ) -> Result<JsValue, VmError> {
     if arguments.is_empty() {
         return Ok(JsValue::String(String::new()));
+    }
+    if let JsValue::Symbol(id) = arg(arguments, 0) {
+        return Ok(JsValue::String(symbol_descriptive_string(context, id)));
     }
     Ok(JsValue::String(
         vm.to_string_coerce(arg(arguments, 0), context)?,
@@ -3193,6 +3494,7 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
         ("split", wk.split),
         ("matchAll", wk.match_all),
         ("search", wk.search),
+        ("dispose", wk.dispose),
     ];
     for (name, sym_id) in well_known {
         context.define_own_property(
@@ -3347,12 +3649,17 @@ fn symbol_proto_to_string(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let sym_id = extract_symbol(context, this)?;
-    let desc = context.symbols().description(sym_id);
-    let tag = match desc {
-        Some(d) => format!("Symbol({d})"),
+    Ok(JsValue::String(symbol_descriptive_string(context, sym_id)))
+}
+
+fn symbol_descriptive_string(
+    context: &NativeContext,
+    sym_id: crate::runtime::SymbolId,
+) -> String {
+    match context.symbols().description(sym_id) {
+        Some(description) => format!("Symbol({description})"),
         None => "Symbol()".into(),
-    };
-    Ok(JsValue::String(tag))
+    }
 }
 
 fn symbol_proto_value_of(

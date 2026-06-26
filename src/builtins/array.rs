@@ -442,8 +442,33 @@ fn array_from(
     };
 
     let object = context.require_object(&source, "Array.from")?;
+    if let Some(iterator_method) =
+        context.get_symbol_property_value(object, context.well_known_symbols().iterator)
+    {
+        if matches!(iterator_method, JsValue::Undefined | JsValue::Null) {
+            let length = array_like_length(context, object);
+            return array_from_array_like(vm, context, source, length, map_fn, map_this);
+        }
+        if !is_callable(&iterator_method) {
+            return Err(VmError::type_error(
+                "Array.from: @@iterator is not callable",
+            ));
+        }
+        return array_from_iterator(vm, context, source, iterator_method, map_fn, map_this);
+    }
     let length = array_like_length(context, object);
 
+    array_from_array_like(vm, context, source, length, map_fn, map_this)
+}
+
+fn array_from_array_like(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    source: JsValue,
+    length: usize,
+    map_fn: Option<JsValue>,
+    map_this: JsValue,
+) -> Result<JsValue, VmError> {
     let mut result = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, source.clone(), i)?;
@@ -461,6 +486,51 @@ fn array_from(
         result.push(mapped);
     }
     context.create_array(result)
+}
+
+fn array_from_iterator(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    source: JsValue,
+    iterator_method: JsValue,
+    map_fn: Option<JsValue>,
+    map_this: JsValue,
+) -> Result<JsValue, VmError> {
+    let iterator = call_callback(vm, context, iterator_method, source, Vec::new())?;
+    let mut result = Vec::new();
+    while result.len() < MAX_DENSE_ALLOC {
+        let next = context.get_property(iterator.clone(), "next")?;
+        if !is_callable(&next) {
+            return Err(VmError::type_error(
+                "Array.from: iterator next is not callable",
+            ));
+        }
+        let step = call_callback(vm, context, next, iterator.clone(), Vec::new())?;
+        let step_object = context.require_object(&step, "Array.from iterator result")?;
+        let step_value = context.object_value(step_object);
+        let done = vm
+            .get_property_value(step_value.clone(), "done", context)?
+            .to_boolean();
+        if done {
+            return context.create_array(result);
+        }
+        let value = vm.get_property_value(step_value, "value", context)?;
+        let mapped = if let Some(ref func) = map_fn {
+            call_callback(
+                vm,
+                context,
+                func.clone(),
+                map_this.clone(),
+                vec![value, JsValue::Number(result.len() as f64)],
+            )?
+        } else {
+            value
+        };
+        result.push(mapped);
+    }
+    Err(VmError::runtime_limit(
+        "Array.from iterator step limit exceeded",
+    ))
 }
 
 fn array_of(

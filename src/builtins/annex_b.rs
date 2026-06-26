@@ -255,7 +255,8 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, St
         | ObjectKind::ArrayBuffer { .. }
         | ObjectKind::DataView { .. }
         | ObjectKind::TypedArray { .. }
-        | ObjectKind::Iterator { .. } => None,
+        | ObjectKind::Iterator { .. }
+        | ObjectKind::Generator { .. } => None,
     }
 }
 

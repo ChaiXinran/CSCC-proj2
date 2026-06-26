@@ -217,6 +217,7 @@ fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
         rest_param: None,
         chunk: function_chunk,
         is_strict: false,
+        is_generator: false,
         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
     };
     let function = chunk.add_function(template).unwrap();

@@ -133,6 +133,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
             rest_param: None,
             chunk: invalid_child,
             is_strict: false,
+            is_generator: false,
             environment_policy: EnvironmentCapturePolicy::None,
         }],
         handlers: Vec::new(),

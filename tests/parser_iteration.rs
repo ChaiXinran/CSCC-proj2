@@ -294,12 +294,70 @@ fn for_of_over_array_runs_successfully() {
 }
 
 #[test]
-fn generator_call_fails_at_runtime_with_pending_message() {
-    let result = run_native("function* g() { yield 1; } g();");
-    let err = result.expect_err("should fail at runtime");
-    assert!(
-        err.contains("V9-B") || err.contains("not yet implemented"),
-        "unexpected error: {err}"
+fn for_of_uses_custom_symbol_iterator() {
+    let result = run_native(
+        "var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           var i = 0; \
+           return { next: function() { i = i + 1; return { value: i, done: i > 3 }; } }; \
+         }; \
+         var s = 0; \
+         for (var x of iterable) { s = s + x; } \
+         s;",
+    );
+    assert_eq!(result.expect("custom iterator should run"), "6");
+}
+
+#[test]
+fn generator_next_runs_until_yield_and_completion() {
+    let result = run_native(
+        "function* g() { yield 1; return 2; } \
+         var it = g(); \
+         var a = it.next(); \
+         var b = it.next(); \
+         '' + a.value + '/' + a.done + '/' + b.value + '/' + b.done;",
+    );
+    assert_eq!(result.expect("generator should run"), "1/false/2/true");
+}
+
+#[test]
+fn generator_yield_star_delegates_array_values() {
+    let result = run_native(
+        "function* g() { yield* [1, 2]; return 3; } \
+         var it = g(); \
+         var a = it.next(); var b = it.next(); var c = it.next(); \
+         '' + a.value + '/' + b.value + '/' + c.value + '/' + c.done;",
+    );
+    assert_eq!(result.expect("yield* should delegate"), "1/2/3/true");
+}
+
+#[test]
+fn generator_yield_star_uses_custom_symbol_iterator_incrementally() {
+    let result = run_native(
+        "var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           var i = 0; \
+           return { next: function() { i = i + 1; return { value: i, done: i > 2 }; } }; \
+         }; \
+         function* g() { yield* iterable; return 9; } \
+         var it = g(); \
+         var a = it.next(); var b = it.next(); var c = it.next(); \
+         '' + a.value + '/' + b.value + '/' + c.value + '/' + c.done;",
+    );
+    assert_eq!(result.expect("custom yield* should run"), "1/2/9/true");
+}
+
+#[test]
+fn generator_function_is_not_constructible() {
+    let result = run_native(
+        "function* g() { yield 1; } \
+         var caught = false; \
+         try { new g(); } catch (e) { caught = true; } \
+         caught;",
+    );
+    assert_eq!(
+        result.expect("constructor call should be catchable"),
+        "true"
     );
 }
 
