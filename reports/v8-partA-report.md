@@ -177,6 +177,7 @@ Newest first.
 
 | Date | Worker | Summary | Files changed | Tests run | Result delta |
 | --- | --- | --- | --- | --- | --- |
+| 2026-06-26 | A group | Post-Fix2 module import/export frontend connector plus regression recovery: added stable AST nodes, module-only parser entry, module early errors, default export declaration parsing, compiler no-op/export-declaration lowering, and `ModuleRecord` metadata extraction without linking or live-binding semantics | `src/ast/statement.rs`, `src/ast/mod.rs`, `src/contracts.rs`, `src/parser/mod.rs`, `src/parser/statement.rs`, `src/bytecode/compiler.rs`, `src/backend/native.rs`, `src/runtime/module.rs`, `tests/native_modules.rs`, `reports/native-language.json` | `cargo test --no-default-features --test native_modules`; `cargo test --no-default-features --test bytecode_basics`; `cargo test --no-default-features --lib`; `cargo test --no-default-features --lib parser::statement::tests`; `cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language/module-code --jobs 4 --json reports/tmp-language-module-code.json`; `cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/language --jobs 4 --progress --json reports/native-language.json` | Focused module test suite 6/6. `module-code` restored to 201/599 after early-error recovery. Full `test/language` now 12,991/23,711 passed, 10,720 failed, 0 skipped, 54.79%, above the user's referenced 54.76%. No V8 scan run in this handoff. |
 | 2026-06-26 | A group | Class/private/member/frontend follow-up plus destructuring assignment handoff completion | `src/ast/expression.rs`, `src/lexer/mod.rs`, `src/parser/expression.rs`, `src/parser/statement.rs`, `src/bytecode/opcode.rs`, `src/bytecode/compiler.rs`, `src/vm/interpreter.rs`, `tests/bytecode_basics.rs`, `tests/native_for_loops.rs`, `reports/native-v8-scan-summary.json` | `cargo test --no-default-features --test bytecode_basics`; `cargo test --no-default-features --test native_for_loops`; `cargo test --no-default-features` (stops at existing BigInt stdlib failure); `cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json` | V8 scan now 1,085/5,000 passed, 3,915 failed, 0 skipped (21.70%). Delta: +468 passed vs previous local summary 617/5,000; +1,085 vs initial V8 scan baseline. Full 2026-06-24 baseline unchanged; no new full-suite run claimed. |
 | 2026-06-24 | A group | Complete V8-A implementation | lexer, ast, parser, bytecode/compiler, bytecode/opcode, bytecode/chunk, vm/interpreter, runtime/function | `cargo test --all-targets` + V1–V6 gates | 205 passed, 0 failed; all gates 100% |
 | 2026-06-24 | setup | Recorded V8 scan baseline | `reports/native-v8-scan-summary.json` | `--native-v8-scan --jobs 4` | 0/5,000 passed, 4,504 failed, 496 skipped |
@@ -185,6 +186,22 @@ Newest first.
 ---
 
 ## 2026-06-26 Follow-up Notes
+
+Post-Fix2 module connector pass:
+
+- Added module AST declarations for imports and exports and re-exported them through `contracts.rs`.
+- Added `Parser::parse_module()` so module source is strict and can accept top-level import/export while script parsing remains unchanged.
+- Implemented first-stage import/export grammar coverage for side-effect imports, default/named/namespace imports, named exports, re-exports, export-all, export-all-as, export declarations, and `export default` expression forms.
+- Added module early errors for duplicate export names, unresolved local exports, strict imported bindings (`eval` / `arguments` / reserved names), duplicate labels, top-level `super` / `new.target`, and ill-formed Unicode string export names.
+- Parsed `export default function/class` as declarations instead of assignment expressions so named default declarations create their expected local binding and semicolon-free declaration forms parse correctly.
+- Lowered imports to bytecode no-ops and export declarations by compiling only their wrapped declaration/expression.
+- Recorded module dependencies, import bindings, and export bindings into `ModuleRecord` before evaluation.
+
+Newly exposed / remaining failures for this pass:
+
+- Initial module connector work dropped `module-code` from the recorded 201/599 to 172/599 because partial import/export parsing removed the previous coarse SyntaxError fallback without yet implementing the required module early errors. The recovery pass restored `module-code` to 201/599 and raised full `test/language` to 54.79%.
+- Module linking, dependency evaluation, live bindings, namespace object creation, and cyclic graph handling remain out of A-line scope.
+- Imported local bindings are metadata-only in this pass; reading them at runtime before B-line linking support remains unsupported.
 
 This pass continued the interrupted A-track repair and stayed on frontend/parser/compiler/runtime-instruction support:
 

@@ -4,8 +4,8 @@ use std::{collections::HashSet, fmt};
 
 use crate::ast::{
     ArrayElement, AssignmentOperator, BinaryOperator, CatchClause, Expression, FunctionBody,
-    FunctionLiteral, Literal, LogicalOperator, ObjectProperty, Program, PropertyName, Statement,
-    SwitchCase, UnaryOperator, UpdateOperator, VariableKind,
+    FunctionLiteral, Literal, LogicalOperator, ModuleDeclaration, ObjectProperty, Program,
+    PropertyName, Statement, SwitchCase, UnaryOperator, UpdateOperator, VariableKind,
 };
 
 use super::{
@@ -260,6 +260,13 @@ impl Compiler {
             } => self.compile_for_of(left, right, body, *is_await, chunk, context),
             Statement::DoWhile { test, body } => self.compile_do_while(test, body, chunk, context),
             Statement::Labelled { body, .. } => self.compile_statement(body, chunk, context, false),
+            Statement::ModuleDeclaration(ModuleDeclaration::Import(_)) => Ok(()),
+            Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
+                if let Some(statement) = decl.declaration.as_deref() {
+                    self.compile_statement(statement, chunk, context, false)?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -3935,6 +3942,16 @@ fn lexical_names(statements: &[Statement]) -> Vec<String> {
                 ..
             } => binding_pattern_names(pattern),
             Statement::ClassDeclaration(decl) => vec![decl.name.clone()],
+            Statement::ModuleDeclaration(ModuleDeclaration::Import(decl)) => decl
+                .entries
+                .iter()
+                .map(|entry| entry.local_name.clone())
+                .collect(),
+            Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => decl
+                .declaration
+                .as_deref()
+                .map(|statement| lexical_names(std::slice::from_ref(statement)))
+                .unwrap_or_default(),
             _ => Vec::new(),
         })
         .collect()
@@ -3989,6 +4006,15 @@ fn lexical_kind(statements: &[Statement], name: &str) -> Option<VariableKind> {
             Some(*kind)
         }
         Statement::ClassDeclaration(decl) if decl.name == name => Some(VariableKind::Let),
+        Statement::ModuleDeclaration(ModuleDeclaration::Import(decl))
+            if decl.entries.iter().any(|entry| entry.local_name == name) =>
+        {
+            Some(VariableKind::Const)
+        }
+        Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => decl
+            .declaration
+            .as_deref()
+            .and_then(|statement| lexical_kind(std::slice::from_ref(statement), name)),
         _ => None,
     })
 }
@@ -4093,6 +4119,12 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
             }
         }
         Statement::Labelled { body, .. } => collect_var_names_in(body, names),
+        Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
+            if let Some(statement) = decl.declaration.as_deref() {
+                collect_var_names_in(statement, names);
+            }
+        }
+        Statement::ModuleDeclaration(ModuleDeclaration::Import(_)) => {}
         Statement::Switch { cases, .. } => {
             for case in cases {
                 collect_var_names(&case.consequent, names);

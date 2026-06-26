@@ -124,6 +124,64 @@ fn bare_module_specifier_is_explicitly_unsupported() {
     assert!(error.message.contains("unsupported module specifier"));
 }
 
+#[test]
+fn module_import_export_metadata_is_recorded_without_linking() {
+    let path = temp_module_path("metadata");
+    let mut runtime = NativeRuntime::new(RuntimeConfig::default());
+
+    runtime
+        .eval_module_source(
+            r#"
+                import defaultName, { thing as localThing, "odd-name" as quoted } from "./dep.mjs";
+                import * as ns from "./ns.mjs";
+                import "./side-effect.mjs";
+                export { localThing as exposed } from "./dep.mjs";
+                export * as allNs from "./ns.mjs";
+                export const own = 1;
+            "#,
+            &path,
+            true,
+        )
+        .expect("module metadata-only import/export syntax should parse and execute");
+
+    let record = runtime
+        .module_record_for_path(&path)
+        .expect("module record should be stored");
+    assert_eq!(
+        record.dependencies,
+        vec!["./dep.mjs", "./ns.mjs", "./side-effect.mjs"]
+    );
+    assert_eq!(record.imports.len(), 4);
+    assert!(
+        record
+            .imports
+            .iter()
+            .any(|entry| entry.imported_name == "default" && entry.local_name == "defaultName")
+    );
+    assert!(
+        record
+            .imports
+            .iter()
+            .any(|entry| entry.imported_name == "*" && entry.local_name == "ns")
+    );
+    assert!(
+        record
+            .exports
+            .iter()
+            .any(|entry| entry.export_name == "exposed"
+                && entry.local_name.as_deref() == Some("localThing")
+                && entry.source.as_deref() == Some("./dep.mjs"))
+    );
+    assert!(
+        record
+            .exports
+            .iter()
+            .any(|entry| entry.export_name == "own"
+                && entry.local_name.as_deref() == Some("own")
+                && entry.source.is_none())
+    );
+}
+
 fn temp_module_path(label: &str) -> PathBuf {
     let path = temp_module_dir(label).join("module.mjs");
     fs::write(&path, "").expect("temporary module path should be writable");

@@ -6,11 +6,17 @@ use std::{
 };
 
 use crate::{
+    ast::ModuleDeclaration,
     backend::{BackendExecution, RuntimeBackend},
     builtins,
     contracts::{Chunk, NativeContext, NativeError, NativePipeline, Program, VmErrorKind},
     engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig, SourceKind},
-    runtime::{JsValue, ModuleRegistry, ModuleStatus, resolve_module_specifier},
+    lexer::Lexer,
+    parser::Parser,
+    runtime::{
+        JsValue, ModuleExportBinding, ModuleImportBinding, ModuleRegistry, ModuleStatus,
+        resolve_module_specifier,
+    },
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +100,7 @@ impl NativeRuntime {
 
     fn prepare_chunk(&mut self, source: &str) -> Result<Chunk, NativeError> {
         if self.config.script_cache_capacity == 0 {
-            let program = self.pipeline.parse(source)?;
+            let program = self.parse_current_source(source)?;
             return self.pipeline.compile(&program);
         }
 
@@ -115,7 +121,7 @@ impl NativeRuntime {
         }
 
         self.cache_stats.misses = self.cache_stats.misses.saturating_add(1);
-        let program = self.pipeline.parse(source)?;
+        let program = self.parse_current_source(source)?;
         let chunk = self.pipeline.compile(&program)?;
         let max_stack_depth = chunk
             .analyze_stack()
@@ -136,6 +142,15 @@ impl NativeRuntime {
         }
         self.script_cache.push_back(entry);
         Ok(chunk)
+    }
+
+    fn parse_current_source(&mut self, source: &str) -> Result<Program, NativeError> {
+        if self.current_source_kind == SourceKind::Module {
+            let tokens = Lexer::new(source).tokenize()?;
+            Ok(Parser::with_source(tokens, source).parse_module()?)
+        } else {
+            self.pipeline.parse(source)
+        }
     }
 
     pub fn eval_source(
@@ -267,7 +282,16 @@ impl RuntimeBackend for NativeRuntime {
 
         self.module_registry
             .set_status(module_id, ModuleStatus::Linked);
-        let outcome = self.evaluate(source);
+        let outcome = (|| {
+            self.reset_limits();
+            let program = self.parse_current_source(source)?;
+            let (dependencies, imports, exports) = collect_module_metadata(&program);
+            self.module_registry
+                .set_metadata(module_id, dependencies, imports, exports);
+            let chunk = self.pipeline.compile(&program)?;
+            self.pipeline.execute(&chunk, &mut self.context)
+        })()
+        .map_err(classify_native_error);
         match outcome {
             Ok(value) => {
                 self.module_registry
@@ -312,6 +336,50 @@ fn hash_source(source: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     hasher.finish()
+}
+
+fn collect_module_metadata(
+    program: &Program,
+) -> (
+    Vec<String>,
+    Vec<ModuleImportBinding>,
+    Vec<ModuleExportBinding>,
+) {
+    let mut dependencies = Vec::new();
+    let mut imports = Vec::new();
+    let mut exports = Vec::new();
+
+    for statement in &program.body {
+        match statement {
+            crate::ast::Statement::ModuleDeclaration(ModuleDeclaration::Import(decl)) => {
+                push_dependency(&mut dependencies, &decl.source);
+                imports.extend(decl.entries.iter().map(|entry| ModuleImportBinding {
+                    source: decl.source.clone(),
+                    imported_name: entry.imported_name.clone(),
+                    local_name: entry.local_name.clone(),
+                }));
+            }
+            crate::ast::Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
+                if let Some(source) = &decl.source {
+                    push_dependency(&mut dependencies, source);
+                }
+                exports.extend(decl.entries.iter().map(|entry| ModuleExportBinding {
+                    export_name: entry.export_name.clone(),
+                    local_name: entry.local_name.clone(),
+                    source: decl.source.clone(),
+                }));
+            }
+            _ => {}
+        }
+    }
+
+    (dependencies, imports, exports)
+}
+
+fn push_dependency(dependencies: &mut Vec<String>, source: &str) {
+    if !dependencies.iter().any(|existing| existing == source) {
+        dependencies.push(source.to_owned());
+    }
 }
 
 fn classify_native_error(error: NativeError) -> EvalFailure {

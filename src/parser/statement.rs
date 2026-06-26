@@ -5,14 +5,25 @@ use std::collections::HashSet;
 use crate::{
     ast::{
         ArrayBindingElement, BindingPattern, CatchClause, Expression, ForBinding, FunctionBody,
-        FunctionParam, ObjectBindingKey, ObjectBindingProp, PropertyName, Statement, SwitchCase,
-        VariableDeclarator, VariableKind,
+        FunctionParam, ObjectBindingKey, ObjectBindingProp, ObjectProperty, PropertyName,
+        Statement, SwitchCase, VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, TokenKind},
-    parser::{ParseError, Parser, describe, is_reserved_identifier_name},
+    parser::{
+        ParseError, Parser, describe, is_reserved_identifier_name, is_strict_future_reserved,
+        is_strict_future_reserved_keyword,
+    },
 };
 
 impl Parser {
+    pub(super) fn parse_module_item(&mut self) -> Result<Statement, ParseError> {
+        match self.peek().kind {
+            TokenKind::Keyword(Keyword::Import) => self.parse_import_declaration(),
+            TokenKind::Keyword(Keyword::Export) => self.parse_export_declaration(),
+            _ => self.parse_statement(),
+        }
+    }
+
     /// Parses a single statement.
     pub(super) fn parse_statement(&mut self) -> Result<Statement, ParseError> {
         match &self.peek().kind {
@@ -499,6 +510,339 @@ impl Parser {
         Ok(Statement::Return(Some(value)))
     }
 
+    fn parse_import_declaration(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `import`
+        let mut entries = Vec::new();
+
+        if let TokenKind::String(source) = self.peek().kind.clone() {
+            self.advance();
+            self.expect_semicolon()?;
+            return Ok(Statement::ModuleDeclaration(
+                crate::ast::ModuleDeclaration::Import(crate::ast::ImportDeclaration {
+                    source,
+                    entries,
+                }),
+            ));
+        }
+
+        if self.eat_operator("*") {
+            self.expect_identifier_name_exact("as")?;
+            let local_name = self.expect_identifier()?;
+            entries.push(crate::ast::ImportEntry {
+                imported_name: "*".into(),
+                local_name,
+            });
+        } else {
+            if let TokenKind::Identifier(local_name) = self.peek().kind.clone() {
+                self.advance();
+                entries.push(crate::ast::ImportEntry {
+                    imported_name: "default".into(),
+                    local_name,
+                });
+                if self.eat_punctuator(',') {
+                    if self.eat_operator("*") {
+                        self.expect_identifier_name_exact("as")?;
+                        let local_name = self.expect_identifier()?;
+                        entries.push(crate::ast::ImportEntry {
+                            imported_name: "*".into(),
+                            local_name,
+                        });
+                    } else {
+                        self.parse_named_import_entries(&mut entries)?;
+                    }
+                }
+            } else {
+                self.parse_named_import_entries(&mut entries)?;
+            }
+        }
+
+        self.expect_identifier_name_exact("from")?;
+        let source = self.expect_string_literal("module specifier")?;
+        self.expect_semicolon()?;
+        Ok(Statement::ModuleDeclaration(
+            crate::ast::ModuleDeclaration::Import(crate::ast::ImportDeclaration {
+                source,
+                entries,
+            }),
+        ))
+    }
+
+    fn parse_named_import_entries(
+        &mut self,
+        entries: &mut Vec<crate::ast::ImportEntry>,
+    ) -> Result<(), ParseError> {
+        self.expect_punctuator('{')?;
+        while !self.check_punctuator('}') {
+            let imported_name = self.expect_module_export_name()?;
+            let local_name = if self.eat_identifier_name("as") {
+                self.expect_module_binding_name()?
+            } else {
+                self.validate_module_binding_identifier(&imported_name)?;
+                imported_name.clone()
+            };
+            entries.push(crate::ast::ImportEntry {
+                imported_name,
+                local_name,
+            });
+            if !self.eat_punctuator(',') {
+                break;
+            }
+        }
+        self.expect_punctuator('}')
+    }
+
+    fn parse_export_declaration(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `export`
+        let mut entries = Vec::new();
+        let mut source = None;
+        let mut declaration = None;
+
+        if self.eat_operator("*") {
+            if self.eat_identifier_name("as") {
+                let export_name = self.expect_module_export_name()?;
+                entries.push(crate::ast::ExportEntry {
+                    export_name,
+                    local_name: None,
+                });
+            } else {
+                entries.push(crate::ast::ExportEntry {
+                    export_name: "*".into(),
+                    local_name: None,
+                });
+            }
+            self.expect_identifier_name_exact("from")?;
+            source = Some(self.expect_string_literal("module specifier")?);
+            self.expect_semicolon()?;
+        } else if self.check_punctuator('{') {
+            self.parse_export_entries(&mut entries)?;
+            if self.eat_identifier_name("from") {
+                source = Some(self.expect_string_literal("module specifier")?);
+            }
+            self.expect_semicolon()?;
+        } else if matches!(
+            self.peek().kind,
+            TokenKind::Keyword(Keyword::Var | Keyword::Let | Keyword::Const)
+        ) {
+            let stmt = self.parse_variable_declaration()?;
+            add_export_decl_names(&stmt, &mut entries);
+            declaration = Some(Box::new(stmt));
+        } else if self.check_keyword(Keyword::Function) {
+            let stmt = self.parse_function_declaration()?;
+            add_export_decl_names(&stmt, &mut entries);
+            declaration = Some(Box::new(stmt));
+        } else if self.check_keyword(Keyword::Class) {
+            let stmt = self.parse_class_declaration()?;
+            add_export_decl_names(&stmt, &mut entries);
+            declaration = Some(Box::new(stmt));
+        } else if self.eat_keyword(Keyword::Default) {
+            let local_name = if self.check_keyword(Keyword::Function) {
+                let stmt = self.parse_export_default_function_declaration()?;
+                let name = export_default_decl_name(&stmt);
+                declaration = Some(Box::new(stmt));
+                name
+            } else if self.check_keyword(Keyword::Class) {
+                let stmt = self.parse_export_default_class_declaration()?;
+                let name = export_default_decl_name(&stmt);
+                declaration = Some(Box::new(stmt));
+                name
+            } else {
+                let expr = self.parse_assignment()?;
+                self.expect_semicolon()?;
+                declaration = Some(Box::new(Statement::Expression(expr)));
+                None
+            };
+            entries.push(crate::ast::ExportEntry {
+                export_name: "default".into(),
+                local_name,
+            });
+        } else {
+            return Err(self.error("unsupported export declaration".into()));
+        }
+
+        Ok(Statement::ModuleDeclaration(
+            crate::ast::ModuleDeclaration::Export(crate::ast::ExportDeclaration {
+                entries,
+                source,
+                declaration,
+            }),
+        ))
+    }
+
+    fn parse_export_entries(
+        &mut self,
+        entries: &mut Vec<crate::ast::ExportEntry>,
+    ) -> Result<(), ParseError> {
+        self.expect_punctuator('{')?;
+        while !self.check_punctuator('}') {
+            let local_name = self.expect_module_export_name()?;
+            let export_name = if self.eat_identifier_name("as") {
+                self.expect_module_export_name()?
+            } else {
+                local_name.clone()
+            };
+            entries.push(crate::ast::ExportEntry {
+                export_name,
+                local_name: Some(local_name),
+            });
+            if !self.eat_punctuator(',') {
+                break;
+            }
+        }
+        self.expect_punctuator('}')
+    }
+
+    fn parse_export_default_function_declaration(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `function`
+        let is_generator = self.eat_operator("*");
+        let name = if self.check_punctuator('(') {
+            "*default*".into()
+        } else {
+            self.expect_identifier()?
+        };
+        let outer_generator = self.is_generator_context;
+        self.is_generator_context = is_generator;
+        let params = self.parse_param_list()?;
+        let is_nspl = Self::params_are_non_simple(&params);
+        let body_strict = self.peek_body_has_use_strict();
+        if is_nspl && body_strict {
+            self.is_generator_context = outer_generator;
+            return Err(self.error(
+                "\"use strict\" directive is not allowed in function with non-simple parameters"
+                    .into(),
+            ));
+        }
+        if is_generator || self.is_strict || body_strict || is_nspl {
+            self.check_duplicate_params(&params)?;
+        }
+        if self.is_strict || body_strict {
+            self.check_strict_params(&params)?;
+            if name != "*default*"
+                && (matches!(name.as_str(), "eval" | "arguments")
+                    || crate::parser::is_strict_future_reserved(&name))
+            {
+                self.is_generator_context = outer_generator;
+                return Err(self.error(format!(
+                    "function name `{name}` is not allowed in strict mode"
+                )));
+            }
+        }
+        let body = self.parse_function_body()?;
+        self.is_generator_context = outer_generator;
+        self.validate_params_vs_lexical(&params, &body.statements)?;
+        Ok(Statement::FunctionDeclaration {
+            name,
+            params,
+            body,
+            is_async: false,
+            is_generator,
+        })
+    }
+
+    fn parse_export_default_class_declaration(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `class`
+        let outer_strict = self.is_strict;
+        self.is_strict = true;
+        let name = if self.check_punctuator('{') || self.check_keyword(Keyword::Extends) {
+            "*default*".into()
+        } else {
+            self.expect_class_name()?
+        };
+        self.is_strict = outer_strict;
+        let super_class = if self.eat_keyword(Keyword::Extends) {
+            Some(self.parse_assignment()?)
+        } else {
+            None
+        };
+        let elements = self.parse_class_body()?;
+        Ok(Statement::ClassDeclaration(crate::ast::ClassDeclaration {
+            name,
+            super_class,
+            elements,
+        }))
+    }
+
+    fn eat_identifier_name(&mut self, name: &str) -> bool {
+        match self.peek().kind.clone() {
+            TokenKind::Identifier(value) if value == name => {
+                self.advance();
+                true
+            }
+            TokenKind::Keyword(keyword) if keyword.as_str() == name => {
+                self.advance();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn expect_identifier_name_exact(&mut self, name: &str) -> Result<(), ParseError> {
+        if self.eat_identifier_name(name) {
+            Ok(())
+        } else {
+            Err(self.error(format!(
+                "expected `{name}` but found {}",
+                describe(&self.peek().kind)
+            )))
+        }
+    }
+
+    fn expect_string_literal(&mut self, label: &str) -> Result<String, ParseError> {
+        let token = self.peek().clone();
+        match token.kind {
+            TokenKind::String(value) => {
+                if self.is_strict && token.has_legacy_escape {
+                    return Err(self.error(format!(
+                        "{label} cannot contain a legacy escape in strict mode"
+                    )));
+                }
+                self.advance();
+                Ok(value)
+            }
+            _ => Err(self.error(format!(
+                "expected {label} string literal but found {}",
+                describe(&self.peek().kind)
+            ))),
+        }
+    }
+
+    fn expect_module_binding_name(&mut self) -> Result<String, ParseError> {
+        let name = self.expect_identifier()?;
+        self.validate_module_binding_identifier(&name)?;
+        Ok(name)
+    }
+
+    fn expect_module_export_name(&mut self) -> Result<String, ParseError> {
+        match self.peek().kind.clone() {
+            TokenKind::String(value) => {
+                // ponytail: the lexer currently maps lone surrogate escapes to U+FFFD.
+                // Upgrade path: carry an explicit ill-formed-string flag on Token.
+                if value.contains(char::REPLACEMENT_CHARACTER) {
+                    return Err(self.error(
+                        "module export names must be well-formed Unicode strings".into(),
+                    ));
+                }
+                self.advance();
+                Ok(value)
+            }
+            _ => self.expect_identifier_name(),
+        }
+    }
+
+    fn validate_module_binding_identifier(&self, name: &str) -> Result<(), ParseError> {
+        if matches!(name, "eval" | "arguments" | "await" | "yield")
+            || is_reserved_identifier_name(name)
+            || is_strict_future_reserved(name)
+            || is_strict_future_reserved_keyword(name)
+            || !is_identifier_like(name)
+        {
+            Err(self.error(format!(
+                "`{name}` cannot be used as an imported binding name in module code"
+            )))
+        } else {
+            Ok(())
+        }
+    }
+
     /// Parses `var`/`let`/`const` declarations.
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
         let kind = match self.advance().kind {
@@ -892,6 +1236,9 @@ impl Parser {
         self.expect_punctuator(':')?;
         // Determine if this label wraps an IterationStatement (allows `continue label`)
         let is_iteration = self.peek_iteration_after_labels();
+        if self.label_stack.iter().any(|(existing, _)| existing == &label) {
+            return Err(self.error(format!("duplicate label `{label}`")));
+        }
         self.label_stack.push((label.clone(), is_iteration));
         let body = self.parse_statement()?;
         self.label_stack.pop();
@@ -1443,6 +1790,47 @@ impl Parser {
         Ok(())
     }
 
+    pub(super) fn validate_module_declarations(
+        &self,
+        statements: &[Statement],
+    ) -> Result<(), ParseError> {
+        let mut local_names: HashSet<String> = direct_lexical_names(statements)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+        local_names.extend(var_declared_names(statements).into_iter().map(str::to_owned));
+
+        let mut exported_names = HashSet::new();
+        for statement in statements {
+            if module_item_contains_forbidden_meta(statement) {
+                return Err(self.error("`super` and `new.target` are not allowed in module code".into()));
+            }
+            let Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Export(decl)) =
+                statement
+            else {
+                continue;
+            };
+
+            for entry in &decl.entries {
+                if entry.export_name != "*" && !exported_names.insert(entry.export_name.as_str()) {
+                    return Err(self.error(format!(
+                        "duplicate export name `{}`",
+                        entry.export_name
+                    )));
+                }
+                if decl.source.is_none()
+                    && let Some(local_name) = &entry.local_name
+                    && !local_names.contains(local_name)
+                {
+                    return Err(self.error(format!(
+                        "exported binding `{local_name}` is not declared in this module"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Validates that no formal parameter name is also declared with `let`/`const`
     /// in the function body (the BoundNames/LexicallyDeclaredNames early error).
     pub(super) fn validate_params_vs_lexical(
@@ -1489,6 +1877,169 @@ fn is_labelled_function(stmt: &Statement) -> bool {
     }
 }
 
+fn module_item_contains_forbidden_meta(statement: &Statement) -> bool {
+    match statement {
+        Statement::Expression(expr) | Statement::Throw(expr) => expr_contains_forbidden_meta(expr),
+        Statement::Block(statements) => statements.iter().any(module_item_contains_forbidden_meta),
+        Statement::If {
+            test,
+            consequent,
+            alternate,
+        } => {
+            expr_contains_forbidden_meta(test)
+                || module_item_contains_forbidden_meta(consequent)
+                || alternate
+                    .as_deref()
+                    .is_some_and(module_item_contains_forbidden_meta)
+        }
+        Statement::While { test, body } | Statement::DoWhile { test, body } => {
+            expr_contains_forbidden_meta(test) || module_item_contains_forbidden_meta(body)
+        }
+        Statement::For {
+            init,
+            test,
+            update,
+            body,
+        } => {
+            init.as_deref()
+                .is_some_and(module_item_contains_forbidden_meta)
+                || test.as_ref().is_some_and(expr_contains_forbidden_meta)
+                || update.as_ref().is_some_and(expr_contains_forbidden_meta)
+                || module_item_contains_forbidden_meta(body)
+        }
+        Statement::ForIn { right, body, .. } | Statement::ForOf { right, body, .. } => {
+            expr_contains_forbidden_meta(right) || module_item_contains_forbidden_meta(body)
+        }
+        Statement::Labelled { body, .. } => module_item_contains_forbidden_meta(body),
+        Statement::Try {
+            block,
+            handler,
+            finalizer,
+        } => {
+            block.iter().any(module_item_contains_forbidden_meta)
+                || handler
+                    .as_ref()
+                    .is_some_and(|handler| handler.body.iter().any(module_item_contains_forbidden_meta))
+                || finalizer
+                    .as_ref()
+                    .is_some_and(|body| body.iter().any(module_item_contains_forbidden_meta))
+        }
+        Statement::Switch {
+            discriminant,
+            cases,
+        } => {
+            expr_contains_forbidden_meta(discriminant)
+                || cases
+                    .iter()
+                    .flat_map(|case| &case.consequent)
+                    .any(module_item_contains_forbidden_meta)
+        }
+        Statement::VariableDeclaration { declarations, .. } => declarations
+            .iter()
+            .filter_map(|declaration| declaration.initializer.as_ref())
+            .any(expr_contains_forbidden_meta),
+        Statement::DestructuringDeclaration { initializer, .. } => {
+            expr_contains_forbidden_meta(initializer)
+        }
+        Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Export(decl)) => decl
+            .declaration
+            .as_deref()
+            .is_some_and(module_item_contains_forbidden_meta),
+        Statement::Empty
+        | Statement::Break(_)
+        | Statement::Continue(_)
+        | Statement::Return(_)
+        | Statement::FunctionDeclaration { .. }
+        | Statement::ClassDeclaration(_)
+        | Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Import(_)) => false,
+    }
+}
+
+fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
+    match expr {
+        Expression::Super | Expression::NewTarget => true,
+        Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
+            expr_contains_forbidden_meta(argument)
+        }
+        Expression::Binary { left, right, .. }
+        | Expression::Logical { left, right, .. }
+        | Expression::Assignment {
+            target: left,
+            value: right,
+        }
+        | Expression::CompoundAssignment {
+            target: left,
+            value: right,
+            ..
+        }
+        | Expression::Member {
+            object: left,
+            property: right,
+            ..
+        } => expr_contains_forbidden_meta(left) || expr_contains_forbidden_meta(right),
+        Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
+            expr_contains_forbidden_meta(callee)
+                || arguments.iter().any(call_arg_contains_forbidden_meta)
+        }
+        Expression::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            expr_contains_forbidden_meta(test)
+                || expr_contains_forbidden_meta(consequent)
+                || expr_contains_forbidden_meta(alternate)
+        }
+        Expression::Array(elements) => elements.iter().any(|element| match element {
+            crate::ast::ArrayElement::Expression(expr) | crate::ast::ArrayElement::Spread(expr) => {
+                expr_contains_forbidden_meta(expr)
+            }
+            crate::ast::ArrayElement::Hole => false,
+        }),
+        Expression::Object(properties) => properties.iter().any(|property| match property {
+            ObjectProperty::Data { value, .. } | ObjectProperty::PrototypeSetter { value } => {
+                expr_contains_forbidden_meta(value)
+            }
+            ObjectProperty::ComputedData { key, value } => {
+                expr_contains_forbidden_meta(key) || expr_contains_forbidden_meta(value)
+            }
+            ObjectProperty::Spread(expr) => expr_contains_forbidden_meta(expr),
+            ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
+        }),
+        Expression::TemplateLiteral(template) => {
+            template.expressions.iter().any(expr_contains_forbidden_meta)
+        }
+        Expression::Spread(expr) | Expression::Await(expr) => expr_contains_forbidden_meta(expr),
+        Expression::Yield { argument, .. } => argument
+            .as_deref()
+            .is_some_and(expr_contains_forbidden_meta),
+        Expression::Sequence(expressions) => expressions.iter().any(expr_contains_forbidden_meta),
+        Expression::Literal(_)
+        | Expression::Identifier(_)
+        | Expression::Function(_)
+        | Expression::Class(_)
+        | Expression::This
+        | Expression::PrivateName(_) => false,
+    }
+}
+
+fn call_arg_contains_forbidden_meta(arg: &crate::ast::CallArgument) -> bool {
+    match arg {
+        crate::ast::CallArgument::Expression(expr) | crate::ast::CallArgument::Spread(expr) => {
+            expr_contains_forbidden_meta(expr)
+        }
+    }
+}
+
+fn is_identifier_like(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first == '$' || first.is_alphabetic())
+        && chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
+}
+
 fn direct_lexical_names(statements: &[Statement]) -> Vec<&str> {
     statements
         .iter()
@@ -1507,6 +2058,16 @@ fn direct_lexical_names(statements: &[Statement]) -> Vec<&str> {
             } => binding_pattern_name_strs(pattern),
             Statement::FunctionDeclaration { name, .. } => vec![name.as_str()],
             Statement::ClassDeclaration(cls) => vec![cls.name.as_str()],
+            Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Import(decl)) => decl
+                .entries
+                .iter()
+                .map(|entry| entry.local_name.as_str())
+                .collect(),
+            Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Export(decl)) => decl
+                .declaration
+                .as_deref()
+                .map(|statement| direct_lexical_names(std::slice::from_ref(statement)))
+                .unwrap_or_default(),
             _ => Vec::new(),
         })
         .collect()
@@ -1596,6 +2157,12 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
             collect_var_declared_names(body, names);
         }
         Statement::ForOf { body, .. } => collect_var_declared_names(body, names),
+        Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Export(decl)) => {
+            if let Some(statement) = decl.declaration.as_deref() {
+                collect_var_declared_names(statement, names);
+            }
+        }
+        Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Import(_)) => {}
         Statement::FunctionDeclaration { .. }
         | Statement::Empty
         | Statement::Expression(_)
@@ -1606,6 +2173,42 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
         | Statement::VariableDeclaration { .. }
         | Statement::ClassDeclaration(_)
         | Statement::DestructuringDeclaration { .. } => {}
+    }
+}
+
+fn add_export_decl_names(statement: &Statement, entries: &mut Vec<crate::ast::ExportEntry>) {
+    let mut names = Vec::new();
+    match statement {
+        Statement::VariableDeclaration { declarations, .. } => {
+            for declaration in declarations {
+                if let Some(pattern) = &declaration.pattern {
+                    collect_binding_pattern_names(pattern, &mut names);
+                } else {
+                    names.push(declaration.name.clone());
+                }
+            }
+        }
+        Statement::DestructuringDeclaration { pattern, .. } => {
+            collect_binding_pattern_names(pattern, &mut names);
+        }
+        Statement::FunctionDeclaration { name, .. } => names.push(name.clone()),
+        Statement::ClassDeclaration(decl) => names.push(decl.name.clone()),
+        _ => {}
+    }
+    entries.extend(names.into_iter().map(|name| crate::ast::ExportEntry {
+        export_name: name.clone(),
+        local_name: Some(name),
+    }));
+}
+
+fn export_default_decl_name(statement: &Statement) -> Option<String> {
+    match statement {
+        Statement::FunctionDeclaration { name, .. } | Statement::ClassDeclaration(crate::ast::ClassDeclaration { name, .. })
+            if name != "*default*" =>
+        {
+            Some(name.clone())
+        }
+        _ => None,
     }
 }
 

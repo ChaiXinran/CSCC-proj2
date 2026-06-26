@@ -10,9 +10,10 @@ pub use crate::{
     ast::{
         ArrayBindingElement, ArrayElement, AssignmentOperator, BinaryOperator, BindingPattern,
         CallArgument, CatchClause, ClassDeclaration, ClassElement, ClassExpression, Expression,
-        FunctionBody, FunctionLiteral, FunctionParam, Literal, LogicalOperator, ObjectBindingKey,
-        ObjectBindingProp, ObjectProperty, Program, PropertyName, Statement, SwitchCase,
-        TemplateLiteral, UnaryOperator, VariableDeclarator, VariableKind,
+        ExportDeclaration, ExportEntry, FunctionBody, FunctionLiteral, FunctionParam,
+        ImportDeclaration, ImportEntry, Literal, LogicalOperator, ModuleDeclaration,
+        ObjectBindingKey, ObjectBindingProp, ObjectProperty, Program, PropertyName, Statement,
+        SwitchCase, TemplateLiteral, UnaryOperator, VariableDeclarator, VariableKind,
     },
     bytecode::{
         Chunk, ChunkError, CompileError, Compiler, Constant, EnvironmentCapturePolicy,

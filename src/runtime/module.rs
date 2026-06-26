@@ -102,6 +102,20 @@ impl ModuleRegistry {
     pub fn set_status(&mut self, id: ModuleId, status: ModuleStatus) {
         self.statuses.insert(id, status);
     }
+
+    pub fn set_metadata(
+        &mut self,
+        id: ModuleId,
+        dependencies: Vec<String>,
+        imports: Vec<ModuleImportBinding>,
+        exports: Vec<ModuleExportBinding>,
+    ) {
+        if let Some(record) = self.records.values_mut().find(|record| record.id == id) {
+            record.dependencies = dependencies;
+            record.imports = imports;
+            record.exports = exports;
+        }
+    }
 }
 
 #[must_use]
