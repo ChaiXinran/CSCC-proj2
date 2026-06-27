@@ -455,6 +455,31 @@ pub enum Expression {
     PrivateName(String),
     /// Comma operator: evaluates each expression and returns the last.
     Sequence(Vec<Expression>),
+    /// `base?.step…` — optional chaining expression.
+    ///
+    /// If any step marked `optional: true` is applied to `null` or `undefined`,
+    /// the entire chain short-circuits to `undefined`.
+    OptionalChain {
+        base: Box<Expression>,
+        steps: Vec<OptionalChainStep>,
+    },
+}
+
+/// One step inside an optional chain expression.
+#[derive(Debug, Clone, PartialEq)]
+pub enum OptionalChainStep {
+    /// `?.prop`, `?.[key]`, `.prop`, or `[key]` within a chain.
+    Member {
+        property: Box<Expression>,
+        computed: bool,
+        /// `true` for `?.`, `false` for `.` / `[]` following a previous `?.`.
+        optional: bool,
+    },
+    /// `?.()` or `()` within a chain.
+    Call {
+        arguments: Vec<CallArgument>,
+        optional: bool,
+    },
 }
 
 /// One argument in a call or construct expression.

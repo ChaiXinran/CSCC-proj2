@@ -359,6 +359,19 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::ToNumeric => {
+                    let value = self.pop_value()?;
+                    match value {
+                        JsValue::Number(_) | JsValue::BigInt(_) => self.stack.push(value),
+                        other => match self.to_number(other, context) {
+                            Ok(n) => self.stack.push(JsValue::Number(n)),
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
+                    }
+                }
                 Instruction::Increment => {
                     let value = self.pop_value()?;
                     match increment_numeric(self, context, value) {
@@ -4031,7 +4044,8 @@ impl Vm {
             JsValue::Symbol(_) => Err(VmError::type_error(
                 "Cannot convert a Symbol value to a number",
             )),
-            JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            JsValue::BuiltinFunction(_) => Ok(f64::NAN),
+            JsValue::Object(_) | JsValue::Function(_) => {
                 let prim = self.to_primitive(value, PreferredType::Number, context)?;
                 self.to_number(prim, context)
             }

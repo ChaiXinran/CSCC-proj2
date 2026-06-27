@@ -92,6 +92,7 @@ impl Parser {
             TokenKind::Keyword(Keyword::Try) => self.parse_try(),
             TokenKind::Keyword(Keyword::Switch) => self.parse_switch(),
             TokenKind::Keyword(Keyword::Class) => self.parse_class_declaration(),
+            TokenKind::Keyword(Keyword::With) => self.parse_with(),
             // Labelled statement: identifier followed by `:`.
             // `await` and `yield` are valid labels in appropriate contexts,
             // but not when they are reserved in the current context (e.g. async/generator).
@@ -1693,6 +1694,23 @@ impl Parser {
     }
 
     /// Parses `throw expression;`.
+    fn parse_with(&mut self) -> Result<Statement, ParseError> {
+        self.advance(); // `with`
+        if self.is_strict {
+            return Err(self.error(
+                "`with` statements are not allowed in strict mode".into(),
+            ));
+        }
+        self.expect_punctuator('(')?;
+        let object = self.allowing_in(|p| p.parse_assignment())?;
+        self.expect_punctuator(')')?;
+        let body = self.parse_statement()?;
+        Ok(Statement::With {
+            object,
+            body: Box::new(body),
+        })
+    }
+
     fn parse_throw(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `throw`
         if self.peek().line_terminator_before {
@@ -2067,6 +2085,9 @@ fn module_item_contains_forbidden_meta(statement: &Statement) -> bool {
             .declaration
             .as_deref()
             .is_some_and(module_item_contains_forbidden_meta),
+        Statement::With { object, body } => {
+            expr_contains_forbidden_meta(object) || module_item_contains_forbidden_meta(body)
+        }
         Statement::Empty
         | Statement::Break(_)
         | Statement::Continue(_)
@@ -2141,6 +2162,17 @@ fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
                 || options.as_deref().is_some_and(expr_contains_forbidden_meta)
         }
         Expression::Sequence(expressions) => expressions.iter().any(expr_contains_forbidden_meta),
+        Expression::OptionalChain { base, steps } => {
+            expr_contains_forbidden_meta(base)
+                || steps.iter().any(|step| match step {
+                    crate::ast::OptionalChainStep::Member { property, .. } => {
+                        expr_contains_forbidden_meta(property)
+                    }
+                    crate::ast::OptionalChainStep::Call { arguments, .. } => {
+                        arguments.iter().any(call_arg_contains_forbidden_meta)
+                    }
+                })
+        }
         Expression::Literal(_)
         | Expression::Identifier(_)
         | Expression::Function(_)
@@ -2240,6 +2272,17 @@ fn expr_contains_yield(expr: &Expression) -> bool {
             expr_contains_yield(specifier) || options.as_deref().is_some_and(expr_contains_yield)
         }
         Expression::Sequence(expressions) => expressions.iter().any(expr_contains_yield),
+        Expression::OptionalChain { base, steps } => {
+            expr_contains_yield(base)
+                || steps.iter().any(|step| match step {
+                    crate::ast::OptionalChainStep::Member { property, .. } => {
+                        expr_contains_yield(property)
+                    }
+                    crate::ast::OptionalChainStep::Call { arguments, .. } => {
+                        arguments.iter().any(call_arg_contains_yield)
+                    }
+                })
+        }
         Expression::Literal(_)
         | Expression::Identifier(_)
         | Expression::Function(_)
@@ -2402,6 +2445,7 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
             }
         }
         Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Import(_)) => {}
+        Statement::With { body, .. } => collect_var_declared_names(body, names),
         Statement::FunctionDeclaration { .. }
         | Statement::Empty
         | Statement::Expression(_)

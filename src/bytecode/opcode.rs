@@ -57,6 +57,9 @@ pub enum Instruction {
     StoreGlobal(u16),
 
     UnaryPlus,
+    /// ToNumeric: converts the top value to a Number (or keeps BigInt). Used for
+    /// postfix `++`/`--` to coerce the old value before it becomes the result.
+    ToNumeric,
     Increment,
     Decrement,
     Negate,
@@ -367,6 +370,7 @@ impl Instruction {
             Self::StoreGlobal(_)
             | Self::StoreName(_)
             | Self::UnaryPlus
+            | Self::ToNumeric
             | Self::Increment
             | Self::Decrement
             | Self::Negate

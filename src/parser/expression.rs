@@ -21,7 +21,8 @@ use crate::{
     ast::{
         ArrayElement, AssignmentOperator, BinaryOperator, CallArgument, ClassElement,
         ClassExpression, Expression, FunctionLiteral, FunctionParam, Literal, LogicalOperator,
-        ObjectProperty, PropertyName, Statement, TemplateLiteral, UnaryOperator, UpdateOperator,
+        ObjectProperty, OptionalChainStep, PropertyName, Statement, TemplateLiteral, UnaryOperator,
+        UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{
@@ -466,11 +467,90 @@ impl Parser {
                     callee: Box::new(expression),
                     arguments,
                 };
+            } else if self.eat_operator("?.") {
+                // Optional chaining: `base?.prop`, `base?.[key]`, `base?.(args)`.
+                // Collect all subsequent chain steps (both optional and mandatory).
+                let first_step = self.parse_optional_chain_first_step()?;
+                let mut steps = vec![first_step];
+                loop {
+                    if self.eat_operator("?.") {
+                        steps.push(self.parse_optional_chain_first_step()?);
+                    } else if self.eat_punctuator('.') {
+                        if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+                            self.advance();
+                            steps.push(OptionalChainStep::Member {
+                                property: Box::new(Expression::PrivateName(name)),
+                                computed: false,
+                                optional: false,
+                            });
+                        } else {
+                            let prop = self.expect_identifier_name()?;
+                            steps.push(OptionalChainStep::Member {
+                                property: Box::new(Expression::Identifier(prop)),
+                                computed: false,
+                                optional: false,
+                            });
+                        }
+                    } else if self.eat_punctuator('[') {
+                        let key = self.allowing_in(|p| p.parse_assignment())?;
+                        self.expect_punctuator(']')?;
+                        steps.push(OptionalChainStep::Member {
+                            property: Box::new(key),
+                            computed: true,
+                            optional: false,
+                        });
+                    } else if self.check_punctuator('(') {
+                        let arguments = self.parse_arguments()?;
+                        steps.push(OptionalChainStep::Call {
+                            arguments,
+                            optional: false,
+                        });
+                    } else {
+                        break;
+                    }
+                }
+                expression = Expression::OptionalChain {
+                    base: Box::new(expression),
+                    steps,
+                };
             } else {
                 break;
             }
         }
         Ok(expression)
+    }
+
+    /// Parses the first step after `?.` has already been consumed.
+    fn parse_optional_chain_first_step(&mut self) -> Result<OptionalChainStep, ParseError> {
+        if self.check_punctuator('(') {
+            let arguments = self.parse_arguments()?;
+            Ok(OptionalChainStep::Call {
+                arguments,
+                optional: true,
+            })
+        } else if self.eat_punctuator('[') {
+            let key = self.allowing_in(|p| p.parse_assignment())?;
+            self.expect_punctuator(']')?;
+            Ok(OptionalChainStep::Member {
+                property: Box::new(key),
+                computed: true,
+                optional: true,
+            })
+        } else if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+            self.advance();
+            Ok(OptionalChainStep::Member {
+                property: Box::new(Expression::PrivateName(name)),
+                computed: false,
+                optional: true,
+            })
+        } else {
+            let prop = self.expect_identifier_name()?;
+            Ok(OptionalChainStep::Member {
+                property: Box::new(Expression::Identifier(prop)),
+                computed: false,
+                optional: true,
+            })
+        }
     }
 
     /// Parses `new callee` and `new callee(args)`.
@@ -2173,6 +2253,25 @@ impl Parser {
             }
             // Class expressions: stop recursion (own class scope)
             Expression::Class(_) => {}
+            Expression::OptionalChain { base, steps } => {
+                self.walk_field_init(base, false)?;
+                for step in steps {
+                    match step {
+                        OptionalChainStep::Member { property, .. } => {
+                            self.walk_field_init(property, false)?
+                        }
+                        OptionalChainStep::Call { arguments, .. } => {
+                            for arg in arguments {
+                                match arg {
+                                    CallArgument::Expression(e) | CallArgument::Spread(e) => {
+                                        self.walk_field_init(e, false)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             // Terminals: nothing to recurse into
             Expression::Literal(_)
             | Expression::This
@@ -2378,6 +2477,10 @@ impl Parser {
                 }
                 Ok(())
             }
+            Statement::With { object, body } => {
+                self.walk_static_block_expr(object)?;
+                self.walk_static_block_stmt(body)
+            }
             // Function bodies and module declarations form their own syntax boundaries here.
             Statement::FunctionDeclaration { .. }
             | Statement::ModuleDeclaration(_)
@@ -2526,6 +2629,26 @@ impl Parser {
                 self.walk_static_block_expr(specifier)?;
                 if let Some(options) = options {
                     self.walk_static_block_expr(options)?;
+                }
+                Ok(())
+            }
+            Expression::OptionalChain { base, steps } => {
+                self.walk_static_block_expr(base)?;
+                for step in steps {
+                    match step {
+                        OptionalChainStep::Member { property, .. } => {
+                            self.walk_static_block_expr(property)?;
+                        }
+                        OptionalChainStep::Call { arguments, .. } => {
+                            for arg in arguments {
+                                match arg {
+                                    CallArgument::Expression(e) | CallArgument::Spread(e) => {
+                                        self.walk_static_block_expr(e)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Ok(())
             }

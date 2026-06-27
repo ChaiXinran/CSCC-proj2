@@ -4,8 +4,9 @@ use std::{collections::HashSet, fmt};
 
 use crate::ast::{
     ArrayElement, AssignmentOperator, BinaryOperator, CatchClause, Expression, FunctionBody,
-    FunctionLiteral, Literal, LogicalOperator, ModuleDeclaration, ObjectProperty, Program,
-    PropertyName, Statement, SwitchCase, UnaryOperator, UpdateOperator, VariableKind,
+    FunctionLiteral, Literal, LogicalOperator, ModuleDeclaration, ObjectProperty,
+    OptionalChainStep, Program, PropertyName, Statement, SwitchCase, UnaryOperator, UpdateOperator,
+    VariableKind,
 };
 
 use super::{
@@ -290,6 +291,14 @@ impl Compiler {
                     self.compile_statement(statement, chunk, context, false)?;
                 }
                 Ok(())
+            }
+            Statement::With { object, body } => {
+                // Evaluate the `with` object for side-effects, then discard it.
+                // Full ObjectEnvironmentRecord semantics are not implemented;
+                // variable lookups fall through to the enclosing scope.
+                self.compile_expression(object, chunk, context)?;
+                chunk.emit(Instruction::Pop);
+                self.compile_statement(body, chunk, context, false)
             }
         }
     }
@@ -1209,6 +1218,9 @@ impl Compiler {
                     chunk.emit(step);
                     self.emit_store_identifier(name, chunk, context)?;
                 } else {
+                    // Postfix: ToNumeric coerces the old value so we return oldNum,
+                    // not the original uncoerced type (e.g. false → 0, "1" → 1).
+                    chunk.emit(Instruction::ToNumeric);
                     chunk.emit(Instruction::Duplicate);
                     chunk.emit(step);
                     self.emit_store_identifier(name, chunk, context)?;
@@ -1239,17 +1251,21 @@ impl Compiler {
                     chunk.emit(step);
                     chunk.emit(Instruction::SetProperty(prop_index));
                 } else {
-                    // Result = old: save [obj, old], compute/store new, then leave old.
+                    // Postfix result is ToNumeric(old).
                     // Stack trace: [obj, old]
-                    //   DuplicatePair -> [obj, old, obj, old]
-                    //   step          -> [obj, old, obj, new]
-                    //   SetProperty   -> [obj, old, new]
-                    //   Pop           -> [obj, old]
-                    //   Pop           -> [old]
+                    //   ToNumeric     -> [obj, old_num]
+                    //   DuplicatePair -> [obj, old_num, obj, old_num]
+                    //   step          -> [obj, old_num, obj, new_num]
+                    //   SetProperty   -> [obj, old_num, new_num]  (pops obj+new_num, pushes new_num)
+                    //   Pop           -> [obj, old_num]           (remove new_num)
+                    //   Swap          -> [old_num, obj]
+                    //   Pop           -> [old_num]                ✓
+                    chunk.emit(Instruction::ToNumeric);
                     chunk.emit(Instruction::DuplicatePair);
                     chunk.emit(step);
                     chunk.emit(Instruction::SetProperty(prop_index));
                     chunk.emit(Instruction::Pop);
+                    chunk.emit(Instruction::Swap);
                     chunk.emit(Instruction::Pop);
                 }
             }
@@ -1397,6 +1413,9 @@ impl Compiler {
                     // Pop           → [obj_s, old_num]
                     // Swap          → [old_num, obj_s]
                     // Pop           → [old_num] ✓
+                    // ToNumeric so the returned old value is a Number/BigInt, not
+                    // the original uncoerced type (e.g. false → 0).
+                    chunk.emit(Instruction::ToNumeric);
                     chunk.emit(Instruction::Duplicate);
                     chunk.emit(step);
                     self.compile_expression(object, chunk, context)?;
@@ -1868,10 +1887,102 @@ impl Compiler {
                 }
                 Ok(())
             }
+            Expression::OptionalChain { base, steps } => {
+                self.compile_optional_chain(base, steps, chunk, context)
+            }
             Expression::PrivateName(_) => Err(CompileError::unsupported(
                 "standalone private name expression",
             )),
         }
+    }
+
+    fn compile_optional_chain(
+        &mut self,
+        base: &Expression,
+        steps: &[OptionalChainStep],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        use crate::ast::CallArgument;
+
+        self.compile_expression(base, chunk, context)?;
+
+        // Collect offsets of `Jump(placeholder)` instructions in the null paths so we
+        // can back-patch them all to the same `all_done` target once we know it.
+        let mut null_path_jumps: Vec<usize> = Vec::new();
+
+        for step in steps {
+            let is_optional = match step {
+                OptionalChainStep::Member { optional, .. } | OptionalChainStep::Call { optional, .. } => *optional,
+            };
+
+            if is_optional {
+                // Peek the top value: if not null/undefined skip the null path.
+                let skip_null = chunk.emit(Instruction::JumpIfNotNullish(usize::MAX));
+                // Null path: discard the nullish value, push undefined, jump to all_done.
+                chunk.emit(Instruction::Pop);
+                let undef_idx = chunk
+                    .add_constant(Constant::Undefined)
+                    .map_err(CompileError::from_chunk)?;
+                chunk.emit(Instruction::Constant(undef_idx));
+                let jump_to_done = chunk.emit(Instruction::Jump(usize::MAX));
+                null_path_jumps.push(jump_to_done);
+                // Patch the skip-null jump to the instruction that follows.
+                chunk
+                    .patch_jump(skip_null, chunk.current_offset())
+                    .map_err(CompileError::from_chunk)?;
+            }
+
+            match step {
+                OptionalChainStep::Member { property, computed, .. } => {
+                    if *computed {
+                        self.compile_expression(property, chunk, context)?;
+                        chunk.emit(Instruction::GetElement);
+                    } else {
+                        let name = match property.as_ref() {
+                            Expression::Identifier(n) => n.clone(),
+                            Expression::PrivateName(n) => format!("\x00#{n}"),
+                            other => {
+                                return Err(CompileError::unsupported(format!(
+                                    "non-identifier optional member property {other:?}"
+                                )))
+                            }
+                        };
+                        let idx = self.add_name(&name, chunk)?;
+                        chunk.emit(Instruction::GetProperty(idx));
+                    }
+                }
+                OptionalChainStep::Call { arguments, .. } => {
+                    let has_spread = arguments
+                        .iter()
+                        .any(|a| matches!(a, CallArgument::Spread(_)));
+                    if has_spread {
+                        return Err(CompileError::unsupported(
+                            "spread argument in optional call is not yet supported",
+                        ));
+                    }
+                    let n = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                        is_syntax: false,
+                        message: "too many optional call arguments".into(),
+                    })?;
+                    for arg in arguments {
+                        let CallArgument::Expression(e) = arg else { unreachable!() };
+                        self.compile_expression(e, chunk, context)?;
+                    }
+                    chunk.emit(Instruction::Call(n));
+                }
+            }
+        }
+
+        // Back-patch all null-path jumps to point here.
+        let all_done = chunk.current_offset();
+        for jump_offset in null_path_jumps {
+            chunk
+                .patch_jump(jump_offset, all_done)
+                .map_err(CompileError::from_chunk)?;
+        }
+
+        Ok(())
     }
 
     fn compile_literal(
@@ -4436,7 +4547,8 @@ fn annex_b_collect_stmt(
         }
         Statement::While { body, .. }
         | Statement::DoWhile { body, .. }
-        | Statement::Labelled { body, .. } => {
+        | Statement::Labelled { body, .. }
+        | Statement::With { body, .. } => {
             annex_b_collect_stmt(body, enclosing_block_lexicals, names);
         }
         // `for (let x; ...) body` — the loop's let/const init creates a lexical scope
@@ -4640,7 +4752,9 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
                 collect_var_names(f, names);
             }
         }
-        Statement::Labelled { body, .. } => collect_var_names_in(body, names),
+        Statement::Labelled { body, .. } | Statement::With { body, .. } => {
+            collect_var_names_in(body, names)
+        }
         Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
             if let Some(statement) = decl.declaration.as_deref() {
                 collect_var_names_in(statement, names);

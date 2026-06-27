@@ -170,4 +170,13 @@ pub enum Statement {
         is_await: bool,
     },
     ModuleDeclaration(ModuleDeclaration),
+    /// `with (object) body` — Annex B legacy sloppy-mode statement.
+    /// Only valid outside strict mode; semantics: evaluate object (for side
+    /// effects), then execute body.  Full ObjectEnvironmentRecord semantics
+    /// are not yet implemented; variable lookups fall through to the enclosing
+    /// scope.
+    With {
+        object: Expression,
+        body: Box<Statement>,
+    },
 }
