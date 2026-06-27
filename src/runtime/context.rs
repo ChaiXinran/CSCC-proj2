@@ -2362,6 +2362,9 @@ impl NativeContext {
             IteratorKind::Js { .. } => Err(VmError::runtime(
                 "JS iterator records must be advanced by the VM",
             )),
+            IteratorKind::JsAsync { .. } => Err(VmError::runtime(
+                "async JS iterator records must be advanced by the VM",
+            )),
         }
     }
 

@@ -287,9 +287,17 @@ pub enum Instruction {
     /// Stack: [iterable] → [iterator]
     GetIterator,
 
+    /// Calls `iterable[Symbol.asyncIterator]()` with sync-iterator fallback.
+    /// Stack: [iterable] → [iterator]
+    GetAsyncIterator,
+
     /// Calls `iterator.next()`, pushes `is_done` flag on top and `value` below.
     /// Stack: [iterator] → [value, is_done]
     IteratorNext,
+
+    /// Advances an async iterator and awaits its next result.
+    /// Stack: [iterator] → [value, done]
+    AsyncIteratorNext,
 
     /// Calls `iterator.return()` if present, then discards the iterator.
     /// Stack: [iterator] → []
@@ -479,8 +487,8 @@ impl Instruction {
             }
 
             // V9-A iterator protocol
-            Self::GetIterator => StackEffect::new(1, 1),
-            Self::IteratorNext => StackEffect::new(1, 2),
+            Self::GetIterator | Self::GetAsyncIterator => StackEffect::new(1, 1),
+            Self::IteratorNext | Self::AsyncIteratorNext => StackEffect::new(1, 2),
             Self::IteratorClose => StackEffect::new(1, 0),
 
             // V9-A generator / async

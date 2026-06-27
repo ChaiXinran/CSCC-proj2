@@ -132,6 +132,14 @@ fn create_promise_capability(
     context: &mut NativeContext,
 ) -> Result<(JsValue, crate::runtime::PromiseId, JsValue, JsValue), VmError> {
     let (promise_object, promise) = create_promise_object(context)?;
+    let (resolve, reject) = create_promise_resolving_functions(context, promise_object.clone())?;
+    Ok((promise_object, promise, resolve, reject))
+}
+
+fn create_promise_resolving_functions(
+    context: &mut NativeContext,
+    promise_object: JsValue,
+) -> Result<(JsValue, JsValue), VmError> {
     let resolve_target = context
         .find_builtin_by_name(PROMISE_RESOLVE_FUNCTION)
         .ok_or_else(|| VmError::runtime("missing Promise resolve function"))?;
@@ -152,7 +160,7 @@ fn create_promise_capability(
         1.0,
         "bound Promise.reject".into(),
     )?;
-    Ok((promise_object, promise, resolve, reject))
+    Ok((resolve, reject))
 }
 
 fn enqueue_settle(
@@ -208,7 +216,7 @@ fn promise_construct(
 }
 
 fn promise_resolve(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -218,7 +226,7 @@ fn promise_resolve(
         return Ok(value);
     }
     let (promise_object, promise) = create_promise_object(context)?;
-    enqueue_settle(context, promise, PromiseReaction::Fulfill, value)?;
+    resolve_promise_value(vm, context, promise_object.clone(), promise, value)?;
     Ok(promise_object)
 }
 
@@ -412,7 +420,7 @@ fn promise_then_with_finally(
 }
 
 fn promise_resolve_executor(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
@@ -422,6 +430,17 @@ fn promise_resolve_executor(
     let Some(promise) = context.promise_id_from_value(&promise_object) else {
         return Err(VmError::type_error("invalid Promise resolve function"));
     };
+    resolve_promise_value(vm, context, promise_object, promise, value)?;
+    Ok(JsValue::Undefined)
+}
+
+fn resolve_promise_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    promise_object: JsValue,
+    promise: crate::runtime::PromiseId,
+    value: JsValue,
+) -> Result<(), VmError> {
     if promise_object.strict_equals(&value) {
         return enqueue_settle(
             context,
@@ -431,11 +450,41 @@ fn promise_resolve_executor(
                 crate::runtime::NativeErrorKind::Type,
                 "Promise cannot resolve to itself",
             )),
-        )
-        .map(|_| JsValue::Undefined);
+        );
     }
-    enqueue_settle(context, promise, PromiseReaction::Fulfill, value)?;
-    Ok(JsValue::Undefined)
+
+    if let Some(source) = context.promise_id_from_value(&value) {
+        return context.add_promise_reaction(
+            source,
+            PromiseThenReaction {
+                result_promise: promise,
+                on_fulfilled: None,
+                on_rejected: None,
+                finally: false,
+            },
+        );
+    }
+
+    if context.value_object(&value).is_some() {
+        let then =
+            match vm.get_property_value_catching_from_builtin(value.clone(), "then", context)? {
+                Ok(then) => then,
+                Err(reason) => {
+                    return enqueue_settle(context, promise, PromiseReaction::Reject, reason);
+                }
+            };
+        if is_callable(&then) {
+            let (resolve, reject) = create_promise_resolving_functions(context, promise_object)?;
+            if let Err(reason) =
+                vm.call_value_catching_from_builtin(then, value, vec![resolve, reject], context)?
+            {
+                enqueue_settle(context, promise, PromiseReaction::Reject, reason)?;
+            }
+            return Ok(());
+        }
+    }
+
+    enqueue_settle(context, promise, PromiseReaction::Fulfill, value)
 }
 
 fn promise_reject_executor(

@@ -579,6 +579,7 @@ impl Trace for JsObject {
                             next_method.trace(tracer);
                         }
                     }
+                    IteratorKind::JsAsync { iterator } => iterator.trace(tracer),
                     IteratorKind::String { .. } => {}
                 }
             }

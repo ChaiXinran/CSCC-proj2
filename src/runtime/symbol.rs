@@ -10,7 +10,7 @@ pub struct Symbol {
     pub description: Option<String>,
 }
 
-/// Well-known symbol ids assigned at registry construction time (ids 0–10).
+/// Well-known symbol ids assigned at registry construction time (ids 0–12).
 #[derive(Debug, Clone, Copy)]
 pub struct WellKnownSymbols {
     pub to_primitive: SymbolId,
@@ -26,6 +26,7 @@ pub struct WellKnownSymbols {
     pub match_all: SymbolId,
     pub search: SymbolId,
     pub dispose: SymbolId,
+    pub async_iterator: SymbolId,
 }
 
 /// Global symbol store shared by one NativeContext isolate.
@@ -53,6 +54,7 @@ impl SymbolRegistry {
             "Symbol.matchAll",           // 9
             "Symbol.search",             // 10
             "Symbol.dispose",            // 11
+            "Symbol.asyncIterator",      // 12
         ] {
             symbols.push(Symbol {
                 description: Some(desc.into()),
@@ -73,6 +75,7 @@ impl SymbolRegistry {
                 match_all: SymbolId(9),
                 search: SymbolId(10),
                 dispose: SymbolId(11),
+                async_iterator: SymbolId(12),
             },
             symbols,
         }
@@ -112,6 +115,7 @@ mod tests {
         assert_eq!(reg.well_known.to_primitive, SymbolId(0));
         assert_eq!(reg.well_known.to_string_tag, SymbolId(1));
         assert_eq!(reg.well_known.iterator, SymbolId(2));
+        assert_eq!(reg.well_known.async_iterator, SymbolId(12));
     }
 
     #[test]
@@ -141,6 +145,10 @@ mod tests {
         assert_eq!(
             reg.description(reg.well_known.to_string_tag),
             Some("Symbol.toStringTag")
+        );
+        assert_eq!(
+            reg.description(reg.well_known.async_iterator),
+            Some("Symbol.asyncIterator")
         );
     }
 }

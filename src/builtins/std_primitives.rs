@@ -3540,6 +3540,7 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
         ("matchAll", wk.match_all),
         ("search", wk.search),
         ("dispose", wk.dispose),
+        ("asyncIterator", wk.async_iterator),
     ];
     for (name, sym_id) in well_known {
         context.define_own_property(

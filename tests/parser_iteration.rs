@@ -503,3 +503,23 @@ fn async_function_call_with_await_returns_a_promise() {
     );
     assert_eq!(result.expect("async function should run"), "0");
 }
+
+#[test]
+fn for_await_emits_async_iterator_opcodes() {
+    let chunk = compile("async function f() { for await (var x of values) { x; } }");
+    let body = &chunk.functions[0].chunk;
+    assert!(
+        body.instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::GetAsyncIterator))
+    );
+    assert!(
+        body.instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::AsyncIteratorNext))
+    );
+    assert_eq!(Instruction::GetAsyncIterator.stack_effect().pops, 1);
+    assert_eq!(Instruction::GetAsyncIterator.stack_effect().pushes, 1);
+    assert_eq!(Instruction::AsyncIteratorNext.stack_effect().pops, 1);
+    assert_eq!(Instruction::AsyncIteratorNext.stack_effect().pushes, 2);
+}
