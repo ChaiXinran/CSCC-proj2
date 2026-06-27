@@ -3756,6 +3756,8 @@ impl Vm {
         } else {
             Err(error)
         }
+    }
+
     /// ToPrimitive(hint: string) for property keys.
     /// For objects, calls `toString()` then `valueOf()` until a primitive is obtained.
     /// Returns `Ok(OperationResult::Value(JsValue::String(...)))` on success,
@@ -3921,6 +3923,8 @@ impl Vm {
                 Ok(value) => Ok(OperationResult::Value(value)),
                 Err(error) => self.error_to_operation_result(error),
             };
+        }
+
         match &receiver {
             JsValue::Null => {
                 return Ok(OperationResult::Throw(vm_error_to_value(
