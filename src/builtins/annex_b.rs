@@ -7,8 +7,8 @@
 use super::regexp;
 use crate::{
     runtime::{
-        JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PropertyDescriptor, PropertyKind,
-        to_property_key,
+        JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PropertyDescriptor,
+        PropertyKind, to_property_key,
     },
     vm::{Vm, VmError},
 };
@@ -91,6 +91,13 @@ fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError
         "constructor".into(),
         method_descriptor(constructor.clone()),
     )?;
+    let species_getter =
+        context.register_builtin("get [Symbol.species]", 0, regexp_species_get, None)?;
+    context.define_symbol_own_property(
+        constructor_object,
+        context.well_known_symbols().species,
+        PropertyDescriptor::accessor(Some(species_getter), None, false, true),
+    )?;
     context.set_global("RegExp", constructor.clone());
 
     define_method(context, constructor_object, "escape", 1, regexp_escape)?;
@@ -170,6 +177,15 @@ fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError
         context.define_symbol_own_property(prototype, symbol, method_descriptor(function))?;
     }
     Ok(())
+}
+
+fn regexp_species_get(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(this_value)
 }
 
 fn regexp_call(
@@ -528,6 +544,7 @@ fn regexp_exec_value(
         "index".into(),
         PropertyDescriptor::data_with(JsValue::Number(match_index as f64), true, true, true),
     )?;
+    let groups = create_regexp_groups_object(context, &re, &captures)?;
     context.define_own_property(
         array,
         "input".into(),
@@ -536,9 +553,39 @@ fn regexp_exec_value(
     context.define_own_property(
         array,
         "groups".into(),
-        PropertyDescriptor::data_with(JsValue::Undefined, true, true, true),
+        PropertyDescriptor::data_with(groups, true, true, true),
     )?;
     Ok(JsValue::Object(array))
+}
+
+fn create_regexp_groups_object(
+    context: &mut NativeContext,
+    regex: &regex::Regex,
+    captures: &regex::Captures<'_>,
+) -> Result<JsValue, VmError> {
+    let names: Vec<(usize, String)> = regex
+        .capture_names()
+        .enumerate()
+        .filter_map(|(index, name)| name.map(|name| (index, name.to_string())))
+        .collect();
+    if names.is_empty() {
+        return Ok(JsValue::Undefined);
+    }
+    let object = context
+        .heap_mut()
+        .allocate_object(JsObject::ordinary())
+        .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+    for (index, name) in names {
+        let value = captures.get(index).map_or(JsValue::Undefined, |capture| {
+            JsValue::String(capture.as_str().into())
+        });
+        context.define_own_property(
+            object,
+            name,
+            PropertyDescriptor::data_with(value, true, true, true),
+        )?;
+    }
+    Ok(JsValue::Object(object))
 }
 
 fn to_length(value: f64) -> usize {
@@ -704,8 +751,7 @@ fn regexp_symbol_match(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    let flags_value = vm.get_property_value(this_value.clone(), "flags", context)?;
-    let flags = vm.to_string_coerce(flags_value, context)?;
+    let flags = regexp_replace_flags(vm, context, this_value.clone())?;
     let global = flags.contains('g');
     if !global {
         return regexp_exec_abstract(vm, context, this_value, string);
@@ -987,6 +1033,26 @@ fn regexp_symbol_replace(
     }
     push_str_replacement(&mut accumulated, &string[next_source_position..])?;
     Ok(JsValue::String(accumulated))
+}
+
+fn regexp_replace_flags(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+) -> Result<String, VmError> {
+    if regexp_data(context, &this_value).is_some() {
+        let flags_value = vm.get_property_value(this_value, "flags", context)?;
+        return vm.to_string_coerce(flags_value, context);
+    }
+    if let Some(object) = context.value_object(&this_value)
+        && context
+            .get_own_property_descriptor(object, "flags")
+            .is_none()
+    {
+        return Ok(String::new());
+    }
+    let flags_value = vm.get_property_value(this_value, "flags", context)?;
+    vm.to_string_coerce(flags_value, context)
 }
 
 fn get_substitution(
