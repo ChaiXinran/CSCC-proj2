@@ -174,3 +174,70 @@ target\release\agentjs.exe test262 --backend native --root test262 --suite test\
 - `RegExp.prototype[@@matchAll]` is still mostly routed through the String-side approximation and species/global flag semantics remain incomplete.
 - Date remaining failures are concentrated in setter coercion ordering, exact legacy string formatting for negative years/time strings, and callback exception propagation.
 - Temporal remains a broad skeleton. The new Instant nanosecond slot is enough for Date bridging, not a complete nanosecond-accurate Temporal implementation.
+
+## Fix7 RegExp Generated Property-Escape Acceleration
+
+Date: 2026-06-28
+
+### Changes
+
+- Added a native Test262 host helper `$262.buildString` that implements the
+  `regExpUtils.js` `buildString({ loneCodePoints, ranges })` helper in Rust.
+- The native Test262 runner now replaces the JS harness `buildString` with the
+  `$262` host helper immediately after loading `regExpUtils.js`.
+- This keeps the generated Unicode property-escape test semantics intact while
+  moving the million-iteration string construction hot loop out of the
+  interpreter.
+- Calibrated the stale `native_regexp` expectation for `RegExp.prototype`
+  `Object.prototype.toString` shape to match the existing V12 C decision that
+  `RegExp.prototype` reports `[object Object]`.
+
+Files touched:
+
+```text
+src/builtins/binary_data.rs
+src/test262.rs
+tests/native_regexp.rs
+reports/v12-partC-report.md
+```
+
+### Focused Results
+
+| Suite | Result | Runtime |
+| --- | ---: | ---: |
+| `test/built-ins/RegExp/property-escapes/generated --filter Default_Ignorable_Code_Point` | 1 / 1 | 2.20s |
+| `test/built-ins/RegExp/property-escapes/generated` | 360 / 469 | 50.16s |
+| `test/built-ins/RegExp/property-escapes` | 400 / 613 | 47.42s |
+
+The main benefit is eliminating the previous wall-clock timeout cluster around
+the generated property-escape tests. This is a focused runtime and pass-rate
+improvement for the RegExp generated area; no full 53,379-case scan was rerun in
+this patch.
+
+Representative artifacts:
+
+```text
+reports/debug-v12-regexp-property-default-ignorable-fastpath.json
+reports/debug-v12-regexp-property-generated-fastpath.json
+reports/debug-v12-regexp-property-escapes-fastpath.json
+```
+
+### Validation
+
+Passed:
+
+```powershell
+cargo check --all-targets --no-default-features
+cargo test --release --no-default-features test262_build_string_host_helper_matches_from_code_point_shape --test native_regexp
+cargo test --release --no-default-features --test native_regexp
+rustfmt --edition 2024 --check src\builtins\binary_data.rs src\test262.rs tests\native_regexp.rs
+target\release\agentjs.exe test262 --backend native --root test262 --suite test\built-ins\RegExp\property-escapes\generated --filter Default_Ignorable_Code_Point --jobs 1 --progress --json reports/debug-v12-regexp-property-default-ignorable-fastpath.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test\built-ins\RegExp\property-escapes\generated --jobs 4 --json reports/debug-v12-regexp-property-generated-fastpath.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test\built-ins\RegExp\property-escapes --jobs 4 --json reports/debug-v12-regexp-property-escapes-fastpath.json
+```
+
+`cargo fmt --all -- --check` remains blocked by pre-existing formatting diffs in
+unrelated files (`src/builtins/annex_b.rs`, `src/builtins/collections.rs`,
+`src/builtins/date_intl.rs`, `src/bytecode/compiler.rs`, `src/lexer/mod.rs`,
+and `src/parser/statement.rs`). The files touched by this change pass the
+Rust 2024 rustfmt check above.
