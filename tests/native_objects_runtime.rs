@@ -215,6 +215,7 @@ fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
         name: Some("Point".into()),
         params: Vec::new(),
         rest_param: None,
+        length_override: None,
         chunk: function_chunk,
         is_strict: false,
         is_generator: false,

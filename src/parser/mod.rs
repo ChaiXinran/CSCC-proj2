@@ -147,6 +147,25 @@ impl Parser {
         Ok(Program { body })
     }
 
+    /// Parses ECMAScript module source. Module code is always strict and may
+    /// contain top-level import/export declarations.
+    pub fn parse_module(&mut self) -> Result<Program, ParseError> {
+        let outer_strict = self.is_strict;
+        self.is_strict = true;
+        let result = (|| {
+            self.consume_directive_prologue()?;
+            let mut body = Vec::new();
+            while !self.at_eof() {
+                body.push(self.parse_module_item()?);
+            }
+            self.validate_lexical_declarations(&body)?;
+            self.validate_module_declarations(&body)?;
+            Ok(Program { body })
+        })();
+        self.is_strict = outer_strict;
+        result
+    }
+
     /// Returns the token at the cursor. The EOF terminator keeps this in bounds.
     fn peek(&self) -> &Token {
         &self.tokens[self.cursor.min(self.tokens.len() - 1)]

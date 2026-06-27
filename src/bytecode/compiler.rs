@@ -4,8 +4,8 @@ use std::{collections::HashSet, fmt};
 
 use crate::ast::{
     ArrayElement, AssignmentOperator, BinaryOperator, CatchClause, Expression, FunctionBody,
-    FunctionLiteral, Literal, LogicalOperator, ObjectProperty, Program, PropertyName, Statement,
-    SwitchCase, UnaryOperator, UpdateOperator, VariableKind,
+    FunctionLiteral, Literal, LogicalOperator, ModuleDeclaration, ObjectProperty, Program,
+    PropertyName, Statement, SwitchCase, UnaryOperator, UpdateOperator, VariableKind,
 };
 
 use super::{
@@ -17,6 +17,20 @@ use super::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileError {
     pub message: String,
+    /// If true, this compile-time error corresponds to a spec "Early Error" that
+    /// the test harness expects to be classified as a SyntaxError (not Unsupported).
+    #[allow(dead_code)]
+    pub is_syntax: bool,
+}
+
+impl CompileError {
+    /// Create an early-error (spec SyntaxError) compile-time failure.
+    pub fn syntax(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            is_syntax: true,
+        }
+    }
 }
 
 impl fmt::Display for CompileError {
@@ -172,6 +186,7 @@ impl Compiler {
                             .initializer
                             .as_ref()
                             .ok_or_else(|| CompileError {
+                                is_syntax: false,
                                 message: "destructuring declaration requires an initializer".into(),
                             })?;
                         self.compile_expression(init, chunk, context)?;
@@ -260,6 +275,13 @@ impl Compiler {
             } => self.compile_for_of(left, right, body, *is_await, chunk, context),
             Statement::DoWhile { test, body } => self.compile_do_while(test, body, chunk, context),
             Statement::Labelled { body, .. } => self.compile_statement(body, chunk, context, false),
+            Statement::ModuleDeclaration(ModuleDeclaration::Import(_)) => Ok(()),
+            Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
+                if let Some(statement) = decl.declaration.as_deref() {
+                    self.compile_statement(statement, chunk, context, false)?;
+                }
+                Ok(())
+            }
         }
     }
 
@@ -1328,6 +1350,7 @@ impl Compiler {
             name: Some(name.to_string()),
             params: fn_chunk.params,
             rest_param: fn_chunk.rest_param,
+            length_override: Some(fn_chunk.length),
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
             is_generator,
@@ -1366,27 +1389,47 @@ impl Compiler {
         // false means it's a pattern (destructuring) param.
         let mut preamble: Vec<(String, &FunctionParam)> = Vec::new();
 
+        // Function.length = number of params before the first default/rest/destructured param.
+        let mut length: u32 = 0;
+        let mut seen_non_simple = false;
         for p in params {
             match p {
                 FunctionParam::Simple(name) => {
                     param_names.push(name.clone());
+                    if !seen_non_simple {
+                        length += 1;
+                    }
                 }
                 FunctionParam::Default(name, _) => {
                     param_names.push(name.clone());
                     preamble.push((name.clone(), p));
+                    seen_non_simple = true;
                 }
-                FunctionParam::Pattern(..) => {
+                FunctionParam::Pattern(_, None) => {
+                    // Destructuring without default — counts toward length.
                     let placeholder = format!("$p{}", param_names.len());
                     param_names.push(placeholder.clone());
                     preamble.push((placeholder, p));
+                    if !seen_non_simple {
+                        length += 1;
+                    }
+                }
+                FunctionParam::Pattern(..) => {
+                    // Destructuring with a default — stops counting.
+                    let placeholder = format!("$p{}", param_names.len());
+                    param_names.push(placeholder.clone());
+                    preamble.push((placeholder, p));
+                    seen_non_simple = true;
                 }
                 FunctionParam::Rest(name) => {
                     rest_param = Some(name.clone());
+                    seen_non_simple = true;
                 }
                 FunctionParam::RestPattern(_) => {
                     let placeholder = "$rest_pat".to_string();
                     rest_param = Some(placeholder.clone());
                     preamble.push((placeholder, p));
+                    seen_non_simple = true;
                 }
             }
         }
@@ -1528,6 +1571,7 @@ impl Compiler {
         fn_chunk.emit(Instruction::ReturnUndefined);
         fn_chunk.validate().map_err(CompileError::from_chunk)?;
         Ok(CompiledFunction {
+            length,
             params: param_names,
             rest_param,
             chunk: fn_chunk,
@@ -1593,6 +1637,7 @@ impl Compiler {
             }
             Expression::TemplateLiteral(tl) => self.compile_template_literal(tl, chunk, context),
             Expression::Spread(_) => Err(CompileError {
+                is_syntax: false,
                 message: "spread expression is only valid inside call arguments or array literals"
                     .into(),
             }),
@@ -2533,6 +2578,7 @@ impl Compiler {
                 let (n_regular, spread_expr) =
                     self.split_trailing_spread(arguments, "method call")?;
                 let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                    is_syntax: false,
                     message: "too many call arguments".into(),
                 })?;
                 for arg in &arguments[..n_regular] {
@@ -2545,6 +2591,7 @@ impl Compiler {
                 chunk.emit(Instruction::SpreadCallWithThis(n));
             } else {
                 let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    is_syntax: false,
                     message: "call argument count exceeds the u16 bytecode range".into(),
                 })?;
                 for arg in arguments {
@@ -2573,6 +2620,7 @@ impl Compiler {
                 let (n_regular, spread_expr) =
                     self.split_trailing_spread(arguments, "computed method call")?;
                 let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                    is_syntax: false,
                     message: "too many call arguments".into(),
                 })?;
                 for arg in &arguments[..n_regular] {
@@ -2585,6 +2633,7 @@ impl Compiler {
                 chunk.emit(Instruction::SpreadCallWithThis(n));
             } else {
                 let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    is_syntax: false,
                     message: "call argument count exceeds the u16 bytecode range".into(),
                 })?;
                 for arg in arguments {
@@ -2603,6 +2652,7 @@ impl Compiler {
             let (n_regular, spread_expr) =
                 self.split_trailing_spread(arguments, "function call")?;
             let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                is_syntax: false,
                 message: "too many call arguments".into(),
             })?;
             for arg in &arguments[..n_regular] {
@@ -2615,6 +2665,7 @@ impl Compiler {
             chunk.emit(Instruction::SpreadCall(n));
         } else {
             let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                is_syntax: false,
                 message: "call argument count exceeds the u16 bytecode range".into(),
             })?;
             for arg in arguments {
@@ -2645,6 +2696,7 @@ impl Compiler {
             let (n_regular, spread_expr) =
                 self.split_trailing_spread(arguments, "new expression")?;
             let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                is_syntax: false,
                 message: "too many construct arguments".into(),
             })?;
             for arg in &arguments[..n_regular] {
@@ -2657,6 +2709,7 @@ impl Compiler {
             chunk.emit(Instruction::SpreadConstruct(n));
         } else {
             let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                is_syntax: false,
                 message: "construct argument count exceeds the u16 bytecode range".into(),
             })?;
             for arg in arguments {
@@ -2685,6 +2738,7 @@ impl Compiler {
             .count();
         if spread_count != 1 {
             return Err(CompileError {
+                is_syntax: false,
                 message: format!(
                     "{ctx}: only a single trailing spread argument is supported in V8"
                 ),
@@ -2693,6 +2747,7 @@ impl Compiler {
         let last = arguments.last().expect("at least one spread");
         let CallArgument::Spread(spread_expr) = last else {
             return Err(CompileError {
+                is_syntax: false,
                 message: format!(
                     "{ctx}: spread must be the last argument in V8 (non-trailing spread unsupported)"
                 ),
@@ -2714,6 +2769,7 @@ impl Compiler {
         // Fast path: dense all-expression array with no spreads.
         if !has_spread_or_hole {
             let count = u16::try_from(elements.len()).map_err(|_| CompileError {
+                is_syntax: false,
                 message: "dense array literal element count exceeds the u16 bytecode range".into(),
             })?;
             for element in elements {
@@ -2758,6 +2814,7 @@ impl Compiler {
 
         // Sparse path (holes but no spread).
         let length = u32::try_from(elements.len()).map_err(|_| CompileError {
+            is_syntax: false,
             message: "sparse array literal length exceeds the u32 bytecode range".into(),
         })?;
         chunk.emit(Instruction::ArrayCreateSparse(length));
@@ -2767,6 +2824,7 @@ impl Compiler {
             };
             self.compile_expression(expression, chunk, context)?;
             let index = u32::try_from(index).map_err(|_| CompileError {
+                is_syntax: false,
                 message: "sparse array element index exceeds the u32 bytecode range".into(),
             })?;
             chunk.emit(Instruction::DefineElement(index));
@@ -2780,11 +2838,26 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        // CoverInitializedName (`{a = expr}`) is only valid as a destructuring target.
+        // If we reach the compiler with one, it's always a value context → SyntaxError.
+        for prop in properties {
+            if let ObjectProperty::Data {
+                key: PropertyName::Identifier(key_name),
+                value: Expression::Assignment { target, .. },
+            } = prop
+                && matches!(target.as_ref(), Expression::Identifier(t) if t == key_name)
+            {
+                return Err(CompileError::syntax(format!(
+                    "invalid use of `{{{key_name} = value}}` in object literal: only valid in destructuring assignment"
+                )));
+            }
+        }
         if properties
             .iter()
             .all(|property| matches!(property, ObjectProperty::Data { .. }))
         {
             let count = u16::try_from(properties.len()).map_err(|_| CompileError {
+                is_syntax: false,
                 message: "object literal property count exceeds the u16 bytecode range".into(),
             })?;
             for property in properties {
@@ -2936,6 +3009,7 @@ impl Compiler {
             name: None,
             params: compiled.params,
             rest_param: compiled.rest_param,
+            length_override: Some(compiled.length),
             chunk: compiled.chunk,
             is_strict: compiled.is_strict,
             is_generator: false,
@@ -3159,18 +3233,19 @@ impl Compiler {
             } else {
                 let mut body = lit.clone();
                 let mut new_stmts = field_init_stmts;
-                new_stmts.extend(body.body.statements.drain(..));
+                new_stmts.append(&mut body.body.statements);
                 body.body.statements = new_stmts;
                 body
             }
         } else {
             // Synthesize a default constructor with field initializations.
+            // Class bodies are always strict per spec.
             FunctionLiteral {
                 name: name.map(String::from),
                 params: vec![],
                 body: FunctionBody {
                     statements: field_init_stmts,
-                    is_strict: false,
+                    is_strict: true,
                 },
                 is_async: false,
                 is_generator: false,
@@ -3182,8 +3257,9 @@ impl Compiler {
             name: name.map(String::from),
             params: ctor_fn.params,
             rest_param: ctor_fn.rest_param,
+            length_override: Some(ctor_fn.length),
             chunk: ctor_fn.chunk,
-            is_strict: ctor_fn.is_strict,
+            is_strict: true, // class bodies are always strict
             is_generator: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3210,8 +3286,9 @@ impl Compiler {
                     name: Some(fn_name.clone()),
                     params: fn_compiled.params,
                     rest_param: fn_compiled.rest_param,
+                    length_override: Some(fn_compiled.length),
                     chunk: fn_compiled.chunk,
-                    is_strict: fn_compiled.is_strict,
+                    is_strict: true, // class methods are always strict
                     is_generator: function.is_generator,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -3245,8 +3322,11 @@ impl Compiler {
             }
         }
 
+        // Duplicate ctor_copy for use as the `prototype.constructor` value.
+        chunk.emit(Instruction::Duplicate); // [ctor, ctor_copy, ctor_for_constructor]
+
         // Create the prototype object.
-        chunk.emit(Instruction::ObjectCreateEmpty); // [ctor, ctor_copy, proto]
+        chunk.emit(Instruction::ObjectCreateEmpty); // [ctor, ctor_copy, ctor_for_constructor, proto]
 
         // Set up prototype inheritance if there is a super class.
         if let Some(super_expr) = super_class {
@@ -3258,62 +3338,67 @@ impl Compiler {
 
         // Instance methods — defined on the prototype.
         for element in elements {
-            match element {
-                ClassElement::Method {
-                    name: prop_name,
-                    function,
-                    is_static: false,
-                    is_getter,
-                    is_setter,
-                } => {
-                    let fn_name = prop_name.to_key_string();
-                    let fn_compiled =
-                        self.compile_function_body(&function.params, &function.body, context)?;
-                    let fn_template = FunctionTemplate {
-                        name: Some(fn_name.clone()),
-                        params: fn_compiled.params,
-                        rest_param: fn_compiled.rest_param,
-                        chunk: fn_compiled.chunk,
-                        is_strict: fn_compiled.is_strict,
-                        is_generator: function.is_generator,
-                        environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
-                    };
-                    let fn_idx = chunk
-                        .add_function(fn_template)
-                        .map_err(CompileError::from_chunk)?;
-                    if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
-                        // Computed key: evaluate before creating function.
-                        self.compile_expression(key_expr, chunk, context)?; // [.., proto, key]
-                        chunk.emit(Instruction::CreateFunction(fn_idx)); // [.., proto, key, fn]
-                        if *is_getter {
-                            chunk.emit(Instruction::DefineClassGetterComputed);
-                        } else if *is_setter {
-                            chunk.emit(Instruction::DefineClassSetterComputed);
-                        } else {
-                            chunk.emit(Instruction::DefineClassMethodComputed);
-                        }
+            if let ClassElement::Method {
+                name: prop_name,
+                function,
+                is_static: false,
+                is_getter,
+                is_setter,
+            } = element
+            {
+                let fn_name = prop_name.to_key_string();
+                let fn_compiled =
+                    self.compile_function_body(&function.params, &function.body, context)?;
+                let fn_template = FunctionTemplate {
+                    name: Some(fn_name.clone()),
+                    params: fn_compiled.params,
+                    rest_param: fn_compiled.rest_param,
+                    length_override: Some(fn_compiled.length),
+                    chunk: fn_compiled.chunk,
+                    is_strict: true, // class methods are always strict
+                    is_generator: function.is_generator,
+                    environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+                };
+                let fn_idx = chunk
+                    .add_function(fn_template)
+                    .map_err(CompileError::from_chunk)?;
+                if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                    // Computed key: evaluate before creating function.
+                    self.compile_expression(key_expr, chunk, context)?; // [.., proto, key]
+                    chunk.emit(Instruction::CreateFunction(fn_idx)); // [.., proto, key, fn]
+                    if *is_getter {
+                        chunk.emit(Instruction::DefineClassGetterComputed);
+                    } else if *is_setter {
+                        chunk.emit(Instruction::DefineClassSetterComputed);
                     } else {
-                        chunk.emit(Instruction::CreateFunction(fn_idx));
-                        let key = self.add_name(&fn_name, chunk)?;
-                        if *is_getter {
-                            chunk.emit(Instruction::DefineClassGetter(key));
-                        } else if *is_setter {
-                            chunk.emit(Instruction::DefineClassSetter(key));
-                        } else {
-                            chunk.emit(Instruction::DefineClassMethod(key));
-                        }
+                        chunk.emit(Instruction::DefineClassMethodComputed);
                     }
-                    // [.., proto]
+                } else {
+                    chunk.emit(Instruction::CreateFunction(fn_idx));
+                    let key = self.add_name(&fn_name, chunk)?;
+                    if *is_getter {
+                        chunk.emit(Instruction::DefineClassGetter(key));
+                    } else if *is_setter {
+                        chunk.emit(Instruction::DefineClassSetter(key));
+                    } else {
+                        chunk.emit(Instruction::DefineClassMethod(key));
+                    }
                 }
-                _ => {}
+                // [.., proto]
             }
         }
 
-        // Attach prototype to constructor: ctor.prototype = proto.
+        // Set proto.constructor = ctor (non-enumerable, per spec).
+        // Stack: [ctor, ctor_copy, ctor_for_constructor, proto]
+        // Swap so ctor_for_constructor is on top: [ctor, ctor_copy, proto, ctor_for_constructor]
+        chunk.emit(Instruction::Swap);
+        let ctor_key = self.add_name("constructor", chunk)?;
+        chunk.emit(Instruction::DefineClassMethod(ctor_key)); // [ctor, ctor_copy, proto]
+
+        // Attach prototype to constructor: ctor.prototype = proto (non-enumerable, non-configurable).
         // Stack: [ctor, ctor_copy, proto]
-        // DefineDataProperty peeks ctor_copy (below proto), pops proto as value.
-        let proto_key = self.add_name("prototype", chunk)?;
-        chunk.emit(Instruction::DefineDataProperty(proto_key)); // [ctor, ctor_copy]
+        // DefineClassPrototype peeks ctor_copy (below proto), pops proto as value.
+        chunk.emit(Instruction::DefineClassPrototype); // [ctor, ctor_copy]
         chunk.emit(Instruction::Pop); // [ctor]
 
         // Pop the computed-field-key scope if we opened one.
@@ -3411,6 +3496,7 @@ impl Compiler {
                 }
                 if let Some(rest_pat) = rest {
                     chunk.emit(Instruction::Duplicate);
+                    chunk.emit(Instruction::IterableToArray);
                     let slice_idx = self.add_name("slice", chunk)?;
                     chunk.emit(Instruction::GetMethod(slice_idx));
                     let n_const = chunk
@@ -3509,15 +3595,17 @@ impl Compiler {
                     self.compile_binding_pattern(kind, &elem.pattern, chunk, context)?;
                     // [rhs]
                 }
-                // Rest element: rhs.slice(elements.len())
+                // Rest element: Array.from(rhs).slice(elements.len())
+                // Using Array.from ensures generators/iterables work, not just plain arrays.
                 if let Some(rest_pat) = rest {
                     chunk.emit(Instruction::Duplicate); // [rhs, rhs]
+                    chunk.emit(Instruction::IterableToArray); // [rhs, array_copy]
                     let slice_idx = self.add_name("slice", chunk)?;
-                    chunk.emit(Instruction::GetMethod(slice_idx)); // [rhs, slice_fn, rhs_copy]
+                    chunk.emit(Instruction::GetMethod(slice_idx)); // [rhs, slice_fn, array_copy]
                     let n_const = chunk
                         .add_constant(Constant::Number(elements.len() as f64))
                         .map_err(CompileError::from_chunk)?;
-                    chunk.emit(Instruction::Constant(n_const)); // [rhs, slice_fn, rhs_copy, N]
+                    chunk.emit(Instruction::Constant(n_const)); // [rhs, slice_fn, array_copy, N]
                     chunk.emit(Instruction::CallWithThis(1)); // [rhs, rest_array]
                     self.compile_binding_pattern(kind, rest_pat, chunk, context)?;
                     // [rhs]
@@ -3602,11 +3690,11 @@ impl Compiler {
         chunk.emit(Instruction::Pop); // [] depth=0        — remove the undefined value
         self.compile_expression(default_expr, chunk, context)?; // [default_value] depth=1
         // Spec: infer function name when default is an anonymous function definition.
-        if let Some(name) = infer_name {
-            if is_anonymous_function_definition(default_expr) {
-                let name_idx = self.add_name(name, chunk)?;
-                chunk.emit(Instruction::SetFunctionName(name_idx));
-            }
+        if let Some(name) = infer_name
+            && is_anonymous_function_definition(default_expr)
+        {
+            let name_idx = self.add_name(name, chunk)?;
+            chunk.emit(Instruction::SetFunctionName(name_idx));
         }
         let jump_end = chunk.emit(Instruction::Jump(usize::MAX));
 
@@ -3636,6 +3724,7 @@ impl Compiler {
             name: literal.name.clone(),
             params: fn_chunk.params,
             rest_param: fn_chunk.rest_param,
+            length_override: Some(fn_chunk.length),
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
             is_generator: literal.is_generator,
@@ -3880,6 +3969,8 @@ fn parse_bigint_literal(raw: &str) -> Result<i128, CompileError> {
 
 /// Intermediate result returned from `compile_function_body`.
 struct CompiledFunction {
+    /// Function.length — params before the first default/rest/pattern-with-default.
+    length: u32,
     params: Vec<String>,
     rest_param: Option<String>,
     chunk: Chunk,
@@ -3934,6 +4025,16 @@ fn lexical_names(statements: &[Statement]) -> Vec<String> {
                 ..
             } => binding_pattern_names(pattern),
             Statement::ClassDeclaration(decl) => vec![decl.name.clone()],
+            Statement::ModuleDeclaration(ModuleDeclaration::Import(decl)) => decl
+                .entries
+                .iter()
+                .map(|entry| entry.local_name.clone())
+                .collect(),
+            Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => decl
+                .declaration
+                .as_deref()
+                .map(|statement| lexical_names(std::slice::from_ref(statement)))
+                .unwrap_or_default(),
             _ => Vec::new(),
         })
         .collect()
@@ -3988,6 +4089,15 @@ fn lexical_kind(statements: &[Statement], name: &str) -> Option<VariableKind> {
             Some(*kind)
         }
         Statement::ClassDeclaration(decl) if decl.name == name => Some(VariableKind::Let),
+        Statement::ModuleDeclaration(ModuleDeclaration::Import(decl))
+            if decl.entries.iter().any(|entry| entry.local_name == name) =>
+        {
+            Some(VariableKind::Const)
+        }
+        Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => decl
+            .declaration
+            .as_deref()
+            .and_then(|statement| lexical_kind(std::slice::from_ref(statement), name)),
         _ => None,
     })
 }
@@ -4092,6 +4202,12 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
             }
         }
         Statement::Labelled { body, .. } => collect_var_names_in(body, names),
+        Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
+            if let Some(statement) = decl.declaration.as_deref() {
+                collect_var_names_in(statement, names);
+            }
+        }
+        Statement::ModuleDeclaration(ModuleDeclaration::Import(_)) => {}
         Statement::Switch { cases, .. } => {
             for case in cases {
                 collect_var_names(&case.consequent, names);
@@ -4120,12 +4236,14 @@ fn completion_expression_index(statements: &[Statement]) -> Option<usize> {
 impl CompileError {
     fn unsupported(node: impl fmt::Display) -> Self {
         Self {
+            is_syntax: false,
             message: format!("bytecode compiler does not support {node} yet"),
         }
     }
 
     fn from_chunk(error: ChunkError) -> Self {
         Self {
+            is_syntax: false,
             message: error.to_string(),
         }
     }

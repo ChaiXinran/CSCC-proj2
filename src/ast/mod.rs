@@ -10,5 +10,6 @@ pub use expression::{
     ObjectProperty, PropertyName, TemplateLiteral, UnaryOperator, UpdateOperator,
 };
 pub use statement::{
-    CatchClause, ForBinding, Program, Statement, SwitchCase, VariableDeclarator, VariableKind,
+    CatchClause, ExportDeclaration, ExportEntry, ForBinding, ImportDeclaration, ImportEntry,
+    ModuleDeclaration, Program, Statement, SwitchCase, VariableDeclarator, VariableKind,
 };

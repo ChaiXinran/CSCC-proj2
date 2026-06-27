@@ -101,6 +101,7 @@ impl Parser {
                 return Err(self.error("invalid assignment target".into()));
             }
             self.check_strict_assignment_target(&left)?;
+            validate_destructuring_assignment_target(&left).map_err(|msg| self.error(msg))?;
             let value = self.parse_assignment()?;
             Ok(Expression::Assignment {
                 target: Box::new(left),
@@ -2194,7 +2195,53 @@ fn binary_operator(operator: &str) -> BinaryOperator {
     }
 }
 
-/// Valid assignment targets in V3: identifiers and member expressions.
+/// Validates that an array/object destructuring assignment target obeys ES spec early errors.
+fn validate_destructuring_assignment_target(expr: &Expression) -> Result<(), String> {
+    match expr {
+        Expression::Array(elements) => {
+            let len = elements.len();
+            for (i, el) in elements.iter().enumerate() {
+                match el {
+                    ArrayElement::Spread(inner) => {
+                        // Rest element cannot have an initializer.
+                        if matches!(inner, Expression::Assignment { .. }) {
+                            return Err("rest element may not have a default value".into());
+                        }
+                        // Rest element must be last — nothing (including holes) may follow.
+                        if i + 1 < len {
+                            return Err("rest element must be last element".into());
+                        }
+                        // Recurse into nested destructuring.
+                        validate_destructuring_assignment_target(inner)?;
+                    }
+                    ArrayElement::Expression(inner) => {
+                        // Nested patterns also need validation.
+                        validate_destructuring_assignment_target(inner)?;
+                    }
+                    ArrayElement::Hole => {}
+                }
+            }
+        }
+        Expression::Object(props) => {
+            let len = props.len();
+            for (i, prop) in props.iter().enumerate() {
+                if let ObjectProperty::Spread(inner) = prop {
+                    if i + 1 < len {
+                        return Err("rest element must be last element".into());
+                    }
+                    validate_destructuring_assignment_target(inner)?;
+                }
+            }
+        }
+        // Nested array or object inside e.g. `[{a}] = ...`
+        Expression::Assignment { target, value: _ } => {
+            validate_destructuring_assignment_target(target)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn is_assignment_target(expression: &Expression) -> bool {
     matches!(
         expression,

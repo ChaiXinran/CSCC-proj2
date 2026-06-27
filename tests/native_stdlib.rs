@@ -3,7 +3,7 @@
 
 use agentjs::{
     backend::BackendKind,
-    engine::{Engine, ExecutionOptions, RuntimeConfig},
+    engine::{Engine, ExecutionOptions, FailureKind, RuntimeConfig},
 };
 
 fn native_eval(source: &str) -> String {
@@ -66,6 +66,34 @@ fn string_repeat_with_negative_count_throws_catchable_range_error() {
 // ── Number.prototype + statics ───────────────────────────────────────────────
 
 #[test]
+fn regexp_replacement_allocation_limit_is_catchable() {
+    let error = Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+        .execute(
+            "function puff(x, n) { while (x.length < n) x += x; return x.substring(0, n); } \
+             var x = puff('1', 1 << 20); \
+             var rep = puff('$1', 1 << 16); \
+             x.replace(/(.+)/g, rep);",
+            ExecutionOptions::default(),
+        )
+        .expect_err("huge replacement should be rejected before allocation");
+    assert_eq!(error.kind, FailureKind::RuntimeLimit);
+}
+
+#[test]
+fn regexp_match_rejects_non_writable_last_index() {
+    assert_eq!(
+        native_eval(
+            "var p = /x/g; \
+             Object.defineProperty(p, 'lastIndex', { writable: false }); \
+             var r = 'no throw'; \
+             try { '0x'.match(p); } catch (e) { r = e.name; } \
+             r;"
+        ),
+        "TypeError"
+    );
+}
+
+#[test]
 fn bigint_minimal_runtime_semantics() {
     assert_eq!(native_eval("typeof 1n"), "bigint");
     assert_eq!(native_eval("(1n + 2n) * 3n"), "9");
@@ -76,6 +104,44 @@ fn bigint_minimal_runtime_semantics() {
     assert_eq!(native_eval("BigInt.asIntN(4, 15n)"), "-1");
     assert_eq!(native_eval("Object(7n).valueOf() === 7n"), "true");
     assert_eq!(native_eval("var i = 10n; i++; i"), "11");
+}
+
+#[test]
+fn bigint_arithmetic_rejects_mixed_number_operands() {
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n + 1; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n & 1; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
+}
+
+#[test]
+fn bigint_bitwise_and_shift_operations() {
+    assert_eq!(native_eval("(6n & 3n).toString()"), "2");
+    assert_eq!(native_eval("(4n | 1n).toString()"), "5");
+    assert_eq!(native_eval("(7n ^ 3n).toString()"), "4");
+    assert_eq!(native_eval("(~0n).toString()"), "-1");
+    assert_eq!(native_eval("(1n << 5n).toString()"), "32");
+    assert_eq!(native_eval("(32n >> 2n).toString()"), "8");
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n >>> 0n; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
+}
+
+#[test]
+fn bigint_division_by_zero_is_catchable_range_error() {
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n / 0n; } catch (e) { r = e.name; } r;"),
+        "RangeError"
+    );
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n % 0n; } catch (e) { r = e.name; } r;"),
+        "RangeError"
+    );
 }
 
 #[test]
@@ -318,7 +384,10 @@ fn reflect_apply_and_construct_enter_vm_call_paths() {
 
 #[test]
 fn bigint_and_template_literals_parse_through_native_pipeline() {
-    assert_eq!(native_eval("1n + 2"), "3");
+    assert_eq!(
+        native_eval("var r = 'no throw'; try { 1n + 2; } catch (e) { r = e.name; } r;"),
+        "TypeError"
+    );
     assert_eq!(native_eval("`hello`"), "hello");
     assert_eq!(native_eval("`a\\n`"), "a\n");
 }

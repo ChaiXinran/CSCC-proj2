@@ -335,18 +335,33 @@ impl Vm {
                 }
                 Instruction::UnaryPlus => {
                     let value = self.pop_value()?;
-                    let value = self.to_number(value, context)?;
-                    self.stack.push(JsValue::Number(value));
+                    match self.to_number(value, context) {
+                        Ok(value) => self.stack.push(JsValue::Number(value)),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Increment => {
                     let value = self.pop_value()?;
-                    let value = increment_numeric(self, context, value)?;
-                    self.stack.push(value);
+                    match increment_numeric(self, context, value) {
+                        Ok(value) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Decrement => {
                     let value = self.pop_value()?;
-                    let value = decrement_numeric(self, context, value)?;
-                    self.stack.push(value);
+                    match decrement_numeric(self, context, value) {
+                        Ok(value) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Negate => {
                     let value = self.pop_value()?;
@@ -354,8 +369,13 @@ impl Vm {
                         self.stack.push(JsValue::BigInt(-value));
                         continue;
                     }
-                    let value = self.to_number(value, context)?;
-                    self.stack.push(JsValue::Number(-value));
+                    match self.to_number(value, context) {
+                        Ok(value) => self.stack.push(JsValue::Number(-value)),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::LogicalNot => {
                     let value = self.pop_value()?;
@@ -364,118 +384,319 @@ impl Vm {
                 Instruction::Add => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let value = add_values(self, context, left, right)?;
-                    self.stack.push(value);
+                    match add_values(self, context, left, right) {
+                        Ok(value) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Subtract => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    if let Some(value) =
-                        bigint_binary(left.clone(), right.clone(), |left, right| {
-                            left.checked_sub(right)
-                        })?
-                    {
-                        self.stack.push(value);
-                        continue;
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                left.checked_sub(right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(left - right));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
                     }
-                    let right = self.to_number(right, context)?;
-                    let left = self.to_number(left, context)?;
-                    self.stack.push(JsValue::Number(left - right));
                 }
                 Instruction::Multiply => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    if let Some(value) =
-                        bigint_binary(left.clone(), right.clone(), |left, right| {
-                            left.checked_mul(right)
-                        })?
-                    {
-                        self.stack.push(value);
-                        continue;
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                left.checked_mul(right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(left * right));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
                     }
-                    let right = self.to_number(right, context)?;
-                    let left = self.to_number(left, context)?;
-                    self.stack.push(JsValue::Number(left * right));
                 }
                 Instruction::Divide => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    if let Some(value) = bigint_divide(left.clone(), right.clone())? {
-                        self.stack.push(value);
-                        continue;
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => match bigint_divide(left.clone(), right.clone()) {
+                            Ok(Some(value)) => self.stack.push(value),
+                            Ok(None) => {
+                                let (left, right) = numeric_number_pair(left, right)?;
+                                self.stack.push(JsValue::Number(left / right));
+                            }
+                            Err(error) => {
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
                     }
-                    let right = self.to_number(right, context)?;
-                    let left = self.to_number(left, context)?;
-                    self.stack.push(JsValue::Number(left / right));
                 }
                 Instruction::Remainder => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    if let Some(value) = bigint_remainder(left.clone(), right.clone())? {
-                        self.stack.push(value);
-                        continue;
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => match bigint_remainder(left.clone(), right.clone()) {
+                            Ok(Some(value)) => self.stack.push(value),
+                            Ok(None) => {
+                                let (left, right) = numeric_number_pair(left, right)?;
+                                self.stack.push(JsValue::Number(left % right));
+                            }
+                            Err(error) => {
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
                     }
-                    let right = self.to_number(right, context)?;
-                    let left = self.to_number(left, context)?;
-                    self.stack.push(JsValue::Number(left % right));
                 }
                 Instruction::Exponentiation => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    if let Some(value) = bigint_exponentiation(left.clone(), right.clone())? {
-                        self.stack.push(value);
-                        continue;
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            match bigint_exponentiation(left.clone(), right.clone()) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(left.powf(right)));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
                     }
-                    let right = self.to_number(right, context)?;
-                    let left = self.to_number(left, context)?;
-                    self.stack.push(JsValue::Number(left.powf(right)));
                 }
                 Instruction::BitwiseAnd => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let right = self.to_int32(right, context)?;
-                    let left = self.to_int32(left, context)?;
-                    self.stack.push(JsValue::Number(f64::from(left & right)));
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                Some(left & right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) & number_to_int32(right),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::BitwiseOr => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let right = self.to_int32(right, context)?;
-                    let left = self.to_int32(left, context)?;
-                    self.stack.push(JsValue::Number(f64::from(left | right)));
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                Some(left | right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) | number_to_int32(right),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::BitwiseXor => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let right = self.to_int32(right, context)?;
-                    let left = self.to_int32(left, context)?;
-                    self.stack.push(JsValue::Number(f64::from(left ^ right)));
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                Some(left ^ right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) ^ number_to_int32(right),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::BitwiseNot => {
                     let val = self.pop_value()?;
-                    let n = self.to_int32(val, context)?;
-                    self.stack.push(JsValue::Number(f64::from(!n)));
+                    if let JsValue::BigInt(value) = val {
+                        match value.checked_neg().and_then(|v| v.checked_sub(1)) {
+                            Some(value) => {
+                                self.stack.push(JsValue::BigInt(value));
+                                continue;
+                            }
+                            None => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(
+                                    VmError::range("BigInt value is outside the native i128 range"),
+                                )));
+                                discard_saved_finally = true;
+                            }
+                        }
+                    }
+                    match self.to_int32(val, context) {
+                        Ok(n) => self.stack.push(JsValue::Number(f64::from(!n))),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::LeftShift => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let right = self.to_uint32(right, context)? & 0x1f;
-                    let left = self.to_int32(left, context)?;
-                    self.stack.push(JsValue::Number(f64::from(left << right)));
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => match bigint_shift(left.clone(), right.clone(), false)
+                        {
+                            Ok(Some(value)) => self.stack.push(value),
+                            Ok(None) => {
+                                let (left, right) = numeric_number_pair(left, right)?;
+                                self.stack.push(JsValue::Number(f64::from(
+                                    number_to_int32(left) << (number_to_uint32(right) & 0x1f),
+                                )));
+                            }
+                            Err(error) => {
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::RightShift => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let right = self.to_uint32(right, context)? & 0x1f;
-                    let left = self.to_int32(left, context)?;
-                    self.stack.push(JsValue::Number(f64::from(left >> right)));
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            match bigint_shift(left.clone(), right.clone(), true) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) >> (number_to_uint32(right) & 0x1f),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::UnsignedRightShift => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let right = self.to_uint32(right, context)? & 0x1f;
-                    let left = self.to_uint32(left, context)?;
-                    self.stack.push(JsValue::Number(f64::from(left >> right)));
+                    match self.to_numeric_operands(left, right, context) {
+                        Ok((left, right)) => {
+                            if matches!(left, JsValue::BigInt(_))
+                                || matches!(right, JsValue::BigInt(_))
+                            {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(
+                                    VmError::type_error(
+                                        "BigInt does not support unsigned right shift",
+                                    ),
+                                )));
+                                discard_saved_finally = true;
+                            } else {
+                                let (left, right) = numeric_number_pair(left, right)?;
+                                self.stack.push(JsValue::Number(f64::from(
+                                    number_to_uint32(left) >> (number_to_uint32(right) & 0x1f),
+                                )));
+                            }
+                        }
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
                 }
                 Instruction::Equal => {
                     let right = self.pop_value()?;
@@ -740,13 +961,25 @@ impl Vm {
                             }
                         }
                     } else {
-                        let key = to_property_key(&key)?;
-                        match self.get_property_value_completion(object, &key, context)? {
-                            OperationResult::Value(value) => self.stack.push(value),
+                        match self.coerce_to_property_key(key, context)? {
+                            OperationResult::Value(JsValue::String(key_str)) => {
+                                match self
+                                    .get_property_value_completion(object, &key_str, context)?
+                                {
+                                    OperationResult::Value(value) => self.stack.push(value),
+                                    OperationResult::Throw(value) => {
+                                        abrupt = Some(Completion::Throw(value));
+                                        discard_saved_finally = true;
+                                    }
+                                }
+                            }
                             OperationResult::Throw(value) => {
                                 abrupt = Some(Completion::Throw(value));
                                 discard_saved_finally = true;
                             }
+                            _ => unreachable!(
+                                "coerce_to_property_key always returns String or Throw"
+                            ),
                         }
                     }
                 }
@@ -784,6 +1017,28 @@ impl Vm {
                         "length".to_string(),
                         crate::runtime::PropertyDescriptor::data_with(new_len, true, false, true),
                     )?;
+                }
+                Instruction::IterableToArray => {
+                    let iterable = self.pop_value()?;
+                    // Fast path: already an array — return as-is.
+                    if let JsValue::Object(id) = &iterable {
+                        let is_array = context
+                            .heap()
+                            .object(*id)
+                            .map(|o| matches!(o.kind, crate::runtime::ObjectKind::Array { .. }))
+                            .unwrap_or(false);
+                        if is_array {
+                            self.stack.push(iterable);
+                        } else {
+                            let elements = self.function_apply_arguments(iterable, context)?;
+                            let arr = context.create_array(elements)?;
+                            self.stack.push(arr);
+                        }
+                    } else {
+                        let elements = self.function_apply_arguments(iterable, context)?;
+                        let arr = context.create_array(elements)?;
+                        self.stack.push(arr);
+                    }
                 }
                 Instruction::SpreadIntoArray => {
                     let iterable = self.pop_value()?;
@@ -1003,8 +1258,13 @@ impl Vm {
                     let result = if let JsValue::Symbol(sym_id) = key {
                         self.get_symbol_property_value_completion(object.clone(), sym_id, context)?
                     } else {
-                        let key = to_property_key(&key)?;
-                        self.get_property_value_completion(object.clone(), &key, context)?
+                        match self.coerce_to_property_key(key, context)? {
+                            OperationResult::Throw(v) => OperationResult::Throw(v),
+                            OperationResult::Value(JsValue::String(k)) => {
+                                self.get_property_value_completion(object.clone(), &k, context)?
+                            }
+                            _ => unreachable!(),
+                        }
                     };
                     match result {
                         OperationResult::Value(method) => {
@@ -1044,13 +1304,21 @@ impl Vm {
                             }
                         }
                     } else {
-                        let key = to_property_key(&key)?;
-                        match self.set_property_value(object, &key, value, context)? {
-                            OperationResult::Value(result) => self.stack.push(result),
-                            OperationResult::Throw(value) => {
-                                abrupt = Some(Completion::Throw(value));
+                        match self.coerce_to_property_key(key, context)? {
+                            OperationResult::Throw(v) => {
+                                abrupt = Some(Completion::Throw(v));
                                 discard_saved_finally = true;
                             }
+                            OperationResult::Value(JsValue::String(key_str)) => {
+                                match self.set_property_value(object, &key_str, value, context)? {
+                                    OperationResult::Value(result) => self.stack.push(result),
+                                    OperationResult::Throw(v) => {
+                                        abrupt = Some(Completion::Throw(v));
+                                        discard_saved_finally = true;
+                                    }
+                                }
+                            }
+                            _ => unreachable!(),
                         }
                     }
                 }
@@ -1080,6 +1348,16 @@ impl Vm {
                     let value = self.pop_value()?;
                     let object = context.require_object(self.peek_value()?, "define property")?;
                     context.define_own_property(object, name, PropertyDescriptor::data(value))?;
+                }
+                Instruction::DefineClassPrototype => {
+                    let proto = self.pop_value()?;
+                    let ctor =
+                        context.require_object(self.peek_value()?, "define class prototype")?;
+                    context.define_own_property(
+                        ctor,
+                        "prototype".into(),
+                        PropertyDescriptor::data_with(proto, true, false, false),
+                    )?;
                 }
                 Instruction::DefineGetter(index) => {
                     let name = self
@@ -1181,48 +1459,125 @@ impl Vm {
                 Instruction::DefineClassMethodComputed => {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define class method (computed)")?;
-                    context.define_own_property(
-                        object,
-                        name,
-                        PropertyDescriptor::data_with(value, true, false, true),
-                    )?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class method (computed)",
+                            )?;
+                            // Static method named "prototype" is a TypeError per spec.
+                            if name == "prototype"
+                                && matches!(self.peek_value()?, JsValue::Function(_))
+                            {
+                                let err = VmError::type_error(
+                                    "Classes may not have a static property named 'prototype'",
+                                );
+                                abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
+                                discard_saved_finally = true;
+                            } else {
+                                context.define_own_property(
+                                    object,
+                                    name,
+                                    PropertyDescriptor::data_with(value, true, false, true),
+                                )?;
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::DefineClassGetterComputed => {
                     let getter = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define class getter (computed)")?;
-                    let setter = existing_accessor_setter(context, object, &name);
-                    context.define_own_property(
-                        object,
-                        name,
-                        PropertyDescriptor::accessor(Some(getter), setter, false, true),
-                    )?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class getter (computed)",
+                            )?;
+                            // Static getter/setter named "prototype" is a TypeError per spec.
+                            if name == "prototype"
+                                && matches!(self.peek_value()?, JsValue::Function(_))
+                            {
+                                let err = VmError::type_error(
+                                    "Classes may not have a static property named 'prototype'",
+                                );
+                                abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
+                                discard_saved_finally = true;
+                            } else {
+                                let setter = existing_accessor_setter(context, object, &name);
+                                context.define_own_property(
+                                    object,
+                                    name,
+                                    PropertyDescriptor::accessor(Some(getter), setter, false, true),
+                                )?;
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::DefineClassSetterComputed => {
                     let setter = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define class setter (computed)")?;
-                    let getter = existing_accessor_getter(context, object, &name);
-                    context.define_own_property(
-                        object,
-                        name,
-                        PropertyDescriptor::accessor(getter, Some(setter), false, true),
-                    )?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class setter (computed)",
+                            )?;
+                            // Static setter named "prototype" is a TypeError per spec.
+                            if name == "prototype"
+                                && matches!(self.peek_value()?, JsValue::Function(_))
+                            {
+                                let err = VmError::type_error(
+                                    "Classes may not have a static property named 'prototype'",
+                                );
+                                abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
+                                discard_saved_finally = true;
+                            } else {
+                                let getter = existing_accessor_getter(context, object, &name);
+                                context.define_own_property(
+                                    object,
+                                    name,
+                                    PropertyDescriptor::accessor(getter, Some(setter), false, true),
+                                )?;
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::DefineDataPropertyComputed => {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define data property (computed)")?;
-                    context.define_own_property(object, name, PropertyDescriptor::data(value))?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define data property (computed)",
+                            )?;
+                            context.define_own_property(
+                                object,
+                                name,
+                                PropertyDescriptor::data(value),
+                            )?;
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::SpreadObject => {
                     let spread_val = self.pop_value()?;
@@ -1230,9 +1585,26 @@ impl Vm {
                     let target_id = context.require_object(&target_val, "SpreadObject")?;
                     if let JsValue::Object(source_id) = &spread_val {
                         let keys = context.own_enumerable_keys(*source_id);
+                        let mut threw: Option<JsValue> = None;
                         for key in keys {
-                            let value = context.get_property(spread_val.clone(), &key)?;
-                            context.set_property(JsValue::Object(target_id), key.clone(), value)?;
+                            // Use the VM call path to handle getter properties.
+                            match self.get_property_value_completion(
+                                spread_val.clone(),
+                                &key,
+                                context,
+                            )? {
+                                OperationResult::Throw(v) => {
+                                    threw = Some(v);
+                                    break;
+                                }
+                                OperationResult::Value(value) => {
+                                    context.set_property(JsValue::Object(target_id), key, value)?;
+                                }
+                            }
+                        }
+                        if let Some(v) = threw {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
                         }
                     }
                 }
@@ -1394,18 +1766,16 @@ impl Vm {
                                 _ => false, // accessor blocks inference
                             },
                         };
-                        if should_set {
-                            if let Some(obj) = context.heap_mut().object_mut(obj_id) {
-                                obj.define_property(
-                                    "name",
-                                    PropertyDescriptor::data_with(
-                                        JsValue::String(inferred_name.into()),
-                                        false,
-                                        false,
-                                        true,
-                                    ),
-                                );
-                            }
+                        if should_set && let Some(obj) = context.heap_mut().object_mut(obj_id) {
+                            obj.define_property(
+                                "name",
+                                PropertyDescriptor::data_with(
+                                    JsValue::String(inferred_name.to_string()),
+                                    false,
+                                    false,
+                                    true,
+                                ),
+                            );
                         }
                     }
                 }
@@ -1583,6 +1953,7 @@ impl Vm {
             name: template.name,
             params: template.params,
             rest_param: template.rest_param,
+            length_override: template.length_override,
             chunk: template.chunk,
             environment,
             is_generator: template.is_generator,
@@ -2801,32 +3172,6 @@ impl Vm {
         }
     }
 
-    pub(crate) fn set_property_value_from_builtin(
-        &mut self,
-        receiver: JsValue,
-        key: &str,
-        value: JsValue,
-        context: &mut NativeContext,
-    ) -> Result<bool, VmError> {
-        let object = context.require_object(&receiver, "write property")?;
-        if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
-            match descriptor.kind {
-                PropertyKind::Accessor {
-                    set: Some(setter), ..
-                } => match self.call_value(setter, receiver, vec![value], context)? {
-                    OperationResult::Value(_) => return Ok(true),
-                    OperationResult::Throw(thrown) => {
-                        self.pending_exception = Some(thrown);
-                        return Err(VmError::runtime("JavaScript setter threw"));
-                    }
-                },
-                PropertyKind::Accessor { set: None, .. } => return Ok(false),
-                PropertyKind::Data { .. } => {}
-            }
-        }
-        context.set(receiver, key, value, false)
-    }
-
     pub(crate) fn set_property_value_strict_from_builtin(
         &mut self,
         receiver: JsValue,
@@ -3219,6 +3564,35 @@ impl Vm {
         }
     }
 
+    pub(crate) fn to_numeric(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        let primitive = self.to_primitive(value, PreferredType::Number, context)?;
+        if matches!(primitive, JsValue::BigInt(_)) {
+            return Ok(primitive);
+        }
+        self.to_number(primitive, context).map(JsValue::Number)
+    }
+
+    fn to_numeric_operands(
+        &mut self,
+        left: JsValue,
+        right: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<(JsValue, JsValue), VmError> {
+        let left = self.to_numeric(left, context)?;
+        let right = self.to_numeric(right, context)?;
+        Ok((left, right))
+    }
+
+    fn throw_value_from_error(&mut self, error: VmError) -> JsValue {
+        self.pending_exception
+            .take()
+            .unwrap_or_else(|| vm_error_to_value(error))
+    }
+
     #[allow(clippy::wrong_self_convention)]
     pub(crate) fn to_int32(
         &mut self,
@@ -3230,19 +3604,6 @@ impl Vm {
             return Ok(0);
         }
         Ok(n.trunc() as i64 as i32)
-    }
-
-    #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn to_uint32(
-        &mut self,
-        value: JsValue,
-        context: &mut NativeContext,
-    ) -> Result<u32, VmError> {
-        let n = self.to_number(value, context)?;
-        if n.is_nan() || n.is_infinite() || n == 0.0 {
-            return Ok(0);
-        }
-        Ok(n.trunc() as i64 as u32)
     }
 
     /// ECMAScript `ToString`. For objects, applies `ToPrimitive(String)` first.
@@ -3395,6 +3756,64 @@ impl Vm {
         } else {
             Err(error)
         }
+    /// ToPrimitive(hint: string) for property keys.
+    /// For objects, calls `toString()` then `valueOf()` until a primitive is obtained.
+    /// Returns `Ok(OperationResult::Value(JsValue::String(...)))` on success,
+    /// or `Ok(OperationResult::Throw(...))` when conversion fails.
+    fn coerce_to_property_key(
+        &mut self,
+        key: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        // Fast path: primitives that already convert cleanly.
+        match &key {
+            JsValue::String(_)
+            | JsValue::Number(_)
+            | JsValue::Boolean(_)
+            | JsValue::Null
+            | JsValue::Undefined
+            | JsValue::BigInt(_) => {
+                return match to_property_key(&key) {
+                    Ok(s) => Ok(OperationResult::Value(JsValue::String(s))),
+                    Err(e) => Ok(OperationResult::Throw(vm_error_to_value(e))),
+                };
+            }
+            JsValue::Symbol(_) => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error("Cannot convert a Symbol value to a string"),
+                )));
+            }
+            _ => {}
+        }
+        // Object path: try toString() then valueOf().
+        for method in ["toString", "valueOf"] {
+            match self.get_property_value_completion(key.clone(), method, context)? {
+                OperationResult::Throw(v) => return Ok(OperationResult::Throw(v)),
+                OperationResult::Value(fn_val) => {
+                    if matches!(fn_val, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
+                        match self.call_value(fn_val, key.clone(), Vec::new(), context)? {
+                            OperationResult::Throw(v) => return Ok(OperationResult::Throw(v)),
+                            OperationResult::Value(result) => {
+                                if !matches!(
+                                    result,
+                                    JsValue::Object(_)
+                                        | JsValue::Function(_)
+                                        | JsValue::BuiltinFunction(_)
+                                ) {
+                                    return match to_property_key(&result) {
+                                        Ok(s) => Ok(OperationResult::Value(JsValue::String(s))),
+                                        Err(e) => Ok(OperationResult::Throw(vm_error_to_value(e))),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(OperationResult::Throw(vm_error_to_value(
+            VmError::type_error("Cannot convert object to primitive value"),
+        )))
     }
 
     fn get_property_value_completion(
@@ -3403,6 +3822,25 @@ impl Vm {
         key: &str,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
+        // null/undefined property access must be a catchable TypeError so that
+        // try-catch blocks in userland (and assert.throws) can intercept it.
+        match &receiver {
+            JsValue::Null => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error(format!(
+                        "Cannot read properties of null (reading '{key}')"
+                    )),
+                )));
+            }
+            JsValue::Undefined => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error(format!(
+                        "Cannot read properties of undefined (reading '{key}')"
+                    )),
+                )));
+            }
+            _ => {}
+        }
         if let JsValue::Error(error) = &receiver {
             let value = match key {
                 "message" => JsValue::String(error.message.clone()),
@@ -3483,6 +3921,18 @@ impl Vm {
                 Ok(value) => Ok(OperationResult::Value(value)),
                 Err(error) => self.error_to_operation_result(error),
             };
+        match &receiver {
+            JsValue::Null => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error("Cannot read properties of null (reading symbol)"),
+                )));
+            }
+            JsValue::Undefined => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error("Cannot read properties of undefined (reading symbol)"),
+                )));
+            }
+            _ => {}
         }
         let object = self.property_lookup_object(&receiver, context)?;
         let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? else {
@@ -4207,20 +4657,6 @@ fn add_values(
             .map(JsValue::BigInt)
             .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range"));
     }
-    if let (JsValue::BigInt(left), JsValue::Number(right)) = (&left, &right) {
-        let right = number_to_integral_bigint(*right)?;
-        return left
-            .checked_add(right)
-            .map(JsValue::BigInt)
-            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range"));
-    }
-    if let (JsValue::Number(left), JsValue::BigInt(right)) = (&left, &right) {
-        let left = number_to_integral_bigint(*left)?;
-        return left
-            .checked_add(*right)
-            .map(JsValue::BigInt)
-            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range"));
-    }
     if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
         return Err(VmError::type_error(
             "Cannot mix BigInt and other types in arithmetic",
@@ -4230,16 +4666,6 @@ fn add_values(
     let left = vm.to_number(left, context)?;
     let right = vm.to_number(right, context)?;
     Ok(JsValue::Number(left + right))
-}
-
-fn number_to_integral_bigint(value: f64) -> Result<i128, VmError> {
-    if value.is_finite() && value.fract() == 0.0 {
-        Ok(value as i128)
-    } else {
-        Err(VmError::type_error(
-            "Cannot mix BigInt and non-integral Number in arithmetic",
-        ))
-    }
 }
 
 fn generator_next(
@@ -4459,24 +4885,41 @@ fn bigint_binary(
     }
 }
 
+fn numeric_number_pair(left: JsValue, right: JsValue) -> Result<(f64, f64), VmError> {
+    let (JsValue::Number(left), JsValue::Number(right)) = (left, right) else {
+        return Err(VmError::type_error(
+            "Cannot mix BigInt and other types in arithmetic",
+        ));
+    };
+    Ok((left, right))
+}
+
+fn number_to_int32(value: f64) -> i32 {
+    if value.is_nan() || value.is_infinite() || value == 0.0 {
+        return 0;
+    }
+    value.trunc() as i64 as i32
+}
+
+fn number_to_uint32(value: f64) -> u32 {
+    if value.is_nan() || value.is_infinite() || value == 0.0 {
+        return 0;
+    }
+    value.trunc() as i64 as u32
+}
+
 fn bigint_divide(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
-    bigint_binary(left, right, |left, right| {
-        if right == 0 {
-            None
-        } else {
-            left.checked_div(right)
-        }
-    })
+    match (&left, &right) {
+        (JsValue::BigInt(_), JsValue::BigInt(0)) => Err(VmError::range("BigInt division by zero")),
+        _ => bigint_binary(left, right, |left, right| left.checked_div(right)),
+    }
 }
 
 fn bigint_remainder(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
-    bigint_binary(left, right, |left, right| {
-        if right == 0 {
-            None
-        } else {
-            left.checked_rem(right)
-        }
-    })
+    match (&left, &right) {
+        (JsValue::BigInt(_), JsValue::BigInt(0)) => Err(VmError::range("BigInt division by zero")),
+        _ => bigint_binary(left, right, |left, right| left.checked_rem(right)),
+    }
 }
 
 fn bigint_exponentiation(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
@@ -4494,6 +4937,31 @@ fn bigint_exponentiation(left: JsValue, right: JsValue) -> Result<Option<JsValue
         )),
         _ => Ok(None),
     }
+}
+
+fn bigint_shift(
+    left: JsValue,
+    right: JsValue,
+    right_shift: bool,
+) -> Result<Option<JsValue>, VmError> {
+    let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) else {
+        if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
+            return Err(VmError::type_error(
+                "Cannot mix BigInt and other types in arithmetic",
+            ));
+        }
+        return Ok(None);
+    };
+    let shift = u32::try_from(right.unsigned_abs())
+        .map_err(|_| VmError::range("BigInt shift count is outside the native range"))?;
+    let shift_left = if right_shift { *right < 0 } else { *right >= 0 };
+    let value = if shift_left {
+        left.checked_shl(shift)
+    } else {
+        left.checked_shr(shift)
+    }
+    .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range"))?;
+    Ok(Some(JsValue::BigInt(value)))
 }
 
 fn increment_numeric(

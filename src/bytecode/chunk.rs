@@ -225,6 +225,9 @@ pub struct FunctionTemplate {
     pub params: Vec<String>,
     /// If the function has a rest parameter `...name`, its binding name.
     pub rest_param: Option<String>,
+    /// Function.length: params before the first default/rest/destructuring param.
+    /// Defaults to params.len() when 0 (for manually constructed templates).
+    pub length_override: Option<u32>,
     /// Bytecode for the function body.
     pub chunk: Chunk,
     pub is_strict: bool,

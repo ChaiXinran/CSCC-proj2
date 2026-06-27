@@ -131,6 +131,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
             name: Some("bad".into()),
             params: Vec::new(),
             rest_param: None,
+            length_override: None,
             chunk: invalid_child,
             is_strict: false,
             is_generator: false,

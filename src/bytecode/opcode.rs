@@ -194,6 +194,9 @@ pub enum Instruction {
     ObjectCreateEmpty,
     ArrayCreateSparse(u32),
     DefineDataProperty(u16),
+    /// Assigns `ctor.prototype = proto` with `{writable:true, enumerable:false, configurable:false}`.
+    /// Stack: `[ctor, proto]` → `[ctor]`. Used in class body compilation.
+    DefineClassPrototype,
     DefineGetter(u16),
     DefineSetter(u16),
     DefineComputedGetter,
@@ -248,6 +251,11 @@ pub enum Instruction {
     /// Appends one value to the end of an array without removing the array.
     /// Stack: [array, value] → [array]
     ArrayPush,
+
+    /// Converts the top-of-stack value to an array (consuming it), leaving the array.
+    /// Arrays pass through as-is; any other iterable is consumed via the iterator protocol.
+    /// Stack: [iterable] → [array]
+    IterableToArray,
 
     /// Iterates an array-like iterable and appends every element to the array
     /// sitting just below it on the stack.
@@ -431,6 +439,7 @@ impl Instruction {
 
             // The object remains below the consumed value.
             Self::DefineDataProperty(_)
+            | Self::DefineClassPrototype
             | Self::DefineGetter(_)
             | Self::DefineSetter(_)
             | Self::DefineClassMethod(_)
@@ -450,6 +459,9 @@ impl Instruction {
             }
 
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
+
+            // IterableToArray: [iterable] → [array]
+            Self::IterableToArray => StackEffect::new(1, 1),
 
             // ArrayPush: [array, value] → [array]
             Self::ArrayPush | Self::SpreadIntoArray | Self::SpreadObject => {

@@ -26,6 +26,37 @@ pub struct Program {
     pub body: Vec<Statement>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportDeclaration {
+    pub source: String,
+    pub entries: Vec<ImportEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportEntry {
+    pub imported_name: String,
+    pub local_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportDeclaration {
+    pub entries: Vec<ExportEntry>,
+    pub source: Option<String>,
+    pub declaration: Option<Box<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportEntry {
+    pub export_name: String,
+    pub local_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModuleDeclaration {
+    Import(ImportDeclaration),
+    Export(ExportDeclaration),
+}
+
 /// Variable declaration category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VariableKind {
@@ -138,4 +169,5 @@ pub enum Statement {
         body: Box<Statement>,
         is_await: bool,
     },
+    ModuleDeclaration(ModuleDeclaration),
 }
