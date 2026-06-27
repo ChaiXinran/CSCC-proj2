@@ -4,6 +4,10 @@
 
 use regex::{Regex, RegexBuilder};
 
+const MAX_REPLACEMENT_OUTPUT_BYTES: usize = 1 << 23;
+
+type ReplacementResult<T> = Result<T, &'static str>;
+
 /// Compile a JS regex pattern + flags string into a Rust [`Regex`].
 /// Returns `Err(message)` if the pattern or flags are invalid.
 pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, String> {
@@ -70,7 +74,7 @@ fn expand_replacement(
     captures: &[Option<&str>],
     before: &str,
     after: &str,
-) -> String {
+) -> ReplacementResult<String> {
     let mut result = String::with_capacity(template.len());
     let bytes = template.as_bytes();
     let mut i = 0;
@@ -78,19 +82,19 @@ fn expand_replacement(
         if bytes[i] == b'$' && i + 1 < bytes.len() {
             match bytes[i + 1] {
                 b'$' => {
-                    result.push('$');
+                    push_checked(&mut result, '$')?;
                     i += 2;
                 }
                 b'&' => {
-                    result.push_str(full_match);
+                    push_str_checked(&mut result, full_match)?;
                     i += 2;
                 }
                 b'`' => {
-                    result.push_str(before);
+                    push_str_checked(&mut result, before)?;
                     i += 2;
                 }
                 b'\'' => {
-                    result.push_str(after);
+                    push_str_checked(&mut result, after)?;
                     i += 2;
                 }
                 d if d.is_ascii_digit() && d != b'0' => {
@@ -109,47 +113,67 @@ fn expand_replacement(
                     }
                     if group_num < captures.len() {
                         if let Some(cap) = captures[group_num] {
-                            result.push_str(cap);
+                            push_str_checked(&mut result, cap)?;
                         }
                         // unmatched group → empty string (omit)
                     } else {
                         // No such group — keep literal text.
-                        result.push_str(&template[i..i + advance]);
+                        push_str_checked(&mut result, &template[i..i + advance])?;
                     }
                     i += advance;
                 }
                 _ => {
-                    result.push('$');
+                    push_checked(&mut result, '$')?;
                     i += 1;
                 }
             }
         } else {
             let ch = template[i..].chars().next().unwrap_or('\0');
-            result.push(ch);
+            push_checked(&mut result, ch)?;
             i += ch.len_utf8().max(1);
         }
     }
-    result
+    Ok(result)
+}
+
+fn push_checked(result: &mut String, ch: char) -> ReplacementResult<()> {
+    if result.len().saturating_add(ch.len_utf8()) > MAX_REPLACEMENT_OUTPUT_BYTES {
+        return Err("regexp replacement allocation limit exceeded");
+    }
+    result.push(ch);
+    Ok(())
+}
+
+fn push_str_checked(result: &mut String, value: &str) -> ReplacementResult<()> {
+    if result.len().saturating_add(value.len()) > MAX_REPLACEMENT_OUTPUT_BYTES {
+        return Err("regexp replacement allocation limit exceeded");
+    }
+    result.push_str(value);
+    Ok(())
 }
 
 /// Replaces the first match of `regex` in `text` with `replacement`, expanding
 /// ES replacement patterns (`$&`, `$1`, etc.).
-pub fn replace_first(regex: &Regex, text: &str, replacement: &str) -> String {
+pub fn replace_first(regex: &Regex, text: &str, replacement: &str) -> ReplacementResult<String> {
     let Some(caps) = regex.captures(text) else {
-        return text.to_owned();
+        return Ok(text.to_owned());
     };
     let m = caps.get(0).unwrap();
     let (before, full_match, after) = (&text[..m.start()], m.as_str(), &text[m.end()..]);
     let groups: Vec<Option<&str>> = (0..caps.len())
         .map(|i| caps.get(i).map(|c| c.as_str()))
         .collect();
-    let repl = expand_replacement(replacement, full_match, &groups, before, after);
-    format!("{before}{repl}{after}")
+    let repl = expand_replacement(replacement, full_match, &groups, before, after)?;
+    let mut result = String::new();
+    push_str_checked(&mut result, before)?;
+    push_str_checked(&mut result, &repl)?;
+    push_str_checked(&mut result, after)?;
+    Ok(result)
 }
 
 /// Replaces all matches of `regex` in `text` with `replacement`, expanding ES
 /// replacement patterns.
-pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> String {
+pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> ReplacementResult<String> {
     let mut result = String::new();
     let mut last_end = 0;
     for caps in regex.captures_iter(text) {
@@ -160,19 +184,19 @@ pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> String {
         let groups: Vec<Option<&str>> = (0..caps.len())
             .map(|i| caps.get(i).map(|c| c.as_str()))
             .collect();
-        let repl = expand_replacement(replacement, full_match, &groups, before, after);
-        result.push_str(before);
-        result.push_str(&repl);
+        let repl = expand_replacement(replacement, full_match, &groups, before, after)?;
+        push_str_checked(&mut result, before)?;
+        push_str_checked(&mut result, &repl)?;
         last_end = m.end();
         // Zero-length match guard: advance by at least one char to avoid infinite loop.
         if m.start() == m.end() && m.end() < text.len() {
             let ch = text[m.end()..].chars().next().unwrap_or('\0');
-            result.push(ch);
+            push_checked(&mut result, ch)?;
             last_end = m.end() + ch.len_utf8();
         }
     }
-    result.push_str(&text[last_end..]);
-    result
+    push_str_checked(&mut result, &text[last_end..])?;
+    Ok(result)
 }
 
 /// Detailed match info for a single match, used by function-replacement callers.

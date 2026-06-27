@@ -137,6 +137,10 @@ fn map_string_error(error: string::StringBuiltinError) -> VmError {
     }
 }
 
+fn map_regexp_replacement_error(error: &'static str) -> VmError {
+    VmError::runtime_limit(error)
+}
+
 fn map_number_format_error(error: number::NumberFormatError) -> VmError {
     VmError::range(match error {
         number::NumberFormatError::InvalidRadix => "radix must be between 2 and 36",
@@ -1495,6 +1499,15 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(String, Stri
     }
 }
 
+fn regexp_last_index_is_writable(context: &NativeContext, value: &JsValue) -> bool {
+    let JsValue::Object(id) = value else {
+        return true;
+    };
+    context
+        .get_own_property_descriptor(*id, "lastIndex")
+        .is_none_or(|descriptor| descriptor.writable())
+}
+
 fn string_includes(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -1756,7 +1769,8 @@ fn string_replace(
             regexp::replace_all(&re, &value, &replacement)
         } else {
             regexp::replace_first(&re, &value, &replacement)
-        };
+        }
+        .map_err(map_regexp_replacement_error)?;
         return Ok(JsValue::String(result));
     }
 
@@ -1886,11 +1900,10 @@ fn string_replace_all(
             return apply_replace_fn(vm, context, &value, &re, true, replace_arg);
         }
         let replacement = vm.to_string_coerce(replace_arg, context)?;
-        return Ok(JsValue::String(regexp::replace_all(
-            &re,
-            &value,
-            &replacement,
-        )));
+        return Ok(JsValue::String(
+            regexp::replace_all(&re, &value, &replacement)
+                .map_err(map_regexp_replacement_error)?,
+        ));
     }
 
     let search = vm.to_string_coerce(first_arg, context)?;
@@ -1964,6 +1977,15 @@ fn string_match(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
+    if let Some((_pattern, flags)) = regexp_data(context, &first_arg)
+        && regexp::is_global(&flags)
+        && !regexp_last_index_is_writable(context, &first_arg)
+    {
+        // ponytail: short-circuit before @@match dispatch; the current native
+        // RegExp matcher does not model lastIndex writes, so non-writable
+        // global regexps must fail before entering the matching loop.
+        return Err(VmError::type_error("RegExp lastIndex is not writable"));
+    }
     // @@match dispatch
     let sym = context.well_known_symbols().match_;
     if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[]) {
@@ -1973,6 +1995,9 @@ fn string_match(
         let re = regexp::compile_regex(&pattern, &flags)
             .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
         if regexp::is_global(&flags) {
+            if !regexp_last_index_is_writable(context, &first_arg) {
+                return Err(VmError::type_error("RegExp lastIndex is not writable"));
+            }
             // Global match: return array of all matches or null.
             let matches = regexp::exec_global(&re, &value);
             if matches.is_empty() {
@@ -2937,11 +2962,13 @@ fn regexp_symbol_replace(
         return apply_replace_fn(vm, context, &string, &re, global, replace_arg);
     }
     let replacement = vm.to_string_coerce(replace_arg, context)?;
-    Ok(JsValue::String(if global {
+    let result = if global {
         regexp::replace_all(&re, &string, &replacement)
     } else {
         regexp::replace_first(&re, &string, &replacement)
-    }))
+    }
+    .map_err(map_regexp_replacement_error)?;
+    Ok(JsValue::String(result))
 }
 
 fn regexp_symbol_match(
@@ -2955,6 +2982,9 @@ fn regexp_symbol_match(
     let re = regexp::compile_regex(&pattern, &flags)
         .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
     if flags.contains('g') {
+        if !regexp_last_index_is_writable(context, &this) {
+            return Err(VmError::type_error("RegExp lastIndex is not writable"));
+        }
         let matches = regexp::exec_global(&re, &string);
         if matches.is_empty() {
             return Ok(JsValue::Null);
