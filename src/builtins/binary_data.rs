@@ -4,7 +4,7 @@
 //! prototypes, descriptors, and deterministic Intl option objects. Operations
 //! that need real typed storage are present only when they can fail explicitly.
 
-use super::{function, install_foundation, install_test262_harness};
+use super::{function, install_foundation, install_test262_harness, string};
 use crate::{
     runtime::{
         ArrayBufferId, DataViewId, IteratorMode, JsObject, JsValue, NativeCall, NativeContext,
@@ -3178,6 +3178,7 @@ fn install_test262_host_object_inner(context: &mut NativeContext) -> Result<(), 
     let detach =
         context.register_builtin("detachArrayBuffer", 1, test262_detach_array_buffer, None)?;
     let create_realm = context.register_builtin("createRealm", 0, test262_create_realm, None)?;
+    let build_string = context.register_builtin("buildString", 1, test262_build_string, None)?;
     context.define_own_property(
         host,
         "global".into(),
@@ -3187,7 +3188,97 @@ fn install_test262_host_object_inner(context: &mut NativeContext) -> Result<(), 
     context.define_own_property(host, "gc".into(), method_descriptor(gc))?;
     context.define_own_property(host, "detachArrayBuffer".into(), method_descriptor(detach))?;
     context.define_own_property(host, "createRealm".into(), method_descriptor(create_realm))?;
+    context.define_own_property(host, "buildString".into(), method_descriptor(build_string))?;
     context.declare_global("$262", JsValue::Object(host));
+    Ok(())
+}
+
+fn test262_build_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let args = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let lone_code_points = vm.get_property_value(args.clone(), "loneCodePoints", context)?;
+    let ranges = vm.get_property_value(args, "ranges", context)?;
+    let mut units = Vec::new();
+    append_code_point_array(vm, context, lone_code_points, &mut units)?;
+
+    let range_count = array_like_len(vm, context, ranges.clone())?;
+    for index in 0..range_count {
+        let range = vm.get_property_value(ranges.clone(), &index.to_string(), context)?;
+        let start = code_point_from_value(
+            vm.get_property_value(range.clone(), "0", context)?,
+            "buildString range start",
+        )?;
+        let end = code_point_from_value(
+            vm.get_property_value(range, "1", context)?,
+            "buildString range end",
+        )?;
+        if start > end {
+            continue;
+        }
+        units.reserve(((end - start + 1) as usize).saturating_mul(2));
+        for code_point in start..=end {
+            push_code_point_units(&mut units, code_point)?;
+        }
+    }
+
+    Ok(JsValue::String(string::decode_utf16(&units)))
+}
+
+fn append_code_point_array(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    units: &mut Vec<u16>,
+) -> Result<(), VmError> {
+    let length = array_like_len(vm, context, value.clone())?;
+    units.reserve(length);
+    for index in 0..length {
+        let value = vm.get_property_value(value.clone(), &index.to_string(), context)?;
+        let code_point = code_point_from_value(value, "buildString code point")?;
+        push_code_point_units(units, code_point)?;
+    }
+    Ok(())
+}
+
+fn array_like_len(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<usize, VmError> {
+    let length = vm
+        .get_property_value(value, "length", context)?
+        .to_js_string()
+        .and_then(|text| text.parse::<usize>().ok())
+        .unwrap_or(0);
+    Ok(length)
+}
+
+fn code_point_from_value(value: JsValue, label: &str) -> Result<u32, VmError> {
+    let Some(number) = value.to_number() else {
+        return Err(VmError::range(format!("{label} is not a number")));
+    };
+    if number < 0.0 || number > f64::from(0x10_FFFF) || number.trunc() != number {
+        return Err(VmError::range(format!(
+            "{number} is not a valid code point"
+        )));
+    }
+    Ok(number as u32)
+}
+
+fn push_code_point_units(units: &mut Vec<u16>, code_point: u32) -> Result<(), VmError> {
+    match code_point {
+        0..=0xFFFF => units.push(code_point as u16),
+        0x10000..=0x10FFFF => {
+            let value = code_point - 0x10000;
+            units.push(0xD800 | ((value >> 10) as u16));
+            units.push(0xDC00 | ((value & 0x3FF) as u16));
+        }
+        _ => return Err(VmError::range("invalid code point in buildString")),
+    }
     Ok(())
 }
 

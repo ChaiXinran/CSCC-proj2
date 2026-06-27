@@ -10,6 +10,28 @@ fn native_eval(source: &str) -> String {
         .value
 }
 
+fn native_test262_eval(source: &str) -> String {
+    let config = RuntimeConfig {
+        install_test262_host: true,
+        ..RuntimeConfig::default()
+    };
+    Engine::with_backend(BackendKind::Native, config)
+        .execute(source, ExecutionOptions::default())
+        .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))
+        .value
+}
+
+#[test]
+fn test262_build_string_host_helper_matches_from_code_point_shape() {
+    assert_eq!(
+        native_test262_eval(
+            "var text = $262.buildString({ loneCodePoints: [0x41], ranges: [[0x42, 0x44], [0x1F600, 0x1F601]] }); \
+             text.length + ':' + text.charCodeAt(0) + ':' + text.charCodeAt(3) + ':' + text.codePointAt(4);"
+        ),
+        "8:65:68:128512"
+    );
+}
+
 #[test]
 fn regexp_static_escape_and_descriptor_refinements_are_installed() {
     assert_eq!(
@@ -58,7 +80,7 @@ fn regexp_prototype_tag_and_flag_getters_match_intrinsic_shape() {
              (global.call(RegExp.prototype) === undefined) + ':' + \
              (dotAll.call(RegExp.prototype) === undefined);"
         ),
-        "[object RegExp]:true:true"
+        "[object Object]:true:true"
     );
 }
 

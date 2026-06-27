@@ -856,6 +856,19 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                     "harness `{include}` failed: {error}"
                 )));
             }
+            if include == "regExpUtils.js" {
+                // ponytail: generated Unicode property-escape tests build
+                // megabyte-scale strings through this harness helper. Keep the
+                // helper semantics but run the hot loop in the native $262 host;
+                // upgrade path is a faster general JS loop/JIT/string builder.
+                runtime
+                    .eval_fragment("buildString = $262.buildString;")
+                    .map_err(|error| {
+                        VariantFailure::Failed(format!(
+                            "native regExpUtils buildString override failed: {error}"
+                        ))
+                    })?;
+            }
         }
     }
 
