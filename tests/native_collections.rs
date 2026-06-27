@@ -230,3 +230,66 @@ fn generator_objects_are_iterable() {
         "[][a][ab]"
     );
 }
+
+#[test]
+fn iterator_pipeline_helpers_are_lazy_and_forward_close() {
+    assert_eq!(
+        native_eval(
+            "var advances = 0; \
+             function* values() { \
+               advances = advances + 1; yield 1; \
+               advances = advances + 1; yield 2; \
+             } \
+             var source = values(); \
+             var mapped = source.map(function(value) { return value * 10; }); \
+             var before = advances; \
+             source.next(); \
+             var mappedValue = mapped.next().value; \
+             var filteredValue = values().filter(function(value) { return value > 1; }).next().value; \
+             var flat = values().flatMap(function(value) { return [value, value + 10]; }); \
+             var flatValues = '' + flat.next().value + ',' + flat.next().value + ',' + flat.next().value; \
+             var closed = 0; var index = 0; \
+             var closable = Object.create(Iterator.prototype); \
+             closable.next = function() { return { value: index++, done: false }; }; \
+             closable.return = function() { closed = closed + 1; return {}; }; \
+             var taken = closable.take(1); taken.next(); taken.next(); \
+             before + ':' + mappedValue + ':' + filteredValue + ':' + flatValues + ':' + closed;"
+        ),
+        "0:20:2:1,11,2:1"
+    );
+}
+
+#[test]
+fn generator_objects_inherit_iterator_helpers() {
+    assert_eq!(
+        native_eval(
+            "function* values() { yield 1; yield 2; yield 3; } \
+             var iterator = values(); \
+             (Object.getPrototypeOf(Object.getPrototypeOf(iterator)) === Iterator.prototype) + ':' + \
+             iterator.every(function(value) { return value > 0; });"
+        ),
+        "true:true"
+    );
+}
+
+#[test]
+fn terminal_iterator_helpers_close_on_early_exit_and_throw() {
+    assert_eq!(
+        native_eval(
+            "var closed = 0; \
+             function make() { \
+               var iterator = Object.create(Iterator.prototype); \
+               iterator.next = function() { return { value: 1, done: false }; }; \
+               iterator.return = function() { closed = closed + 1; return {}; }; \
+               return iterator; \
+             } \
+             var early = make().every(function() { return false; }); \
+             var thrown = ''; \
+             try { make().some(function() { throw 'boom'; }); } catch (error) { thrown = error; } \
+             var invalid = false; \
+             try { make().find(); } catch (error) { invalid = error.name === 'TypeError'; } \
+             early + ':' + thrown + ':' + invalid + ':' + closed;"
+        ),
+        "false:boom:true:3"
+    );
+}

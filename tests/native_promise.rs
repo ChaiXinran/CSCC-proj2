@@ -92,6 +92,49 @@ fn promise_try_and_with_resolvers_expose_minimal_capabilities() {
 }
 
 #[test]
+fn promise_static_methods_use_the_receiver_constructor() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "function SubPromise(executor) { \
+               var promise = new Promise(executor); \
+               Object.setPrototypeOf(promise, SubPromise.prototype); \
+               return promise; \
+             } \
+             SubPromise.prototype = Object.create(Promise.prototype); \
+             SubPromise.prototype.constructor = SubPromise; \
+             var calls = 0; \
+             var inheritedResolve = Promise.resolve; \
+             SubPromise.resolve = function(value) { \
+               calls = calls + 1; \
+               return inheritedResolve.call(this, value); \
+             }; \
+             var resolved = Promise.resolve.call(SubPromise, 1); \
+             var rejected = Promise.reject.call(SubPromise, 'bad'); \
+             var combined = Promise.all.call(SubPromise, [1, 2]); \
+             var capability = Promise.withResolvers.call(SubPromise); \
+             var invalidReceiver = false; \
+             try { Promise.resolve.call({}, 1); } \
+             catch (error) { invalidReceiver = error.name === 'TypeError'; } \
+             var result = \
+               (resolved instanceof SubPromise) + ':' + \
+               (rejected instanceof SubPromise) + ':' + \
+               (combined instanceof SubPromise) + ':' + \
+               (capability.promise instanceof SubPromise) + ':' + \
+               capability.resolve.name + ':' + calls + ':' + invalidReceiver;",
+            ExecutionOptions::default(),
+        )
+        .expect("receiver-specific Promise capability");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read Promise capability result"),
+        "true:true:true:true::2:true"
+    );
+}
+
+#[test]
 fn promise_all_consumes_a_custom_iterator() {
     let mut config = RuntimeConfig::default();
     config.gc_allocation_threshold = 1;
@@ -119,6 +162,63 @@ fn promise_all_consumes_a_custom_iterator() {
             .eval_source("result;", ExecutionOptions::default())
             .expect("read result"),
         "12"
+    );
+}
+
+#[test]
+fn promise_combinators_resolve_inputs_and_preserve_order() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var allResult = ''; var settledResult = ''; var anyResult = ''; var raceResult = ''; \
+             var thenable = { then: function (resolve) { resolve(2); } }; \
+             Promise.all([Promise.resolve(1), thenable]).then(function (values) { \
+               allResult = '' + values[0] + values[1]; \
+             }); \
+             Promise.allSettled([Promise.resolve(3), Promise.reject('bad')]) \
+               .then(function (values) { \
+                 settledResult = values[0].status + ':' + values[0].value + \
+                   '/' + values[1].status + ':' + values[1].reason; \
+               }); \
+             Promise.any([Promise.reject('first'), Promise.resolve(4)]) \
+               .then(function (value) { anyResult = '' + value; }); \
+             Promise.race([Promise.resolve(5), Promise.resolve(6)]) \
+               .then(function (value) { raceResult = '' + value; });",
+            ExecutionOptions::default(),
+        )
+        .expect("Promise combinators");
+
+    assert_eq!(
+        runtime
+            .eval_source(
+                "allResult + '|' + settledResult + '|' + anyResult + '|' + raceResult;",
+                ExecutionOptions::default(),
+            )
+            .expect("read combinator results"),
+        "12|fulfilled:3/rejected:bad|4|5"
+    );
+}
+
+#[test]
+fn promise_combinators_reject_instead_of_throwing_on_iterator_failure() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var result = ''; \
+             var iterable = {}; \
+             iterable[Symbol.iterator] = function () { \
+               return { next: function () { throw 'iterator failed'; } }; \
+             }; \
+             Promise.all(iterable).catch(function (reason) { result = reason; });",
+            ExecutionOptions::default(),
+        )
+        .expect("Promise combinator iterator failure");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read iterator rejection"),
+        "iterator failed"
     );
 }
 
