@@ -817,8 +817,18 @@ fn install_annex_b_refinements(context: &mut NativeContext) -> Result<(), VmErro
 fn install_global_annex_b(context: &mut NativeContext) -> Result<(), VmError> {
     let escape = context.register_builtin("escape", 1, global_escape, None)?;
     let unescape = context.register_builtin("unescape", 1, global_unescape, None)?;
-    context.declare_global("escape", escape);
-    context.declare_global("unescape", unescape);
+    context.declare_global("escape", escape.clone());
+    context.declare_global("unescape", unescape.clone());
+    context.define_own_property(
+        context.global_object(),
+        "escape".into(),
+        method_descriptor(escape),
+    )?;
+    context.define_own_property(
+        context.global_object(),
+        "unescape".into(),
+        method_descriptor(unescape),
+    )?;
     Ok(())
 }
 
@@ -870,8 +880,39 @@ fn install_string_annex_b(context: &mut NativeContext) -> Result<(), VmError> {
     let prototype = context
         .string_prototype()
         .ok_or_else(|| VmError::runtime("String prototype missing"))?;
-    define_method(context, prototype, "trimLeft", 0, string_trim_left)?;
-    define_method(context, prototype, "trimRight", 0, string_trim_right)?;
+    alias_method(context, prototype, "trimStart", "trimLeft")?;
+    alias_method(context, prototype, "trimEnd", "trimRight")?;
+    for (name, length, call) in [
+        ("anchor", 1, string_anchor as NativeCall),
+        ("big", 0, string_big as NativeCall),
+        ("blink", 0, string_blink as NativeCall),
+        ("bold", 0, string_bold as NativeCall),
+        ("fixed", 0, string_fixed as NativeCall),
+        ("fontcolor", 1, string_fontcolor as NativeCall),
+        ("fontsize", 1, string_fontsize as NativeCall),
+        ("italics", 0, string_italics as NativeCall),
+        ("link", 1, string_link as NativeCall),
+        ("small", 0, string_small as NativeCall),
+        ("strike", 0, string_strike as NativeCall),
+        ("sub", 0, string_sub as NativeCall),
+        ("sup", 0, string_sup as NativeCall),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
+    Ok(())
+}
+
+fn alias_method(
+    context: &mut NativeContext,
+    target: ObjectId,
+    source_name: &'static str,
+    alias_name: &'static str,
+) -> Result<(), VmError> {
+    let value = context
+        .get_own_property_descriptor(target, source_name)
+        .and_then(|descriptor| descriptor.value_cloned())
+        .ok_or_else(|| VmError::runtime(format!("missing String.prototype.{source_name}")))?;
+    context.define_own_property(target, alias_name.into(), method_descriptor(value))?;
     Ok(())
 }
 
@@ -921,7 +962,7 @@ fn global_unescape(
     while i < bytes.len() {
         if bytes[i] == b'%'
             && i + 5 < bytes.len()
-            && matches!(bytes[i + 1], b'u' | b'U')
+            && bytes[i + 1] == b'u'
             && let Ok(unit) = u16::from_str_radix(&string[i + 2..i + 6], 16)
         {
             units.push(unit);
@@ -1075,27 +1116,73 @@ fn string_this(
     vm.to_string_coerce(this_value, context)
 }
 
-fn string_trim_left(
+fn create_html(
     vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
+    tag: &'static str,
+    attribute: &'static str,
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(
-        string_this(vm, context, this_value)?.trim_start().into(),
-    ))
+    let string = string_this(vm, context, this_value)?;
+    let mut result = String::new();
+    result.push('<');
+    result.push_str(tag);
+    if !attribute.is_empty() {
+        let value = vm.to_string_coerce(
+            arguments.first().cloned().unwrap_or(JsValue::Undefined),
+            context,
+        )?;
+        result.push(' ');
+        result.push_str(attribute);
+        result.push_str("=\"");
+        result.push_str(&value.replace('"', "&quot;"));
+        result.push('"');
+    }
+    result.push('>');
+    result.push_str(&string);
+    result.push_str("</");
+    result.push_str(tag);
+    result.push('>');
+    Ok(JsValue::String(result))
 }
 
-fn string_trim_right(
-    vm: &mut Vm,
-    context: &mut NativeContext,
-    this_value: JsValue,
-    _arguments: &[JsValue],
-) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(
-        string_this(vm, context, this_value)?.trim_end().into(),
-    ))
+macro_rules! html_method {
+    ($name:ident, $tag:literal) => {
+        fn $name(
+            vm: &mut Vm,
+            context: &mut NativeContext,
+            this_value: JsValue,
+            arguments: &[JsValue],
+        ) -> Result<JsValue, VmError> {
+            create_html(vm, context, this_value, arguments, $tag, "")
+        }
+    };
+    ($name:ident, $tag:literal, $attribute:literal) => {
+        fn $name(
+            vm: &mut Vm,
+            context: &mut NativeContext,
+            this_value: JsValue,
+            arguments: &[JsValue],
+        ) -> Result<JsValue, VmError> {
+            create_html(vm, context, this_value, arguments, $tag, $attribute)
+        }
+    };
 }
+
+html_method!(string_anchor, "a", "name");
+html_method!(string_big, "big");
+html_method!(string_blink, "blink");
+html_method!(string_bold, "b");
+html_method!(string_fixed, "tt");
+html_method!(string_fontcolor, "font", "color");
+html_method!(string_fontsize, "font", "size");
+html_method!(string_italics, "i");
+html_method!(string_link, "a", "href");
+html_method!(string_small, "small");
+html_method!(string_strike, "strike");
+html_method!(string_sub, "sub");
+html_method!(string_sup, "sup");
 
 fn push_hex_escape(output: &mut String, value: u32, width: usize) {
     output.push_str(if width == 2 { "\\x" } else { "\\u" });

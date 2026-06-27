@@ -544,13 +544,12 @@ fn install_date(context: &mut NativeContext) -> Result<(), VmError> {
         ("toISOString", 0, date_to_iso_string as NativeCall),
         ("toJSON", 1, date_to_json as NativeCall),
         ("toString", 0, date_to_string as NativeCall),
-        ("toUTCString", 0, date_to_utc_string as NativeCall),
-        ("toGMTString", 0, date_to_utc_string as NativeCall),
         ("toDateString", 0, date_to_date_string as NativeCall),
         ("toTimeString", 0, date_to_time_string as NativeCall),
         ("toLocaleString", 0, date_to_string as NativeCall),
         ("toLocaleDateString", 0, date_to_date_string as NativeCall),
         ("toLocaleTimeString", 0, date_to_time_string as NativeCall),
+        ("getYear", 0, date_get_year as NativeCall),
         ("getFullYear", 0, date_get_utc_full_year as NativeCall),
         ("getUTCFullYear", 0, date_get_utc_full_year as NativeCall),
         ("getMonth", 0, date_get_utc_month as NativeCall),
@@ -581,9 +580,38 @@ fn install_date(context: &mut NativeContext) -> Result<(), VmError> {
             date_get_timezone_offset as NativeCall,
         ),
         ("setTime", 1, date_set_time as NativeCall),
+        (
+            "setMilliseconds",
+            1,
+            date_set_utc_milliseconds as NativeCall,
+        ),
+        (
+            "setUTCMilliseconds",
+            1,
+            date_set_utc_milliseconds as NativeCall,
+        ),
+        ("setSeconds", 2, date_set_utc_seconds as NativeCall),
+        ("setUTCSeconds", 2, date_set_utc_seconds as NativeCall),
+        ("setMinutes", 3, date_set_utc_minutes as NativeCall),
+        ("setUTCMinutes", 3, date_set_utc_minutes as NativeCall),
+        ("setHours", 4, date_set_utc_hours as NativeCall),
+        ("setUTCHours", 4, date_set_utc_hours as NativeCall),
+        ("setDate", 1, date_set_utc_date as NativeCall),
+        ("setUTCDate", 1, date_set_utc_date as NativeCall),
+        ("setMonth", 2, date_set_utc_month as NativeCall),
+        ("setUTCMonth", 2, date_set_utc_month as NativeCall),
+        ("setFullYear", 3, date_set_utc_full_year as NativeCall),
+        ("setUTCFullYear", 3, date_set_utc_full_year as NativeCall),
+        ("setYear", 1, date_set_year as NativeCall),
     ] {
         define_method(context, prototype, name, length, call)?;
     }
+    let to_utc_string = define_method(context, prototype, "toUTCString", 0, date_to_utc_string)?;
+    context.define_own_property(
+        prototype,
+        "toGMTString".into(),
+        method_descriptor(to_utc_string),
+    )?;
 
     let to_primitive =
         context.register_builtin("[Symbol.toPrimitive]", 1, date_to_primitive, None)?;
@@ -818,6 +846,15 @@ fn date_get_utc_full_year(
     date_field(context, &this_value, |fields| fields.year as f64)
 }
 
+fn date_get_year(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    date_field(context, &this_value, |fields| (fields.year - 1900) as f64)
+}
+
 fn date_get_utc_month(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -907,6 +944,282 @@ fn date_set_time(
     )?);
     set_date_value(context, &this_value, value)?;
     Ok(JsValue::Number(value))
+}
+
+fn date_number_or_default(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    index: usize,
+    default: f64,
+) -> Result<f64, VmError> {
+    match arguments.get(index) {
+        Some(value) => vm.to_number(value.clone(), context),
+        None => Ok(default),
+    }
+}
+
+fn time_within_day(fields: DateFields) -> f64 {
+    make_time(
+        fields.hour as f64,
+        fields.minute as f64,
+        fields.second as f64,
+        fields.millisecond as f64,
+    )
+}
+
+fn fields_for_set(value: f64, nan_as_epoch: bool) -> Option<DateFields> {
+    decompose_time(value).or_else(|| nan_as_epoch.then(|| decompose_time(0.0)).flatten())
+}
+
+fn set_date_from_parts(
+    context: &mut NativeContext,
+    this_value: &JsValue,
+    year: f64,
+    month: f64,
+    date: f64,
+    time: f64,
+) -> Result<JsValue, VmError> {
+    let value = time_clip(make_date(make_day(year, month, date), time));
+    set_date_value(context, this_value, value)?;
+    Ok(JsValue::Number(value))
+}
+
+fn date_set_utc_milliseconds(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let millisecond = vm.to_number(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    let Some(fields) = fields_for_set(value, false) else {
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    let time = make_time(
+        fields.hour as f64,
+        fields.minute as f64,
+        fields.second as f64,
+        millisecond,
+    );
+    set_date_from_parts(
+        context,
+        &this_value,
+        fields.year as f64,
+        (fields.month - 1) as f64,
+        fields.day as f64,
+        time,
+    )
+}
+
+fn date_set_utc_seconds(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let Some(fields) = fields_for_set(value, false) else {
+        vm.to_number(
+            arguments.first().cloned().unwrap_or(JsValue::Undefined),
+            context,
+        )?;
+        if let Some(argument) = arguments.get(1) {
+            vm.to_number(argument.clone(), context)?;
+        }
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    let second = date_number_or_default(vm, context, arguments, 0, fields.second as f64)?;
+    let millisecond = date_number_or_default(vm, context, arguments, 1, fields.millisecond as f64)?;
+    let time = make_time(
+        fields.hour as f64,
+        fields.minute as f64,
+        second,
+        millisecond,
+    );
+    set_date_from_parts(
+        context,
+        &this_value,
+        fields.year as f64,
+        (fields.month - 1) as f64,
+        fields.day as f64,
+        time,
+    )
+}
+
+fn date_set_utc_minutes(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let Some(fields) = fields_for_set(value, false) else {
+        for index in 0..arguments.len().min(3) {
+            vm.to_number(arguments[index].clone(), context)?;
+        }
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    let minute = date_number_or_default(vm, context, arguments, 0, fields.minute as f64)?;
+    let second = date_number_or_default(vm, context, arguments, 1, fields.second as f64)?;
+    let millisecond = date_number_or_default(vm, context, arguments, 2, fields.millisecond as f64)?;
+    let time = make_time(fields.hour as f64, minute, second, millisecond);
+    set_date_from_parts(
+        context,
+        &this_value,
+        fields.year as f64,
+        (fields.month - 1) as f64,
+        fields.day as f64,
+        time,
+    )
+}
+
+fn date_set_utc_hours(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let Some(fields) = fields_for_set(value, false) else {
+        for index in 0..arguments.len().min(4) {
+            vm.to_number(arguments[index].clone(), context)?;
+        }
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    let hour = date_number_or_default(vm, context, arguments, 0, fields.hour as f64)?;
+    let minute = date_number_or_default(vm, context, arguments, 1, fields.minute as f64)?;
+    let second = date_number_or_default(vm, context, arguments, 2, fields.second as f64)?;
+    let millisecond = date_number_or_default(vm, context, arguments, 3, fields.millisecond as f64)?;
+    let time = make_time(hour, minute, second, millisecond);
+    set_date_from_parts(
+        context,
+        &this_value,
+        fields.year as f64,
+        (fields.month - 1) as f64,
+        fields.day as f64,
+        time,
+    )
+}
+
+fn date_set_utc_date(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let date = vm.to_number(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    let Some(fields) = fields_for_set(value, false) else {
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    set_date_from_parts(
+        context,
+        &this_value,
+        fields.year as f64,
+        (fields.month - 1) as f64,
+        date,
+        time_within_day(fields),
+    )
+}
+
+fn date_set_utc_month(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let Some(fields) = fields_for_set(value, false) else {
+        for index in 0..arguments.len().min(2) {
+            vm.to_number(arguments[index].clone(), context)?;
+        }
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    let month = date_number_or_default(vm, context, arguments, 0, (fields.month - 1) as f64)?;
+    let date = date_number_or_default(vm, context, arguments, 1, fields.day as f64)?;
+    set_date_from_parts(
+        context,
+        &this_value,
+        fields.year as f64,
+        month,
+        date,
+        time_within_day(fields),
+    )
+}
+
+fn date_set_utc_full_year(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let Some(fields) = fields_for_set(value, true) else {
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    let year = vm.to_number(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    let month = date_number_or_default(vm, context, arguments, 1, (fields.month - 1) as f64)?;
+    let date = date_number_or_default(vm, context, arguments, 2, fields.day as f64)?;
+    set_date_from_parts(
+        context,
+        &this_value,
+        year,
+        month,
+        date,
+        time_within_day(fields),
+    )
+}
+
+fn date_set_year(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    let year = vm.to_number(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    if year.is_nan() {
+        set_date_value(context, &this_value, f64::NAN)?;
+        return Ok(JsValue::Number(f64::NAN));
+    }
+    let Some(fields) = fields_for_set(value, true) else {
+        return set_date_value_and_return_nan(context, &this_value);
+    };
+    let integer_year = year.trunc();
+    let full_year = if (0.0..=99.0).contains(&integer_year) {
+        integer_year + 1900.0
+    } else {
+        integer_year
+    };
+    set_date_from_parts(
+        context,
+        &this_value,
+        full_year,
+        (fields.month - 1) as f64,
+        fields.day as f64,
+        time_within_day(fields),
+    )
+}
+
+fn set_date_value_and_return_nan(
+    context: &mut NativeContext,
+    this_value: &JsValue,
+) -> Result<JsValue, VmError> {
+    set_date_value(context, this_value, f64::NAN)?;
+    Ok(JsValue::Number(f64::NAN))
 }
 
 fn date_to_primitive(
