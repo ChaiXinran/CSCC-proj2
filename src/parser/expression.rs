@@ -650,6 +650,7 @@ impl Parser {
             TokenKind::Punctuator('[') => self.parse_array_literal(),
             TokenKind::Punctuator('{') => self.parse_object_literal(),
             TokenKind::Keyword(Keyword::Function) => self.parse_function_expression(),
+            TokenKind::Keyword(Keyword::Import) => self.parse_dynamic_import(),
             // In a primary-expression position, `/` and `/=` introduce a regex
             // literal, not a division operator. Use the source text to re-read the
             // full `/pattern/flags` sequence, then skip the tokens that the
@@ -694,6 +695,41 @@ impl Parser {
             }
             other => Err(self.error(format!("unexpected {}", describe(&other)))),
         }
+    }
+
+    fn parse_dynamic_import(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // consume `import`
+        // `import.meta` — module meta-object (§13.3.12). Only valid in module code.
+        if self.eat_punctuator('.') {
+            match &self.peek().kind.clone() {
+                TokenKind::Identifier(name) if name == "meta" => {
+                    self.advance();
+                    return Ok(Expression::ImportMeta);
+                }
+                _ => return Err(self.error("expected `meta` after `import.`".into())),
+            }
+        }
+        self.expect_punctuator('(')?;
+        if self.check_punctuator(')') {
+            return Err(self.error("dynamic import requires a specifier".into()));
+        }
+        let specifier = self.allowing_in(|parser| parser.parse_assignment())?;
+        let options = if self.eat_punctuator(',') {
+            if self.check_punctuator(')') {
+                None
+            } else {
+                Some(Box::new(
+                    self.allowing_in(|parser| parser.parse_assignment())?,
+                ))
+            }
+        } else {
+            None
+        };
+        self.expect_punctuator(')')?;
+        Ok(Expression::DynamicImport {
+            specifier: Box::new(specifier),
+            options,
+        })
     }
 
     fn parse_regex_literal(&mut self) -> Result<Expression, ParseError> {
@@ -826,7 +862,7 @@ impl Parser {
 
         // Computed key: `[expr]: value` or `[expr]() {}`
         if self.eat_punctuator('[') {
-            let key = self.parse_assignment()?;
+            let key = self.allowing_in(|parser| parser.parse_assignment())?;
             self.expect_punctuator(']')?;
             if self.check_punctuator('(') {
                 let params = self.parse_param_list()?;
@@ -1092,7 +1128,7 @@ impl Parser {
             // Computed property name: `[expr]`
             TokenKind::Punctuator('[') => {
                 self.advance(); // consume `[`
-                let expr = self.parse_assignment()?;
+                let expr = self.allowing_in(|parser| parser.parse_assignment())?;
                 self.expect_punctuator(']')?;
                 Ok(PropertyName::Computed(Box::new(expr)))
             }
@@ -2129,6 +2165,12 @@ impl Parser {
                     self.walk_field_init(e, false)?;
                 }
             }
+            Expression::DynamicImport { specifier, options } => {
+                self.walk_field_init(specifier, false)?;
+                if let Some(options) = options {
+                    self.walk_field_init(options, false)?;
+                }
+            }
             // Class expressions: stop recursion (own class scope)
             Expression::Class(_) => {}
             // Terminals: nothing to recurse into
@@ -2136,6 +2178,7 @@ impl Parser {
             | Expression::This
             | Expression::Super
             | Expression::NewTarget
+            | Expression::ImportMeta
             | Expression::Identifier(_)
             | Expression::PrivateName(_) => {}
         }
@@ -2479,10 +2522,18 @@ impl Parser {
                 }
                 Ok(())
             }
+            Expression::DynamicImport { specifier, options } => {
+                self.walk_static_block_expr(specifier)?;
+                if let Some(options) = options {
+                    self.walk_static_block_expr(options)?;
+                }
+                Ok(())
+            }
             Expression::Literal(_)
             | Expression::This
             | Expression::Super
             | Expression::NewTarget
+            | Expression::ImportMeta
             | Expression::Identifier(_)
             | Expression::PrivateName(_) => Ok(()),
         }
@@ -3234,6 +3285,12 @@ mod tests {
         Parser::new(tokens)
             .parse_program()
             .expect("computed class member names re-enable `in`");
+    }
+
+    #[test]
+    fn object_computed_property_name_allows_in_inside_for_header() {
+        parse_program_ok("for (obj = { get ['x' in empty]() { return 1; } }; ; ) { break; }");
+        parse_program_ok("for (obj = { ['x' in empty]: 1 }; ; ) { break; }");
     }
 
     #[test]

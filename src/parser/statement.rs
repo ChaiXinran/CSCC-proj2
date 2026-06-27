@@ -1805,12 +1805,40 @@ impl Parser {
             cases.push(SwitchCase { test, consequent });
         }
 
+        // Annex B B.3.3.4: in non-strict mode, duplicate FunctionDeclaration names are allowed.
+        let all_case_stmts: Vec<&Statement> =
+            cases.iter().flat_map(|c| c.consequent.iter()).collect();
+        let fn_decl_only_switch: HashSet<&str> = {
+            let mut fn_names: HashSet<&str> = HashSet::new();
+            let mut non_fn_names: HashSet<&str> = HashSet::new();
+            for stmt in &all_case_stmts {
+                match stmt {
+                    Statement::FunctionDeclaration { name, .. } => {
+                        fn_names.insert(name.as_str());
+                    }
+                    Statement::VariableDeclaration {
+                        kind: crate::ast::VariableKind::Let | crate::ast::VariableKind::Const,
+                        declarations,
+                    } => {
+                        for d in declarations { non_fn_names.insert(d.name.as_str()); }
+                    }
+                    Statement::ClassDeclaration(cls) => {
+                        non_fn_names.insert(cls.name.as_str());
+                    }
+                    _ => {}
+                }
+            }
+            fn_names.difference(&non_fn_names).copied().collect()
+        };
         let mut lexical_names = HashSet::new();
         for name in cases
             .iter()
             .flat_map(|case| direct_lexical_names(&case.consequent))
         {
             if !lexical_names.insert(name) {
+                if !self.is_strict && fn_decl_only_switch.contains(name) {
+                    continue;
+                }
                 return Err(self.error(format!("duplicate lexical declaration `{name}` in switch")));
             }
         }
@@ -1833,9 +1861,39 @@ impl Parser {
         &self,
         statements: &[Statement],
     ) -> Result<(), ParseError> {
-        let mut lexical_names = HashSet::new();
+        // Names that appear only as FunctionDeclarations in this block (for Annex B B.3.3.4).
+        let fn_decl_only: HashSet<&str> = {
+            let mut fn_names: HashSet<&str> = HashSet::new();
+            let mut non_fn_names: HashSet<&str> = HashSet::new();
+            for stmt in statements {
+                match stmt {
+                    Statement::FunctionDeclaration { name, .. } => {
+                        fn_names.insert(name.as_str());
+                    }
+                    Statement::VariableDeclaration {
+                        kind: crate::ast::VariableKind::Let | crate::ast::VariableKind::Const,
+                        declarations,
+                    } => {
+                        for d in declarations {
+                            non_fn_names.insert(d.name.as_str());
+                        }
+                    }
+                    Statement::ClassDeclaration(cls) => {
+                        non_fn_names.insert(cls.name.as_str());
+                    }
+                    _ => {}
+                }
+            }
+            fn_names.difference(&non_fn_names).copied().collect()
+        };
+
+        let mut lexical_names: HashSet<&str> = HashSet::new();
         for name in direct_lexical_names(statements) {
             if !lexical_names.insert(name) {
+                // Annex B B.3.3.4: duplicate function declarations in non-strict mode are allowed.
+                if !self.is_strict && fn_decl_only.contains(name) {
+                    continue;
+                }
                 return Err(self.error(format!("duplicate lexical declaration `{name}`")));
             }
         }
@@ -2078,12 +2136,17 @@ fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
         Expression::Yield { argument, .. } => argument
             .as_deref()
             .is_some_and(expr_contains_forbidden_meta),
+        Expression::DynamicImport { specifier, options } => {
+            expr_contains_forbidden_meta(specifier)
+                || options.as_deref().is_some_and(expr_contains_forbidden_meta)
+        }
         Expression::Sequence(expressions) => expressions.iter().any(expr_contains_forbidden_meta),
         Expression::Literal(_)
         | Expression::Identifier(_)
         | Expression::Function(_)
         | Expression::Class(_)
         | Expression::This
+        | Expression::ImportMeta
         | Expression::PrivateName(_) => false,
     }
 }
@@ -2173,6 +2236,9 @@ fn expr_contains_yield(expr: &Expression) -> bool {
         Expression::TemplateLiteral(template) => {
             template.expressions.iter().any(expr_contains_yield)
         }
+        Expression::DynamicImport { specifier, options } => {
+            expr_contains_yield(specifier) || options.as_deref().is_some_and(expr_contains_yield)
+        }
         Expression::Sequence(expressions) => expressions.iter().any(expr_contains_yield),
         Expression::Literal(_)
         | Expression::Identifier(_)
@@ -2181,6 +2247,7 @@ fn expr_contains_yield(expr: &Expression) -> bool {
         | Expression::This
         | Expression::Super
         | Expression::NewTarget
+        | Expression::ImportMeta
         | Expression::PrivateName(_) => false,
     }
 }

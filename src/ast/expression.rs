@@ -441,9 +441,16 @@ pub enum Expression {
     },
     /// `await expr` inside an async function.
     Await(Box<Expression>),
+    /// `import(specifier[, options])` dynamic import expression.
+    DynamicImport {
+        specifier: Box<Expression>,
+        options: Option<Box<Expression>>,
+    },
     /// `new.target` — the constructor or function that was invoked with `new`.
     /// Returns `undefined` in regular calls; the constructor function in `new` calls.
     NewTarget,
+    /// `import.meta` — the module meta-object. Only valid inside module code.
+    ImportMeta,
     /// `#name` used as a member-access property (e.g. `this.#x`, `obj.#method()`).
     PrivateName(String),
     /// Comma operator: evaluates each expression and returns the last.

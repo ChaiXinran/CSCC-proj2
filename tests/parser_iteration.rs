@@ -68,6 +68,21 @@ fn parses_generator_function_expression() {
 }
 
 #[test]
+fn parses_dynamic_import_expression() {
+    let prog = parse("var p = import('./x.js', { with: { type: 'json' } });");
+    let Statement::VariableDeclaration { declarations, .. } = &prog.body[0] else {
+        panic!("expected variable declaration");
+    };
+    let Expression::DynamicImport { specifier, options } =
+        declarations[0].initializer.as_ref().expect("initializer")
+    else {
+        panic!("expected dynamic import expression");
+    };
+    assert!(matches!(specifier.as_ref(), Expression::Literal(_)));
+    assert!(options.is_some());
+}
+
+#[test]
 fn parses_yield_expression_with_argument() {
     let prog = parse("function* g() { yield 1 + 2; }");
     let Statement::FunctionDeclaration { body, .. } = &prog.body[0] else {

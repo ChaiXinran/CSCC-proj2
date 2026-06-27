@@ -151,7 +151,12 @@ impl Parser {
     /// contain top-level import/export declarations.
     pub fn parse_module(&mut self) -> Result<Program, ParseError> {
         let outer_strict = self.is_strict;
+        let outer_async = self.is_async_context;
         self.is_strict = true;
+        // Spec §11.5: Module code is always strict. Top-level await (§15.7)
+        // means the module-level scope behaves like an async function body —
+        // `await` is a keyword, not an identifier, at the top level.
+        self.is_async_context = true;
         let result = (|| {
             self.consume_directive_prologue()?;
             let mut body = Vec::new();
@@ -163,6 +168,7 @@ impl Parser {
             Ok(Program { body })
         })();
         self.is_strict = outer_strict;
+        self.is_async_context = outer_async;
         result
     }
 

@@ -300,18 +300,102 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        // Annex B B.3.3.1: classify block-level function declarations.
+        // "Path B" = Annex B is SKIPPED because the fn name is already visible in an
+        // enclosing lexical scope (any let/const/class from outer block OR function body).
+        // These must be block-scoped here so they don't leak to the outer var env.
+        // "Path A" = Annex B APPLIES; the fn goes to the outer var env (pre-hoisted as undefined
+        // at function entry by compile_function_body).
+        let mut path_b_fn_names: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        if context.function_depth > 0 {
+            // Check ALL currently visible lexical scopes (function-body + any outer blocks).
+            let all_visible_lexicals: std::collections::HashSet<&str> = context
+                .lexical_scopes
+                .iter()
+                .flat_map(|scope| scope.iter().map(|s| s.as_str()))
+                .collect();
+            for stmt in statements {
+                if let Statement::FunctionDeclaration { name, .. } = stmt {
+                    if all_visible_lexicals.contains(name.as_str()) {
+                        path_b_fn_names.insert(name.clone());
+                    }
+                }
+            }
+        }
+
         let names = lexical_names(statements);
-        if names.is_empty() {
+
+        // If there are no let/const/class AND no path-B function names, no block env is needed.
+        // Path-A fn decls: compile_statement_list hoists them into the current (outer) env.
+        if names.is_empty() && path_b_fn_names.is_empty() {
             return self.compile_statement_list(statements, chunk, context);
+        }
+
+        // A block env is needed (for let/const/class and/or path-B fn names).
+        // Path-A fn decls must be hoisted to the OUTER env BEFORE the block env is created,
+        // so that DeclareFunction binds in the outer scope, not the block scope.
+        for stmt in statements {
+            if let Statement::FunctionDeclaration {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } = stmt
+            {
+                if !path_b_fn_names.contains(name) {
+                    self.compile_function_declaration(
+                        name,
+                        params,
+                        body,
+                        (*is_async, *is_generator),
+                        chunk,
+                        context,
+                    )?;
+                }
+            }
         }
 
         chunk.emit(Instruction::CreateLexicalEnvironment);
         context.environment_depth += 1;
-        let scope = self.predeclare_names(&names, statements, chunk)?;
+        let mut scope = self.predeclare_names(&names, statements, chunk)?;
+        // Path-B fn names are declared by DeclareFunction below (no pre-declare needed).
+        for name in &path_b_fn_names {
+            scope.insert(name.clone());
+        }
         context.lexical_scopes.push(scope);
-        let result = self.compile_statement_list(statements, chunk, context);
+
+        // Hoist path-B fn decls (DeclareFunction into block env), skipping path-A ones.
+        for stmt in statements {
+            if let Statement::FunctionDeclaration {
+                name,
+                params,
+                body,
+                is_async,
+                is_generator,
+            } = stmt
+            {
+                if path_b_fn_names.contains(name) {
+                    self.compile_function_declaration(
+                        name,
+                        params,
+                        body,
+                        (*is_async, *is_generator),
+                        chunk,
+                        context,
+                    )?;
+                }
+            }
+        }
+        // Compile non-function statements (all fn decls already handled above).
+        for stmt in statements {
+            if !matches!(stmt, Statement::FunctionDeclaration { .. }) {
+                self.compile_statement(stmt, chunk, context, false)?;
+            }
+        }
+
         context.lexical_scopes.pop();
-        result?;
         chunk.emit(Instruction::PopEnvironment);
         context.environment_depth -= 1;
         Ok(())
@@ -531,7 +615,11 @@ impl Compiler {
         let mut body_starts = Vec::with_capacity(cases.len());
         for case in cases {
             body_starts.push(chunk.current_offset());
-            self.compile_statement_list(&case.consequent, chunk, context)?;
+            // Annex B: function declarations in switch case bodies are block-scoped;
+            // route them through compile_block so path-B classification works correctly.
+            for stmt in &case.consequent {
+                self.compile_if_body(stmt, chunk, context)?;
+            }
         }
 
         let cleanup = chunk.current_offset();
@@ -577,7 +665,10 @@ impl Compiler {
         self.compile_expression(test, chunk, context)?;
         let false_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
         chunk.emit(Instruction::Pop);
-        self.compile_statement(consequent, chunk, context, false)?;
+        // Annex B B.3.3: a bare FunctionDeclaration in an if-body is block-scoped.
+        // Route through compile_block so path-B classification and block-env creation
+        // happen correctly (prevents DeclareFunction from overwriting an outer `let f`).
+        self.compile_if_body(consequent, chunk, context)?;
         let end_jump = chunk.emit(Instruction::Jump(usize::MAX));
 
         let false_cleanup = chunk.current_offset();
@@ -586,7 +677,7 @@ impl Compiler {
             .map_err(CompileError::from_chunk)?;
         chunk.emit(Instruction::Pop);
         if let Some(alternate) = alternate {
-            self.compile_statement(alternate, chunk, context, false)?;
+            self.compile_if_body(alternate, chunk, context)?;
         }
 
         let end = chunk.current_offset();
@@ -594,6 +685,22 @@ impl Compiler {
             .patch_jump(end_jump, end)
             .map_err(CompileError::from_chunk)?;
         Ok(())
+    }
+
+    /// Compiles an if-body statement. When the body is a bare `FunctionDeclaration`,
+    /// routes through `compile_block` so Annex B path-B classification and the implicit
+    /// block scope are handled correctly.
+    fn compile_if_body(
+        &mut self,
+        body: &Statement,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        if matches!(body, Statement::FunctionDeclaration { .. }) {
+            self.compile_block(std::slice::from_ref(body), chunk, context)
+        } else {
+            self.compile_statement(body, chunk, context, false)
+        }
     }
 
     fn compile_while(
@@ -1457,7 +1564,19 @@ impl Compiler {
             environment_depth: 0,
             function_depth: outer_context.function_depth + 1,
         };
-        let lexical_scope = self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
+        let mut lexical_scope = self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
+        // Include formal parameter names and `arguments` in the function body's lexical scope
+        // so that compile_block can classify Annex B fn decls whose name matches a param as
+        // path-B (block-scoped) instead of path-A (hoisting into the outer var env).
+        for name in &param_names {
+            if !name.starts_with('$') {
+                lexical_scope.insert(name.clone());
+            }
+        }
+        if let Some(rest) = &rest_param {
+            lexical_scope.insert(rest.clone());
+        }
+        lexical_scope.insert("arguments".into());
         fn_context.lexical_scopes.push(lexical_scope);
 
         // Emit preamble: default-value checks and pattern destructuring.
@@ -1551,6 +1670,41 @@ impl Compiler {
                     let idx = self.add_name(&name, &mut fn_chunk)?;
                     fn_chunk.emit(Instruction::Constant(undef_const));
                     fn_chunk.emit(Instruction::DeclareLocal(idx));
+                }
+            }
+        }
+
+        // Annex B B.3.3.1: in sloppy mode, pre-declare block-level function declaration names
+        // as var=undefined so they are accessible (as undefined) before the containing block
+        // executes (e.g. `init = f` before `{ function f() {} }`).
+        if !body.is_strict {
+            let annex_b_candidates = collect_annex_b_fn_candidates(&body.statements);
+            if !annex_b_candidates.is_empty() {
+                let param_set: std::collections::HashSet<&str> =
+                    param_names.iter().map(|s| s.as_str()).collect();
+                let fn_body_lexical_set: std::collections::HashSet<String> =
+                    lexical_names(&body.statements).into_iter().collect();
+                let undef_const = fn_chunk
+                    .add_constant(Constant::Undefined)
+                    .map_err(CompileError::from_chunk)?;
+                let mut already_hoisted: std::collections::HashSet<String> =
+                    std::collections::HashSet::new();
+                for name in annex_b_candidates {
+                    if already_hoisted.contains(&name) {
+                        continue;
+                    }
+                    // Skip: already bound as a formal param, 'arguments' (always in paramNames),
+                    // or would conflict with a function-scope lexical declaration.
+                    if param_set.contains(name.as_str())
+                        || name == "arguments"
+                        || fn_body_lexical_set.contains(&name)
+                    {
+                        continue;
+                    }
+                    let idx = self.add_name(&name, &mut fn_chunk)?;
+                    fn_chunk.emit(Instruction::Constant(undef_const));
+                    fn_chunk.emit(Instruction::DeclareLocal(idx));
+                    already_hoisted.insert(name);
                 }
             }
         }
@@ -1691,11 +1845,20 @@ impl Compiler {
                 chunk.emit(Instruction::LoadNewTarget);
                 Ok(())
             }
+            Expression::ImportMeta => {
+                // `import.meta` — module meta-object. Runtime support lives in B/C;
+                // for now emit an empty object so the parse shape is accepted.
+                chunk.emit(Instruction::ObjectCreateEmpty);
+                Ok(())
+            }
             Expression::Await(value) => {
                 self.compile_expression(value, chunk, context)?;
                 chunk.emit(Instruction::AwaitValue);
                 Ok(())
             }
+            Expression::DynamicImport { .. } => Err(CompileError::unsupported(
+                "dynamic import execution is owned by the V12-B module protocol",
+            )),
             Expression::Sequence(exprs) => {
                 for (i, expr) in exprs.iter().enumerate() {
                     self.compile_expression(expr, chunk, context)?;
@@ -4192,6 +4355,189 @@ fn is_anonymous_function_definition(expr: &Expression) -> bool {
         Expression::Function(lit) => lit.name.is_none(),
         Expression::Class(cls) => cls.name.is_none(),
         _ => false,
+    }
+}
+
+/// Collect names of function declarations that are Annex B B.3.3.1 candidates:
+/// function declarations appearing directly inside block statements, IfStatement
+/// bodies (bare fn decl, no braces), or SwitchStatement case bodies.
+/// Recurses into control-flow constructs but NOT into nested function bodies.
+fn collect_annex_b_fn_candidates(statements: &[Statement]) -> Vec<String> {
+    let mut names = Vec::new();
+    // Initialize with the function body's own top-level lexical names (let/const/class).
+    // A block-level fn decl whose name conflicts with one of these is skipped (var F would
+    // produce an early error against the outer let/const F).
+    let enclosing: std::collections::HashSet<String> =
+        lexical_names(statements).into_iter().collect();
+    for stmt in statements {
+        annex_b_collect_stmt(stmt, &enclosing, &mut names);
+    }
+    names
+}
+
+/// `enclosing_block_lexicals` = union of let/const/class names from all enclosing blocks
+/// that are INSIDE the current function body (not the function body itself).
+/// A block-level fn decl is a valid Annex B candidate only if its name is NOT already in
+/// this set (otherwise `var F` would conflict with an enclosing lexical binding → early error →
+/// Annex B skipped).
+fn annex_b_collect_stmt(
+    stmt: &Statement,
+    enclosing_block_lexicals: &std::collections::HashSet<String>,
+    names: &mut Vec<String>,
+) {
+    match stmt {
+        Statement::Block(stmts) => {
+            // Lexical names introduced by THIS block.
+            let block_own: std::collections::HashSet<String> =
+                lexical_names(stmts).into_iter().collect();
+            // Combined = parent enclosing + this block's own lexicals.
+            let mut combined = enclosing_block_lexicals.clone();
+            combined.extend(block_own);
+
+            // Function declarations DIRECTLY in this block: candidate only if name is
+            // NOT in the ENCLOSING blocks' lexicals (this block's own names don't matter
+            // for the early-error check on var F in an outer scope).
+            for inner in stmts {
+                if let Statement::FunctionDeclaration { name, .. } = inner {
+                    if !enclosing_block_lexicals.contains(name) && !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                }
+            }
+            // Recurse with the combined set (now this block's names are "enclosing" for nested).
+            for inner in stmts {
+                if !matches!(inner, Statement::FunctionDeclaration { .. }) {
+                    annex_b_collect_stmt(inner, &combined, names);
+                }
+            }
+        }
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
+            // Bare fn decl as if/else body (no `{ }`) = Annex B candidate if not conflicting.
+            if let Statement::FunctionDeclaration { name, .. } = consequent.as_ref() {
+                if !enclosing_block_lexicals.contains(name) && !names.contains(name) {
+                    names.push(name.clone());
+                }
+            } else {
+                annex_b_collect_stmt(consequent, enclosing_block_lexicals, names);
+            }
+            if let Some(alt) = alternate {
+                if let Statement::FunctionDeclaration { name, .. } = alt.as_ref() {
+                    if !enclosing_block_lexicals.contains(name) && !names.contains(name) {
+                        names.push(name.clone());
+                    }
+                } else {
+                    annex_b_collect_stmt(alt, enclosing_block_lexicals, names);
+                }
+            }
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::Labelled { body, .. } => {
+            annex_b_collect_stmt(body, enclosing_block_lexicals, names);
+        }
+        // `for (let x; ...) body` — the loop's let/const init creates a lexical scope
+        // that is enclosing for the body. Must include those names in the conflict check.
+        Statement::For { init, body, .. } => {
+            let mut inner_enclosing = enclosing_block_lexicals.clone();
+            if let Some(init_stmt) = init {
+                if let Statement::VariableDeclaration {
+                    kind: VariableKind::Let | VariableKind::Const,
+                    declarations,
+                } = init_stmt.as_ref()
+                {
+                    for decl in declarations {
+                        if let Some(pat) = &decl.pattern {
+                            for n in binding_pattern_names(pat) {
+                                inner_enclosing.insert(n);
+                            }
+                        } else {
+                            inner_enclosing.insert(decl.name.clone());
+                        }
+                    }
+                }
+            }
+            annex_b_collect_stmt(body, &inner_enclosing, names);
+        }
+        Statement::ForIn { left, body, .. } | Statement::ForOf { left, body, .. } => {
+            let mut inner_enclosing = enclosing_block_lexicals.clone();
+            if let crate::ast::ForBinding::Declaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                pattern,
+            } = left
+            {
+                for n in binding_pattern_names(pattern) {
+                    inner_enclosing.insert(n);
+                }
+            }
+            annex_b_collect_stmt(body, &inner_enclosing, names);
+        }
+        Statement::Try {
+            block,
+            handler,
+            finalizer,
+        } => {
+            for s in block {
+                annex_b_collect_stmt(s, enclosing_block_lexicals, names);
+            }
+            if let Some(catch_clause) = handler {
+                for s in &catch_clause.body {
+                    annex_b_collect_stmt(s, enclosing_block_lexicals, names);
+                }
+            }
+            if let Some(fin) = finalizer {
+                for s in fin {
+                    annex_b_collect_stmt(s, enclosing_block_lexicals, names);
+                }
+            }
+        }
+        Statement::Switch { cases, .. } => {
+            // Switch cases share a single lexical scope. Collect all let/const names from
+            // ALL case bodies — these act as enclosing lexicals for nested blocks inside.
+            let mut switch_body_lexicals = enclosing_block_lexicals.clone();
+            for case in cases {
+                for s in &case.consequent {
+                    if let Statement::VariableDeclaration {
+                        kind: VariableKind::Let | VariableKind::Const,
+                        declarations,
+                    } = s
+                    {
+                        for decl in declarations {
+                            if let Some(pat) = &decl.pattern {
+                                for n in binding_pattern_names(pat) {
+                                    switch_body_lexicals.insert(n);
+                                }
+                            } else {
+                                switch_body_lexicals.insert(decl.name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            for case in cases {
+                // Function declarations DIRECTLY in switch case bodies = Annex B candidates
+                // (if not conflicting with enclosing scope lexicals, NOT switch-body lexicals).
+                for s in &case.consequent {
+                    if let Statement::FunctionDeclaration { name, .. } = s {
+                        if !enclosing_block_lexicals.contains(name) && !names.contains(name) {
+                            names.push(name.clone());
+                        }
+                    }
+                }
+                // Recurse with the combined switch-body lexicals as the new enclosing.
+                for s in &case.consequent {
+                    if !matches!(s, Statement::FunctionDeclaration { .. }) {
+                        annex_b_collect_stmt(s, &switch_body_lexicals, names);
+                    }
+                }
+            }
+        }
+        // FunctionDeclaration at top level of function body: hoisted normally, not Annex B.
+        // All other statements: no Annex B candidates inside.
+        _ => {}
     }
 }
 
