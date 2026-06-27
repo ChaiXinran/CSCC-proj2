@@ -1515,6 +1515,14 @@ fn typed_array_constructor_values(
     }
     if matches!(source, JsValue::Number(_)) {
         let length = to_index(vm, context, source)?;
+        let byte_length = length
+            .checked_mul(kind.bytes_per_element())
+            .ok_or_else(|| VmError::range("typed array byte length overflow"))?;
+        if byte_length > MAX_SKELETON_BUFFER_BYTES {
+            return Err(VmError::range(
+                "typed array length exceeds V8 skeleton limit",
+            ));
+        }
         let zero = if kind.is_bigint() {
             JsValue::BigInt(0)
         } else {
@@ -2573,21 +2581,22 @@ fn typed_array_sort_values(
     mut values: Vec<JsValue>,
     compare_fn: Option<JsValue>,
 ) -> Result<Vec<JsValue>, VmError> {
+    if compare_fn.is_none() {
+        values.sort_by(typed_array_default_compare);
+        return Ok(values);
+    }
+
     for i in 1..values.len() {
         let mut j = i;
         while j > 0 {
-            let swap = if let Some(func) = &compare_fn {
-                let compared = vm.call_value_from_builtin(
-                    func.clone(),
-                    JsValue::Undefined,
-                    vec![values[j - 1].clone(), values[j].clone()],
-                    context,
-                )?;
-                vm.to_number(compared, context)? > 0.0
-            } else {
-                vm.to_string_coerce(values[j - 1].clone(), context)?
-                    > vm.to_string_coerce(values[j].clone(), context)?
-            };
+            let func = compare_fn.as_ref().expect("compare_fn checked above");
+            let compared = vm.call_value_from_builtin(
+                func.clone(),
+                JsValue::Undefined,
+                vec![values[j - 1].clone(), values[j].clone()],
+                context,
+            )?;
+            let swap = vm.to_number(compared, context)? > 0.0;
             if !swap {
                 break;
             }
@@ -2596,6 +2605,34 @@ fn typed_array_sort_values(
         }
     }
     Ok(values)
+}
+
+fn typed_array_default_compare(left: &JsValue, right: &JsValue) -> std::cmp::Ordering {
+    match (left, right) {
+        (JsValue::BigInt(left), JsValue::BigInt(right)) => left.cmp(right),
+        _ => compare_typed_array_numbers(
+            left.to_number().unwrap_or(f64::NAN),
+            right.to_number().unwrap_or(f64::NAN),
+        ),
+    }
+}
+
+fn compare_typed_array_numbers(left: f64, right: f64) -> std::cmp::Ordering {
+    match (left.is_nan(), right.is_nan()) {
+        (true, true) => return std::cmp::Ordering::Equal,
+        (true, false) => return std::cmp::Ordering::Greater,
+        (false, true) => return std::cmp::Ordering::Less,
+        (false, false) => {}
+    }
+    if left == right {
+        return match (left.is_sign_negative(), right.is_sign_negative()) {
+            (true, false) if left == 0.0 => std::cmp::Ordering::Less,
+            (false, true) if left == 0.0 => std::cmp::Ordering::Greater,
+            _ => std::cmp::Ordering::Equal,
+        };
+    }
+    left.partial_cmp(&right)
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 fn typed_array_sort(

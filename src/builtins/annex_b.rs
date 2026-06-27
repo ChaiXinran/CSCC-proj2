@@ -569,7 +569,7 @@ fn set_last_index(
     receiver: JsValue,
     value: usize,
 ) -> Result<(), VmError> {
-    let _ = vm.set_property_value_from_builtin(
+    vm.set_property_value_strict_from_builtin(
         receiver,
         "lastIndex",
         JsValue::Number(value as f64),

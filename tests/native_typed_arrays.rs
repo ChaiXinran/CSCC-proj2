@@ -90,6 +90,33 @@ fn typed_array_storage_methods_and_index_access_are_live() {
 }
 
 #[test]
+fn typed_array_default_sort_is_numeric_and_handles_nan_and_negative_zero() {
+    assert_eq!(
+        native_eval(
+            "var u = new Uint8Array([10, 2, 1]); \
+             u.sort(); \
+             var f = new Float64Array([NaN, 1, -0, 0, -1]); \
+             f.sort(); \
+             u.join(',') + ':' + f[0] + ':' + (1 / f[1] === -Infinity) + ':' + \
+             (1 / f[2] === Infinity) + ':' + f[3] + ':' + (f[4] !== f[4]);"
+        ),
+        "1,2,10:-1:true:true:1:true"
+    );
+}
+
+#[test]
+fn typed_array_constructor_rejects_excessive_numeric_lengths_before_allocation() {
+    assert_eq!(
+        native_eval(
+            "var caught = false; \
+             try { new Float64Array(0x800000000); } catch (e) { caught = e instanceof RangeError; } \
+             caught;"
+        ),
+        "true"
+    );
+}
+
+#[test]
 fn typed_array_set_boxes_primitive_array_like_sources() {
     assert_eq!(
         native_eval(

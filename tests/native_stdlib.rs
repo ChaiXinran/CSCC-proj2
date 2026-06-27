@@ -3,7 +3,7 @@
 
 use agentjs::{
     backend::BackendKind,
-    engine::{Engine, ExecutionOptions, RuntimeConfig},
+    engine::{Engine, ExecutionOptions, FailureKind, RuntimeConfig},
 };
 
 fn native_eval(source: &str) -> String {
@@ -64,6 +64,34 @@ fn string_repeat_with_negative_count_throws_catchable_range_error() {
 }
 
 // ── Number.prototype + statics ───────────────────────────────────────────────
+
+#[test]
+fn regexp_replacement_allocation_limit_is_catchable() {
+    let error = Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+        .execute(
+            "function puff(x, n) { while (x.length < n) x += x; return x.substring(0, n); } \
+             var x = puff('1', 1 << 20); \
+             var rep = puff('$1', 1 << 16); \
+             x.replace(/(.+)/g, rep);",
+            ExecutionOptions::default(),
+        )
+        .expect_err("huge replacement should be rejected before allocation");
+    assert_eq!(error.kind, FailureKind::RuntimeLimit);
+}
+
+#[test]
+fn regexp_match_rejects_non_writable_last_index() {
+    assert_eq!(
+        native_eval(
+            "var p = /x/g; \
+             Object.defineProperty(p, 'lastIndex', { writable: false }); \
+             var r = 'no throw'; \
+             try { '0x'.match(p); } catch (e) { r = e.name; } \
+             r;"
+        ),
+        "TypeError"
+    );
+}
 
 #[test]
 fn bigint_minimal_runtime_semantics() {
