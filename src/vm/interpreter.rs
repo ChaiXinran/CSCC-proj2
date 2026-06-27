@@ -1204,20 +1204,32 @@ impl Vm {
                     }
                 }
 
-                // V9-A stubs: async support (B group provides full implementation)
                 Instruction::CreateAsyncFunction(function) => {
-                    let _ = chunk.functions.get(function as usize).ok_or_else(|| {
-                        VmError::runtime(format!(
-                            "CreateAsyncFunction: function index {function} out of range"
-                        ))
-                    })?;
-                    return Err(VmError::runtime(
-                        "async functions not yet implemented (V9-B pending)",
-                    ));
+                    let value = self.create_function(chunk, function, context)?;
+                    self.stack.push(value);
                 }
                 Instruction::AwaitValue => {
-                    let _value = self.pop_value()?;
-                    return Err(VmError::runtime("await not yet implemented (V9-B pending)"));
+                    let value = self.pop_value()?;
+                    if let Some(promise) = context.promise_id_from_value(&value) {
+                        self.drain_jobs(context)?;
+                        match context.promise_state(promise) {
+                            Some(crate::runtime::PromiseState::Fulfilled(value)) => {
+                                self.stack.push(value);
+                            }
+                            Some(crate::runtime::PromiseState::Rejected(value)) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                            Some(crate::runtime::PromiseState::Pending) => {
+                                return Err(VmError::runtime(
+                                    "awaited Promise is still pending; async continuation is not available",
+                                ));
+                            }
+                            None => return Err(VmError::runtime("invalid Promise id")),
+                        }
+                    } else {
+                        self.stack.push(value);
+                    }
                 }
 
                 Instruction::ForInKeys => {
@@ -1956,6 +1968,7 @@ impl Vm {
             length_override: template.length_override,
             chunk: template.chunk,
             environment,
+            is_async: template.is_async,
             is_generator: template.is_generator,
         })?;
         if template.is_strict || context.strict() {
@@ -3128,6 +3141,38 @@ impl Vm {
         }
     }
 
+    pub(crate) fn collect_iterable_values_from_builtin(
+        &mut self,
+        iterable: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Vec<JsValue>, VmError> {
+        let iterator = match self.create_iterator_object(iterable, context)? {
+            OperationResult::Value(iterator) => iterator,
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                return Err(VmError::runtime("GetIterator threw"));
+            }
+        };
+        let root_depth = self.stack.len();
+        self.stack.push(iterator.clone());
+        let result = (|| {
+            let mut values = Vec::new();
+            loop {
+                context.consume_loop_iteration()?;
+                match self.step_iterator_object(iterator.clone(), context)? {
+                    IteratorStepResult::Value { done: true, .. } => return Ok(values),
+                    IteratorStepResult::Value { value, done: false } => values.push(value),
+                    IteratorStepResult::Throw(value) => {
+                        self.pending_exception = Some(value);
+                        return Err(VmError::runtime("IteratorNext threw"));
+                    }
+                }
+            }
+        })();
+        self.stack.truncate(root_depth);
+        result
+    }
+
     pub(crate) fn call_value_catching_from_builtin(
         &mut self,
         callee: JsValue,
@@ -4246,7 +4291,7 @@ impl Vm {
         let frame_result = context.pop_call_frame();
         let environment_result = context.restore_environment_depth(caller_environment_depth);
 
-        match result {
+        let operation = match result {
             Err(error) => Err(error),
             Ok(completion) => {
                 frame_result?;
@@ -4269,7 +4314,39 @@ impl Vm {
                     ))),
                 }
             }
+        };
+        if function.is_async {
+            self.wrap_async_function_result(operation?, context)
+        } else {
+            operation
         }
+    }
+
+    fn wrap_async_function_result(
+        &mut self,
+        operation: OperationResult,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let promise = context.create_promise()?;
+        let prototype = context
+            .get_global("Promise")
+            .and_then(|constructor| context.value_object(&constructor))
+            .and_then(|constructor| {
+                context
+                    .get_own_property_descriptor(constructor, "prototype")
+                    .and_then(|descriptor| descriptor.value_cloned())
+                    .and_then(|value| context.value_object(&value))
+            });
+        let promise_object = context.create_promise_object(promise, prototype)?;
+        match operation {
+            OperationResult::Value(value) => {
+                context.fulfill_promise(promise, value)?;
+            }
+            OperationResult::Throw(value) => {
+                context.reject_promise(promise, value)?;
+            }
+        }
+        Ok(OperationResult::Value(promise_object))
     }
 
     fn construct_value(
@@ -4312,10 +4389,12 @@ impl Vm {
                 let operation = (|| {
                     if context
                         .function(function_id)
-                        .is_some_and(|function| function.is_generator)
+                        .is_some_and(|function| function.is_generator || function.is_async)
                     {
                         return Ok(OperationResult::Throw(vm_error_to_value(
-                            VmError::type_error("generator functions are not constructors"),
+                            VmError::type_error(
+                                "generator and async functions are not constructors",
+                            ),
                         )));
                     }
                     let prototype =

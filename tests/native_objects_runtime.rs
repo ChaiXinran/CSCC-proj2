@@ -218,6 +218,7 @@ fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
         length_override: None,
         chunk: function_chunk,
         is_strict: false,
+        is_async: false,
         is_generator: false,
         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
     };

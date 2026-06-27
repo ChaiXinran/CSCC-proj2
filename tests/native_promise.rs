@@ -89,3 +89,84 @@ fn promise_try_and_with_resolvers_expose_minimal_capabilities() {
         "5:ok"
     );
 }
+
+#[test]
+fn promise_all_consumes_a_custom_iterator() {
+    let mut config = RuntimeConfig::default();
+    config.gc_allocation_threshold = 1;
+    let mut runtime = NativeRuntime::new(config);
+    runtime
+        .eval_source(
+            "var iterable = {}; \
+             iterable[Symbol.iterator] = function () { \
+               var value = 0; \
+               return { next: function () { \
+                 value = value + 1; \
+                 return { value: value, done: value > 2 }; \
+               } }; \
+             }; \
+             var result = ''; \
+             Promise.all(iterable).then(function (values) { \
+               result = '' + values[0] + values[1]; \
+             });",
+            ExecutionOptions::default(),
+        )
+        .expect("Promise.all custom iterator");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read result"),
+        "12"
+    );
+}
+
+#[test]
+fn async_function_awaits_settled_values_and_rejects_on_throw() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var log = ''; \
+             async function fulfilled() { \
+               var value = await Promise.resolve(6); \
+               return value + 1; \
+             } \
+             async function rejected() { throw 'bad'; } \
+             fulfilled().then(function (value) { log = '' + value; }); \
+             rejected().catch(function (reason) { log = log + ':' + reason; });",
+            ExecutionOptions::default(),
+        )
+        .expect("async functions");
+
+    assert_eq!(
+        runtime
+            .eval_source("log;", ExecutionOptions::default())
+            .expect("read log"),
+        "7:bad"
+    );
+}
+
+#[test]
+fn for_await_of_uses_the_sync_iterator_fallback() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var result = 0; \
+             async function sum() { \
+               for await (var value of [Promise.resolve(2), 3]) { \
+                 result = result + value; \
+               } \
+               return result; \
+             } \
+             sum();",
+            ExecutionOptions::default(),
+        )
+        .expect("for-await-of over sync iterable");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read result"),
+        "5"
+    );
+}

@@ -61,6 +61,7 @@ fn gc_preserves_closure_environment_and_captured_values() {
             handlers: Vec::new(),
         },
         environment: Some(outer),
+        is_async: false,
         is_generator: false,
     };
     let function_id = context.allocate_function(function).unwrap();

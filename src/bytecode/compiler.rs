@@ -125,15 +125,15 @@ impl Compiler {
                 name,
                 params,
                 body,
+                is_async,
                 is_generator,
-                ..
             } = statement
             {
                 self.compile_function_declaration(
                     name,
                     params,
                     body,
-                    *is_generator,
+                    (*is_async, *is_generator),
                     &mut chunk,
                     &mut context,
                 )?;
@@ -237,11 +237,16 @@ impl Compiler {
                 name,
                 params,
                 body,
+                is_async,
                 is_generator,
-                ..
-            } => {
-                self.compile_function_declaration(name, params, body, *is_generator, chunk, context)
-            }
+            } => self.compile_function_declaration(
+                name,
+                params,
+                body,
+                (*is_async, *is_generator),
+                chunk,
+                context,
+            ),
             Statement::Try {
                 block,
                 handler,
@@ -320,15 +325,15 @@ impl Compiler {
                 name,
                 params,
                 body,
+                is_async,
                 is_generator,
-                ..
             } = statement
             {
                 self.compile_function_declaration(
                     name,
                     params,
                     body,
-                    *is_generator,
+                    (*is_async, *is_generator),
                     chunk,
                     context,
                 )?;
@@ -1341,10 +1346,11 @@ impl Compiler {
         name: &str,
         params: &[crate::ast::FunctionParam],
         body: &FunctionBody,
-        is_generator: bool,
+        function_kind: (bool, bool),
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        let (is_async, is_generator) = function_kind;
         let fn_chunk = self.compile_function_body(params, body, context)?;
         let template = FunctionTemplate {
             name: Some(name.to_string()),
@@ -1353,6 +1359,7 @@ impl Compiler {
             length_override: Some(fn_chunk.length),
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
+            is_async,
             is_generator,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -1546,15 +1553,15 @@ impl Compiler {
                 name,
                 params,
                 body: inner_body,
+                is_async,
                 is_generator,
-                ..
             } = statement
             {
                 self.compile_function_declaration(
                     name,
                     params,
                     inner_body,
-                    *is_generator,
+                    (*is_async, *is_generator),
                     &mut fn_chunk,
                     &mut fn_context,
                 )?;
@@ -3012,6 +3019,7 @@ impl Compiler {
             length_override: Some(compiled.length),
             chunk: compiled.chunk,
             is_strict: compiled.is_strict,
+            is_async: false,
             is_generator: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3260,6 +3268,7 @@ impl Compiler {
             length_override: Some(ctor_fn.length),
             chunk: ctor_fn.chunk,
             is_strict: true, // class bodies are always strict
+            is_async: false,
             is_generator: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3289,6 +3298,7 @@ impl Compiler {
                     length_override: Some(fn_compiled.length),
                     chunk: fn_compiled.chunk,
                     is_strict: true, // class methods are always strict
+                    is_async: function.is_async,
                     is_generator: function.is_generator,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -3356,6 +3366,7 @@ impl Compiler {
                     length_override: Some(fn_compiled.length),
                     chunk: fn_compiled.chunk,
                     is_strict: true, // class methods are always strict
+                    is_async: function.is_async,
                     is_generator: function.is_generator,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -3727,6 +3738,7 @@ impl Compiler {
             length_override: Some(fn_chunk.length),
             chunk: fn_chunk.chunk,
             is_strict: fn_chunk.is_strict,
+            is_async: literal.is_async,
             is_generator: literal.is_generator,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3756,12 +3768,6 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        if is_await {
-            return Err(CompileError::unsupported(
-                "for-await-of requires V9-B async iterator support",
-            ));
-        }
-
         const ITER: &str = "\u{0}forof_iter";
 
         chunk.emit(Instruction::CreateLexicalEnvironment);
@@ -3823,6 +3829,11 @@ impl Compiler {
         // if is_done (top), jump to exit.
         let exit_jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX));
         chunk.emit(Instruction::Pop); // pop is_done=false
+        if is_await {
+            // Async-from-Sync iterator fallback: await each value yielded by the
+            // ordinary iterator before assigning it to the loop target.
+            chunk.emit(Instruction::AwaitValue);
+        }
 
         // Assign the iteration value to the loop variable.
         // For let/var, the binding was pre-initialized before the loop; use StoreName

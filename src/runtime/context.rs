@@ -2178,7 +2178,7 @@ impl NativeContext {
         match value {
             JsValue::Function(function) => self
                 .function(*function)
-                .is_some_and(|function| !function.is_generator),
+                .is_some_and(|function| !function.is_generator && !function.is_async),
             JsValue::BuiltinFunction(id) => self.builtin(*id).is_some_and(|builtin| {
                 if let Some(bound) = &builtin.bound {
                     self.is_constructable_value(&bound.target)
