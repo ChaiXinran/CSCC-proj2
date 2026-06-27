@@ -49,6 +49,20 @@ fn regexp_flags_getter_is_generic_and_ordered() {
 }
 
 #[test]
+fn regexp_prototype_tag_and_flag_getters_match_intrinsic_shape() {
+    assert_eq!(
+        native_eval(
+            "var global = Object.getOwnPropertyDescriptor(RegExp.prototype, 'global').get; \
+             var dotAll = Object.getOwnPropertyDescriptor(RegExp.prototype, 'dotAll').get; \
+             Object.prototype.toString.call(RegExp.prototype) + ':' + \
+             (global.call(RegExp.prototype) === undefined) + ':' + \
+             (dotAll.call(RegExp.prototype) === undefined);"
+        ),
+        "[object RegExp]:true:true"
+    );
+}
+
+#[test]
 fn regexp_exec_and_test_use_to_string_and_last_index() {
     assert_eq!(
         native_eval(

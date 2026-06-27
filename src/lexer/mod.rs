@@ -35,8 +35,8 @@ const OPERATORS: &[&str] = &[
     // 4-char
     ">>>=", "&&=", "||=", "??=", // 3-char
     "===", "!==", ">>=", ">>>", "<<=", "**=", // 2-char
-    "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "++", "--", "+=", "-=", "**", "*=", "/=", "%=", "|=",
-    "^=", "&=", ">>", "<<", // 1-char
+    "=>", "==", "!=", "<=", ">=", "&&", "||", "??", "++", "--", "+=", "-=", "**", "*=", "/=", "%=",
+    "|=", "^=", "&=", ">>", "<<", // 1-char
     "+", "-", "*", "/", "%", "!", "=", "<", ">", "|", "^", "&", "~", "?",
 ];
 
@@ -215,7 +215,10 @@ impl<'source> Lexer<'source> {
             }
         }
         let end = self.cursor.offset();
-        Ok(Token::new(TokenKind::PrivateName(name), Span::new(start, end)))
+        Ok(Token::new(
+            TokenKind::PrivateName(name),
+            Span::new(start, end),
+        ))
     }
 
     fn read_identifier_or_keyword(&mut self) -> Result<Token, LexError> {
@@ -1185,8 +1188,7 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                 '-' if unicode_mode && i + 1 < len && chars[i + 1] != ']' => {
                     if let Some(previous) = class_previous_atom {
                         let Some((next_atom, next_i)) =
-                            regex_class_atom_at(&chars, i + 1, unicode_mode)
-                                .map_err(make_err)?
+                            regex_class_atom_at(&chars, i + 1, unicode_mode).map_err(make_err)?
                         else {
                             class_previous_atom = Some(RegexClassAtomKind::Single);
                             i += 1;

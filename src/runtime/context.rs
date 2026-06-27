@@ -9,12 +9,11 @@ use super::{
     ArrayBufferId, ArrayBufferRecord, BoundFunction, BuiltinFunction, BuiltinId, CollectionStats,
     Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId, Heap, HeapStats,
     IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue, NativeCall,
-    NativeConstruct, NativeErrorKind, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PromiseId,
-    PromiseCallbackJob, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
-    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, RootSet,
-    SymbolId, SymbolRegistry,
-    TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols,
-    iterator::IteratorKind, object::array_index,
+    NativeConstruct, NativeErrorKind, NativeJob, ObjectId, ObjectKind, PrimitiveValue,
+    PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
+    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, ProxyRecord,
+    RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
+    WellKnownSymbols, iterator::IteratorKind, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 
@@ -111,6 +110,10 @@ pub struct NativeContext {
     function_prototypes: HashMap<FunctionId, ObjectId>,
     function_objects: HashMap<FunctionId, ObjectId>,
     strict_functions: HashSet<FunctionId>,
+    function_restricted_thrower: Option<JsValue>,
+    function_legacy_caller_getter: Option<JsValue>,
+    function_legacy_arguments_getter: Option<JsValue>,
+    function_legacy_setter: Option<JsValue>,
     object_values: HashMap<ObjectId, JsValue>,
     error_objects: HashSet<ObjectId>,
     raw_json_objects: HashMap<ObjectId, String>,
@@ -167,6 +170,10 @@ impl NativeContext {
             function_prototypes: HashMap::new(),
             function_objects: HashMap::new(),
             strict_functions: HashSet::new(),
+            function_restricted_thrower: None,
+            function_legacy_caller_getter: None,
+            function_legacy_arguments_getter: None,
+            function_legacy_setter: None,
             object_values: HashMap::new(),
             error_objects: HashSet::new(),
             raw_json_objects: HashMap::new(),
@@ -292,6 +299,17 @@ impl NativeContext {
         roots
             .object_roots
             .extend(self.function_objects.values().copied());
+        for value in [
+            &self.function_restricted_thrower,
+            &self.function_legacy_caller_getter,
+            &self.function_legacy_arguments_getter,
+            &self.function_legacy_setter,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            roots.value_roots.push(value.clone());
+        }
         for builtin in &self.builtin_registry {
             roots.object_roots.push(builtin.object);
             if let Some(bound) = &builtin.bound {
@@ -370,12 +388,12 @@ impl NativeContext {
         // Set Function.prototype as the prototype so .call/.apply/.bind are accessible
         object.prototype = self.function_prototype_object();
         object.define_property(
-            "name",
-            PropertyDescriptor::data_with(JsValue::String(name.into()), false, false, true),
-        );
-        object.define_property(
             "length",
             PropertyDescriptor::data_with(JsValue::Number(f64::from(length)), false, false, true),
+        );
+        object.define_property(
+            "name",
+            PropertyDescriptor::data_with(JsValue::String(name.into()), false, false, true),
         );
         let object_id = self
             .heap
@@ -409,12 +427,12 @@ impl NativeContext {
         let mut object = JsObject::ordinary();
         object.prototype = self.function_prototype_object();
         object.define_property(
-            "name",
-            PropertyDescriptor::data_with(JsValue::String("bound".into()), false, false, true),
-        );
-        object.define_property(
             "length",
             PropertyDescriptor::data_with(JsValue::Number(f64::from(length)), false, false, true),
+        );
+        object.define_property(
+            "name",
+            PropertyDescriptor::data_with(JsValue::String("bound".into()), false, false, true),
         );
         let object_id = self
             .heap
@@ -471,6 +489,49 @@ impl NativeContext {
     #[must_use]
     pub fn is_function_prototype_apply(&self, id: BuiltinId) -> bool {
         self.function_prototype_apply == Some(id)
+    }
+
+    pub fn set_function_restricted_thrower(&mut self, thrower: JsValue) {
+        self.function_restricted_thrower = Some(thrower);
+    }
+
+    pub fn set_function_legacy_accessors(
+        &mut self,
+        caller_getter: JsValue,
+        arguments_getter: JsValue,
+        setter: JsValue,
+    ) {
+        self.function_legacy_caller_getter = Some(caller_getter);
+        self.function_legacy_arguments_getter = Some(arguments_getter);
+        self.function_legacy_setter = Some(setter);
+    }
+
+    fn restricted_function_descriptor(&self) -> Option<PropertyDescriptor> {
+        let thrower = self.function_restricted_thrower.clone()?;
+        Some(PropertyDescriptor::accessor(
+            Some(thrower.clone()),
+            Some(thrower),
+            false,
+            true,
+        ))
+    }
+
+    fn legacy_function_caller_descriptor(&self) -> Option<PropertyDescriptor> {
+        Some(PropertyDescriptor::accessor(
+            Some(self.function_legacy_caller_getter.clone()?),
+            self.function_legacy_setter.clone(),
+            false,
+            true,
+        ))
+    }
+
+    fn legacy_function_arguments_descriptor(&self) -> Option<PropertyDescriptor> {
+        Some(PropertyDescriptor::accessor(
+            Some(self.function_legacy_arguments_getter.clone()?),
+            self.function_legacy_setter.clone(),
+            false,
+            true,
+        ))
     }
 
     #[must_use]
@@ -698,6 +759,62 @@ impl NativeContext {
         self.strict_functions.insert(function);
     }
 
+    pub fn install_restricted_function_properties(
+        &mut self,
+        function: FunctionId,
+    ) -> Result<(), VmError> {
+        let Some(object) = self.function_object(function) else {
+            return Ok(());
+        };
+        let Some(descriptor) = self.restricted_function_descriptor() else {
+            return Ok(());
+        };
+        self.define_own_property(object, "caller".into(), descriptor.clone())?;
+        self.define_own_property(object, "arguments".into(), descriptor)?;
+        Ok(())
+    }
+
+    pub fn remove_own_function_legacy_properties(
+        &mut self,
+        function: FunctionId,
+    ) -> Result<(), VmError> {
+        let Some(object) = self.function_object(function) else {
+            return Ok(());
+        };
+        self.delete_property(object, "caller", false)?;
+        self.delete_property(object, "arguments", false)?;
+        Ok(())
+    }
+
+    pub fn legacy_function_caller(&self, this: &JsValue) -> Result<JsValue, VmError> {
+        let JsValue::Function(target) = this else {
+            if matches!(this, JsValue::BuiltinFunction(_)) {
+                return Ok(JsValue::Null);
+            }
+            return Err(VmError::type_error(
+                "Function caller getter receiver is not callable",
+            ));
+        };
+        let Some(index) = self
+            .call_frames
+            .iter()
+            .rposition(|frame| frame.function == Some(*target))
+        else {
+            return Ok(JsValue::Null);
+        };
+        let Some(caller) = index
+            .checked_sub(1)
+            .and_then(|caller_index| self.call_frames.get(caller_index))
+            .and_then(|frame| frame.function)
+        else {
+            return Ok(JsValue::Null);
+        };
+        if self.is_strict_function(caller) {
+            return Err(VmError::type_error("caller is a strict mode function"));
+        }
+        Ok(JsValue::Function(caller))
+    }
+
     #[must_use]
     pub fn is_strict_function(&self, function: FunctionId) -> bool {
         self.strict_functions.contains(&function)
@@ -721,6 +838,15 @@ impl NativeContext {
     pub fn require_object(&self, value: &JsValue, operation: &str) -> Result<ObjectId, VmError> {
         self.value_object(value)
             .ok_or_else(|| VmError::type_error(format!("cannot {operation} on {value}")))
+    }
+
+    #[must_use]
+    pub fn proxy_record(&self, object: ObjectId) -> Option<ProxyRecord> {
+        let object = self.heap.object(object)?;
+        match &object.kind {
+            ObjectKind::Proxy { record } => Some(record.clone()),
+            _ => None,
+        }
     }
 
     pub fn mark_error_object(&mut self, object: ObjectId) {
@@ -1128,14 +1254,12 @@ impl NativeContext {
             .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         self.function_prototypes.insert(id, prototype_id);
 
+        let legacy_caller_descriptor = self.legacy_function_caller_descriptor();
+        let legacy_arguments_descriptor = self.legacy_function_arguments_descriptor();
         let function_object = self
             .heap
             .object_mut(function_object_id)
             .ok_or_else(|| VmError::runtime("missing function object"))?;
-        function_object.define_property(
-            "name",
-            PropertyDescriptor::data_with(JsValue::String(function_name), false, false, true),
-        );
         function_object.define_property(
             "length",
             PropertyDescriptor::data_with(
@@ -1146,9 +1270,19 @@ impl NativeContext {
             ),
         );
         function_object.define_property(
+            "name",
+            PropertyDescriptor::data_with(JsValue::String(function_name), false, false, true),
+        );
+        function_object.define_property(
             "prototype",
             PropertyDescriptor::data_with(JsValue::Object(prototype_id), true, false, false),
         );
+        if let Some(descriptor) = legacy_caller_descriptor {
+            function_object.define_property("caller", descriptor);
+        }
+        if let Some(descriptor) = legacy_arguments_descriptor {
+            function_object.define_property("arguments", descriptor);
+        }
         Ok(id)
     }
 
@@ -2513,14 +2647,15 @@ impl NativeContext {
         let reactions = std::mem::take(&mut record.reactions);
         record.state = state;
         for reaction in reactions {
-            self.job_queue.push(Job::PromiseCallback(PromiseCallbackJob {
-                result_promise: reaction.result_promise,
-                on_fulfilled: reaction.on_fulfilled,
-                on_rejected: reaction.on_rejected,
-                fulfilled,
-                value: value.clone(),
-                finally: reaction.finally,
-            }));
+            self.job_queue
+                .push(Job::PromiseCallback(PromiseCallbackJob {
+                    result_promise: reaction.result_promise,
+                    on_fulfilled: reaction.on_fulfilled,
+                    on_rejected: reaction.on_rejected,
+                    fulfilled,
+                    value: value.clone(),
+                    finally: reaction.finally,
+                }));
         }
         Ok(true)
     }
@@ -2536,25 +2671,27 @@ impl NativeContext {
             .ok_or_else(|| VmError::runtime("invalid promise id"))?;
         match &record.state {
             PromiseState::Pending => record.reactions.push(reaction),
-            PromiseState::Fulfilled(value) => self.job_queue.push(Job::PromiseCallback(
-                PromiseCallbackJob {
-                    result_promise: reaction.result_promise,
-                    on_fulfilled: reaction.on_fulfilled,
-                    on_rejected: reaction.on_rejected,
-                    fulfilled: true,
-                    value: value.clone(),
-                    finally: reaction.finally,
-                },
-            )),
+            PromiseState::Fulfilled(value) => {
+                self.job_queue
+                    .push(Job::PromiseCallback(PromiseCallbackJob {
+                        result_promise: reaction.result_promise,
+                        on_fulfilled: reaction.on_fulfilled,
+                        on_rejected: reaction.on_rejected,
+                        fulfilled: true,
+                        value: value.clone(),
+                        finally: reaction.finally,
+                    }))
+            }
             PromiseState::Rejected(value) => {
-                self.job_queue.push(Job::PromiseCallback(PromiseCallbackJob {
-                    result_promise: reaction.result_promise,
-                    on_fulfilled: reaction.on_fulfilled,
-                    on_rejected: reaction.on_rejected,
-                    fulfilled: false,
-                    value: value.clone(),
-                    finally: reaction.finally,
-                }));
+                self.job_queue
+                    .push(Job::PromiseCallback(PromiseCallbackJob {
+                        result_promise: reaction.result_promise,
+                        on_fulfilled: reaction.on_fulfilled,
+                        on_rejected: reaction.on_rejected,
+                        fulfilled: false,
+                        value: value.clone(),
+                        finally: reaction.finally,
+                    }));
             }
         }
         Ok(())
@@ -2881,11 +3018,7 @@ impl NativeContext {
             byte_offset,
             view.element_kind.bytes_per_element(),
         )?;
-        Ok(JsValue::Number(decode_typed_array_number(
-            view.element_kind,
-            bytes,
-            true,
-        )?))
+        decode_typed_array_value(view.element_kind, bytes, true)
     }
 
     pub fn typed_array_store_element(
@@ -2904,7 +3037,7 @@ impl NativeContext {
             return Err(VmError::range("TypedArray index is out of range"));
         }
         let byte_offset = typed_array_element_offset(&view, index)?;
-        let bytes = encode_typed_array_number(view.element_kind, value)?;
+        let bytes = encode_typed_array_value(self, view.element_kind, value)?;
         self.write_buffer_bytes(view.buffer, byte_offset, &bytes)
     }
 
@@ -2939,11 +3072,6 @@ impl NativeContext {
         let view = self
             .data_view_record(view)
             .ok_or_else(|| VmError::runtime("invalid DataView id"))?;
-        if element_kind.is_bigint() {
-            return Err(VmError::type_error(
-                "BigInt DataView elements are not implemented",
-            ));
-        }
         if self.is_array_buffer_detached(view.buffer)? {
             return Err(VmError::type_error("ArrayBuffer is detached"));
         }
@@ -2959,11 +3087,7 @@ impl NativeContext {
             .checked_add(request_index)
             .ok_or_else(|| VmError::runtime_limit("DataView byteOffset overflow"))?;
         let bytes = self.read_buffer_bytes(view.buffer, byte_offset, width)?;
-        Ok(JsValue::Number(decode_typed_array_number(
-            element_kind,
-            bytes,
-            little_endian,
-        )?))
+        decode_typed_array_value(element_kind, bytes, little_endian)
     }
 
     pub fn data_view_set(
@@ -2978,11 +3102,6 @@ impl NativeContext {
             .data_view_record(view)
             .ok_or_else(|| VmError::runtime("invalid DataView id"))?
             .clone();
-        if element_kind.is_bigint() {
-            return Err(VmError::type_error(
-                "BigInt DataView elements are not implemented",
-            ));
-        }
         if self.is_array_buffer_detached(view.buffer)? {
             return Err(VmError::type_error("ArrayBuffer is detached"));
         }
@@ -2997,7 +3116,7 @@ impl NativeContext {
             .byte_offset
             .checked_add(request_index)
             .ok_or_else(|| VmError::runtime_limit("DataView byteOffset overflow"))?;
-        let mut bytes = encode_typed_array_number(element_kind, value)?;
+        let mut bytes = encode_typed_array_value(self, element_kind, value)?;
         if !little_endian && width > 1 {
             bytes.reverse();
         }
@@ -3114,81 +3233,227 @@ fn typed_array_element_offset(view: &TypedArrayView, index: usize) -> Result<usi
         .ok_or_else(|| VmError::runtime_limit("typed array byteOffset overflow"))
 }
 
-fn encode_typed_array_number(
+fn encode_typed_array_value(
+    context: &NativeContext,
     kind: TypedArrayElementKind,
     value: JsValue,
 ) -> Result<Vec<u8>, VmError> {
-    if kind.is_bigint() {
-        return Err(VmError::type_error(
-            "BigInt typed array elements are not implemented",
-        ));
-    }
-    let number = value
-        .to_number()
-        .ok_or_else(|| VmError::type_error("typed array element value must be numeric"))?;
-    let bytes = match kind {
-        TypedArrayElementKind::Int8 => vec![(to_uint_n(number, 8) as u8) as i8 as u8],
-        TypedArrayElementKind::Uint8 => vec![to_uint_n(number, 8) as u8],
-        TypedArrayElementKind::Uint8Clamped => vec![to_uint8_clamp(number)],
-        TypedArrayElementKind::Int16 => {
-            (to_uint_n(number, 16) as u16 as i16).to_le_bytes().to_vec()
+    let bytes = if kind.is_bigint() {
+        let value = to_bigint_for_buffer(context, value)?;
+        bigint_to_u64_bits(value).to_le_bytes().to_vec()
+    } else {
+        let number = value
+            .to_number()
+            .ok_or_else(|| VmError::type_error("typed array element value must be numeric"))?;
+        match kind {
+            TypedArrayElementKind::Int8 => vec![(to_uint_n(number, 8) as u8) as i8 as u8],
+            TypedArrayElementKind::Uint8 => vec![to_uint_n(number, 8) as u8],
+            TypedArrayElementKind::Uint8Clamped => vec![to_uint8_clamp(number)],
+            TypedArrayElementKind::Int16 => {
+                (to_uint_n(number, 16) as u16 as i16).to_le_bytes().to_vec()
+            }
+            TypedArrayElementKind::Uint16 => (to_uint_n(number, 16) as u16).to_le_bytes().to_vec(),
+            TypedArrayElementKind::Int32 => {
+                (to_uint_n(number, 32) as u32 as i32).to_le_bytes().to_vec()
+            }
+            TypedArrayElementKind::Uint32 => (to_uint_n(number, 32) as u32).to_le_bytes().to_vec(),
+            TypedArrayElementKind::Float16 => f64_to_f16_bits(number).to_le_bytes().to_vec(),
+            TypedArrayElementKind::Float32 => (number as f32).to_le_bytes().to_vec(),
+            TypedArrayElementKind::Float64 => number.to_le_bytes().to_vec(),
+            TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64 => unreachable!(),
         }
-        TypedArrayElementKind::Uint16 => (to_uint_n(number, 16) as u16).to_le_bytes().to_vec(),
-        TypedArrayElementKind::Int32 => {
-            (to_uint_n(number, 32) as u32 as i32).to_le_bytes().to_vec()
-        }
-        TypedArrayElementKind::Uint32 => (to_uint_n(number, 32) as u32).to_le_bytes().to_vec(),
-        TypedArrayElementKind::Float32 => (number as f32).to_le_bytes().to_vec(),
-        TypedArrayElementKind::Float64 => number.to_le_bytes().to_vec(),
-        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64 => unreachable!(),
     };
     Ok(bytes)
 }
 
-fn decode_typed_array_number(
+fn decode_typed_array_value(
     kind: TypedArrayElementKind,
     bytes: &[u8],
     little_endian: bool,
-) -> Result<f64, VmError> {
-    if kind.is_bigint() {
-        return Err(VmError::type_error(
-            "BigInt typed array elements are not implemented",
-        ));
-    }
+) -> Result<JsValue, VmError> {
     let mut data = bytes.to_vec();
     if !little_endian && data.len() > 1 {
         data.reverse();
     }
-    let number = match kind {
-        TypedArrayElementKind::Int8 => i8::from_le_bytes([data[0]]) as f64,
-        TypedArrayElementKind::Uint8 | TypedArrayElementKind::Uint8Clamped => data[0] as f64,
-        TypedArrayElementKind::Int16 => i16::from_le_bytes(
+    let value = match kind {
+        TypedArrayElementKind::Int8 => JsValue::Number(i8::from_le_bytes([data[0]]) as f64),
+        TypedArrayElementKind::Uint8 | TypedArrayElementKind::Uint8Clamped => {
+            JsValue::Number(data[0] as f64)
+        }
+        TypedArrayElementKind::Int16 => JsValue::Number(i16::from_le_bytes(
             data.try_into()
                 .map_err(|_| VmError::runtime("invalid Int16 byte length"))?,
-        ) as f64,
-        TypedArrayElementKind::Uint16 => u16::from_le_bytes(
+        ) as f64),
+        TypedArrayElementKind::Uint16 => JsValue::Number(u16::from_le_bytes(
             data.try_into()
                 .map_err(|_| VmError::runtime("invalid Uint16 byte length"))?,
-        ) as f64,
-        TypedArrayElementKind::Int32 => i32::from_le_bytes(
+        ) as f64),
+        TypedArrayElementKind::Int32 => JsValue::Number(i32::from_le_bytes(
             data.try_into()
                 .map_err(|_| VmError::runtime("invalid Int32 byte length"))?,
-        ) as f64,
-        TypedArrayElementKind::Uint32 => u32::from_le_bytes(
+        ) as f64),
+        TypedArrayElementKind::Uint32 => JsValue::Number(u32::from_le_bytes(
             data.try_into()
                 .map_err(|_| VmError::runtime("invalid Uint32 byte length"))?,
-        ) as f64,
-        TypedArrayElementKind::Float32 => f32::from_le_bytes(
+        ) as f64),
+        TypedArrayElementKind::Float16 => JsValue::Number(f16_bits_to_f64(u16::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid Float16 byte length"))?,
+        ))),
+        TypedArrayElementKind::Float32 => JsValue::Number(f32::from_le_bytes(
             data.try_into()
                 .map_err(|_| VmError::runtime("invalid Float32 byte length"))?,
-        ) as f64,
-        TypedArrayElementKind::Float64 => f64::from_le_bytes(
+        ) as f64),
+        TypedArrayElementKind::Float64 => JsValue::Number(f64::from_le_bytes(
             data.try_into()
                 .map_err(|_| VmError::runtime("invalid Float64 byte length"))?,
-        ),
-        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64 => unreachable!(),
+        )),
+        TypedArrayElementKind::BigInt64 => JsValue::BigInt(i64::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid BigInt64 byte length"))?,
+        ) as i128),
+        TypedArrayElementKind::BigUint64 => JsValue::BigInt(u64::from_le_bytes(
+            data.try_into()
+                .map_err(|_| VmError::runtime("invalid BigUint64 byte length"))?,
+        ) as i128),
     };
-    Ok(number)
+    Ok(value)
+}
+
+fn to_bigint_for_buffer(context: &NativeContext, value: JsValue) -> Result<i128, VmError> {
+    match value {
+        JsValue::BigInt(value) => Ok(value),
+        JsValue::Boolean(value) => Ok(i128::from(value)),
+        JsValue::String(value) => parse_bigint_string(&value)
+            .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
+        JsValue::Object(object) => match context.primitive_value(object) {
+            Some(PrimitiveValue::BigInt(value)) => Ok(*value),
+            Some(PrimitiveValue::Boolean(value)) => Ok(i128::from(*value)),
+            Some(PrimitiveValue::String(value)) => parse_bigint_string(&value)
+                .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
+            _ => Err(VmError::type_error("Cannot convert value to BigInt")),
+        },
+        _ => Err(VmError::type_error("Cannot convert value to BigInt")),
+    }
+}
+
+fn bigint_to_u64_bits(value: i128) -> u64 {
+    const MODULO: i128 = 1_i128 << 64;
+    value.rem_euclid(MODULO) as u64
+}
+
+fn f64_to_f16_bits(value: f64) -> u16 {
+    let bits = (value as f32).to_bits();
+    let sign = ((bits >> 16) & 0x8000) as u16;
+    let exponent = ((bits >> 23) & 0xff) as i32;
+    let fraction = bits & 0x7f_ffff;
+
+    if exponent == 0xff {
+        if fraction == 0 {
+            return sign | 0x7c00;
+        }
+        let payload = (fraction >> 13) as u16;
+        return sign | 0x7c00 | payload | 1;
+    }
+
+    let half_exponent = exponent - 127 + 15;
+    if half_exponent >= 0x1f {
+        return sign | 0x7c00;
+    }
+    if half_exponent <= 0 {
+        if half_exponent < -10 {
+            return sign;
+        }
+        let mantissa = fraction | 0x80_0000;
+        let shift = (14 - half_exponent) as u32;
+        let mut half_mantissa = (mantissa >> shift) as u16;
+        let round_bit = 1_u32 << (shift - 1);
+        let remainder = mantissa & (round_bit - 1);
+        if (mantissa & round_bit) != 0 && (remainder != 0 || (half_mantissa & 1) != 0) {
+            half_mantissa += 1;
+        }
+        return sign | half_mantissa;
+    }
+
+    let mut half = sign | ((half_exponent as u16) << 10) | ((fraction >> 13) as u16);
+    let round_bits = fraction & 0x1fff;
+    if round_bits > 0x1000 || (round_bits == 0x1000 && (half & 1) != 0) {
+        half += 1;
+    }
+    half
+}
+
+fn f16_bits_to_f64(bits: u16) -> f64 {
+    let sign = ((bits & 0x8000) as u32) << 16;
+    let exponent = (bits >> 10) & 0x1f;
+    let fraction = bits & 0x03ff;
+
+    let f32_bits = if exponent == 0 {
+        if fraction == 0 {
+            sign
+        } else {
+            let mut mantissa = fraction as u32;
+            let mut exponent_value = -14_i32;
+            while (mantissa & 0x0400) == 0 {
+                mantissa <<= 1;
+                exponent_value -= 1;
+            }
+            mantissa &= 0x03ff;
+            sign | (((exponent_value + 127) as u32) << 23) | (mantissa << 13)
+        }
+    } else if exponent == 0x1f {
+        sign | 0x7f80_0000 | ((fraction as u32) << 13)
+    } else {
+        let exponent_value = (exponent as i32) - 15 + 127;
+        sign | ((exponent_value as u32) << 23) | ((fraction as u32) << 13)
+    };
+    f32::from_bits(f32_bits) as f64
+}
+
+fn parse_bigint_string(input: &str) -> Option<i128> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Some(0);
+    }
+    let (negative, unsigned) = if let Some(rest) = trimmed.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = trimmed.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, trimmed)
+    };
+    if (negative || trimmed.starts_with('+'))
+        && (unsigned.starts_with("0x")
+            || unsigned.starts_with("0X")
+            || unsigned.starts_with("0b")
+            || unsigned.starts_with("0B")
+            || unsigned.starts_with("0o")
+            || unsigned.starts_with("0O"))
+    {
+        return None;
+    }
+    let (digits, radix) = unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            unsigned
+                .strip_prefix("0b")
+                .or_else(|| unsigned.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            unsigned
+                .strip_prefix("0o")
+                .or_else(|| unsigned.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })
+        .unwrap_or((unsigned, 10));
+    if digits.is_empty() {
+        return None;
+    }
+    let value = i128::from_str_radix(digits, radix).ok()?;
+    Some(if negative { -value } else { value })
 }
 
 fn to_uint_n(number: f64, bits: u32) -> u64 {

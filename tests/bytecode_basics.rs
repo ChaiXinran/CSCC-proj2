@@ -146,10 +146,12 @@ fn compiler_preserves_completion_value_across_trailing_var_statements() {
 
     assert_eq!(chunk.instructions.last(), Some(&Instruction::Return));
     assert!(chunk.instructions.contains(&Instruction::DeclareGlobal(1)));
-    assert!(chunk
-        .instructions
-        .iter()
-        .any(|instruction| matches!(instruction, Instruction::DeclareGlobal(_))));
+    assert!(
+        chunk
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::DeclareGlobal(_)))
+    );
     assert_eq!(chunk.validate(), Ok(()));
 }
 
@@ -479,9 +481,11 @@ fn compiler_declares_initialized_and_uninitialized_var_bindings() {
     let chunk = Compiler::new().compile_program(&program).unwrap();
 
     assert!(chunk.constants.contains(&Constant::Undefined));
-    assert!(chunk
-        .constants
-        .contains(&Constant::String("initialized".into())));
+    assert!(
+        chunk
+            .constants
+            .contains(&Constant::String("initialized".into()))
+    );
     assert!(chunk.constants.contains(&Constant::String("empty".into())));
     assert!(chunk.constants.contains(&Constant::Number(1.0)));
     assert_eq!(
@@ -515,14 +519,18 @@ fn compiler_loads_identifier_expressions() {
 
     assert!(chunk.constants.contains(&Constant::Number(42.0)));
     assert!(chunk.constants.contains(&Constant::String("answer".into())));
-    assert!(chunk
-        .instructions
-        .iter()
-        .any(|instruction| matches!(instruction, Instruction::DeclareGlobal(_))));
-    assert!(chunk
-        .instructions
-        .iter()
-        .any(|instruction| matches!(instruction, Instruction::LoadGlobal(_))));
+    assert!(
+        chunk
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::DeclareGlobal(_)))
+    );
+    assert!(
+        chunk
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::LoadGlobal(_)))
+    );
     assert_eq!(chunk.instructions.last(), Some(&Instruction::Return));
 }
 
@@ -653,10 +661,12 @@ fn compiler_creates_lexical_bindings_before_initialization() {
 
         let chunk = Compiler::new().compile_program(&program).unwrap();
         assert_eq!(chunk.instructions[0], expected_create);
-        assert!(chunk
-            .instructions
-            .iter()
-            .any(|instruction| matches!(instruction, Instruction::InitializeBinding(_))));
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::InitializeBinding(_)))
+        );
     }
 }
 

@@ -1,5 +1,6 @@
 //! `Object` constructor, static methods, and prototype methods.
 
+use super::proxy;
 use crate::{
     runtime::{
         JsObject, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
@@ -264,13 +265,9 @@ fn own_descriptor_for_key(
     object: ObjectId,
     key_arg: JsValue,
 ) -> Result<Option<PropertyDescriptor>, VmError> {
-    match vm.to_property_key_from_builtin(key_arg, context)? {
-        JsValue::Symbol(symbol) => Ok(context.get_own_symbol_property_descriptor(object, symbol)),
-        JsValue::String(key) => Ok(context.get_own_property_descriptor(object, &key)),
-        _ => {
-            unreachable!("ToPropertyKey returns a string or symbol")
-        }
-    }
+    let key = proxy::to_property_key(vm, context, key_arg)?;
+    let target = context.object_value(object);
+    proxy::internal_get_own_property(vm, context, target, &key)
 }
 
 fn object_get_prototype_of(
@@ -503,6 +500,7 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Iterator { .. } => "Object",
         ObjectKind::Generator { .. } => "Generator",
         ObjectKind::Promise { .. } => "Promise",
+        ObjectKind::Proxy { .. } => "Object",
     })
 }
 
@@ -693,67 +691,65 @@ fn object_assign(
             }
             _ => context.object_value(source_id),
         };
-        let keys = context
-            .heap()
-            .object(source_id)
-            .ok_or_else(|| VmError::runtime("missing source object"))?
-            .own_property_keys();
+        let keys = proxy::internal_own_property_keys(vm, context, source_value.clone())?;
         for key in keys {
-            if !context
-                .get_own_property_descriptor(source_id, &key)
-                .is_some_and(|d| d.enumerable)
-            {
+            let Some(descriptor) =
+                proxy::internal_get_own_property(vm, context, source_value.clone(), &key)?
+            else {
+                continue;
+            };
+            if !descriptor.enumerable {
                 continue;
             }
-            let value = vm.get_property_value_with_receiver_from_builtin(
-                source_value.clone(),
+            let value = proxy::internal_get(
+                vm,
+                context,
                 source_value.clone(),
                 &key,
-                context,
-            )?;
-            if !vm.set_property_value_strict_from_builtin(
-                target_value.clone(),
-                &key,
-                value,
-                context,
-            )? {
-                return Err(VmError::type_error(format!("cannot write property {key}")));
-            }
-        }
-
-        let symbols: Vec<_> = context
-            .heap()
-            .object(source_id)
-            .ok_or_else(|| VmError::runtime("missing source object"))?
-            .symbol_properties
-            .iter()
-            .map(|(symbol, _)| *symbol)
-            .collect();
-        for symbol in symbols {
-            if !context
-                .get_own_symbol_property_descriptor(source_id, symbol)
-                .is_some_and(|d| d.enumerable)
-            {
-                continue;
-            }
-            let value = vm.get_symbol_property_value_with_receiver_from_builtin(
                 source_value.clone(),
-                source_value.clone(),
-                symbol,
-                context,
             )?;
-            if !vm.set_symbol_property_value_with_receiver_from_builtin(
-                target_value.clone(),
-                target_value.clone(),
-                symbol,
-                value,
-                context,
-            )? {
-                return Err(VmError::type_error("cannot assign symbol property"));
+            if !object_assign_set(vm, context, target_value.clone(), &key, value)? {
+                return Err(VmError::type_error(format!(
+                    "cannot write property {}",
+                    property_key_label(&key)
+                )));
             }
         }
     }
     Ok(target_value)
+}
+
+fn object_assign_set(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+    key: &crate::runtime::PropertyKey,
+    value: JsValue,
+) -> Result<bool, VmError> {
+    let target_object = context.require_object(&target, "assign property")?;
+    if context.proxy_record(target_object).is_some() {
+        return proxy::internal_set(vm, context, target.clone(), key, value, target);
+    }
+    match key {
+        crate::runtime::PropertyKey::String(key) => {
+            vm.set_property_value_strict_from_builtin(target, key, value, context)
+        }
+        crate::runtime::PropertyKey::Symbol(symbol) => vm
+            .set_symbol_property_value_with_receiver_from_builtin(
+                target.clone(),
+                target,
+                *symbol,
+                value,
+                context,
+            ),
+    }
+}
+
+fn property_key_label(key: &crate::runtime::PropertyKey) -> String {
+    match key {
+        crate::runtime::PropertyKey::String(key) => key.clone(),
+        crate::runtime::PropertyKey::Symbol(symbol) => format!("Symbol({})", symbol.0),
+    }
 }
 
 fn own_symbol_keys(context: &NativeContext, object: ObjectId) -> Result<Vec<SymbolId>, VmError> {

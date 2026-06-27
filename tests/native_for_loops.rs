@@ -39,12 +39,18 @@ fn increment_coerces_to_number() {
 
 #[test]
 fn postfix_computed_member_update_returns_old_value() {
-    assert_eq!(native_eval("var a = [1]; var old = a[0]++; old + a[0];"), "3");
+    assert_eq!(
+        native_eval("var a = [1]; var old = a[0]++; old + a[0];"),
+        "3"
+    );
 }
 
 #[test]
 fn destructuring_assignment_updates_existing_bindings() {
-    assert_eq!(native_eval("var a = 0; var b = 0; [a, b] = [1, 2]; a + b;"), "3");
+    assert_eq!(
+        native_eval("var a = 0; var b = 0; [a, b] = [1, 2]; a + b;"),
+        "3"
+    );
     assert_eq!(
         native_eval("var a = 0; var b = 0; ({ x: a, y: b } = { x: 4, y: 5 }); a + b;"),
         "9"

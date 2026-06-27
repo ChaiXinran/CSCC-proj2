@@ -7,9 +7,9 @@ use crate::{
         Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
     },
     runtime::{
-        FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord, JsFunction,
-        Job, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
-        PreferredType, PrimitiveValue, PromiseCallbackJob, PromiseReaction, PromiseThenReaction,
+        FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord, Job, JsFunction,
+        JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind, PreferredType,
+        PrimitiveValue, PromiseCallbackJob, PromiseReaction, PromiseThenReaction,
         PropertyDescriptor, PropertyKind, SymbolId, to_property_key,
     },
     vm::{CallFrame, Completion},
@@ -1378,7 +1378,8 @@ impl Vm {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
                     let name = to_property_key(&key)?;
-                    let object = context.require_object(self.peek_value()?, "define class method (computed)")?;
+                    let object = context
+                        .require_object(self.peek_value()?, "define class method (computed)")?;
                     context.define_own_property(
                         object,
                         name,
@@ -1389,7 +1390,8 @@ impl Vm {
                     let getter = self.pop_value()?;
                     let key = self.pop_value()?;
                     let name = to_property_key(&key)?;
-                    let object = context.require_object(self.peek_value()?, "define class getter (computed)")?;
+                    let object = context
+                        .require_object(self.peek_value()?, "define class getter (computed)")?;
                     let setter = existing_accessor_setter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1401,7 +1403,8 @@ impl Vm {
                     let setter = self.pop_value()?;
                     let key = self.pop_value()?;
                     let name = to_property_key(&key)?;
-                    let object = context.require_object(self.peek_value()?, "define class setter (computed)")?;
+                    let object = context
+                        .require_object(self.peek_value()?, "define class setter (computed)")?;
                     let getter = existing_accessor_getter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1413,7 +1416,8 @@ impl Vm {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
                     let name = to_property_key(&key)?;
-                    let object = context.require_object(self.peek_value()?, "define data property (computed)")?;
+                    let object = context
+                        .require_object(self.peek_value()?, "define data property (computed)")?;
                     context.define_own_property(object, name, PropertyDescriptor::data(value))?;
                 }
                 Instruction::SpreadObject => {
@@ -1750,8 +1754,9 @@ impl Vm {
             environment,
             is_generator: template.is_generator,
         })?;
-        if template.is_strict {
+        if template.is_strict || context.strict() {
             context.mark_strict_function(id);
+            context.install_restricted_function_properties(id)?;
         }
         Ok(JsValue::Function(id))
     }

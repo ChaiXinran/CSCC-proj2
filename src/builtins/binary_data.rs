@@ -8,7 +8,7 @@ use super::function;
 use crate::{
     runtime::{
         ArrayBufferId, DataViewId, DataViewRecord, IteratorMode, JsObject, JsValue, NativeCall,
-        NativeContext, ObjectId, ObjectKind, PropertyDescriptor, PropertyKind,
+        NativeContext, ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
         TypedArrayElementKind, TypedArrayViewId,
     },
     vm::{Vm, VmError},
@@ -38,6 +38,7 @@ struct TypedArrayIntrinsic {
 
 pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_array_buffer(context)?;
+    install_shared_array_buffer(context)?;
     install_data_view(context)?;
     let typed_array_intrinsic = install_typed_array_intrinsic(context)?;
     for (name, bytes_per_element) in [
@@ -213,13 +214,21 @@ fn to_index(vm: &mut Vm, context: &mut NativeContext, value: JsValue) -> Result<
         return Ok(0);
     }
     let number = vm.to_number(value, context)?;
-    if !number.is_finite() || number < 0.0 || number.fract() != 0.0 {
+    if number.is_infinite() {
         return Err(VmError::range("invalid buffer length"));
     }
-    if number > MAX_SKELETON_BUFFER_BYTES as f64 {
+    let integer = if number.is_nan() || number == 0.0 {
+        0.0
+    } else {
+        number.trunc()
+    };
+    if integer < 0.0 {
+        return Err(VmError::range("invalid buffer length"));
+    }
+    if integer > MAX_SKELETON_BUFFER_BYTES as f64 {
         return Err(VmError::range("buffer length exceeds V8 skeleton limit"));
     }
-    Ok(number as usize)
+    Ok(integer as usize)
 }
 
 fn to_length(vm: &mut Vm, context: &mut NativeContext, value: JsValue) -> Result<usize, VmError> {
@@ -383,6 +392,102 @@ fn install_array_buffer(context: &mut NativeContext) -> Result<(), VmError> {
     )?;
     declare_standard_global(context, "ArrayBuffer", constructor)?;
     Ok(())
+}
+
+fn install_shared_array_buffer(context: &mut NativeContext) -> Result<(), VmError> {
+    let prototype = new_ordinary_object(context, context.object_prototype())?;
+    let constructor = context.register_builtin(
+        "SharedArrayBuffer",
+        1,
+        shared_array_buffer_call,
+        Some(shared_array_buffer_construct),
+    )?;
+    let constructor_object = context
+        .value_object(&constructor)
+        .ok_or_else(|| VmError::runtime("SharedArrayBuffer constructor object missing"))?;
+
+    context.define_own_property(
+        constructor_object,
+        "prototype".into(),
+        constant_descriptor(JsValue::Object(prototype)),
+    )?;
+    context.define_own_property(
+        prototype,
+        "constructor".into(),
+        method_descriptor(constructor.clone()),
+    )?;
+    let byte_length_getter =
+        context.register_builtin("get byteLength", 0, array_buffer_byte_length_get, None)?;
+    context.define_own_property(
+        prototype,
+        "byteLength".into(),
+        PropertyDescriptor::accessor(Some(byte_length_getter), None, false, true),
+    )?;
+    let species_getter = context.register_builtin(
+        "get [Symbol.species]",
+        0,
+        shared_array_buffer_species_get,
+        None,
+    )?;
+    let species = context.well_known_symbols().species;
+    context.define_symbol_own_property(
+        constructor_object,
+        species,
+        PropertyDescriptor::accessor(Some(species_getter), None, false, true),
+    )?;
+    let to_string_tag = context.well_known_symbols().to_string_tag;
+    context.define_symbol_own_property(
+        prototype,
+        to_string_tag,
+        readonly_configurable_descriptor(JsValue::String("SharedArrayBuffer".into())),
+    )?;
+    declare_standard_global(context, "SharedArrayBuffer", constructor)?;
+    Ok(())
+}
+
+fn shared_array_buffer_call(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Err(VmError::type_error(
+        "SharedArrayBuffer constructor requires 'new'",
+    ))
+}
+
+fn shared_array_buffer_construct(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    let byte_length = to_index(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let prototype = context
+        .constructor_prototype(&new_target)?
+        .or_else(|| context.object_prototype())
+        .ok_or_else(|| VmError::runtime("SharedArrayBuffer prototype missing"))?;
+    create_array_buffer_object_with_options(
+        context,
+        byte_length,
+        byte_length,
+        false,
+        false,
+        prototype,
+    )
+}
+
+fn shared_array_buffer_species_get(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(this_value)
 }
 
 fn array_buffer_call(
@@ -752,16 +857,22 @@ fn install_data_view(context: &mut NativeContext) -> Result<(), VmError> {
         ("getUint16", 1, data_view_get_uint16 as NativeCall),
         ("getInt32", 1, data_view_get_int32 as NativeCall),
         ("getUint32", 1, data_view_get_uint32 as NativeCall),
+        ("getFloat16", 1, data_view_get_float16 as NativeCall),
         ("getFloat32", 1, data_view_get_float32 as NativeCall),
         ("getFloat64", 1, data_view_get_float64 as NativeCall),
+        ("getBigInt64", 1, data_view_get_big_int64 as NativeCall),
+        ("getBigUint64", 1, data_view_get_big_uint64 as NativeCall),
         ("setInt8", 2, data_view_set_int8 as NativeCall),
         ("setUint8", 2, data_view_set_uint8 as NativeCall),
         ("setInt16", 2, data_view_set_int16 as NativeCall),
         ("setUint16", 2, data_view_set_uint16 as NativeCall),
         ("setInt32", 2, data_view_set_int32 as NativeCall),
         ("setUint32", 2, data_view_set_uint32 as NativeCall),
+        ("setFloat16", 2, data_view_set_float16 as NativeCall),
         ("setFloat32", 2, data_view_set_float32 as NativeCall),
         ("setFloat64", 2, data_view_set_float64 as NativeCall),
+        ("setBigInt64", 2, data_view_set_big_int64 as NativeCall),
+        ("setBigUint64", 2, data_view_set_big_uint64 as NativeCall),
     ] {
         define_method(context, prototype, name, length, call)?;
     }
@@ -922,15 +1033,105 @@ fn data_view_set(
 ) -> Result<JsValue, VmError> {
     let object = require_data_view(context, &this_value, "DataView set")?;
     let view = data_view_id_from_object(context, object)?;
+    let record = context
+        .data_view_record(view)
+        .ok_or_else(|| VmError::runtime("invalid DataView id"))?
+        .clone();
+    if context.is_array_buffer_immutable(record.buffer)? {
+        return Err(VmError::type_error("ArrayBuffer is immutable"));
+    }
     let offset = to_index(
         vm,
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    let value = data_view_set_value(
+        vm,
+        context,
+        kind,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
     let little_endian = arguments.get(2).is_some_and(JsValue::to_boolean);
     context.data_view_set(view, offset, kind, value, little_endian)?;
     Ok(JsValue::Undefined)
+}
+
+fn data_view_set_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    kind: TypedArrayElementKind,
+    value: JsValue,
+) -> Result<JsValue, VmError> {
+    if kind.is_bigint() {
+        return Ok(JsValue::BigInt(to_bigint_for_data_view(
+            vm, context, value,
+        )?));
+    }
+    Ok(JsValue::Number(vm.to_number(value, context)?))
+}
+
+fn to_bigint_for_data_view(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<i128, VmError> {
+    match value {
+        JsValue::BigInt(value) => Ok(value),
+        JsValue::Boolean(value) => Ok(i128::from(value)),
+        JsValue::String(value) => parse_bigint_string(&value)
+            .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            let primitive = vm.to_primitive(value, PreferredType::Number, context)?;
+            to_bigint_for_data_view(vm, context, primitive)
+        }
+        _ => Err(VmError::type_error("Cannot convert value to BigInt")),
+    }
+}
+
+fn parse_bigint_string(input: &str) -> Option<i128> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Some(0);
+    }
+    let (negative, unsigned) = if let Some(rest) = trimmed.strip_prefix('-') {
+        (true, rest)
+    } else if let Some(rest) = trimmed.strip_prefix('+') {
+        (false, rest)
+    } else {
+        (false, trimmed)
+    };
+    if (negative || trimmed.starts_with('+'))
+        && (unsigned.starts_with("0x")
+            || unsigned.starts_with("0X")
+            || unsigned.starts_with("0b")
+            || unsigned.starts_with("0B")
+            || unsigned.starts_with("0o")
+            || unsigned.starts_with("0O"))
+    {
+        return None;
+    }
+    let (digits, radix) = unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+        .map(|digits| (digits, 16))
+        .or_else(|| {
+            unsigned
+                .strip_prefix("0b")
+                .or_else(|| unsigned.strip_prefix("0B"))
+                .map(|digits| (digits, 2))
+        })
+        .or_else(|| {
+            unsigned
+                .strip_prefix("0o")
+                .or_else(|| unsigned.strip_prefix("0O"))
+                .map(|digits| (digits, 8))
+        })
+        .unwrap_or((unsigned, 10));
+    if digits.is_empty() {
+        return None;
+    }
+    let value = i128::from_str_radix(digits, radix).ok()?;
+    Some(if negative { -value } else { value })
 }
 
 macro_rules! data_view_getter {
@@ -965,16 +1166,22 @@ data_view_getter!(data_view_get_int16, TypedArrayElementKind::Int16);
 data_view_getter!(data_view_get_uint16, TypedArrayElementKind::Uint16);
 data_view_getter!(data_view_get_int32, TypedArrayElementKind::Int32);
 data_view_getter!(data_view_get_uint32, TypedArrayElementKind::Uint32);
+data_view_getter!(data_view_get_float16, TypedArrayElementKind::Float16);
 data_view_getter!(data_view_get_float32, TypedArrayElementKind::Float32);
 data_view_getter!(data_view_get_float64, TypedArrayElementKind::Float64);
+data_view_getter!(data_view_get_big_int64, TypedArrayElementKind::BigInt64);
+data_view_getter!(data_view_get_big_uint64, TypedArrayElementKind::BigUint64);
 data_view_setter!(data_view_set_int8, TypedArrayElementKind::Int8);
 data_view_setter!(data_view_set_uint8, TypedArrayElementKind::Uint8);
 data_view_setter!(data_view_set_int16, TypedArrayElementKind::Int16);
 data_view_setter!(data_view_set_uint16, TypedArrayElementKind::Uint16);
 data_view_setter!(data_view_set_int32, TypedArrayElementKind::Int32);
 data_view_setter!(data_view_set_uint32, TypedArrayElementKind::Uint32);
+data_view_setter!(data_view_set_float16, TypedArrayElementKind::Float16);
 data_view_setter!(data_view_set_float32, TypedArrayElementKind::Float32);
 data_view_setter!(data_view_set_float64, TypedArrayElementKind::Float64);
+data_view_setter!(data_view_set_big_int64, TypedArrayElementKind::BigInt64);
+data_view_setter!(data_view_set_big_uint64, TypedArrayElementKind::BigUint64);
 
 fn install_typed_array_intrinsic(
     context: &mut NativeContext,
@@ -1264,7 +1471,7 @@ fn typed_array_construct(
         })
         .or_else(|| context.object_prototype())
         .ok_or_else(|| VmError::runtime("ArrayBuffer prototype missing"))?;
-    let values = typed_array_constructor_values(vm, context, source)?;
+    let values = typed_array_constructor_values(vm, context, kind, source)?;
     let byte_length = values
         .len()
         .checked_mul(bytes_per_element)
@@ -1300,6 +1507,7 @@ fn typed_array_construct(
 fn typed_array_constructor_values(
     vm: &mut Vm,
     context: &mut NativeContext,
+    kind: TypedArrayElementKind,
     source: JsValue,
 ) -> Result<Vec<JsValue>, VmError> {
     if matches!(source, JsValue::Undefined) {
@@ -1307,7 +1515,12 @@ fn typed_array_constructor_values(
     }
     if matches!(source, JsValue::Number(_)) {
         let length = to_index(vm, context, source)?;
-        return Ok(vec![JsValue::Number(0.0); length]);
+        let zero = if kind.is_bigint() {
+            JsValue::BigInt(0)
+        } else {
+            JsValue::Number(0.0)
+        };
+        return Ok(vec![zero; length]);
     }
     collect_typed_array_source_values(vm, context, source)
 }

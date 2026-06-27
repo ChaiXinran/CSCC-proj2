@@ -2,13 +2,29 @@
 
 use super::iterator::IteratorKind;
 use super::{
-    ArrayBufferId, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsValue,
-    PromiseId, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
+    ArrayBufferId, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsValue, PromiseId,
+    PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
 };
 
 /// Stable handle into the runtime heap.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectId(pub u32);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum PropertyKey {
+    String(String),
+    Symbol(SymbolId),
+}
+
+impl PropertyKey {
+    #[must_use]
+    pub fn to_value(&self) -> JsValue {
+        match self {
+            Self::String(value) => JsValue::String(value.clone()),
+            Self::Symbol(symbol) => JsValue::Symbol(*symbol),
+        }
+    }
+}
 
 /// Primitive value stored in a wrapper object's internal slot (ECMAScript [[PrimitiveValue]]).
 /// Excludes objects, functions, errors, null, and undefined — only the three wrappable primitives.
@@ -70,6 +86,10 @@ pub enum ObjectKind {
     Promise {
         promise: PromiseId,
     },
+    /// ECMAScript Proxy exotic object.
+    Proxy {
+        record: ProxyRecord,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -92,6 +112,12 @@ pub struct GeneratorRecord {
     pub delegate_values: Vec<JsValue>,
     pub delegate_iterator: Option<JsValue>,
     pub delegate_return: Option<JsValue>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProxyRecord {
+    pub target: JsValue,
+    pub handler: JsValue,
 }
 
 /// Ordinary object storage.
@@ -164,6 +190,19 @@ impl JsObject {
         Self {
             prototype: None,
             kind: ObjectKind::Iterator { record },
+            properties: PropertyMap::default(),
+            symbol_properties: Vec::new(),
+            extensible: true,
+        }
+    }
+
+    #[must_use]
+    pub fn proxy(target: JsValue, handler: JsValue) -> Self {
+        Self {
+            prototype: None,
+            kind: ObjectKind::Proxy {
+                record: ProxyRecord { target, handler },
+            },
             properties: PropertyMap::default(),
             symbol_properties: Vec::new(),
             extensible: true,
@@ -343,7 +382,8 @@ impl JsObject {
             | ObjectKind::TypedArray { .. }
             | ObjectKind::Iterator { .. }
             | ObjectKind::Generator { .. }
-            | ObjectKind::Promise { .. } => None,
+            | ObjectKind::Promise { .. }
+            | ObjectKind::Proxy { .. } => None,
         }
     }
 
@@ -361,7 +401,8 @@ impl JsObject {
             | ObjectKind::TypedArray { .. }
             | ObjectKind::Iterator { .. }
             | ObjectKind::Generator { .. }
-            | ObjectKind::Promise { .. } => None,
+            | ObjectKind::Promise { .. }
+            | ObjectKind::Proxy { .. } => None,
         }
     }
 
@@ -514,6 +555,10 @@ impl Trace for JsObject {
             | ObjectKind::DataView { .. }
             | ObjectKind::TypedArray { .. }
             | ObjectKind::Promise { .. } => {}
+            ObjectKind::Proxy { record } => {
+                record.target.trace(tracer);
+                record.handler.trace(tracer);
+            }
             ObjectKind::Iterator { record } => {
                 // Trace the backing iterable/iterator so GC doesn't collect it.
                 match &record.kind {
@@ -586,6 +631,7 @@ impl JsObject {
                 .saturating_add(record.stack.capacity() * std::mem::size_of::<JsValue>())
                 .saturating_add(record.delegate_values.capacity() * std::mem::size_of::<JsValue>()),
             ObjectKind::Promise { .. } => std::mem::size_of::<PromiseId>(),
+            ObjectKind::Proxy { .. } => std::mem::size_of::<ProxyRecord>(),
         };
         std::mem::size_of::<Self>()
             .saturating_add(kind_bytes)

@@ -130,6 +130,11 @@ fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError
     ] {
         define_accessor(context, prototype, name, getter_name, getter, None, None)?;
     }
+    context.define_symbol_own_property(
+        prototype,
+        context.well_known_symbols().to_string_tag,
+        PropertyDescriptor::data_with(JsValue::String("RegExp".into()), false, false, true),
+    )?;
 
     let wk = *context.well_known_symbols();
     for (name, symbol, length, call) in [
@@ -257,7 +262,8 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, St
         | ObjectKind::TypedArray { .. }
         | ObjectKind::Iterator { .. }
         | ObjectKind::Generator { .. }
-        | ObjectKind::Promise { .. } => None,
+        | ObjectKind::Promise { .. }
+        | ObjectKind::Proxy { .. } => None,
     }
 }
 
@@ -277,7 +283,7 @@ fn regexp_boolean_get(
     if let Some(object) = context.value_object(this_value)
         && context.regexp_prototype() == Some(object)
     {
-        return Ok(JsValue::Boolean(false));
+        return Ok(JsValue::Undefined);
     }
     let (_, _, flags) = require_regexp(context, this_value)?;
     Ok(JsValue::Boolean(flags.contains(flag)))

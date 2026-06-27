@@ -8,7 +8,7 @@
 //! goes through the V6 `Vm` contract so JavaScript `valueOf`/`toString` throws
 //! stay catchable by V5 handlers.
 
-use super::{boolean, error, json, math, number, regexp, string};
+use super::{boolean, error, json, math, number, proxy, regexp, string};
 use crate::runtime::{
     JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
     PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
@@ -3166,22 +3166,16 @@ fn reflect_define_property(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.defineProperty")?;
+    context.require_object(&target, "Reflect.defineProperty")?;
     let key_arg = arg(arguments, 1);
-    let key = vm.to_property_key_from_builtin(key_arg, context)?;
+    let key = proxy::to_property_key(vm, context, key_arg)?;
     let descriptor_value = arg(arguments, 2);
     let descriptor_object =
         context.require_object(&descriptor_value, "read property descriptor")?;
     let update = reflect_descriptor_update_from_object(vm, context, descriptor_object)?;
 
-    let defined = if let JsValue::Symbol(symbol) = key {
-        context.validate_and_apply_symbol_property_descriptor(object, symbol, update)?
-    } else {
-        let JsValue::String(key) = key else {
-            unreachable!("ToPropertyKey returns a string or symbol")
-        };
-        context.validate_and_apply_property_descriptor(object, key, update)?
-    };
+    let defined =
+        proxy::internal_define_own_property(vm, context, target, &key, descriptor_value, update)?;
     Ok(JsValue::Boolean(defined))
 }
 
@@ -3192,20 +3186,12 @@ fn reflect_delete_property(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.deleteProperty")?;
+    context.require_object(&target, "Reflect.deleteProperty")?;
     let key_arg = arg(arguments, 1);
-    let key = _vm.to_property_key_from_builtin(key_arg, context)?;
-    if let JsValue::Symbol(symbol) = key {
-        return Ok(JsValue::Boolean(
-            context.delete_symbol_property(object, symbol, false)?,
-        ));
-    }
-    let JsValue::String(key) = key else {
-        unreachable!("ToPropertyKey returns a string or symbol")
-    };
-    Ok(JsValue::Boolean(
-        context.delete_property(object, &key, false)?,
-    ))
+    let key = proxy::to_property_key(_vm, context, key_arg)?;
+    Ok(JsValue::Boolean(proxy::internal_delete(
+        _vm, context, target, &key,
+    )?))
 }
 
 fn reflect_get(
@@ -3218,16 +3204,8 @@ fn reflect_get(
     context.require_object(&target, "Reflect.get")?;
     let key_arg = arg(arguments, 1);
     let receiver = arguments.get(2).cloned().unwrap_or_else(|| target.clone());
-    let key = vm.to_property_key_from_builtin(key_arg, context)?;
-    if let JsValue::Symbol(symbol) = key {
-        return vm.get_symbol_property_value_with_receiver_from_builtin(
-            target, receiver, symbol, context,
-        );
-    }
-    let JsValue::String(key) = key else {
-        unreachable!("ToPropertyKey returns a string or symbol")
-    };
-    vm.get_property_value_with_receiver_from_builtin(target, receiver, &key, context)
+    let key = proxy::to_property_key(vm, context, key_arg)?;
+    proxy::internal_get(vm, context, target, &key, receiver)
 }
 
 fn reflect_get_own_property_descriptor(
@@ -3237,19 +3215,10 @@ fn reflect_get_own_property_descriptor(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.getOwnPropertyDescriptor")?;
+    context.require_object(&target, "Reflect.getOwnPropertyDescriptor")?;
     let key_arg = arg(arguments, 1);
-    let key = _vm.to_property_key_from_builtin(key_arg, context)?;
-    if let JsValue::Symbol(symbol) = key {
-        let Some(descriptor) = context.get_own_symbol_property_descriptor(object, symbol) else {
-            return Ok(JsValue::Undefined);
-        };
-        return reflect_descriptor_to_object(context, descriptor);
-    }
-    let JsValue::String(key) = key else {
-        unreachable!("ToPropertyKey returns a string or symbol")
-    };
-    let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
+    let key = proxy::to_property_key(_vm, context, key_arg)?;
+    let Some(descriptor) = proxy::internal_get_own_property(_vm, context, target, &key)? else {
         return Ok(JsValue::Undefined);
     };
     reflect_descriptor_to_object(context, descriptor)
@@ -3262,9 +3231,8 @@ fn reflect_get_prototype_of(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.getPrototypeOf")?;
-    Ok(context
-        .get_prototype_of(object)
+    context.require_object(&target, "Reflect.getPrototypeOf")?;
+    Ok(proxy::internal_get_prototype_of(_vm, context, target)?
         .map_or(JsValue::Null, |prototype| context.object_value(prototype)))
 }
 
@@ -3275,18 +3243,12 @@ fn reflect_has(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.has")?;
+    context.require_object(&target, "Reflect.has")?;
     let key_arg = arg(arguments, 1);
-    let key = _vm.to_property_key_from_builtin(key_arg, context)?;
-    if let JsValue::Symbol(symbol) = key {
-        return Ok(JsValue::Boolean(
-            context.has_symbol_property(object, symbol)?,
-        ));
-    }
-    let JsValue::String(key) = key else {
-        unreachable!("ToPropertyKey returns a string or symbol")
-    };
-    Ok(JsValue::Boolean(context.has_property(object, &key)?))
+    let key = proxy::to_property_key(_vm, context, key_arg)?;
+    Ok(JsValue::Boolean(proxy::internal_has_property(
+        _vm, context, target, &key,
+    )?))
 }
 
 fn reflect_is_extensible(
@@ -3296,8 +3258,10 @@ fn reflect_is_extensible(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.isExtensible")?;
-    Ok(JsValue::Boolean(context.is_extensible(object)?))
+    context.require_object(&target, "Reflect.isExtensible")?;
+    Ok(JsValue::Boolean(proxy::internal_is_extensible(
+        _vm, context, target,
+    )?))
 }
 
 fn reflect_own_keys(
@@ -3307,22 +3271,11 @@ fn reflect_own_keys(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.ownKeys")?;
-    let heap_object = context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?;
-    let mut keys: Vec<JsValue> = heap_object
-        .own_property_keys()
+    context.require_object(&target, "Reflect.ownKeys")?;
+    let keys: Vec<JsValue> = proxy::internal_own_property_keys(_vm, context, target)?
         .into_iter()
-        .map(JsValue::String)
+        .map(|key| key.to_value())
         .collect();
-    keys.extend(
-        heap_object
-            .symbol_properties
-            .iter()
-            .map(|(symbol, _)| JsValue::Symbol(*symbol)),
-    );
     context.create_array(keys)
 }
 
@@ -3333,8 +3286,10 @@ fn reflect_prevent_extensions(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.preventExtensions")?;
-    Ok(JsValue::Boolean(context.prevent_extensions(object)?))
+    context.require_object(&target, "Reflect.preventExtensions")?;
+    Ok(JsValue::Boolean(proxy::internal_prevent_extensions(
+        _vm, context, target,
+    )?))
 }
 
 fn reflect_set(
@@ -3348,19 +3303,8 @@ fn reflect_set(
     let key_arg = arg(arguments, 1);
     let value = arg(arguments, 2);
     let receiver = arguments.get(3).cloned().unwrap_or_else(|| target.clone());
-    let key = vm.to_property_key_from_builtin(key_arg, context)?;
-    if let JsValue::Symbol(symbol) = key {
-        return Ok(JsValue::Boolean(
-            vm.set_symbol_property_value_with_receiver_from_builtin(
-                target, receiver, symbol, value, context,
-            )?,
-        ));
-    }
-    let JsValue::String(key) = key else {
-        unreachable!("ToPropertyKey returns a string or symbol")
-    };
-    let set =
-        vm.set_property_value_with_receiver_from_builtin(target, receiver, &key, value, context)?;
+    let key = proxy::to_property_key(vm, context, key_arg)?;
+    let set = proxy::internal_set(vm, context, target, &key, value, receiver)?;
     Ok(JsValue::Boolean(set))
 }
 
@@ -3371,12 +3315,12 @@ fn reflect_set_prototype_of(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    let object = context.require_object(&target, "Reflect.setPrototypeOf")?;
+    context.require_object(&target, "Reflect.setPrototypeOf")?;
     let prototype = match arg(arguments, 1) {
         JsValue::Null => None,
         value => Some(context.require_object(&value, "Reflect.setPrototypeOf")?),
     };
-    match context.set_prototype_of(object, prototype) {
+    match proxy::internal_set_prototype_of(_vm, context, target, prototype) {
         Ok(result) => Ok(JsValue::Boolean(result)),
         Err(error)
             if error.kind == VmErrorKind::Type
