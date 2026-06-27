@@ -33,6 +33,9 @@ pub(crate) enum IteratorKind {
         iterator: JsValue,
         next_method: Option<JsValue>,
     },
+    JsAsync {
+        iterator: JsValue,
+    },
 }
 
 impl IteratorRecord {
@@ -78,6 +81,13 @@ impl IteratorRecord {
                 iterator,
                 next_method: Some(next_method),
             },
+            done: false,
+        }
+    }
+
+    pub(crate) fn js_async(iterator: JsValue) -> Self {
+        Self {
+            kind: IteratorKind::JsAsync { iterator },
             done: false,
         }
     }

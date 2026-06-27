@@ -1,6 +1,7 @@
 use agentjs::{
+    BackendKind,
     backend::NativeRuntime,
-    engine::{ExecutionOptions, RuntimeConfig},
+    engine::{ExecutionOptions, Runtime, RuntimeConfig},
 };
 
 fn runtime() -> NativeRuntime {
@@ -168,5 +169,135 @@ fn for_await_of_uses_the_sync_iterator_fallback() {
             .eval_source("result;", ExecutionOptions::default())
             .expect("read result"),
         "5"
+    );
+}
+
+#[test]
+fn for_await_promise_chain_signals_async_completion() {
+    let mut config = RuntimeConfig::default();
+    config.install_test262_host = true;
+    let mut runtime = Runtime::with_backend(BackendKind::Native, config).expect("native runtime");
+    let report = runtime
+        .eval(
+            "function $DONE(error) { print(error ? 'failed' : 'complete'); } \
+             var iterCount = 0; \
+             async function fn() { \
+               for await (var value of [[2]]) { iterCount = iterCount + 1; } \
+             } \
+             fn() \
+               .then(function () { \
+                 if (iterCount !== 1) { throw 'wrong count'; } \
+               }, $DONE) \
+               .then($DONE, $DONE);",
+            ExecutionOptions::default(),
+        )
+        .expect("async completion chain");
+
+    assert_eq!(report.output, ["complete"]);
+}
+
+#[test]
+fn async_generator_next_returns_a_promise_for_iterator_result() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var result = ''; \
+             async function* values() { yield await Promise.resolve(4); } \
+             values().next().then(function (step) { \
+               result = '' + step.value + '/' + step.done; \
+             });",
+            ExecutionOptions::default(),
+        )
+        .expect("async generator next");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read async generator result"),
+        "4/false"
+    );
+}
+
+#[test]
+fn promise_resolution_adopts_foreign_thenables_and_native_promises() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var result = ''; \
+             var thenable = { \
+               then: function (resolve) { resolve(6); } \
+             }; \
+             Promise.resolve(thenable) \
+               .then(function (value) { result = '' + value; }); \
+             new Promise(function (resolve) { \
+               resolve(Promise.resolve(7)); \
+             }).then(function (value) { result = result + ':' + value; });",
+            ExecutionOptions::default(),
+        )
+        .expect("Promise resolution procedure");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read adopted values"),
+        "6:7"
+    );
+}
+
+#[test]
+fn promise_resolution_rejects_when_then_getter_throws() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var result = ''; \
+             var thenable = {}; \
+             Object.defineProperty(thenable, 'then', { \
+               get: function () { throw 'poison'; } \
+             }); \
+             Promise.resolve(thenable).catch(function (reason) { result = reason; });",
+            ExecutionOptions::default(),
+        )
+        .expect("poisoned then getter");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read rejection"),
+        "poison"
+    );
+}
+
+#[test]
+fn for_await_prefers_async_iterator_and_consumes_async_generators() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var total = 0; \
+             var iterable = {}; \
+             iterable[Symbol.asyncIterator] = function () { \
+               var value = 0; \
+               return { next: function () { \
+                 value = value + 1; \
+                 return Promise.resolve({ value: value, done: value > 2 }); \
+               } }; \
+             }; \
+             Object.defineProperty(iterable, Symbol.iterator, { \
+               get: function () { throw 'sync iterator must not be read'; } \
+             }); \
+             async function* values() { yield 3; yield 4; } \
+             async function run() { \
+               for await (var first of iterable) { total = total + first; } \
+               for await (var second of values()) { total = total + second; } \
+             } \
+             run();",
+            ExecutionOptions::default(),
+        )
+        .expect("async iterator preference");
+
+    assert_eq!(
+        runtime
+            .eval_source("total;", ExecutionOptions::default())
+            .expect("read async iterator total"),
+        "10"
     );
 }

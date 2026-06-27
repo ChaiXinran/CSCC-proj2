@@ -478,7 +478,6 @@ struct Harness {
     assert: Arc<str>,
     #[cfg(feature = "boa-backend")]
     sta: Arc<str>,
-    #[cfg(feature = "boa-backend")]
     doneprint: Arc<str>,
     includes: Arc<HashMap<String, Arc<str>>>,
 }
@@ -492,7 +491,6 @@ impl Harness {
             assert: Arc::from(""),
             #[cfg(feature = "boa-backend")]
             sta: Arc::from(""),
-            #[cfg(feature = "boa-backend")]
             doneprint: Arc::from(""),
             includes: Arc::new(HashMap::new()),
         }
@@ -838,6 +836,11 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
             runtime
                 .eval_fragment(&harness.assert)
                 .map_err(|error| format!("assert.js failed: {error}"))?;
+            if metadata.flags.contains("async") {
+                runtime
+                    .eval_fragment(&harness.doneprint)
+                    .map_err(|error| format!("doneprintHandle.js failed: {error}"))?;
+            }
         }
         for include in &metadata.includes {
             let code = harness.includes.get(include).ok_or_else(|| {
@@ -1047,7 +1050,6 @@ fn load_harness(root: &Path) -> Result<Harness, String> {
         assert: required("assert.js")?,
         #[cfg(feature = "boa-backend")]
         sta: required("sta.js")?,
-        #[cfg(feature = "boa-backend")]
         doneprint: required("doneprintHandle.js")?,
         includes: Arc::new(files),
     })

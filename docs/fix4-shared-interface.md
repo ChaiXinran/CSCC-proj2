@@ -12,9 +12,10 @@ functions. A owns AST/parser flags; B owns propagation through
 `src/bytecode/compiler.rs`, `src/bytecode/chunk.rs`, and the VM.
 
 The frozen B opcodes are `CreateGenerator`, `YieldValue`, `YieldDelegate`,
-`CreateAsyncFunction`, `AwaitValue`, `GetIterator`, `IteratorNext`, and
-`IteratorClose`. Any new opcode must document operands, stack effect, abrupt
-completion behavior, and saved-frame state in `src/bytecode/opcode.rs`.
+`CreateAsyncFunction`, `AwaitValue`, `GetIterator`, `GetAsyncIterator`,
+`IteratorNext`, `AsyncIteratorNext`, and `IteratorClose`. Any new opcode must
+document operands, stack effect, abrupt completion behavior, and saved-frame
+state in `src/bytecode/opcode.rs`.
 
 ## Iterator Boundary
 
@@ -57,3 +58,5 @@ stack. Shared-interface changes require a focused test and an entry below.
 | Date | Owner | Change | Verification |
 | --- | --- | --- | --- |
 | 2026-06-27 | B | Freeze existing iterator/job contracts; add async flags, builtin iterable collection, and immediate-await behavior | `native_iteration`, `native_promise`, `parser_iteration` |
+| 2026-06-27 | B/D | Native async Test262 variants load `doneprintHandle.js`; the native host provides its required `print()` output bridge | Promise and for-await-of focused scans |
+| 2026-06-27 | B | Add async-generator Promise results, `Symbol.asyncIterator`, async iterator opcodes, and Promise thenable assimilation | `native_promise`, `parser_iteration`, focused Test262 scans |

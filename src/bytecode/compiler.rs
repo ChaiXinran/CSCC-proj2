@@ -3818,23 +3818,25 @@ impl Compiler {
 
         // Evaluate iterable and obtain the iterator.
         self.compile_expression(right, chunk, context)?;
-        chunk.emit(Instruction::GetIterator);
+        chunk.emit(if is_await {
+            Instruction::GetAsyncIterator
+        } else {
+            Instruction::GetIterator
+        });
         chunk.emit(Instruction::InitializeBinding(iter_idx));
 
         // Loop header.
         let loop_start = chunk.current_offset();
         chunk.emit(Instruction::LoadName(iter_idx));
-        chunk.emit(Instruction::IteratorNext); // [value, is_done]
+        chunk.emit(if is_await {
+            Instruction::AsyncIteratorNext
+        } else {
+            Instruction::IteratorNext
+        }); // [value, is_done]
 
         // if is_done (top), jump to exit.
         let exit_jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX));
         chunk.emit(Instruction::Pop); // pop is_done=false
-        if is_await {
-            // Async-from-Sync iterator fallback: await each value yielded by the
-            // ordinary iterator before assigning it to the loop target.
-            chunk.emit(Instruction::AwaitValue);
-        }
-
         // Assign the iteration value to the loop variable.
         // For let/var, the binding was pre-initialized before the loop; use StoreName
         // (write to existing binding) so every iteration re-assigns without "already

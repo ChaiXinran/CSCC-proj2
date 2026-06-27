@@ -219,8 +219,8 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
 
 /// Installs the minimal Test262 host surface used by the native runtime.
 ///
-/// Only `Test262Error` is wired as a Rust host function so that the test runner
-/// can reliably detect assertion failures via `VmError::test262`.  All other
+/// `Test262Error` and `print` are wired as Rust host functions so that the test
+/// runner can detect assertion failures and async completion. All other
 /// harness globals (`assert`, `assert.sameValue`, `assert.compareArray`, …) are
 /// provided by eval'ing the official `assert.js` at the start of each test case.
 /// `sta.js` is intentionally NOT eval'd: it redefines `Test262Error` as a plain
@@ -235,7 +235,25 @@ pub fn install_test262_harness(context: &mut NativeContext) {
         )
         .expect("install Test262Error");
     context.declare_global("Test262Error", test262_error);
+    let print = context
+        .register_builtin("print", 1, test262_print, None)
+        .expect("install Test262 print");
+    context.declare_global("print", print);
     binary_data::install_test262_host_object(context);
+}
+
+fn test262_print(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let mut fields = Vec::with_capacity(arguments.len());
+    for value in arguments {
+        fields.push(vm.to_string_coerce(value.clone(), context)?);
+    }
+    context.push_output(fields.join(" "));
+    Ok(JsValue::Undefined)
 }
 
 fn test262_error_call(

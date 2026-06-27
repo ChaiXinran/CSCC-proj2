@@ -1135,11 +1135,34 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::GetAsyncIterator => {
+                    let iterable = self.pop_value()?;
+                    match self.create_async_iterator_object(iterable, context)? {
+                        OperationResult::Value(iterator) => self.stack.push(iterator),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
                 Instruction::IteratorNext => {
                     let iterator = self.pop_value()?;
                     match self.step_iterator_object(iterator, context)? {
                         IteratorStepResult::Value { value, done } => {
                             // Push value first, then done-flag on top (JumpIfTrue peeks the top).
+                            self.stack.push(value);
+                            self.stack.push(JsValue::Boolean(done));
+                        }
+                        IteratorStepResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::AsyncIteratorNext => {
+                    let iterator = self.pop_value()?;
+                    match self.step_async_iterator_object(iterator, context)? {
+                        IteratorStepResult::Value { value, done } => {
                             self.stack.push(value);
                             self.stack.push(JsValue::Boolean(done));
                         }
@@ -1210,25 +1233,12 @@ impl Vm {
                 }
                 Instruction::AwaitValue => {
                     let value = self.pop_value()?;
-                    if let Some(promise) = context.promise_id_from_value(&value) {
-                        self.drain_jobs(context)?;
-                        match context.promise_state(promise) {
-                            Some(crate::runtime::PromiseState::Fulfilled(value)) => {
-                                self.stack.push(value);
-                            }
-                            Some(crate::runtime::PromiseState::Rejected(value)) => {
-                                abrupt = Some(Completion::Throw(value));
-                                discard_saved_finally = true;
-                            }
-                            Some(crate::runtime::PromiseState::Pending) => {
-                                return Err(VmError::runtime(
-                                    "awaited Promise is still pending; async continuation is not available",
-                                ));
-                            }
-                            None => return Err(VmError::runtime("invalid Promise id")),
+                    match self.await_value_now(value, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
                         }
-                    } else {
-                        self.stack.push(value);
                     }
                 }
 
@@ -2005,17 +2015,54 @@ impl Vm {
             .allocate_object(object)
             .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
 
-        let next = context.register_builtin("Generator.prototype.next", 1, generator_next, None)?;
-        let return_ =
-            context.register_builtin("Generator.prototype.return", 1, generator_return, None)?;
-        let throw =
-            context.register_builtin("Generator.prototype.throw", 1, generator_throw, None)?;
-        let iterator = context.register_builtin(
-            "Generator.prototype[Symbol.iterator]",
-            0,
-            generator_iterator,
-            None,
-        )?;
+        let is_async = context
+            .function(function)
+            .is_some_and(|function| function.is_async);
+        let (next, return_, throw) = if is_async {
+            (
+                context.register_builtin(
+                    "AsyncGenerator.prototype.next",
+                    1,
+                    async_generator_next,
+                    None,
+                )?,
+                context.register_builtin(
+                    "AsyncGenerator.prototype.return",
+                    1,
+                    async_generator_return,
+                    None,
+                )?,
+                context.register_builtin(
+                    "AsyncGenerator.prototype.throw",
+                    1,
+                    async_generator_throw,
+                    None,
+                )?,
+            )
+        } else {
+            (
+                context.register_builtin("Generator.prototype.next", 1, generator_next, None)?,
+                context.register_builtin(
+                    "Generator.prototype.return",
+                    1,
+                    generator_return,
+                    None,
+                )?,
+                context.register_builtin("Generator.prototype.throw", 1, generator_throw, None)?,
+            )
+        };
+        let (iterator_name, iterator_symbol) = if is_async {
+            (
+                "AsyncGenerator.prototype[Symbol.asyncIterator]",
+                context.well_known_symbols().async_iterator,
+            )
+        } else {
+            (
+                "Generator.prototype[Symbol.iterator]",
+                context.well_known_symbols().iterator,
+            )
+        };
+        let iterator = context.register_builtin(iterator_name, 0, generator_iterator, None)?;
         context.define_own_property(
             object,
             "next".into(),
@@ -2033,7 +2080,7 @@ impl Vm {
         )?;
         context.define_symbol_own_property(
             object,
-            context.well_known_symbols().iterator,
+            iterator_symbol,
             PropertyDescriptor::data_with(iterator, true, false, true),
         )?;
         Ok(JsValue::Object(object))
@@ -2621,6 +2668,44 @@ impl Vm {
         Ok(OperationResult::Value(JsValue::Object(id)))
     }
 
+    fn create_async_iterator_object(
+        &mut self,
+        iterable: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let method = match self.get_symbol_property_value_completion(
+            iterable.clone(),
+            context.well_known_symbols().async_iterator,
+            context,
+        )? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(OperationResult::Throw(value)),
+        };
+        if matches!(method, JsValue::Undefined | JsValue::Null) {
+            return self.create_iterator_object(iterable, context);
+        }
+        if !is_callable_value(&method) {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("async iterator method is not callable"),
+            )));
+        }
+        let iterator = match self.call_value(method, iterable, Vec::new(), context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(OperationResult::Throw(value)),
+        };
+        if !is_object_like(&iterator) {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("async iterator method returned a non-object"),
+            )));
+        }
+        let object = JsObject::iterator(IteratorRecord::js_async(iterator));
+        let id = context
+            .heap_mut()
+            .allocate_object(object)
+            .ok_or_else(|| VmError::runtime("heap full: cannot allocate async iterator object"))?;
+        Ok(OperationResult::Value(JsValue::Object(id)))
+    }
+
     fn step_iterator_object(
         &mut self,
         iterator_val: JsValue,
@@ -2663,6 +2748,101 @@ impl Vm {
                 Ok(IteratorStepResult::Value { value, done })
             }
             IteratorKind::Js { iterator, .. } => self.step_js_iterator(iterator, context),
+            IteratorKind::JsAsync { .. } => Ok(IteratorStepResult::Throw(vm_error_to_value(
+                VmError::type_error("async iterator requires AsyncIteratorNext"),
+            ))),
+        }
+    }
+
+    fn step_async_iterator_object(
+        &mut self,
+        iterator_val: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<IteratorStepResult, VmError> {
+        let id = context.require_object(&iterator_val, "async iterator")?;
+        let kind = context
+            .heap()
+            .object(id)
+            .and_then(|object| match &object.kind {
+                ObjectKind::Iterator { record } => Some(record.kind.clone()),
+                _ => None,
+            })
+            .ok_or_else(|| VmError::type_error("object is not an iterator"))?;
+        if let IteratorKind::JsAsync { iterator } = kind {
+            return self.step_js_async_iterator(iterator, context);
+        }
+
+        match self.step_iterator_object(iterator_val, context)? {
+            IteratorStepResult::Value { value, done: false } => {
+                match self.await_value_now(value, context)? {
+                    OperationResult::Value(value) => {
+                        Ok(IteratorStepResult::Value { value, done: false })
+                    }
+                    OperationResult::Throw(value) => Ok(IteratorStepResult::Throw(value)),
+                }
+            }
+            result => Ok(result),
+        }
+    }
+
+    fn step_js_async_iterator(
+        &mut self,
+        iterator: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<IteratorStepResult, VmError> {
+        let next = match self.get_property_value_completion(iterator.clone(), "next", context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        if !is_callable_value(&next) {
+            return Ok(IteratorStepResult::Throw(vm_error_to_value(
+                VmError::type_error("async iterator next is not callable"),
+            )));
+        }
+        let result = match self.call_value(next, iterator, Vec::new(), context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        let result = match self.await_value_now(result, context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        if !is_object_like(&result) {
+            return Ok(IteratorStepResult::Throw(vm_error_to_value(
+                VmError::type_error("async iterator next returned a non-object"),
+            )));
+        }
+        let done = match self.get_property_value_completion(result.clone(), "done", context)? {
+            OperationResult::Value(value) => value.to_boolean(),
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        let value = match self.get_property_value_completion(result, "value", context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        };
+        Ok(IteratorStepResult::Value { value, done })
+    }
+
+    fn await_value_now(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let Some(promise) = context.promise_id_from_value(&value) else {
+            return Ok(OperationResult::Value(value));
+        };
+        self.drain_jobs(context)?;
+        match context.promise_state(promise) {
+            Some(crate::runtime::PromiseState::Fulfilled(value)) => {
+                Ok(OperationResult::Value(value))
+            }
+            Some(crate::runtime::PromiseState::Rejected(value)) => {
+                Ok(OperationResult::Throw(value))
+            }
+            Some(crate::runtime::PromiseState::Pending) => Err(VmError::runtime(
+                "awaited Promise is still pending; async continuation is not available",
+            )),
+            None => Err(VmError::runtime("invalid Promise id")),
         }
     }
 
@@ -2747,6 +2927,9 @@ impl Vm {
             }
             IteratorKind::Js { .. } => Err(VmError::runtime(
                 "JS iterator records must be advanced by the VM",
+            )),
+            IteratorKind::JsAsync { .. } => Err(VmError::runtime(
+                "async JS iterator records must be advanced by the VM",
             )),
         }
     }
@@ -2886,6 +3069,9 @@ impl Vm {
             IteratorKind::Js { iterator, .. } => {
                 self.step_js_yield_star_iterator(iterator, sent_value, context)
             }
+            IteratorKind::JsAsync { .. } => {
+                Err(VmError::runtime("async iterator cannot be used by yield*"))
+            }
         }
     }
 
@@ -2950,8 +3136,9 @@ impl Vm {
 
         context.close_iterator_object(JsValue::Object(id))?;
 
-        let IteratorKind::Js { iterator, .. } = kind else {
-            return Ok(OperationResult::Value(JsValue::Undefined));
+        let iterator = match kind {
+            IteratorKind::Js { iterator, .. } | IteratorKind::JsAsync { iterator } => iterator,
+            _ => return Ok(OperationResult::Value(JsValue::Undefined)),
         };
 
         let return_method =
@@ -3765,6 +3952,18 @@ impl Vm {
         match self.get_property_value_completion(receiver, key, context)? {
             OperationResult::Value(value) => Ok(value),
             OperationResult::Throw(value) => Err(throw_value(value)),
+        }
+    }
+
+    pub(crate) fn get_property_value_catching_from_builtin(
+        &mut self,
+        receiver: JsValue,
+        key: &str,
+        context: &mut NativeContext,
+    ) -> Result<Result<JsValue, JsValue>, VmError> {
+        match self.get_property_value_completion(receiver, key, context)? {
+            OperationResult::Value(value) => Ok(Ok(value)),
+            OperationResult::Throw(value) => Ok(Err(value)),
         }
     }
 
@@ -4759,6 +4958,51 @@ fn generator_next(
 ) -> Result<JsValue, VmError> {
     let sent = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     vm.resume_generator(this_value, sent, context)
+}
+
+fn async_generator_next(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let result = generator_next(vm, context, this_value, arguments);
+    wrap_async_generator_result(vm, context, result)
+}
+
+fn async_generator_return(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let result = generator_return(vm, context, this_value, arguments);
+    wrap_async_generator_result(vm, context, result)
+}
+
+fn async_generator_throw(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let result = generator_throw(vm, context, this_value, arguments);
+    wrap_async_generator_result(vm, context, result)
+}
+
+fn wrap_async_generator_result(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    result: Result<JsValue, VmError>,
+) -> Result<JsValue, VmError> {
+    let operation = match result {
+        Ok(value) => OperationResult::Value(value),
+        Err(error) => vm.error_to_operation_result(error)?,
+    };
+    match vm.wrap_async_function_result(operation, context)? {
+        OperationResult::Value(promise) => Ok(promise),
+        OperationResult::Throw(_) => unreachable!("async result wrapping always returns a Promise"),
+    }
 }
 
 fn generator_iterator(

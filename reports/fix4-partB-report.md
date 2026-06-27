@@ -6,6 +6,43 @@ B group owns generator resume, iterator protocol execution, Promise jobs, and
 async/for-await runtime lowering. Locked full-suite baseline from
 `docs/fix4-team-plan.md`: 28,468/53,379 passed (53.33%).
 
+## 2026-06-27 — Async Completion, Async Iterator, and Resolution Pass
+
+Implemented:
+
+- Native Test262 async variants now load `doneprintHandle.js`; the native host
+  installs `print()` and forwards output through `NativeContext::push_output`.
+- Async-generator `next`, `return`, and `throw` reuse the generator VM and wrap
+  results or throws in native Promises.
+- Added `Symbol.asyncIterator`, `GetAsyncIterator`, and `AsyncIteratorNext`.
+  `for await` prefers the async method, awaits async next-results, and falls
+  back to the existing sync iterator while awaiting yielded values.
+- Centralized Promise resolution for native Promise adoption, foreign
+  thenables, poisoned `then` getters, callback throws, and self-resolution.
+- Added focused end-to-end tests for `$DONE`, async generators, custom async
+  iterators, opcode stack effects, and Promise resolution.
+
+Focused Test262 delta against the start of this pass:
+
+- for-await-of: 90/1,234 → 983/1,234 (+893, 79.66%)
+- async-generator expressions: 81/623 → 348/623 (+267, 55.86%)
+- async-generator statements: 34/301 → 165/301 (+131, 54.82%)
+- Promise: 113/703 → 232/703 (+119, 33.00%)
+- Iterator: stable at 191/514
+- generator expressions/statements: stable at 188/290 and 173/266
+
+Remaining high-density failures:
+
+- Most remaining for-await cases are A-owned destructuring IteratorClose,
+  abrupt completion, default initializer, name inference, and early errors.
+- Promise combinators still need per-element resolution and aggregate state;
+  pending Promise continuation capture remains incomplete.
+- Async-generator rejection/finally precision still depends on injecting
+  abrupt completions into suspended generator frames.
+
+Coordination: `src/test262.rs` and `src/builtins/mod.rs` received the minimum
+documented D/C host bridge required to measure B async behavior accurately.
+
 ## 2026-06-27 — Async and Shared Iterator Pass
 
 Implemented:
