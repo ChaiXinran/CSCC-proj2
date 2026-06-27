@@ -1672,7 +1672,7 @@ impl Parser {
             return Ok(PropertyName::PrivateName(name));
         }
         if self.eat_punctuator('[') {
-            let expr = self.parse_assignment()?;
+            let expr = self.allowing_in(|parser| parser.parse_assignment())?;
             self.expect_punctuator(']')?;
             return Ok(PropertyName::Computed(Box::new(expr)));
         }
@@ -2762,6 +2762,15 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn class_computed_member_name_allows_in_inside_for_header() {
+        let source = "for (C = class { get ['x' in empty]() { return 1; } }; ; ) { break; }";
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        Parser::new(tokens)
+            .parse_program()
+            .expect("computed class member names re-enable `in`");
     }
 
     #[test]
