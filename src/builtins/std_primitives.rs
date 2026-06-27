@@ -3750,7 +3750,6 @@ fn install_to_string_tags(
     push_proto!(number_prototype, "Number");
     push_proto!(boolean_prototype, "Boolean");
     push_proto!(error_prototype, "Error");
-    push_proto!(regexp_prototype, "RegExp");
 
     // Sub-error prototypes (TypeError, RangeError, etc.) get their own tag.
     for name in [
