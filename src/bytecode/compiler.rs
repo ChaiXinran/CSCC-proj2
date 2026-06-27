@@ -3470,6 +3470,7 @@ impl Compiler {
                         chunk: block_fn.chunk,
                         is_strict: true,
                         is_generator: false,
+                        is_async: false,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
                     let block_idx = chunk
