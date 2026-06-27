@@ -1690,35 +1690,8 @@ impl NativeContext {
         let mut object = JsObject::ordinary();
         object.prototype = self.regexp_prototype().or_else(|| self.object_prototype());
 
-        // ES2023 §22.2.6 — RegExp instance own properties.
-        // `source` and `flags` are non-writable, non-enumerable, configurable.
-        let sorted_flags = sort_regexp_flags(&flags);
-        let props = [
-            (
-                "source",
-                JsValue::String(if pattern.is_empty() {
-                    "(?:)".into()
-                } else {
-                    pattern.clone()
-                }),
-            ),
-            ("flags", JsValue::String(sorted_flags)),
-            ("global", JsValue::Boolean(flags.contains('g'))),
-            ("ignoreCase", JsValue::Boolean(flags.contains('i'))),
-            ("multiline", JsValue::Boolean(flags.contains('m'))),
-            ("dotAll", JsValue::Boolean(flags.contains('s'))),
-            ("sticky", JsValue::Boolean(flags.contains('y'))),
-            ("unicode", JsValue::Boolean(flags.contains('u'))),
-            ("unicodeSets", JsValue::Boolean(flags.contains('v'))),
-            ("hasIndices", JsValue::Boolean(flags.contains('d'))),
-        ];
-        for (name, value) in props {
-            object.properties.define(
-                name,
-                PropertyDescriptor::data_with(value, false, false, true),
-            );
-        }
-        // `lastIndex` is writable, non-enumerable, non-configurable.
+        // RegExp instances expose source/flags/boolean state through prototype
+        // accessors. `lastIndex` is the observable own data property.
         object.properties.define(
             "lastIndex",
             PropertyDescriptor::data_with(JsValue::Number(0.0), true, false, false),
@@ -3989,13 +3962,6 @@ fn value_references_live_heap(value: &JsValue, heap: &Heap) -> bool {
         | JsValue::Error(_) => true,
     }
 }
-/// Returns the canonical flags string for a RegExp, sorted in the order
-/// specified by ES2023 §22.2.6.5 (d, g, i, m, s, u, v, y).
-pub fn sort_regexp_flags(flags: &str) -> String {
-    const ORDER: &[char] = &['d', 'g', 'i', 'm', 's', 'u', 'v', 'y'];
-    ORDER.iter().filter(|&&c| flags.contains(c)).collect()
-}
-
 pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
     match value {
         JsValue::String(value) => Ok(value.clone()),
