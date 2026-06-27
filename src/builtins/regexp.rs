@@ -11,7 +11,8 @@ type ReplacementResult<T> = Result<T, &'static str>;
 /// Compile a JS regex pattern + flags string into a Rust [`Regex`].
 /// Returns `Err(message)` if the pattern or flags are invalid.
 pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, String> {
-    let mut builder = RegexBuilder::new(pattern);
+    let translated_pattern = translate_js_pattern_for_rust(pattern, flags);
+    let mut builder = RegexBuilder::new(&translated_pattern);
     for flag in flags.chars() {
         match flag {
             'i' => {
@@ -28,6 +29,51 @@ pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, String> {
         }
     }
     builder.build().map_err(|e| e.to_string())
+}
+
+fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
+    if flags.contains('s') && (flags.contains('u') || flags.contains('v')) {
+        return pattern.to_string();
+    }
+    if !pattern.contains('.') {
+        return pattern.to_string();
+    }
+    let unicode_mode = flags.contains('u') || flags.contains('v');
+    let dot_replacement = if flags.contains('s') {
+        r"[^\u{10000}-\u{10FFFF}]"
+    } else if unicode_mode {
+        r"[^\n\r\u{2028}\u{2029}]"
+    } else {
+        r"[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]"
+    };
+    let mut output = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars().peekable();
+    let mut in_class = false;
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            output.push(ch);
+            if let Some(next) = chars.next() {
+                output.push(next);
+            }
+            continue;
+        }
+        if ch == '[' {
+            in_class = true;
+            output.push(ch);
+            continue;
+        }
+        if ch == ']' {
+            in_class = false;
+            output.push(ch);
+            continue;
+        }
+        if ch == '.' && !in_class {
+            output.push_str(dot_replacement);
+        } else {
+            output.push(ch);
+        }
+    }
+    output
 }
 
 /// Returns `true` if the flags string contains the global flag `g`.

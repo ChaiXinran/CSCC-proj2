@@ -1958,6 +1958,13 @@ fn install_set(context: &mut NativeContext, _iterator: IteratorIntrinsic) -> Res
         "prototype".into(),
         constant_descriptor(JsValue::Object(prototype)),
     )?;
+    let species_getter =
+        context.register_builtin("get [Symbol.species]", 0, set_species_get, None)?;
+    context.define_symbol_own_property(
+        constructor_object,
+        context.well_known_symbols().species,
+        PropertyDescriptor::accessor(Some(species_getter), None, false, true),
+    )?;
     context.define_own_property(
         prototype,
         "constructor".into(),
@@ -1982,12 +1989,40 @@ fn install_set(context: &mut NativeContext, _iterator: IteratorIntrinsic) -> Res
         method_descriptor(values),
     )?;
     define_method(context, prototype, "forEach", 1, set_for_each)?;
+    define_method(context, prototype, "union", 1, set_union)?;
+    define_method(context, prototype, "intersection", 1, set_intersection)?;
+    define_method(context, prototype, "difference", 1, set_difference)?;
+    define_method(
+        context,
+        prototype,
+        "symmetricDifference",
+        1,
+        set_symmetric_difference,
+    )?;
+    define_method(context, prototype, "isSubsetOf", 1, set_is_subset_of)?;
+    define_method(context, prototype, "isSupersetOf", 1, set_is_superset_of)?;
+    define_method(
+        context,
+        prototype,
+        "isDisjointFrom",
+        1,
+        set_is_disjoint_from,
+    )?;
     context.define_symbol_own_property(
         prototype,
         context.well_known_symbols().to_string_tag,
         readonly_configurable_descriptor(JsValue::String("Set".into())),
     )?;
     declare_standard_global(context, "Set", constructor)
+}
+
+fn set_species_get(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(this_value)
 }
 
 fn set_call(
@@ -2140,6 +2175,200 @@ fn set_for_each(
         }
     }
     Ok(JsValue::Undefined)
+}
+
+fn set_values_from_collection(context: &NativeContext, set: ObjectId) -> Vec<JsValue> {
+    let next = own_usize(context, set, COLLECTION_NEXT_INDEX);
+    let mut values = Vec::new();
+    for index in 0..next {
+        if entry_is_active(context, set, index)
+            && let Some(value) = collection_entry_key(context, set, index)
+        {
+            values.push(value);
+        }
+    }
+    values
+}
+
+fn set_like_values(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<Vec<JsValue>, VmError> {
+    if let Ok(set) = require_collection(context, &value, "Set") {
+        return Ok(set_values_from_collection(context, set));
+    }
+    let object = context.require_object(&value, "Set method argument")?;
+    let keys = vm.get_property_value(context.object_value(object), "keys", context)?;
+    if !is_callable(&keys) {
+        return Err(VmError::type_error("set-like keys is not callable"));
+    }
+    let iterator = vm.call_value_from_builtin(keys, value, Vec::new(), context)?;
+    collect_iterator_values(vm, context, iterator)
+}
+
+fn value_in_list(values: &[JsValue], needle: &JsValue) -> bool {
+    values.iter().any(|value| same_value_zero(value, needle))
+}
+
+fn set_result_object(context: &mut NativeContext) -> Result<ObjectId, VmError> {
+    let prototype = context
+        .get_global("Set")
+        .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten())
+        .or_else(|| context.object_prototype())
+        .ok_or_else(|| VmError::runtime("Set prototype missing"))?;
+    let value = create_collection_object(context, prototype, "Set")?;
+    context
+        .value_object(&value)
+        .ok_or_else(|| VmError::runtime("Set result object missing"))
+}
+
+fn set_from_values(context: &mut NativeContext, values: Vec<JsValue>) -> Result<JsValue, VmError> {
+    let result = set_result_object(context)?;
+    for value in values {
+        set_collection_entry(context, result, value.clone(), value)?;
+    }
+    Ok(JsValue::Object(result))
+}
+
+fn set_union(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let set = require_collection(context, &this_value, "Set")?;
+    let mut values = set_values_from_collection(context, set);
+    for value in set_like_values(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )? {
+        if !value_in_list(&values, &value) {
+            values.push(value);
+        }
+    }
+    set_from_values(context, values)
+}
+
+fn set_intersection(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let set = require_collection(context, &this_value, "Set")?;
+    let other = set_like_values(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let values = set_values_from_collection(context, set)
+        .into_iter()
+        .filter(|value| value_in_list(&other, value))
+        .collect();
+    set_from_values(context, values)
+}
+
+fn set_difference(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let set = require_collection(context, &this_value, "Set")?;
+    let other = set_like_values(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let values = set_values_from_collection(context, set)
+        .into_iter()
+        .filter(|value| !value_in_list(&other, value))
+        .collect();
+    set_from_values(context, values)
+}
+
+fn set_symmetric_difference(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let set = require_collection(context, &this_value, "Set")?;
+    let left = set_values_from_collection(context, set);
+    let other = set_like_values(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let mut values = Vec::new();
+    for value in &left {
+        if !value_in_list(&other, value) {
+            values.push(value.clone());
+        }
+    }
+    for value in other {
+        if !value_in_list(&left, &value) && !value_in_list(&values, &value) {
+            values.push(value);
+        }
+    }
+    set_from_values(context, values)
+}
+
+fn set_is_subset_of(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let set = require_collection(context, &this_value, "Set")?;
+    let other = set_like_values(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    Ok(JsValue::Boolean(
+        set_values_from_collection(context, set)
+            .iter()
+            .all(|value| value_in_list(&other, value)),
+    ))
+}
+
+fn set_is_superset_of(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let set = require_collection(context, &this_value, "Set")?;
+    let left = set_values_from_collection(context, set);
+    let other = set_like_values(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    Ok(JsValue::Boolean(
+        other.iter().all(|value| value_in_list(&left, value)),
+    ))
+}
+
+fn set_is_disjoint_from(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let set = require_collection(context, &this_value, "Set")?;
+    let left = set_values_from_collection(context, set);
+    let other = set_like_values(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    Ok(JsValue::Boolean(
+        left.iter().all(|value| !value_in_list(&other, value)),
+    ))
 }
 
 fn install_weak_map(context: &mut NativeContext) -> Result<(), VmError> {
