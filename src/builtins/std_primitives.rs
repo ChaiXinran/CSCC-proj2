@@ -487,8 +487,7 @@ fn error_construct(
     new_target: JsValue,
 ) -> Result<JsValue, VmError> {
     // Capture the constructor name before borrowing context mutably.
-    let constructor_name: Option<&'static str> = if let JsValue::BuiltinFunction(id) = &new_target
-    {
+    let constructor_name: Option<&'static str> = if let JsValue::BuiltinFunction(id) = &new_target {
         context.builtin(*id).map(|b| b.name)
     } else {
         None

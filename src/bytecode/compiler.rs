@@ -3969,6 +3969,19 @@ impl Compiler {
         // stack at exit: [value=undefined, is_done=true]; pop both.
         chunk.emit(Instruction::Pop); // pop is_done=true
         chunk.emit(Instruction::Pop); // pop value=undefined
+        let natural_exit_jump = chunk.emit(Instruction::Jump(usize::MAX));
+
+        // A `break` arrives with an empty operand stack, so it must not share
+        // the natural-exhaustion cleanup above. Close the still-live iterator
+        // before both paths rejoin at the lexical-scope cleanup.
+        let break_target = chunk.current_offset();
+        chunk.emit(Instruction::LoadName(iter_idx));
+        chunk.emit(Instruction::IteratorClose);
+
+        let loop_end = chunk.current_offset();
+        chunk
+            .patch_jump(natural_exit_jump, loop_end)
+            .map_err(CompileError::from_chunk)?;
 
         let break_jumps = context
             .breakables
@@ -3978,7 +3991,7 @@ impl Compiler {
             .clone();
         for jump in break_jumps {
             chunk
-                .patch_jump(jump, exit_target)
+                .patch_jump(jump, break_target)
                 .map_err(CompileError::from_chunk)?;
         }
         context.loops.pop();
