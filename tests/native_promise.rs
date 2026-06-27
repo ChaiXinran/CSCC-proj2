@@ -135,6 +135,109 @@ fn promise_static_methods_use_the_receiver_constructor() {
 }
 
 #[test]
+fn promise_all_uses_custom_capability_functions_without_native_promise() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var resolveCalls = 0; var rejectedSame = false; var firstReject; \
+             function C(executor) { \
+               var result = {}; \
+               executor(function(value) { resolveCalls++; result.value = value; }, \
+                        function(reason) { result.reason = reason; }); \
+               return result; \
+             } \
+             C.resolve = function(value) { return value; }; \
+             var p1 = { then: function(fulfilled, rejected) { \
+               firstReject = rejected; fulfilled('ok'); fulfilled('late'); \
+             } }; \
+             var p2 = { then: function(fulfilled, rejected) { \
+               rejectedSame = rejected === firstReject; fulfilled('two'); \
+             } }; \
+             var result = Promise.all.call(C, [p1, p2]); \
+             var summary = resolveCalls + ':' + result.value.join(',') + ':' + rejectedSame;",
+            ExecutionOptions::default(),
+        )
+        .expect("custom Promise capability");
+
+    assert_eq!(
+        runtime
+            .eval_source("summary;", ExecutionOptions::default())
+            .expect("read custom capability result"),
+        "1:ok,two:true"
+    );
+}
+
+#[test]
+fn promise_then_uses_species_constructor_for_result_capability() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var p = new Promise(function () {}); p.constructor = {}; Object.defineProperty(p.constructor, Symbol.species, { value: Promise }); var q = p.then(); var nullCtorThrows = false; p.constructor = null; try { p.then(); } catch (error) { nullCtorThrows = error.name === 'TypeError'; } var result = (q instanceof Promise) + ':' + nullCtorThrows;",
+            ExecutionOptions::default(),
+        )
+        .expect("Promise.prototype.then species constructor");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read species result"),
+        "true:true"
+    );
+}
+
+#[test]
+fn promise_catch_and_finally_invoke_receiver_then() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var catchArgs = ''; var finallyArgs = ''; \
+             var catchReceiver = { then: function(a, b) { \
+               catchArgs = (a === undefined) + ':' + (typeof b); return 'catch-result'; \
+             } }; \
+             var finallyReceiver = { constructor: Promise, then: function(a, b) { \
+               finallyArgs = (typeof a) + ':' + (typeof b); return 'finally-result'; \
+             } }; \
+             var catchResult = Promise.prototype.catch.call(catchReceiver, function() {}); \
+             var finallyResult = Promise.prototype.finally.call(finallyReceiver, function() {}); \
+             var result = catchArgs + ':' + catchResult + '/' + finallyArgs + ':' + finallyResult;",
+            ExecutionOptions::default(),
+        )
+        .expect("generic catch/finally receivers");
+
+    assert_eq!(
+        runtime
+            .eval_source("result;", ExecutionOptions::default())
+            .expect("read generic catch/finally result"),
+        "true:function:catch-result/function:function:finally-result"
+    );
+}
+
+#[test]
+fn promise_finally_waits_for_handler_and_preserves_outcome() {
+    let mut runtime = runtime();
+    runtime
+        .eval_source(
+            "var fulfilledResult = ''; var rejectedResult = ''; \
+             Promise.resolve(1).finally(function() { return Promise.resolve(2); }) \
+               .then(function(value) { fulfilledResult = '' + value; }); \
+             Promise.reject('bad').finally(function() { return Promise.resolve(3); }) \
+               .catch(function(reason) { rejectedResult = reason; });",
+            ExecutionOptions::default(),
+        )
+        .expect("Promise.finally outcome preservation");
+
+    assert_eq!(
+        runtime
+            .eval_source(
+                "fulfilledResult + ':' + rejectedResult;",
+                ExecutionOptions::default(),
+            )
+            .expect("read finally outcome"),
+        "1:bad"
+    );
+}
+
+#[test]
 fn promise_all_consumes_a_custom_iterator() {
     let mut config = RuntimeConfig::default();
     config.gc_allocation_threshold = 1;

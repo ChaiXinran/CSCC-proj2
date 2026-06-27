@@ -128,7 +128,7 @@ fn iterator_helpers_cover_eager_collection_iterators() {
 fn iterator_static_concat_zip_and_zip_keyed_cover_basic_sequences() {
     assert_eq!(
         native_eval(
-            "var c = Iterator.concat([1, 2], 'ab').toArray(); \
+            "var c = Iterator.concat([1, 2], ['a', 'b']).toArray(); \
              var z = Iterator.zip([[1, 2], ['a', 'b']]).toArray(); \
              var k = Iterator.zipKeyed({ x: [1], y: ['a'] }).next().value; \
              c.join(',') + ':' + z[0][0] + z[0][1] + z[1][0] + z[1][1] + ':' + \
@@ -232,6 +232,27 @@ fn generator_objects_are_iterable() {
 }
 
 #[test]
+fn iterator_concat_is_lazy_caches_methods_and_forwards_return() {
+    assert_eq!(
+        native_eval(
+            "var gets = 0; var opens = 0; var closes = 0; var nexts = 0; \
+             var iterable = {}; \
+             Object.defineProperty(iterable, Symbol.iterator, { get: function() { \
+               gets++; return function() { opens++; return { \
+                 next: function() { nexts++; return { value: nexts, done: false }; }, \
+                 return: function() { closes++; return {}; } \
+               }; }; \
+             } }); \
+             var iterator = Iterator.concat(iterable); \
+             var before = gets + ':' + opens + ':' + nexts; \
+             var first = iterator.next().value; iterator.return(); iterator.return(); \
+             before + ':' + first + ':' + gets + ':' + opens + ':' + nexts + ':' + closes;"
+        ),
+        "1:0:0:1:1:1:1:1"
+    );
+}
+
+#[test]
 fn iterator_pipeline_helpers_are_lazy_and_forward_close() {
     assert_eq!(
         native_eval(
@@ -291,5 +312,15 @@ fn terminal_iterator_helpers_close_on_early_exit_and_throw() {
              early + ':' + thrown + ':' + invalid + ':' + closed;"
         ),
         "false:boom:true:3"
+    );
+}
+
+#[test]
+fn terminal_iterator_helpers_read_next_through_getter() {
+    assert_eq!(
+        native_eval(
+            "var reads = 0; var index = 0; var iterator = Object.create(Iterator.prototype); Object.defineProperty(iterator, 'next', { get: function() { reads = reads + 1; return function() { return index < 2 ? { value: ++index, done: false } : { done: true }; }; }}); var values = iterator.toArray(); reads + ':' + values.join(',');"
+        ),
+        "1:1,2"
     );
 }

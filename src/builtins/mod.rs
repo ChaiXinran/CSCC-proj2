@@ -4,7 +4,7 @@ mod array;
 mod function;
 mod json;
 mod object;
-mod promise;
+pub(crate) mod promise;
 pub(crate) mod proxy;
 
 // C1/C2 pure algorithm modules. They contain no VM/runtime wiring; the thin

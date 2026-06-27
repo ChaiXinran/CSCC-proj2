@@ -11,6 +11,8 @@ use crate::{
 const PROMISE_RESOLVE_FUNCTION: &str = "__AgentJSPromiseResolveFunction";
 const PROMISE_REJECT_FUNCTION: &str = "__AgentJSPromiseRejectFunction";
 const PROMISE_CAPABILITY_EXECUTOR: &str = "__AgentJSPromiseCapabilityExecutor";
+const PROMISE_FINALLY_HANDLER: &str = "__AgentJSPromiseFinallyHandler";
+const PROMISE_FINALLY_PASSTHROUGH: &str = "__AgentJSPromiseFinallyPassthrough";
 const PROMISE_ALL_FULFILL: &str = "__AgentJSPromiseAllFulfill";
 const PROMISE_ALL_SETTLED_FULFILL: &str = "__AgentJSPromiseAllSettledFulfill";
 const PROMISE_ALL_SETTLED_REJECT: &str = "__AgentJSPromiseAllSettledReject";
@@ -18,7 +20,8 @@ const PROMISE_ANY_REJECT: &str = "__AgentJSPromiseAnyReject";
 const PROMISE_AGGREGATE_FULFILL: &str = "__AgentJSPromiseAggregateFulfill";
 const PROMISE_AGGREGATE_REJECT: &str = "__AgentJSPromiseAggregateReject";
 
-const AGGREGATE_TARGET: &str = "__agentjs_promise_aggregate_target__";
+const AGGREGATE_RESOLVE: &str = "__agentjs_promise_aggregate_resolve__";
+const AGGREGATE_REJECT: &str = "__agentjs_promise_aggregate_reject__";
 const AGGREGATE_VALUES: &str = "__agentjs_promise_aggregate_values__";
 const AGGREGATE_REMAINING: &str = "__agentjs_promise_aggregate_remaining__";
 const CAPABILITY_RESOLVE: &str = "__agentjs_promise_capability_resolve__";
@@ -95,6 +98,13 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
         promise_capability_executor,
         None,
     )?;
+    context.register_builtin(PROMISE_FINALLY_HANDLER, 1, promise_finally_handler, None)?;
+    context.register_builtin(
+        PROMISE_FINALLY_PASSTHROUGH,
+        1,
+        promise_finally_passthrough,
+        None,
+    )?;
     context.register_builtin(PROMISE_ALL_FULFILL, 1, promise_all_fulfill, None)?;
     context.register_builtin(
         PROMISE_ALL_SETTLED_FULFILL,
@@ -158,14 +168,6 @@ fn promise_prototype(context: &NativeContext) -> Option<ObjectId> {
         JsValue::Object(object) => Some(object),
         _ => None,
     }
-}
-
-fn create_promise_object(
-    context: &mut NativeContext,
-) -> Result<(JsValue, crate::runtime::PromiseId), VmError> {
-    let promise = context.create_promise()?;
-    let object = context.create_promise_object(promise, promise_prototype(context))?;
-    Ok((object, promise))
 }
 
 struct PromiseCapability {
@@ -383,9 +385,6 @@ fn promise_combinator(
 ) -> Result<JsValue, VmError> {
     let capability = new_promise_capability(vm, context, constructor.clone())?;
     let promise_object = capability.promise;
-    let promise = capability.promise_id.ok_or_else(|| {
-        VmError::type_error("Promise constructor did not create a native Promise")
-    })?;
     let iterable = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     vm.with_root_from_builtin(promise_object.clone(), |vm| {
         initialize_promise_combinator(
@@ -394,8 +393,8 @@ fn promise_combinator(
             constructor,
             iterable,
             combinator,
-            promise_object.clone(),
-            promise,
+            capability.resolve,
+            capability.reject,
         )
     })?;
     Ok(promise_object)
@@ -407,8 +406,8 @@ fn initialize_promise_combinator(
     constructor: JsValue,
     iterable: JsValue,
     combinator: PromiseCombinator,
-    promise_object: JsValue,
-    promise: PromiseId,
+    capability_resolve: JsValue,
+    capability_reject: JsValue,
 ) -> Result<(), VmError> {
     let resolve = match vm.get_property_value_catching_from_builtin(
         constructor.clone(),
@@ -417,16 +416,21 @@ fn initialize_promise_combinator(
     )? {
         Ok(resolve) if is_callable(&resolve) => resolve,
         Ok(_) => {
-            enqueue_settle(
+            vm.call_value_from_builtin(
+                capability_reject,
+                JsValue::Undefined,
+                vec![type_error_value("Promise resolve is not callable")],
                 context,
-                promise,
-                PromiseReaction::Reject,
-                type_error_value("Promise resolve is not callable"),
             )?;
             return Ok(());
         }
         Err(reason) => {
-            enqueue_settle(context, promise, PromiseReaction::Reject, reason)?;
+            vm.call_value_from_builtin(
+                capability_reject,
+                JsValue::Undefined,
+                vec![reason],
+                context,
+            )?;
             return Ok(());
         }
     };
@@ -436,7 +440,12 @@ fn initialize_promise_combinator(
             let Some(reason) = vm.take_pending_exception_from_builtin() else {
                 return Err(error);
             };
-            enqueue_settle(context, promise, PromiseReaction::Reject, reason)?;
+            vm.call_value_from_builtin(
+                capability_reject,
+                JsValue::Undefined,
+                vec![reason],
+                context,
+            )?;
             return Ok(());
         }
     };
@@ -445,10 +454,20 @@ fn initialize_promise_combinator(
         match combinator {
             PromiseCombinator::All | PromiseCombinator::AllSettled => {
                 let array = context.create_array(Vec::new())?;
-                enqueue_settle(context, promise, PromiseReaction::Fulfill, array)?;
+                vm.call_value_from_builtin(
+                    capability_resolve,
+                    JsValue::Undefined,
+                    vec![array],
+                    context,
+                )?;
             }
             PromiseCombinator::Any => {
-                enqueue_settle(context, promise, PromiseReaction::Reject, aggregate_error())?
+                vm.call_value_from_builtin(
+                    capability_reject,
+                    JsValue::Undefined,
+                    vec![aggregate_error()],
+                    context,
+                )?;
             }
             PromiseCombinator::Race => {}
         }
@@ -457,7 +476,8 @@ fn initialize_promise_combinator(
 
     let result_values = context.create_array(vec![JsValue::Undefined; values.len()])?;
     let state = context.create_object([
-        (AGGREGATE_TARGET.into(), promise_object.clone()),
+        (AGGREGATE_RESOLVE.into(), capability_resolve.clone()),
+        (AGGREGATE_REJECT.into(), capability_reject.clone()),
         (AGGREGATE_VALUES.into(), result_values),
         (
             AGGREGATE_REMAINING.into(),
@@ -477,7 +497,12 @@ fn initialize_promise_combinator(
             )? {
                 Ok(resolved) => resolved,
                 Err(reason) => {
-                    enqueue_settle(context, promise, PromiseReaction::Reject, reason)?;
+                    vm.call_value_from_builtin(
+                        capability_reject.clone(),
+                        JsValue::Undefined,
+                        vec![reason],
+                        context,
+                    )?;
                     return Ok(());
                 }
             };
@@ -501,7 +526,12 @@ fn initialize_promise_combinator(
                 )
             })?;
             if let Err(reason) = registration {
-                enqueue_settle(context, promise, PromiseReaction::Reject, reason)?;
+                vm.call_value_from_builtin(
+                    capability_reject.clone(),
+                    JsValue::Undefined,
+                    vec![reason],
+                    context,
+                )?;
                 return Ok(());
             }
         }
@@ -516,24 +546,22 @@ fn aggregate_callbacks(
     index: usize,
 ) -> Result<(JsValue, JsValue), VmError> {
     let indexed_args = vec![state.clone(), JsValue::Number(index as f64)];
-    let state_arg = vec![state.clone()];
+    let resolve = context.get(state.clone(), AGGREGATE_RESOLVE)?;
+    let reject = context.get(state.clone(), AGGREGATE_REJECT)?;
     match combinator {
         PromiseCombinator::All => Ok((
             bind_internal(context, PROMISE_ALL_FULFILL, indexed_args)?,
-            bind_internal(context, PROMISE_AGGREGATE_REJECT, state_arg)?,
+            reject,
         )),
         PromiseCombinator::AllSettled => Ok((
             bind_internal(context, PROMISE_ALL_SETTLED_FULFILL, indexed_args.clone())?,
             bind_internal(context, PROMISE_ALL_SETTLED_REJECT, indexed_args)?,
         )),
         PromiseCombinator::Any => Ok((
-            bind_internal(context, PROMISE_AGGREGATE_FULFILL, state_arg)?,
+            resolve,
             bind_internal(context, PROMISE_ANY_REJECT, indexed_args)?,
         )),
-        PromiseCombinator::Race => Ok((
-            bind_internal(context, PROMISE_AGGREGATE_FULFILL, state_arg.clone())?,
-            bind_internal(context, PROMISE_AGGREGATE_REJECT, state_arg)?,
-        )),
+        PromiseCombinator::Race => Ok((resolve, reject)),
     }
 }
 
@@ -562,11 +590,33 @@ fn aggregate_state(arguments: &[JsValue]) -> Result<JsValue, VmError> {
         .ok_or_else(|| VmError::runtime("invalid Promise aggregate state"))
 }
 
-fn aggregate_target(context: &mut NativeContext, state: JsValue) -> Result<PromiseId, VmError> {
-    let target = context.get(state, AGGREGATE_TARGET)?;
-    context
-        .promise_id_from_value(&target)
-        .ok_or_else(|| VmError::runtime("invalid Promise aggregate target"))
+fn aggregate_function(
+    context: &mut NativeContext,
+    state: JsValue,
+    key: &str,
+) -> Result<JsValue, VmError> {
+    let function = context.get(state, key)?;
+    if !is_callable(&function) {
+        return Err(VmError::runtime("invalid Promise aggregate capability"));
+    }
+    Ok(function)
+}
+
+fn aggregate_called_key(index: usize) -> String {
+    format!("__agentjs_promise_aggregate_{index}_called__")
+}
+
+fn mark_aggregate_called(
+    context: &mut NativeContext,
+    state: JsValue,
+    index: usize,
+) -> Result<bool, VmError> {
+    let key = aggregate_called_key(index);
+    if context.get(state.clone(), &key)?.to_boolean() {
+        return Ok(false);
+    }
+    context.set(state, &key, JsValue::Boolean(true), true)?;
+    Ok(true)
 }
 
 fn aggregate_values(context: &mut NativeContext, state: JsValue) -> Result<JsValue, VmError> {
@@ -604,50 +654,59 @@ fn aggregate_index(arguments: &[JsValue]) -> Result<usize, VmError> {
 }
 
 fn promise_all_fulfill(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let state = aggregate_state(arguments)?;
+    let index = aggregate_index(arguments)?;
+    if !mark_aggregate_called(context, state.clone(), index)? {
+        return Ok(JsValue::Undefined);
+    }
     set_aggregate_value(
         context,
         state.clone(),
-        aggregate_index(arguments)?,
+        index,
         arguments.get(2).cloned().unwrap_or(JsValue::Undefined),
     )?;
     if decrement_aggregate_remaining(context, state.clone())? {
-        let target = aggregate_target(context, state.clone())?;
+        let resolve = aggregate_function(context, state.clone(), AGGREGATE_RESOLVE)?;
         let values = aggregate_values(context, state)?;
-        context.fulfill_promise(target, values)?;
+        vm.call_value_from_builtin(resolve, JsValue::Undefined, vec![values], context)?;
     }
     Ok(JsValue::Undefined)
 }
 
 fn promise_all_settled_fulfill(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    settle_all_settled(context, arguments, true)
+    settle_all_settled(vm, context, arguments, true)
 }
 
 fn promise_all_settled_reject(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    settle_all_settled(context, arguments, false)
+    settle_all_settled(vm, context, arguments, false)
 }
 
 fn settle_all_settled(
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     fulfilled: bool,
 ) -> Result<JsValue, VmError> {
     let state = aggregate_state(arguments)?;
+    let index = aggregate_index(arguments)?;
+    if !mark_aggregate_called(context, state.clone(), index)? {
+        return Ok(JsValue::Undefined);
+    }
     let value = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
     let result = if fulfilled {
         context.create_object([
@@ -660,61 +719,69 @@ fn settle_all_settled(
             ("reason".into(), value),
         ])?
     };
-    set_aggregate_value(context, state.clone(), aggregate_index(arguments)?, result)?;
+    set_aggregate_value(context, state.clone(), index, result)?;
     if decrement_aggregate_remaining(context, state.clone())? {
-        let target = aggregate_target(context, state.clone())?;
+        let resolve = aggregate_function(context, state.clone(), AGGREGATE_RESOLVE)?;
         let values = aggregate_values(context, state)?;
-        context.fulfill_promise(target, values)?;
+        vm.call_value_from_builtin(resolve, JsValue::Undefined, vec![values], context)?;
     }
     Ok(JsValue::Undefined)
 }
 
 fn promise_any_reject(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let state = aggregate_state(arguments)?;
+    let index = aggregate_index(arguments)?;
+    if !mark_aggregate_called(context, state.clone(), index)? {
+        return Ok(JsValue::Undefined);
+    }
     set_aggregate_value(
         context,
         state.clone(),
-        aggregate_index(arguments)?,
+        index,
         arguments.get(2).cloned().unwrap_or(JsValue::Undefined),
     )?;
     if decrement_aggregate_remaining(context, state.clone())? {
-        let target = aggregate_target(context, state)?;
-        context.reject_promise(target, aggregate_error())?;
+        let reject = aggregate_function(context, state, AGGREGATE_REJECT)?;
+        vm.call_value_from_builtin(reject, JsValue::Undefined, vec![aggregate_error()], context)?;
     }
     Ok(JsValue::Undefined)
 }
 
 fn promise_aggregate_fulfill(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let state = aggregate_state(arguments)?;
-    let target = aggregate_target(context, state)?;
-    context.fulfill_promise(
-        target,
-        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    let resolve = aggregate_function(context, state, AGGREGATE_RESOLVE)?;
+    vm.call_value_from_builtin(
+        resolve,
+        JsValue::Undefined,
+        vec![arguments.get(1).cloned().unwrap_or(JsValue::Undefined)],
+        context,
     )?;
     Ok(JsValue::Undefined)
 }
 
 fn promise_aggregate_reject(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let state = aggregate_state(arguments)?;
-    let target = aggregate_target(context, state)?;
-    context.reject_promise(
-        target,
-        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    let reject = aggregate_function(context, state, AGGREGATE_REJECT)?;
+    vm.call_value_from_builtin(
+        reject,
+        JsValue::Undefined,
+        vec![arguments.get(1).cloned().unwrap_or(JsValue::Undefined)],
+        context,
     )?;
     Ok(JsValue::Undefined)
 }
@@ -798,35 +865,61 @@ fn promise_capability_executor(
 }
 
 fn promise_then(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    promise_then_with_finally(context, this, arguments, false)
+    promise_then_with_finally(vm, context, this, arguments, false)
 }
 
 fn promise_catch(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let on_rejected = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let args = [JsValue::Undefined, on_rejected];
-    promise_then_with_finally(context, this, &args, false)
+    let then = vm.get_property_value(this.clone(), "then", context)?;
+    vm.call_value_from_builtin(then, this, vec![JsValue::Undefined, on_rejected], context)
 }
 
 fn promise_finally(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    promise_then_with_finally(context, this, arguments, true)
+    let constructor = promise_species_constructor(vm, context, this.clone())?;
+    let on_finally = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let then = vm.get_property_value(this.clone(), "then", context)?;
+    if !is_callable(&on_finally) {
+        return vm.call_value_from_builtin(
+            then,
+            this,
+            vec![on_finally.clone(), on_finally],
+            context,
+        );
+    }
+    let fulfilled = bind_internal(
+        context,
+        PROMISE_FINALLY_HANDLER,
+        vec![
+            constructor.clone(),
+            on_finally.clone(),
+            JsValue::Boolean(true),
+        ],
+    )?;
+    let rejected = bind_internal(
+        context,
+        PROMISE_FINALLY_HANDLER,
+        vec![constructor, on_finally, JsValue::Boolean(false)],
+    )?;
+    vm.call_value_from_builtin(then, this, vec![fulfilled, rejected], context)
 }
 
 fn promise_then_with_finally(
+    vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     arguments: &[JsValue],
@@ -835,7 +928,12 @@ fn promise_then_with_finally(
     let Some(source) = context.promise_id_from_value(&this) else {
         return Err(VmError::type_error("Promise method called on non-promise"));
     };
-    let (result_object, result_promise) = create_promise_object(context)?;
+    let constructor = promise_species_constructor(vm, context, this.clone())?;
+    let capability = new_promise_capability(vm, context, constructor)?;
+    let result_object = capability.promise;
+    let result_promise = capability.promise_id.ok_or_else(|| {
+        VmError::type_error("Promise species constructor did not create a native Promise")
+    })?;
     let on_fulfilled = arguments
         .first()
         .filter(|value| is_callable(value))
@@ -857,6 +955,82 @@ fn promise_then_with_finally(
     Ok(result_object)
 }
 
+fn promise_species_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    promise: JsValue,
+) -> Result<JsValue, VmError> {
+    let default_constructor = context
+        .get_global("Promise")
+        .ok_or_else(|| VmError::runtime("Promise constructor is not installed"))?;
+    let constructor = vm.get_property_value(promise.clone(), "constructor", context)?;
+    if matches!(constructor, JsValue::Undefined) {
+        return Ok(default_constructor);
+    }
+    if !matches!(
+        constructor,
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+    ) {
+        return Err(VmError::type_error(
+            "Promise constructor property is not an object",
+        ));
+    }
+    let species = vm.get_symbol_property_value_with_receiver_from_builtin(
+        constructor.clone(),
+        constructor,
+        context.well_known_symbols().species,
+        context,
+    )?;
+    if matches!(species, JsValue::Undefined | JsValue::Null) {
+        return Ok(default_constructor);
+    }
+    if !context.is_constructable_value(&species) {
+        return Err(VmError::type_error("Promise species is not a constructor"));
+    }
+    Ok(species)
+}
+
+fn promise_finally_handler(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let constructor = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let on_finally = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    let fulfilled = arguments
+        .get(2)
+        .is_some_and(|value| matches!(value, JsValue::Boolean(true)));
+    let original = arguments.get(3).cloned().unwrap_or(JsValue::Undefined);
+    let result = vm.call_value_from_builtin(on_finally, JsValue::Undefined, Vec::new(), context)?;
+    let resolve = vm.get_property_value(constructor.clone(), "resolve", context)?;
+    let promise = vm.call_value_from_builtin(resolve, constructor, vec![result], context)?;
+    let passthrough = bind_internal(
+        context,
+        PROMISE_FINALLY_PASSTHROUGH,
+        vec![JsValue::Boolean(fulfilled), original],
+    )?;
+    let then = vm.get_property_value(promise.clone(), "then", context)?;
+    vm.call_value_from_builtin(then, promise, vec![passthrough], context)
+}
+
+fn promise_finally_passthrough(
+    vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let fulfilled = arguments
+        .first()
+        .is_some_and(|value| matches!(value, JsValue::Boolean(true)));
+    let original = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if fulfilled {
+        Ok(original)
+    } else {
+        Err(vm.throw_value_from_builtin(original))
+    }
+}
+
 fn promise_resolve_executor(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -872,14 +1046,18 @@ fn promise_resolve_executor(
     Ok(JsValue::Undefined)
 }
 
-fn resolve_promise_value(
+pub(crate) fn resolve_promise_value(
     vm: &mut Vm,
     context: &mut NativeContext,
     promise_object: JsValue,
     promise: crate::runtime::PromiseId,
     value: JsValue,
 ) -> Result<(), VmError> {
-    if promise_object.strict_equals(&value) {
+    if promise_object.strict_equals(&value)
+        || context
+            .promise_id_from_value(&value)
+            .is_some_and(|id| id == promise)
+    {
         return enqueue_settle(
             context,
             promise,
@@ -923,6 +1101,16 @@ fn resolve_promise_value(
     }
 
     enqueue_settle(context, promise, PromiseReaction::Fulfill, value)
+}
+
+pub(crate) fn resolve_promise_id(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    promise: PromiseId,
+    value: JsValue,
+) -> Result<(), VmError> {
+    let promise_object = context.create_promise_object(promise, promise_prototype(context))?;
+    resolve_promise_value(vm, context, promise_object, promise, value)
 }
 
 fn promise_reject_executor(

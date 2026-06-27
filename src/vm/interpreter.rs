@@ -10,8 +10,8 @@ use crate::{
     runtime::{
         FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord, Job, JsFunction,
         JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind, PreferredType,
-        PrimitiveValue, PromiseCallbackJob, PromiseReaction, PromiseThenReaction,
-        PropertyDescriptor, PropertyKey, PropertyKind, SymbolId, to_property_key,
+        PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor, PropertyKey,
+        PropertyKind, SymbolId, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -152,6 +152,11 @@ impl Vm {
         self.pending_exception.take()
     }
 
+    pub(crate) fn throw_value_from_builtin(&mut self, value: JsValue) -> VmError {
+        self.pending_exception = Some(value);
+        VmError::runtime("JavaScript callback threw")
+    }
+
     pub(crate) fn with_root_from_builtin<T>(
         &mut self,
         value: JsValue,
@@ -271,6 +276,16 @@ impl Vm {
         context: &mut NativeContext,
         start_ip: usize,
     ) -> Result<Completion, VmError> {
+        self.run_completion_from_with_initial(chunk, context, start_ip, None)
+    }
+
+    fn run_completion_from_with_initial(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+        start_ip: usize,
+        initial: Option<Completion>,
+    ) -> Result<Completion, VmError> {
         let analysis = chunk
             .analyze_stack()
             .map_err(|error| VmError::runtime(format!("invalid bytecode stack: {error}")))?;
@@ -282,6 +297,18 @@ impl Vm {
             stack_depth: self.stack.len(),
             environment_depth: context.environment_depth(),
         };
+        if let Some(completion) = initial
+            && !self.enter_handler(
+                chunk,
+                start_ip.saturating_sub(1),
+                completion.clone(),
+                baseline,
+                context,
+                &mut instruction_pointer,
+            )?
+        {
+            return Ok(completion);
+        }
         while instruction_pointer < chunk.instructions.len() {
             context.check_deadline()?;
             if context.should_collect_garbage() {
@@ -2196,6 +2223,16 @@ impl Vm {
         sent_value: JsValue,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
+        self.resume_generator_with_completion(generator, sent_value, None, context)
+    }
+
+    fn resume_generator_with_completion(
+        &mut self,
+        generator: JsValue,
+        sent_value: JsValue,
+        injected: Option<Completion>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
         let object = context.require_object(&generator, "Generator.prototype.next")?;
         let mut record = match context.heap().object(object).map(|object| &object.kind) {
             Some(ObjectKind::Generator { record }) => record.clone(),
@@ -2274,7 +2311,7 @@ impl Vm {
         self.stack.extend(record.stack.iter().cloned());
         if let Some(return_value) = record.delegate_return.take() {
             self.stack.push(return_value);
-        } else if !suspended_start {
+        } else if !suspended_start && injected.is_none() {
             self.stack.push(sent_value);
         }
 
@@ -2286,7 +2323,12 @@ impl Vm {
             stack_base,
         );
         context.push_call_frame(frame)?;
-        let result = self.run_completion_from(&function.chunk, context, record.next_ip);
+        let result = self.run_completion_from_with_initial(
+            &function.chunk,
+            context,
+            record.next_ip,
+            injected,
+        );
         let saved_stack = self.stack[stack_base..].to_vec();
         self.stack.truncate(stack_base);
         let frame_result = context.pop_call_frame();
@@ -2766,11 +2808,11 @@ impl Vm {
         if is_already_handled {
             return match context.create_iterator_object(iterable.clone()) {
                 Ok(iterator) => Ok(OperationResult::Value(iterator)),
-                Err(error) if matches!(error.kind, VmErrorKind::Type) => Ok(
-                    OperationResult::Throw(vm_error_to_value(VmError::type_error(
-                        "value is not iterable",
-                    ))),
-                ),
+                Err(error) if matches!(error.kind, VmErrorKind::Type) => {
+                    Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error("value is not iterable"),
+                    )))
+                }
                 Err(error) => Err(error),
             };
         }
@@ -2803,11 +2845,11 @@ impl Vm {
             // (handles array-like objects such as `arguments` that lack Symbol.iterator in our impl).
             return match context.create_iterator_object(iterable.clone()) {
                 Ok(iterator) => Ok(OperationResult::Value(iterator)),
-                Err(error) if matches!(error.kind, VmErrorKind::Type) => Ok(
-                    OperationResult::Throw(vm_error_to_value(VmError::type_error(
-                        "value is not iterable",
-                    ))),
-                ),
+                Err(error) if matches!(error.kind, VmErrorKind::Type) => {
+                    Ok(OperationResult::Throw(vm_error_to_value(
+                        VmError::type_error("value is not iterable"),
+                    )))
+                }
                 Err(error) => Err(error),
             };
         }
@@ -2837,12 +2879,10 @@ impl Vm {
                 return Ok(OperationResult::Value(iterator));
             }
         }
-        let object = JsObject::iterator(IteratorRecord::js(iterator));
-        let id = context
-            .heap_mut()
-            .allocate_object(object)
-            .ok_or_else(|| VmError::runtime("heap full: cannot allocate iterator object"))?;
-        Ok(OperationResult::Value(JsValue::Object(id)))
+        match self.wrap_js_iterator(iterator, context) {
+            Ok(iterator) => Ok(OperationResult::Value(iterator)),
+            Err(error) => self.error_to_operation_result_in_context(error, context),
+        }
     }
 
     fn create_async_iterator_object(
@@ -2924,8 +2964,11 @@ impl Vm {
                 };
                 Ok(IteratorStepResult::Value { value, done })
             }
-            IteratorKind::Js { iterator, .. } => {
-                let result = self.step_js_iterator(iterator, context)?;
+            IteratorKind::Js {
+                iterator,
+                next_method,
+            } => {
+                let result = self.step_js_iterator(iterator, next_method, context)?;
                 // Update done flag in the stored record so IteratorClose knows if we're exhausted.
                 if let IteratorStepResult::Value { done: true, .. } = &result {
                     if let Some(obj) = context.heap_mut().object_mut(id) {
@@ -3177,11 +3220,15 @@ impl Vm {
     fn step_js_iterator(
         &mut self,
         iterator: JsValue,
+        next_method: Option<JsValue>,
         context: &mut NativeContext,
     ) -> Result<IteratorStepResult, VmError> {
-        let next = match self.get_property_value_completion(iterator.clone(), "next", context)? {
-            OperationResult::Value(value) => value,
-            OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+        let next = match next_method {
+            Some(value) => value,
+            None => match self.get_property_value_completion(iterator.clone(), "next", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(IteratorStepResult::Throw(value)),
+            },
         };
         if !is_callable_value(&next) {
             return Ok(IteratorStepResult::Throw(vm_error_to_value(
@@ -3254,9 +3301,10 @@ impl Vm {
                     generator_result(context, value, false).map(YieldStarStepResult::Yield)
                 }
             }
-            IteratorKind::Js { iterator, .. } => {
-                self.step_js_yield_star_iterator(iterator, sent_value, context)
-            }
+            IteratorKind::Js {
+                iterator,
+                next_method,
+            } => self.step_js_yield_star_iterator(iterator, next_method, sent_value, context),
             IteratorKind::JsAsync { .. } => {
                 Err(VmError::runtime("async iterator cannot be used by yield*"))
             }
@@ -3266,12 +3314,18 @@ impl Vm {
     fn step_js_yield_star_iterator(
         &mut self,
         iterator: JsValue,
+        next_method: Option<JsValue>,
         sent_value: JsValue,
         context: &mut NativeContext,
     ) -> Result<YieldStarStepResult, VmError> {
-        let next = match self.get_property_value_completion(iterator.clone(), "next", context)? {
-            OperationResult::Value(value) => value,
-            OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+        let next = match next_method {
+            Some(value) => value,
+            None => match self.get_property_value_completion(iterator.clone(), "next", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => {
+                    return Ok(YieldStarStepResult::Throw(value));
+                }
+            },
         };
         if !is_callable_value(&next) {
             return Ok(YieldStarStepResult::Throw(vm_error_to_value(
@@ -3596,6 +3650,24 @@ impl Vm {
                 return Err(VmError::runtime("GetIterator threw"));
             }
         };
+        self.collect_iterator_values_from_builtin(iterator, context)
+    }
+
+    pub(crate) fn collect_iterator_values_from_builtin(
+        &mut self,
+        iterator: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Vec<JsValue>, VmError> {
+        let iterator = if context.value_object(&iterator).is_some_and(|id| {
+            context
+                .heap()
+                .object(id)
+                .is_some_and(|object| matches!(object.kind, ObjectKind::Iterator { .. }))
+        }) {
+            iterator
+        } else {
+            self.wrap_js_iterator(iterator, context)?
+        };
         let root_depth = self.stack.len();
         self.stack.push(iterator.clone());
         let result = (|| {
@@ -3614,6 +3686,32 @@ impl Vm {
         })();
         self.stack.truncate(root_depth);
         result
+    }
+
+    fn wrap_js_iterator(
+        &mut self,
+        iterator: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        if !is_object_like(&iterator) {
+            return Err(VmError::type_error("iterator method returned a non-object"));
+        }
+        let next = match self.get_property_value_completion(iterator.clone(), "next", context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                return Err(VmError::runtime("iterator next getter threw"));
+            }
+        };
+        if !is_callable_value(&next) {
+            return Err(VmError::type_error("iterator next is not callable"));
+        }
+        let object = JsObject::iterator(IteratorRecord::js_with_next(iterator, next));
+        let id = context
+            .heap_mut()
+            .allocate_object(object)
+            .ok_or_else(|| VmError::runtime("heap full: cannot allocate iterator object"))?;
+        Ok(JsValue::Object(id))
     }
 
     pub(crate) fn call_value_catching_from_builtin(
@@ -3720,6 +3818,15 @@ impl Vm {
         symbol: SymbolId,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
+        if context.value_object(&target).is_some() {
+            return proxy::internal_get(
+                self,
+                context,
+                target,
+                &PropertyKey::Symbol(symbol),
+                receiver,
+            );
+        }
         let object = self.property_lookup_object(&target, context)?;
         let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? else {
             return Ok(JsValue::Undefined);
@@ -5048,30 +5155,12 @@ impl Vm {
                     }
                     return Ok(());
                 }
-                if let Some(promise) = context.promise_id_from_value(&value) {
-                    match context.promise_state(promise) {
-                        Some(crate::runtime::PromiseState::Fulfilled(value)) => {
-                            context.fulfill_promise(job.result_promise, value)?;
-                        }
-                        Some(crate::runtime::PromiseState::Rejected(value)) => {
-                            context.reject_promise(job.result_promise, value)?;
-                        }
-                        Some(crate::runtime::PromiseState::Pending) => {
-                            context.add_promise_reaction(
-                                promise,
-                                PromiseThenReaction {
-                                    result_promise: job.result_promise,
-                                    on_fulfilled: None,
-                                    on_rejected: None,
-                                    finally: false,
-                                },
-                            )?;
-                        }
-                        None => return Err(VmError::runtime("invalid promise id")),
-                    }
-                } else {
-                    context.fulfill_promise(job.result_promise, value)?;
-                }
+                crate::builtins::promise::resolve_promise_id(
+                    self,
+                    context,
+                    job.result_promise,
+                    value,
+                )?;
             }
             OperationResult::Throw(value) => {
                 context.reject_promise(job.result_promise, value)?;
@@ -5306,31 +5395,40 @@ fn generator_return(
                 return Ok(delegate_result);
             }
             YieldStarStepResult::Complete(delegate_value) => {
-                record.state = GeneratorState::Completed;
-                record.stack.clear();
-                record.delegate_values.clear();
                 record.delegate_iterator = None;
                 record.delegate_return = None;
-                let Some(object) = context.heap_mut().object_mut(object) else {
-                    return Err(VmError::runtime("missing generator object"));
-                };
-                object.kind = ObjectKind::Generator { record };
-                return generator_result(context, delegate_value, true);
+                vm.write_generator_record(context, object, record)?;
+                return vm.resume_generator_with_completion(
+                    this_value,
+                    JsValue::Undefined,
+                    Some(Completion::Return(delegate_value)),
+                    context,
+                );
             }
             YieldStarStepResult::Throw(value) => {
-                record.state = GeneratorState::Completed;
-                record.stack.clear();
-                record.delegate_values.clear();
                 record.delegate_iterator = None;
                 record.delegate_return = None;
-                let Some(object) = context.heap_mut().object_mut(object) else {
-                    return Err(VmError::runtime("missing generator object"));
-                };
-                object.kind = ObjectKind::Generator { record };
-                vm.pending_exception = Some(value);
-                return Err(VmError::runtime("generator delegate return threw"));
+                vm.write_generator_record(context, object, record)?;
+                return vm.resume_generator_with_completion(
+                    this_value,
+                    JsValue::Undefined,
+                    Some(Completion::Throw(value)),
+                    context,
+                );
             }
         }
+    }
+
+    if matches!(record.state, GeneratorState::SuspendedYield) {
+        return vm.resume_generator_with_completion(
+            this_value,
+            JsValue::Undefined,
+            Some(Completion::Return(value)),
+            context,
+        );
+    }
+    if matches!(record.state, GeneratorState::Executing) {
+        return Err(VmError::type_error("generator is already executing"));
     }
 
     record.state = GeneratorState::Completed;
@@ -5380,19 +5478,28 @@ fn generator_throw(
                 return vm.resume_generator(this_value, JsValue::Undefined, context);
             }
             YieldStarStepResult::Throw(value) => {
-                record.state = GeneratorState::Completed;
-                record.stack.clear();
-                record.delegate_values.clear();
                 record.delegate_iterator = None;
                 record.delegate_return = None;
-                let Some(object) = context.heap_mut().object_mut(object) else {
-                    return Err(VmError::runtime("missing generator object"));
-                };
-                object.kind = ObjectKind::Generator { record };
-                vm.pending_exception = Some(value);
-                return Err(VmError::runtime("generator delegate throw"));
+                vm.write_generator_record(context, object, record)?;
+                return vm.resume_generator_with_completion(
+                    this_value,
+                    JsValue::Undefined,
+                    Some(Completion::Throw(value)),
+                    context,
+                );
             }
         }
+    }
+    if matches!(record.state, GeneratorState::SuspendedYield) {
+        return vm.resume_generator_with_completion(
+            this_value,
+            JsValue::Undefined,
+            Some(Completion::Throw(value)),
+            context,
+        );
+    }
+    if matches!(record.state, GeneratorState::Executing) {
+        return Err(VmError::type_error("generator is already executing"));
     }
     record.state = GeneratorState::Completed;
     record.stack.clear();

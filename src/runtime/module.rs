@@ -3,6 +3,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use super::JsValue;
+
 /// Stable numeric identity for a module record inside one native isolate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ModuleId(pub u32);
@@ -44,11 +46,19 @@ pub enum ModuleStatus {
     Failed,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModuleEvaluationState {
+    Pending,
+    Fulfilled,
+    Rejected(JsValue),
+}
+
 #[derive(Debug, Default)]
 pub struct ModuleRegistry {
     next_id: u32,
     records: HashMap<PathBuf, ModuleRecord>,
     statuses: HashMap<ModuleId, ModuleStatus>,
+    evaluation_states: HashMap<ModuleId, ModuleEvaluationState>,
 }
 
 impl ModuleRegistry {
@@ -76,6 +86,13 @@ impl ModuleRegistry {
         self.records.get(&normalized)
     }
 
+    #[must_use]
+    pub fn evaluation_state_for_path(&self, path: &Path) -> Option<&ModuleEvaluationState> {
+        let normalized = normalize_module_path(path);
+        let id = self.records.get(&normalized)?.id;
+        self.evaluation_states.get(&id)
+    }
+
     pub fn ensure_record(&mut self, path: &Path) -> ModuleId {
         let normalized = normalize_module_path(path);
         if let Some(record) = self.records.get(&normalized) {
@@ -96,11 +113,17 @@ impl ModuleRegistry {
             },
         );
         self.statuses.insert(id, ModuleStatus::Parsed);
+        self.evaluation_states
+            .insert(id, ModuleEvaluationState::Pending);
         id
     }
 
     pub fn set_status(&mut self, id: ModuleId, status: ModuleStatus) {
         self.statuses.insert(id, status);
+    }
+
+    pub fn set_evaluation_state(&mut self, id: ModuleId, state: ModuleEvaluationState) {
+        self.evaluation_states.insert(id, state);
     }
 
     pub fn set_metadata(

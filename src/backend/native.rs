@@ -14,8 +14,8 @@ use crate::{
     lexer::Lexer,
     parser::Parser,
     runtime::{
-        JsValue, ModuleExportBinding, ModuleImportBinding, ModuleRegistry, ModuleStatus,
-        resolve_module_specifier,
+        JsValue, ModuleEvaluationState, ModuleExportBinding, ModuleImportBinding, ModuleRegistry,
+        ModuleStatus, resolve_module_specifier,
     },
 };
 
@@ -177,6 +177,10 @@ impl NativeRuntime {
         self.module_registry.record_for_path(path)
     }
 
+    pub fn module_evaluation_state_for_path(&self, path: &Path) -> Option<&ModuleEvaluationState> {
+        self.module_registry.evaluation_state_for_path(path)
+    }
+
     pub fn eval_module_source(
         &mut self,
         source: &str,
@@ -282,6 +286,8 @@ impl RuntimeBackend for NativeRuntime {
 
         self.module_registry
             .set_status(module_id, ModuleStatus::Linked);
+        self.module_registry
+            .set_evaluation_state(module_id, ModuleEvaluationState::Pending);
         let outcome = (|| {
             self.reset_limits();
             let program = self.parse_current_source(source)?;
@@ -294,11 +300,19 @@ impl RuntimeBackend for NativeRuntime {
         .map_err(classify_native_error);
         match outcome {
             Ok(value) => {
+                if drain_jobs && let Err(error) = self.run_jobs() {
+                    self.module_registry
+                        .set_status(module_id, ModuleStatus::Failed);
+                    self.module_registry.set_evaluation_state(
+                        module_id,
+                        ModuleEvaluationState::Rejected(JsValue::String(error.message.clone())),
+                    );
+                    return Err(error);
+                }
                 self.module_registry
                     .set_status(module_id, ModuleStatus::Evaluated);
-                if drain_jobs {
-                    self.run_jobs()?;
-                }
+                self.module_registry
+                    .set_evaluation_state(module_id, ModuleEvaluationState::Fulfilled);
                 Ok(BackendExecution {
                     value: value.to_string(),
                     output: self.context.take_output(),
@@ -307,6 +321,10 @@ impl RuntimeBackend for NativeRuntime {
             Err(error) => {
                 self.module_registry
                     .set_status(module_id, ModuleStatus::Failed);
+                self.module_registry.set_evaluation_state(
+                    module_id,
+                    ModuleEvaluationState::Rejected(JsValue::String(error.message.clone())),
+                );
                 Err(error)
             }
         }

@@ -1810,39 +1810,8 @@ fn collect_iterable_values(
     }
     require_callable(&method, "TypedArray iterable")?;
     let iterator = vm.call_value_from_builtin(method, source, Vec::new(), context)?;
-    collect_iterator_values(vm, context, iterator).map(Some)
-}
-
-fn collect_iterator_values(
-    vm: &mut Vm,
-    context: &mut NativeContext,
-    iterator: JsValue,
-) -> Result<Vec<JsValue>, VmError> {
-    if let Some(object) = context.value_object(&iterator)
-        && (context.is_array_object(object).unwrap_or(false)
-            || context.typed_array_indexed_view(object).is_some())
-    {
-        return collect_array_like_values(vm, context, iterator);
-    }
-
-    let next = vm.get_property_value(iterator.clone(), "next", context)?;
-    require_callable(&next, "TypedArray iterator next")?;
-    let mut values = Vec::new();
-    while values.len() < MAX_SKELETON_BUFFER_BYTES {
-        let step =
-            vm.call_value_from_builtin(next.clone(), iterator.clone(), Vec::new(), context)?;
-        let step_object = context.require_object(&step, "TypedArray iterator result")?;
-        let done = vm
-            .get_property_value(context.object_value(step_object), "done", context)?
-            .to_boolean();
-        if done {
-            return Ok(values);
-        }
-        values.push(vm.get_property_value(context.object_value(step_object), "value", context)?);
-    }
-    Err(VmError::runtime_limit(
-        "TypedArray iterator result limit exceeded",
-    ))
+    vm.collect_iterator_values_from_builtin(iterator, context)
+        .map(Some)
 }
 
 fn array_buffer_prototype(context: &NativeContext) -> Result<ObjectId, VmError> {
@@ -1948,21 +1917,43 @@ fn typed_array_from(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let source = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let mut values = collect_typed_array_source_values(vm, context, source)?;
     let map_fn = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     if !matches!(map_fn, JsValue::Undefined) {
         require_callable(&map_fn, "TypedArray.from")?;
-        let this_arg = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
-        for (index, value) in values.iter_mut().enumerate() {
-            *value = vm.call_value_from_builtin(
+    }
+
+    let values = collect_typed_array_source_values(vm, context, source)?;
+    let target = vm.construct_value_from_builtin(
+        this_value,
+        vec![JsValue::Number(values.len() as f64)],
+        context,
+    )?;
+    let object = context.require_object(&target, "TypedArray.from result")?;
+    let view = typed_array_view_id_from_object(context, object)?;
+    let (_, length) = context
+        .typed_array_indexed_view(object)
+        .ok_or_else(|| VmError::type_error("TypedArray.from result is not a TypedArray"))?;
+    if values.len() > length {
+        return Err(VmError::type_error(
+            "TypedArray.from constructor returned a short TypedArray",
+        ));
+    }
+
+    let this_arg = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
+    for (index, value) in values.into_iter().enumerate() {
+        let value = if matches!(map_fn, JsValue::Undefined) {
+            value
+        } else {
+            vm.call_value_from_builtin(
                 map_fn.clone(),
                 this_arg.clone(),
-                vec![value.clone(), JsValue::Number(index as f64)],
+                vec![value, JsValue::Number(index as f64)],
                 context,
-            )?;
-        }
+            )?
+        };
+        context.typed_array_store_element(view, index, value)?;
     }
-    construct_typed_array_with_values(vm, context, this_value, values)
+    Ok(target)
 }
 
 fn typed_array_of(

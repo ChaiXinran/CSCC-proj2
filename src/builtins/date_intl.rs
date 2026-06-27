@@ -8,7 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
     runtime::{
-        JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, ObjectId,
+        JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, ObjectId, PreferredType,
         PropertyDescriptor, PropertyKind,
     },
     vm::{Vm, VmError},
@@ -272,8 +272,13 @@ fn date_from_components(
     second: f64,
     millisecond: f64,
 ) -> f64 {
-    let year = if (0.0..=99.0).contains(&year) {
-        year + 1900.0
+    let year = if year.is_finite() {
+        let integer_year = year.trunc();
+        if (0.0..=99.0).contains(&integer_year) {
+            integer_year + 1900.0
+        } else {
+            year
+        }
     } else {
         year
     };
@@ -419,6 +424,48 @@ fn parse_fixed_digits(value: &str, count: usize) -> Option<u32> {
     value.parse().ok()
 }
 
+fn parse_iso_date_part(input: &str) -> Option<(i32, u32, u32)> {
+    let (year_text, rest) = if input.starts_with(['+', '-']) {
+        if input.len() < 7 {
+            return None;
+        }
+        (&input[..7], &input[7..])
+    } else {
+        if input.len() < 4 {
+            return None;
+        }
+        (&input[..4], &input[4..])
+    };
+    let signed = year_text.starts_with(['+', '-']);
+    let digits = if signed { &year_text[1..] } else { year_text };
+    if digits.len() != if signed { 6 } else { 4 }
+        || !digits.chars().all(|ch| ch.is_ascii_digit())
+        || year_text == "-000000"
+    {
+        return None;
+    }
+    let year = year_text.parse::<i32>().ok()?;
+    if rest.is_empty() {
+        return Some((year, 1, 1));
+    }
+    let rest = rest.strip_prefix('-')?;
+    if rest.len() < 2 {
+        return None;
+    }
+    let month = parse_fixed_digits(&rest[..2], 2)?;
+    let rest = &rest[2..];
+    let day = if rest.is_empty() {
+        1
+    } else {
+        let rest = rest.strip_prefix('-')?;
+        if rest.len() != 2 {
+            return None;
+        }
+        parse_fixed_digits(rest, 2)?
+    };
+    Some((year, month, day))
+}
+
 fn parse_iso_date_string(input: &str) -> Option<f64> {
     let input = input.trim();
     if input.is_empty() {
@@ -428,14 +475,8 @@ fn parse_iso_date_string(input: &str) -> Option<f64> {
         Some(index) => (&input[..index], Some(&input[index + 1..])),
         None => (input, None),
     };
-    let mut date_pieces = date_part.split('-');
-    let year = date_pieces.next()?.parse::<i32>().ok()?;
-    let month = parse_fixed_digits(date_pieces.next()?, 2)?;
-    let day = parse_fixed_digits(date_pieces.next()?, 2)?;
-    if date_pieces.next().is_some()
-        || !(1..=12).contains(&month)
-        || !(1..=month_day_count(year, month)).contains(&day)
-    {
+    let (year, month, day) = parse_iso_date_part(date_part)?;
+    if !(1..=12).contains(&month) || !(1..=month_day_count(year, month)).contains(&day) {
         return None;
     }
 
@@ -520,8 +561,6 @@ fn parse_time_zone_offset(input: &str) -> Option<i64> {
 
 fn install_date(context: &mut NativeContext) -> Result<(), VmError> {
     let prototype = new_ordinary_object(context, context.object_prototype())?;
-    define_hidden(context, prototype, DATE_MARKER, JsValue::Boolean(true))?;
-    define_hidden(context, prototype, DATE_VALUE, JsValue::Number(f64::NAN))?;
 
     let constructor = context.register_builtin("Date", 7, date_call, Some(date_construct))?;
     let constructor_object = context
@@ -547,6 +586,11 @@ fn install_date(context: &mut NativeContext) -> Result<(), VmError> {
         ("getTime", 0, date_value_of as NativeCall),
         ("toISOString", 0, date_to_iso_string as NativeCall),
         ("toJSON", 1, date_to_json as NativeCall),
+        (
+            "toTemporalInstant",
+            0,
+            date_to_temporal_instant as NativeCall,
+        ),
         ("toString", 0, date_to_string as NativeCall),
         ("toDateString", 0, date_to_date_string as NativeCall),
         ("toTimeString", 0, date_to_time_string as NativeCall),
@@ -623,7 +667,7 @@ fn install_date(context: &mut NativeContext) -> Result<(), VmError> {
     context.define_symbol_own_property(
         prototype,
         to_primitive_symbol,
-        method_descriptor(to_primitive),
+        readonly_configurable_descriptor(to_primitive),
     )?;
     let to_string_tag = context.well_known_symbols().to_string_tag;
     context.define_symbol_own_property(
@@ -734,7 +778,7 @@ fn date_utc(
         context,
     )?;
     let month = vm.to_number(
-        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+        arguments.get(1).cloned().unwrap_or(JsValue::Number(0.0)),
         context,
     )?;
     Ok(JsValue::Number(date_from_components(
@@ -775,11 +819,34 @@ fn date_to_json(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let primitive = vm.to_number(this_value.clone(), context)?;
-    if !primitive.is_finite() {
+    if matches!(this_value, JsValue::Undefined | JsValue::Null) {
+        return Err(VmError::type_error(
+            "Date.prototype.toJSON receiver is null or undefined",
+        ));
+    }
+    let primitive = vm.to_primitive(this_value.clone(), PreferredType::Number, context)?;
+    if matches!(primitive, JsValue::Number(number) if !number.is_finite()) {
         return Ok(JsValue::Null);
     }
-    date_to_iso_string(vm, context, this_value, &[])
+    let to_iso_string = vm.get_property_value(this_value.clone(), "toISOString", context)?;
+    if !is_callable(&to_iso_string) {
+        return Err(VmError::type_error("Date.prototype.toJSON toISOString is not callable"));
+    }
+    vm.call_value_from_builtin(to_iso_string, this_value, Vec::new(), context)
+}
+
+fn date_to_temporal_instant(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = date_value_from_this(context, &this_value)?;
+    if !value.is_finite() {
+        return Err(VmError::range("Invalid time value"));
+    }
+    let prototype = temporal_instant_constructor_prototype(context)?;
+    create_instant(context, prototype, value)
 }
 
 fn date_to_string(
@@ -1232,17 +1299,51 @@ fn date_to_primitive(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let hint = arguments
-        .first()
-        .and_then(JsValue::to_js_string)
-        .unwrap_or_else(|| "default".into());
+    context.require_object(&this_value, "Date @@toPrimitive")?;
+    let hint = match arguments.first() {
+        Some(JsValue::String(value)) => value.as_str(),
+        _ => return Err(VmError::type_error("invalid Date @@toPrimitive hint")),
+    };
     if hint == "number" {
-        date_value_of(vm, context, this_value, &[])
+        ordinary_to_primitive(vm, context, this_value, "valueOf", "toString")
     } else if hint == "string" || hint == "default" {
-        date_to_string(vm, context, this_value, &[])
+        ordinary_to_primitive(vm, context, this_value, "toString", "valueOf")
     } else {
         Err(VmError::type_error("invalid Date @@toPrimitive hint"))
     }
+}
+
+fn ordinary_to_primitive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    first: &str,
+    second: &str,
+) -> Result<JsValue, VmError> {
+    for method_name in [first, second] {
+        let method = vm.get_property_value(value.clone(), method_name, context)?;
+        if !is_callable(&method) {
+            continue;
+        }
+        let result = vm.call_value_from_builtin(method, value.clone(), Vec::new(), context)?;
+        if !is_object_like(&result) {
+            return Ok(result);
+        }
+    }
+    Err(VmError::type_error(
+        "Cannot convert object to primitive value",
+    ))
+}
+
+fn is_object_like(value: &JsValue) -> bool {
+    matches!(
+        value,
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+    )
+}
+
+fn is_callable(value: &JsValue) -> bool {
+    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
 }
 
 fn augment_intl(context: &mut NativeContext) -> Result<(), VmError> {
@@ -2763,6 +2864,17 @@ fn install_temporal_instant(
         "Instant",
         "epochMilliseconds",
     )?;
+    let epoch_nanoseconds_getter = context.register_builtin(
+        "get epochNanoseconds",
+        0,
+        temporal_instant_epoch_nanoseconds_get,
+        None,
+    )?;
+    context.define_own_property(
+        prototype,
+        "epochNanoseconds".into(),
+        PropertyDescriptor::accessor(Some(epoch_nanoseconds_getter), None, false, true),
+    )?;
     Ok(())
 }
 
@@ -2771,12 +2883,31 @@ fn create_instant(
     prototype: ObjectId,
     epoch_ms: f64,
 ) -> Result<JsValue, VmError> {
+    let clipped = time_clip(epoch_ms);
+    let epoch_ns = if clipped.is_finite() {
+        (clipped as i128).saturating_mul(1_000_000)
+    } else {
+        0
+    };
     create_temporal_object(
         context,
         prototype,
         "Instant",
-        [("epochMilliseconds", JsValue::Number(time_clip(epoch_ms)))],
+        [
+            ("epochMilliseconds", JsValue::Number(clipped)),
+            ("epochNanoseconds", JsValue::BigInt(epoch_ns)),
+        ],
     )
+}
+
+fn temporal_instant_epoch_nanoseconds_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "Instant")?;
+    Ok(own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)))
 }
 
 fn temporal_instant_construct(

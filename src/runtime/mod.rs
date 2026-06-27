@@ -38,8 +38,8 @@ pub use job::{
     PromiseRecord, PromiseState, PromiseThenReaction,
 };
 pub use module::{
-    ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus,
-    normalize_module_path, resolve_module_specifier,
+    ModuleEvaluationState, ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord,
+    ModuleRegistry, ModuleStatus, normalize_module_path, resolve_module_specifier,
 };
 pub use object::{
     GeneratorRecord, GeneratorState, JsObject, ObjectId, ObjectKind, PrimitiveValue, PropertyKey,
