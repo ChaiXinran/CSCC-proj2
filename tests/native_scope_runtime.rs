@@ -49,6 +49,7 @@ fn runtime_can_allocate_function_values_with_captured_environment() {
         length_override: None,
         chunk: empty_function_chunk(),
         environment: Some(captured),
+        is_async: false,
         is_generator: false,
     };
 

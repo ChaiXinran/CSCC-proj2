@@ -235,13 +235,13 @@ fn promise_reject(
 }
 
 fn promise_all(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let iterable = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let values = collect_simple_array_values(context, iterable)?;
+    let values = vm.collect_iterable_values_from_builtin(iterable, context)?;
     let array = context.create_array(values)?;
     let (promise_object, promise) = create_promise_object(context)?;
     enqueue_settle(context, promise, PromiseReaction::Fulfill, array)?;
@@ -249,13 +249,13 @@ fn promise_all(
 }
 
 fn promise_all_settled(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let iterable = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let values = collect_simple_array_values(context, iterable)?;
+    let values = vm.collect_iterable_values_from_builtin(iterable, context)?;
     let mut settled = Vec::with_capacity(values.len());
     for value in values {
         settled.push(context.create_object([
@@ -270,13 +270,13 @@ fn promise_all_settled(
 }
 
 fn promise_any(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let iterable = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let values = collect_simple_array_values(context, iterable)?;
+    let values = vm.collect_iterable_values_from_builtin(iterable, context)?;
     let (promise_object, promise) = create_promise_object(context)?;
     if let Some(value) = values.into_iter().next() {
         enqueue_settle(context, promise, PromiseReaction::Fulfill, value)?;
@@ -295,13 +295,13 @@ fn promise_any(
 }
 
 fn promise_race(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let iterable = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let values = collect_simple_array_values(context, iterable)?;
+    let values = vm.collect_iterable_values_from_builtin(iterable, context)?;
     let (promise_object, promise) = create_promise_object(context)?;
     if let Some(value) = values.into_iter().next() {
         enqueue_settle(context, promise, PromiseReaction::Fulfill, value)?;
@@ -409,28 +409,6 @@ fn promise_then_with_finally(
         },
     )?;
     Ok(result_object)
-}
-
-fn collect_simple_array_values(
-    context: &mut NativeContext,
-    iterable: JsValue,
-) -> Result<Vec<JsValue>, VmError> {
-    let object = context.require_object(&iterable, "Promise iterable")?;
-    let Some(length) = context
-        .heap()
-        .object(object)
-        .and_then(JsObject::array_length)
-    else {
-        return Err(VmError::type_error("Promise iterable must be an array"));
-    };
-    // ponytail: Fix2-B skeleton only handles concrete arrays. Upgrade path:
-    // route this through the shared GetIterator/IteratorClose helper once
-    // Promise combinators are ready to consume arbitrary iterables/thenables.
-    let mut values = Vec::with_capacity(length);
-    for index in 0..length {
-        values.push(context.get(iterable.clone(), &index.to_string())?);
-    }
-    Ok(values)
 }
 
 fn promise_resolve_executor(

@@ -1,8 +1,7 @@
 //! V9-A frontend smoke tests — parser, AST, and bytecode emission.
 //!
-//! These tests verify that V9-A syntax parses successfully and compiles to the
-//! expected opcodes. Runtime failures (V9-B territory) are checked by verifying
-//! that the produced runtime error message mentions "V9-B pending".
+//! These tests verify that iteration and async syntax parses, compiles, and
+//! reaches the native runtime contracts expected by the VM.
 
 use agentjs::{
     BackendKind, Engine, ExecutionOptions, RuntimeConfig,
@@ -495,12 +494,12 @@ fn generator_function_is_not_constructible() {
 }
 
 #[test]
-fn async_function_call_with_await_fails_at_runtime_with_pending_message() {
-    // An async function body that contains `await` triggers the V9-B stub.
-    let result = run_native("async function f() { await 1; } f();");
-    let err = result.expect_err("should fail at runtime");
-    assert!(
-        err.contains("V9-B") || err.contains("not yet implemented"),
-        "unexpected error: {err}"
+fn async_function_call_with_await_returns_a_promise() {
+    let result = run_native(
+        "var result = 0; \
+         async function f() { var value = await Promise.resolve(4); return value + 1; } \
+         f().then(function (value) { result = value; }); \
+         result;",
     );
+    assert_eq!(result.expect("async function should run"), "0");
 }

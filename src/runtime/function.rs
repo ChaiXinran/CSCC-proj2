@@ -23,6 +23,7 @@ pub struct JsFunction {
     pub length_override: Option<u32>,
     pub chunk: Chunk,
     pub environment: Option<EnvironmentId>,
+    pub is_async: bool,
     pub is_generator: bool,
 }
 

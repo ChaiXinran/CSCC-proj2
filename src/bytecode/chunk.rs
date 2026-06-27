@@ -231,6 +231,7 @@ pub struct FunctionTemplate {
     /// Bytecode for the function body.
     pub chunk: Chunk,
     pub is_strict: bool,
+    pub is_async: bool,
     pub is_generator: bool,
     pub environment_policy: EnvironmentCapturePolicy,
 }
