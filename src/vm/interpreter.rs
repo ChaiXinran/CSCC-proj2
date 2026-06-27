@@ -3,6 +3,7 @@
 use std::fmt;
 
 use crate::{
+    builtins::proxy,
     bytecode::{
         Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
     },
@@ -10,10 +11,12 @@ use crate::{
         FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord, Job, JsFunction,
         JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind, PreferredType,
         PrimitiveValue, PromiseCallbackJob, PromiseReaction, PromiseThenReaction,
-        PropertyDescriptor, PropertyKind, SymbolId, to_property_key,
+        PropertyDescriptor, PropertyKey, PropertyKind, SymbolId, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
+
+const ITERATOR_MAX_ARRAY_LENGTH: usize = 1_000_000;
 
 /// Native VM failure category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -616,13 +619,14 @@ impl Vm {
                 }
                 Instruction::TypeOf => {
                     let value = self.pop_value()?;
-                    self.stack.push(JsValue::String(value.type_of().into()));
+                    self.stack
+                        .push(JsValue::String(self.type_of_value(&value, context).into()));
                 }
                 Instruction::TypeOfGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let type_name = context
                         .get_global(name)
-                        .map_or("undefined", |value| value.type_of());
+                        .map_or("undefined", |value| self.type_of_value(&value, context));
                     self.stack.push(JsValue::String(type_name.into()));
                 }
                 Instruction::Throw => {
@@ -677,7 +681,9 @@ impl Vm {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     match context.resolve_binding_value(name) {
                         Ok(value) => {
-                            let type_name = value.map_or("undefined", |(_, value)| value.type_of());
+                            let type_name = value.map_or("undefined", |(_, value)| {
+                                self.type_of_value(&value, context)
+                            });
                             self.stack.push(JsValue::String(type_name.into()));
                         }
                         Err(error) => {
@@ -969,7 +975,7 @@ impl Vm {
                             (0..count).map(|index| index.to_string()).collect()
                         }
                         _ => match context.value_object(&value) {
-                            Some(object) => context.for_in_keys(object)?,
+                            Some(_) => proxy::internal_for_in_keys(self, context, value)?,
                             None => Vec::new(),
                         },
                     };
@@ -1254,55 +1260,84 @@ impl Vm {
                         .to_string();
                     let value = self.pop_value()?;
                     let object = context.require_object(&value, "delete property")?;
-                    match context.delete_property(object, &name, context.strict()) {
-                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
-                        Err(error)
-                            if matches!(
-                                error.kind,
-                                VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
-                            ) =>
-                        {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                    let strict = context.is_strict_code();
+                    let result = if context.proxy_record(object).is_some() {
+                        proxy::internal_delete(self, context, value, &PropertyKey::String(name))
+                    } else {
+                        context.delete_property(object, &name, strict)
+                    };
+                    match result {
+                        Ok(false) if strict => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(
+                                VmError::type_error("cannot delete property"),
+                            )));
                             discard_saved_finally = true;
                         }
-                        Err(error) => return Err(error),
+                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
+                        Err(error) => match self.error_to_operation_result(error)? {
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                            OperationResult::Value(_) => unreachable!(),
+                        },
                     }
                 }
                 Instruction::DeleteElement => {
                     let key = self.pop_value()?;
                     let value = self.pop_value()?;
                     let object = context.require_object(&value, "delete property")?;
-                    let result = if let JsValue::Symbol(symbol) = key {
-                        context.delete_symbol_property(object, symbol, context.strict())
+                    let strict = context.is_strict_code();
+                    let result = if context.proxy_record(object).is_some() {
+                        let property_key = if let JsValue::Symbol(symbol) = key {
+                            PropertyKey::Symbol(symbol)
+                        } else {
+                            PropertyKey::String(to_property_key(&key)?)
+                        };
+                        proxy::internal_delete(self, context, value, &property_key)
+                    } else if let JsValue::Symbol(symbol) = key {
+                        context.delete_symbol_property(object, symbol, strict)
                     } else {
                         let key = to_property_key(&key)?;
-                        context.delete_property(object, &key, context.strict())
+                        context.delete_property(object, &key, strict)
                     };
                     match result {
-                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
-                        Err(error)
-                            if matches!(
-                                error.kind,
-                                VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
-                            ) =>
-                        {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                        Ok(false) if strict => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(
+                                VmError::type_error("cannot delete property"),
+                            )));
                             discard_saved_finally = true;
                         }
-                        Err(error) => return Err(error),
+                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
+                        Err(error) => match self.error_to_operation_result(error)? {
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                            OperationResult::Value(_) => unreachable!(),
+                        },
                     }
                 }
                 Instruction::HasProperty => {
                     let value = self.pop_value()?;
-                    let object = context.require_object(&value, "test property")?;
+                    context.require_object(&value, "test property")?;
                     let key = self.pop_value()?;
-                    let has = if let JsValue::Symbol(symbol) = key {
-                        context.has_symbol_property(object, symbol)?
+                    let property_key = if let JsValue::Symbol(symbol) = key {
+                        PropertyKey::Symbol(symbol)
                     } else {
-                        let key = to_property_key(&key)?;
-                        context.has_property(object, &key)?
+                        PropertyKey::String(to_property_key(&key)?)
                     };
-                    self.stack.push(JsValue::Boolean(has));
+                    let result = proxy::internal_has_property(self, context, value, &property_key);
+                    match result {
+                        Ok(has) => self.stack.push(JsValue::Boolean(has)),
+                        Err(error) => match self.error_to_operation_result(error)? {
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                            OperationResult::Value(_) => unreachable!(),
+                        },
+                    }
                 }
                 Instruction::InstanceOf => {
                     let constructor = self.pop_value()?;
@@ -1884,21 +1919,114 @@ impl Vm {
             }
         }
 
-        match context.ordinary_instance_of(value, constructor) {
+        match self.ordinary_instance_of(value, constructor, context) {
             Ok(result) => Ok(OperationResult::Value(JsValue::Boolean(result))),
-            Err(error)
-                if matches!(
-                    error.kind,
-                    VmErrorKind::Reference
-                        | VmErrorKind::Type
-                        | VmErrorKind::Syntax
-                        | VmErrorKind::Range
-                ) =>
-            {
-                Ok(OperationResult::Throw(vm_error_to_value(error)))
-            }
-            Err(error) => Err(error),
+            Err(error) => self.error_to_operation_result(error),
         }
+    }
+
+    pub(crate) fn ordinary_instance_of(
+        &mut self,
+        value: JsValue,
+        constructor: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<bool, VmError> {
+        if matches!(value, JsValue::Error(_)) {
+            return context.ordinary_instance_of(value, constructor);
+        }
+        if let JsValue::BuiltinFunction(id) = &constructor
+            && let Some(bound) = context
+                .builtin(*id)
+                .and_then(|builtin| builtin.bound.as_ref())
+        {
+            return self.ordinary_instance_of(value, bound.target.clone(), context);
+        }
+        if !context.is_constructable_value(&constructor) {
+            return Err(VmError::type_error(
+                "right-hand side of instanceof is not a constructor",
+            ));
+        }
+        let Some(object) = context.value_object(&value) else {
+            return Ok(false);
+        };
+        context.value_object(&constructor).ok_or_else(|| {
+            VmError::type_error("right-hand side of instanceof is not a constructor")
+        })?;
+        let prototype_value = proxy::internal_get(
+            self,
+            context,
+            constructor.clone(),
+            &PropertyKey::String("prototype".into()),
+            constructor,
+        )?;
+        let prototype = context
+            .value_object(&prototype_value)
+            .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?;
+
+        let mut current =
+            proxy::internal_get_prototype_of(self, context, context.object_value(object))?;
+        let mut depth = 0usize;
+        while let Some(object) = current {
+            if depth > 1024 {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
+            if object == prototype {
+                return Ok(true);
+            }
+            current =
+                proxy::internal_get_prototype_of(self, context, context.object_value(object))?;
+            depth += 1;
+        }
+        Ok(false)
+    }
+
+    pub(crate) fn get_prototype_from_constructor(
+        &mut self,
+        constructor: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Option<ObjectId>, VmError> {
+        self.get_prototype_from_constructor_with_default(constructor, context, |context, value| {
+            context.default_object_prototype_for_callable(value)
+        })
+    }
+
+    pub(crate) fn get_array_prototype_from_constructor(
+        &mut self,
+        constructor: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Option<ObjectId>, VmError> {
+        self.get_prototype_from_constructor_with_default(constructor, context, |context, value| {
+            context.default_array_prototype_for_callable(value)
+        })
+    }
+
+    pub(crate) fn get_boolean_prototype_from_constructor(
+        &mut self,
+        constructor: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Option<ObjectId>, VmError> {
+        self.get_prototype_from_constructor_with_default(constructor, context, |context, value| {
+            context.default_boolean_prototype_for_callable(value)
+        })
+    }
+
+    fn get_prototype_from_constructor_with_default(
+        &mut self,
+        constructor: JsValue,
+        context: &mut NativeContext,
+        default: fn(&NativeContext, &JsValue) -> Option<ObjectId>,
+    ) -> Result<Option<ObjectId>, VmError> {
+        context.require_object(&constructor, "value is not a constructor")?;
+        let prototype_value = proxy::internal_get(
+            self,
+            context,
+            constructor.clone(),
+            &PropertyKey::String("prototype".into()),
+            constructor.clone(),
+        )?;
+        Ok(context
+            .value_object(&prototype_value)
+            .or_else(|| default(context, &constructor)))
     }
 
     fn call_value(
@@ -1909,69 +2037,117 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
         match callee {
+            JsValue::Object(object) if context.is_function_prototype_object(object) => {
+                Ok(OperationResult::Value(JsValue::Undefined))
+            }
+            JsValue::Object(object) if context.proxy_record(object).is_some() => {
+                match proxy::internal_call(
+                    self,
+                    context,
+                    JsValue::Object(object),
+                    this_value,
+                    arguments,
+                ) {
+                    Ok(value) => Ok(OperationResult::Value(value)),
+                    Err(error) => self.error_to_operation_result_in_context(error, context),
+                }
+            }
             JsValue::Function(function) => {
-                self.call_user_function(function, this_value, arguments, context)
+                let activation = match context.realm_for_function(function) {
+                    Some(realm) if !context.is_current_realm(realm) => {
+                        Some(context.enter_realm(realm)?)
+                    }
+                    None => None,
+                    Some(_) => None,
+                };
+                let operation = self.call_user_function(function, this_value, arguments, context);
+                match (
+                    operation,
+                    activation.map(|activation| context.leave_realm(activation)),
+                ) {
+                    (Ok(value), None) => Ok(value),
+                    (Err(error), None) => Err(error),
+                    (Ok(value), Some(Ok(()))) => Ok(value),
+                    (Err(error), Some(Ok(()))) => Err(error),
+                    (Ok(_), Some(Err(error))) | (Err(error), Some(Err(_))) => Err(error),
+                }
             }
             JsValue::BuiltinFunction(id) => {
                 context.consume_call_depth()?;
                 let result: Result<OperationResult, VmError> = (|| {
-                    let def = context
-                        .builtin(id)
-                        .ok_or_else(|| VmError::runtime("invalid builtin id"))?
-                        .clone();
-                    // A bound function forwards to its target with the bound `this`
-                    // and bound arguments prepended.
-                    if let Some(bound) = &def.bound {
-                        let mut forwarded = bound.args.clone();
-                        forwarded.extend(arguments);
-                        let target = bound.target.clone();
-                        let this_value = bound.this_value.clone();
-                        return self.call_value(target, this_value, forwarded, context);
-                    }
-                    if context.is_function_prototype_call(id) {
-                        let target = this_value;
-                        let call_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-                        let forwarded = arguments.into_iter().skip(1).collect();
-                        return self.call_value(target, call_this, forwarded, context);
-                    }
-                    if context.is_function_prototype_apply(id) {
-                        let target = this_value;
-                        let apply_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-                        let arg_array = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-                        let forwarded = match self.function_apply_arguments(arg_array, context) {
-                            Ok(values) => values,
-                            Err(error)
-                                if matches!(
-                                    error.kind,
-                                    VmErrorKind::Reference
-                                        | VmErrorKind::Type
-                                        | VmErrorKind::Syntax
-                                        | VmErrorKind::Range
-                                ) =>
+                    let activation = match context.realm_for_builtin(id) {
+                        Some(realm) if !context.is_current_realm(realm) => {
+                            Some(context.enter_realm(realm)?)
+                        }
+                        None => None,
+                        Some(_) => None,
+                    };
+                    let operation = (|| {
+                        let def = context
+                            .builtin(id)
+                            .ok_or_else(|| VmError::runtime("invalid builtin id"))?
+                            .clone();
+                        // A bound function forwards to its target with the bound `this`
+                        // and bound arguments prepended.
+                        if let Some(bound) = &def.bound {
+                            let mut forwarded = bound.args.clone();
+                            forwarded.extend(arguments);
+                            let target = bound.target.clone();
+                            let this_value = bound.this_value.clone();
+                            return self.call_value(target, this_value, forwarded, context);
+                        }
+                        if context.is_function_prototype_call(id) {
+                            let target = this_value;
+                            let call_this =
+                                arguments.first().cloned().unwrap_or(JsValue::Undefined);
+                            let forwarded = arguments.into_iter().skip(1).collect();
+                            return self.call_value(target, call_this, forwarded, context);
+                        }
+                        if context.is_function_prototype_apply(id) {
+                            let target = this_value;
+                            let apply_this =
+                                arguments.first().cloned().unwrap_or(JsValue::Undefined);
+                            let arg_array = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+                            let forwarded = match self.function_apply_arguments(arg_array, context)
                             {
-                                return Ok(OperationResult::Throw(vm_error_to_value(error)));
-                            }
-                            Err(error) => return Err(error),
-                        };
-                        return self.call_value(target, apply_this, forwarded, context);
-                    }
-                    match (def.call)(self, context, this_value, &arguments) {
-                        Ok(value) => Ok(OperationResult::Value(value)),
-                        Err(error) => match self.pending_exception.take() {
-                            // A nested JavaScript callback threw; surface its value.
-                            Some(value) => Ok(OperationResult::Throw(value)),
-                            // ECMAScript error types raised directly by a builtin are
-                            // catchable throws; engine-internal failures are not.
-                            None => match error.kind {
-                                VmErrorKind::Reference
-                                | VmErrorKind::Type
-                                | VmErrorKind::Syntax
-                                | VmErrorKind::Range => {
-                                    Ok(OperationResult::Throw(vm_error_to_value(error)))
-                                }
-                                _ => Err(error),
+                                Ok(values) => values,
+                                Err(error) => match self.error_to_operation_result(error)? {
+                                    OperationResult::Throw(value) => {
+                                        return Ok(OperationResult::Throw(value));
+                                    }
+                                    OperationResult::Value(_) => unreachable!(),
+                                },
+                            };
+                            return self.call_value(target, apply_this, forwarded, context);
+                        }
+                        match (def.call)(self, context, this_value, &arguments) {
+                            Ok(value) => Ok(OperationResult::Value(value)),
+                            Err(error) => match self.pending_exception.take() {
+                                // A nested JavaScript callback threw; surface its value.
+                                Some(value) => Ok(OperationResult::Throw(value)),
+                                // ECMAScript error types raised directly by a builtin are
+                                // catchable throws; engine-internal failures are not.
+                                None => match error.kind {
+                                    VmErrorKind::Reference
+                                    | VmErrorKind::Type
+                                    | VmErrorKind::Syntax
+                                    | VmErrorKind::Range => {
+                                        Ok(OperationResult::Throw(vm_error_to_value(error)))
+                                    }
+                                    _ => Err(error),
+                                },
                             },
-                        },
+                        }
+                    })();
+                    match (
+                        operation,
+                        activation.map(|activation| context.leave_realm(activation)),
+                    ) {
+                        (Ok(value), None) => Ok(value),
+                        (Err(error), None) => Err(error),
+                        (Ok(value), Some(Ok(()))) => Ok(value),
+                        (Err(error), Some(Ok(()))) => Err(error),
+                        (Ok(_), Some(Err(error))) | (Err(error), Some(Err(_))) => Err(error),
                     }
                 })();
                 context.release_call_depth();
@@ -2091,10 +2267,155 @@ impl Vm {
 
         match kind {
             IteratorKind::Array { .. } | IteratorKind::String { .. } => {
-                let (value, done) = context.step_iterator_object(iterator_val)?;
+                let (value, done) = match self.step_native_iterator_object(iterator_val, context) {
+                    Ok(result) => result,
+                    Err(error) => match self.error_to_operation_result(error)? {
+                        OperationResult::Throw(value) => {
+                            return Ok(IteratorStepResult::Throw(value));
+                        }
+                        OperationResult::Value(_) => unreachable!(),
+                    },
+                };
                 Ok(IteratorStepResult::Value { value, done })
             }
             IteratorKind::Js { iterator, .. } => self.step_js_iterator(iterator, context),
+        }
+    }
+
+    pub(crate) fn step_native_iterator_object(
+        &mut self,
+        iterator_val: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<(JsValue, bool), VmError> {
+        let id = match &iterator_val {
+            JsValue::Object(id) => *id,
+            _ => return Err(VmError::type_error("value is not an iterator object")),
+        };
+        let mut record = {
+            let object = context
+                .heap()
+                .object(id)
+                .ok_or_else(|| VmError::runtime("invalid iterator object"))?;
+            match &object.kind {
+                ObjectKind::Iterator { record } => record.clone(),
+                _ => return Err(VmError::type_error("object is not an iterator")),
+            }
+        };
+        let result = self.native_iterator_next(&mut record, context)?;
+        if let Some(object) = context.heap_mut().object_mut(id)
+            && let ObjectKind::Iterator {
+                record: stored_record,
+            } = &mut object.kind
+        {
+            *stored_record = record;
+        }
+        match result {
+            Some(value) => Ok((value, false)),
+            None => Ok((JsValue::Undefined, true)),
+        }
+    }
+
+    fn native_iterator_next(
+        &mut self,
+        iterator: &mut IteratorRecord,
+        context: &mut NativeContext,
+    ) -> Result<Option<JsValue>, VmError> {
+        if iterator.done {
+            return Ok(None);
+        }
+        match &mut iterator.kind {
+            IteratorKind::Array {
+                object,
+                index,
+                length,
+                mode,
+            } => {
+                let current_length = self
+                    .array_like_iterator_length(object.clone(), *length, context)?
+                    .min(ITERATOR_MAX_ARRAY_LENGTH);
+                if *index >= current_length {
+                    iterator.done = true;
+                    return Ok(None);
+                }
+                let current_index = *index;
+                *index += 1;
+                let key = JsValue::Number(current_index as f64);
+                match mode {
+                    crate::runtime::IteratorMode::Key => Ok(Some(key)),
+                    crate::runtime::IteratorMode::Value => self
+                        .iterator_property_value(object.clone(), current_index, context)
+                        .map(Some),
+                    crate::runtime::IteratorMode::KeyAndValue => {
+                        let value =
+                            self.iterator_property_value(object.clone(), current_index, context)?;
+                        context.create_array(vec![key, value]).map(Some)
+                    }
+                }
+            }
+            IteratorKind::String { chars, index } => {
+                if *index >= chars.len() {
+                    iterator.done = true;
+                    return Ok(None);
+                }
+                let value = JsValue::String(chars[*index].clone());
+                *index += 1;
+                Ok(Some(value))
+            }
+            IteratorKind::Js { .. } => Err(VmError::runtime(
+                "JS iterator records must be advanced by the VM",
+            )),
+        }
+    }
+
+    fn array_like_iterator_length(
+        &mut self,
+        object: JsValue,
+        fallback_length: usize,
+        context: &mut NativeContext,
+    ) -> Result<usize, VmError> {
+        let Some(object_id) = context.value_object(&object) else {
+            return Ok(fallback_length);
+        };
+        if let Some((view, _)) = context.typed_array_indexed_view(object_id) {
+            return context.validate_typed_array_view(view);
+        }
+        if let Some(length) = context
+            .heap()
+            .object(object_id)
+            .and_then(JsObject::array_length)
+        {
+            return Ok(length);
+        }
+        let length = self.iterator_property_value_by_key(object, "length", context)?;
+        let number = self.to_number(length, context)?;
+        if !number.is_finite() || number <= 0.0 {
+            Ok(0)
+        } else {
+            Ok(number.floor().min(ITERATOR_MAX_ARRAY_LENGTH as f64) as usize)
+        }
+    }
+
+    fn iterator_property_value(
+        &mut self,
+        object: JsValue,
+        index: usize,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        self.iterator_property_value_by_key(object, &index.to_string(), context)
+    }
+
+    fn iterator_property_value_by_key(
+        &mut self,
+        object: JsValue,
+        key: &str,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match self.get_property_value_completion(object, key, context)? {
+            OperationResult::Value(value) => Ok(value),
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("iterator property access threw"))
+            }
         }
     }
 
@@ -2163,7 +2484,15 @@ impl Vm {
 
         match kind {
             IteratorKind::Array { .. } | IteratorKind::String { .. } => {
-                let (value, done) = context.step_iterator_object(iterator_val)?;
+                let (value, done) = match self.step_native_iterator_object(iterator_val, context) {
+                    Ok(result) => result,
+                    Err(error) => match self.error_to_operation_result(error)? {
+                        OperationResult::Throw(value) => {
+                            return Ok(YieldStarStepResult::Throw(value));
+                        }
+                        OperationResult::Value(_) => unreachable!(),
+                    },
+                };
                 if done {
                     Ok(YieldStarStepResult::Complete(value))
                 } else {
@@ -2571,45 +2900,6 @@ impl Vm {
         }
     }
 
-    pub(crate) fn set_property_value_with_receiver_from_builtin(
-        &mut self,
-        target: JsValue,
-        receiver: JsValue,
-        key: &str,
-        value: JsValue,
-        context: &mut NativeContext,
-    ) -> Result<bool, VmError> {
-        let target_object = context.require_object(&target, "Reflect.set")?;
-        if let Some((_, descriptor)) = context.find_property_descriptor(target_object, key)? {
-            match descriptor.kind {
-                PropertyKind::Accessor {
-                    set: Some(setter), ..
-                } => {
-                    let _ = self.call_value_from_builtin(setter, receiver, vec![value], context)?;
-                    return Ok(true);
-                }
-                PropertyKind::Accessor { set: None, .. } => return Ok(false),
-                PropertyKind::Data {
-                    writable: false, ..
-                } => return Ok(false),
-                PropertyKind::Data { .. } => {}
-            }
-        }
-        let Some(receiver_object) = context.value_object(&receiver) else {
-            return Ok(false);
-        };
-        if let Some(current) = context.get_own_property_descriptor(receiver_object, key) {
-            match current.kind {
-                PropertyKind::Accessor { .. } => return Ok(false),
-                PropertyKind::Data {
-                    writable: false, ..
-                } => return Ok(false),
-                PropertyKind::Data { .. } => {}
-            }
-        }
-        context.define_own_property(receiver_object, key.into(), PropertyDescriptor::data(value))
-    }
-
     pub(crate) fn set_symbol_property_value_with_receiver_from_builtin(
         &mut self,
         target: JsValue,
@@ -2803,38 +3093,44 @@ impl Vm {
         // ECMAScript step 1: check @@toPrimitive.
         if let Some(object_id) = context.value_object(&value) {
             let to_primitive_sym = context.well_known_symbols().to_primitive;
-            if let Some(method) = context.get_symbol_property_value(object_id, to_primitive_sym)
-                && matches!(method, JsValue::Function(_) | JsValue::BuiltinFunction(_))
-            {
-                let hint_str = match hint {
-                    PreferredType::Default => "default",
-                    PreferredType::Number => "number",
-                    PreferredType::String => "string",
-                };
-                let result = match self.call_value(
-                    method,
-                    value,
-                    vec![JsValue::String(hint_str.into())],
-                    context,
-                )? {
-                    OperationResult::Value(v) => v,
-                    OperationResult::Throw(thrown) => {
-                        self.pending_exception = Some(thrown);
-                        return Err(VmError::runtime(
-                            "Symbol.toPrimitive method threw an exception",
+            if let Some(method) = context.get_symbol_property_value(object_id, to_primitive_sym) {
+                if matches!(method, JsValue::Undefined | JsValue::Null) {
+                    // GetMethod treats null/undefined as absent.
+                } else if !matches!(method, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
+                    return Err(VmError::type_error(
+                        "Symbol.toPrimitive method is not callable",
+                    ));
+                } else {
+                    let hint_str = match hint {
+                        PreferredType::Default => "default",
+                        PreferredType::Number => "number",
+                        PreferredType::String => "string",
+                    };
+                    let result = match self.call_value(
+                        method,
+                        value,
+                        vec![JsValue::String(hint_str.into())],
+                        context,
+                    )? {
+                        OperationResult::Value(v) => v,
+                        OperationResult::Throw(thrown) => {
+                            self.pending_exception = Some(thrown);
+                            return Err(VmError::runtime(
+                                "Symbol.toPrimitive method threw an exception",
+                            ));
+                        }
+                    };
+                    // ECMAScript: if the result is not primitive, throw TypeError.
+                    if matches!(
+                        result,
+                        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+                    ) {
+                        return Err(VmError::type_error(
+                            "Symbol.toPrimitive must return a primitive",
                         ));
                     }
-                };
-                // ECMAScript: if the result is not primitive, throw TypeError.
-                if matches!(
-                    result,
-                    JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
-                ) {
-                    return Err(VmError::type_error(
-                        "Symbol.toPrimitive must return a primitive",
-                    ));
+                    return Ok(result);
                 }
-                return Ok(result);
             }
         }
 
@@ -3066,6 +3362,41 @@ impl Vm {
         }
     }
 
+    fn error_to_operation_result(&mut self, error: VmError) -> Result<OperationResult, VmError> {
+        if let Some(value) = self.pending_exception.take() {
+            return Ok(OperationResult::Throw(value));
+        }
+        if matches!(
+            error.kind,
+            VmErrorKind::Reference | VmErrorKind::Type | VmErrorKind::Syntax | VmErrorKind::Range
+        ) {
+            Ok(OperationResult::Throw(vm_error_to_value(error)))
+        } else {
+            Err(error)
+        }
+    }
+
+    fn error_to_operation_result_in_context(
+        &mut self,
+        error: VmError,
+        context: &NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        if let Some(value) = self.pending_exception.take() {
+            return Ok(OperationResult::Throw(value));
+        }
+        if matches!(
+            error.kind,
+            VmErrorKind::Reference | VmErrorKind::Type | VmErrorKind::Syntax | VmErrorKind::Range
+        ) {
+            Ok(OperationResult::Throw(vm_error_to_value_with_realm(
+                error,
+                context.global_object(),
+            )))
+        } else {
+            Err(error)
+        }
+    }
+
     fn get_property_value_completion(
         &mut self,
         receiver: JsValue,
@@ -3076,13 +3407,25 @@ impl Vm {
             let value = match key {
                 "message" => JsValue::String(error.message.clone()),
                 "name" => JsValue::String(native_error_constructor_name(&error.kind).into()),
-                "constructor" => context
-                    .find_builtin_by_name(native_error_constructor_name(&error.kind))
-                    .unwrap_or(JsValue::Undefined),
+                "constructor" => context.error_constructor_value(error),
                 "stack" | "cause" => JsValue::Undefined,
                 _ => JsValue::Undefined,
             };
             return Ok(OperationResult::Value(value));
+        }
+
+        if context.value_object(&receiver).is_some() {
+            let key = PropertyKey::String(key.to_string());
+            return match proxy::internal_get(
+                self,
+                context,
+                receiver.clone(),
+                &key,
+                receiver.clone(),
+            ) {
+                Ok(value) => Ok(OperationResult::Value(value)),
+                Err(error) => self.error_to_operation_result(error),
+            };
         }
 
         // Primitive strings expose `length` and UTF-16 code-unit indexing
@@ -3128,6 +3471,19 @@ impl Vm {
         symbol: SymbolId,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
+        if context.value_object(&receiver).is_some() {
+            let key = PropertyKey::Symbol(symbol);
+            return match proxy::internal_get(
+                self,
+                context,
+                receiver.clone(),
+                &key,
+                receiver.clone(),
+            ) {
+                Ok(value) => Ok(OperationResult::Value(value)),
+                Err(error) => self.error_to_operation_result(error),
+            };
+        }
         let object = self.property_lookup_object(&receiver, context)?;
         let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? else {
             return Ok(OperationResult::Value(JsValue::Undefined));
@@ -3140,6 +3496,14 @@ impl Vm {
             PropertyKind::Accessor {
                 get: Some(getter), ..
             } => self.call_value(getter, receiver, Vec::new(), context),
+        }
+    }
+
+    fn type_of_value(&self, value: &JsValue, context: &NativeContext) -> &'static str {
+        if context.is_callable_value(value) {
+            "function"
+        } else {
+            value.type_of()
         }
     }
 
@@ -3215,7 +3579,7 @@ impl Vm {
         value: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        let object = match context.require_object(&receiver, "write property") {
+        match context.require_object(&receiver, "write property") {
             Ok(object) => object,
             Err(error)
                 if matches!(
@@ -3227,38 +3591,21 @@ impl Vm {
             }
             Err(error) => return Err(error),
         };
-        if let Some((_, descriptor)) = context.find_property_descriptor(object, key)? {
-            match descriptor.kind {
-                PropertyKind::Accessor {
-                    set: Some(setter), ..
-                } => match self.call_value(setter, receiver, vec![value.clone()], context)? {
-                    OperationResult::Value(_) => return Ok(OperationResult::Value(value)),
-                    OperationResult::Throw(thrown) => return Ok(OperationResult::Throw(thrown)),
-                },
-                PropertyKind::Accessor { set: None, .. } => {
-                    // TypeError from a write to a getter-only property is a JS throw,
-                    // not a Rust-level error, so it can be caught by JS try/catch.
-                    return Ok(OperationResult::Throw(vm_error_to_value(
-                        VmError::type_error("property setter is undefined"),
-                    )));
-                }
-                PropertyKind::Data { .. } => {}
-            }
-        }
-        // TypeError/RangeError from a non-writable write must become a JS throw so
-        // that code like `isWritable` / `assert.throws` can catch it.  Only
-        // runtime-internal errors (heap exhausted, etc.) propagate as Rust errors.
-        match context.set_property(receiver, key, value) {
-            Ok(result) => Ok(OperationResult::Value(result)),
-            Err(error)
-                if matches!(
-                    error.kind,
-                    VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
-                ) =>
-            {
-                Ok(OperationResult::Throw(vm_error_to_value(error)))
-            }
-            Err(error) => Err(error),
+        let property_key = PropertyKey::String(key.to_string());
+        match proxy::internal_set(
+            self,
+            context,
+            receiver.clone(),
+            &property_key,
+            value.clone(),
+            receiver,
+        ) {
+            Ok(true) => Ok(OperationResult::Value(value)),
+            Ok(false) if context.is_strict_code() => Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("cannot write property"),
+            ))),
+            Ok(false) => Ok(OperationResult::Value(value)),
+            Err(error) => self.error_to_operation_result(error),
         }
     }
 
@@ -3269,7 +3616,7 @@ impl Vm {
         value: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        let object = match context.require_object(&receiver, "write property") {
+        match context.require_object(&receiver, "write property") {
             Ok(object) => object,
             Err(error)
                 if matches!(
@@ -3281,34 +3628,21 @@ impl Vm {
             }
             Err(error) => return Err(error),
         };
-        if let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? {
-            match descriptor.kind {
-                PropertyKind::Accessor {
-                    set: Some(setter), ..
-                } => match self.call_value(setter, receiver, vec![value.clone()], context)? {
-                    OperationResult::Value(_) => return Ok(OperationResult::Value(value)),
-                    OperationResult::Throw(thrown) => return Ok(OperationResult::Throw(thrown)),
-                },
-                PropertyKind::Accessor { set: None, .. } => {
-                    return Ok(OperationResult::Throw(vm_error_to_value(
-                        VmError::type_error("property setter is undefined"),
-                    )));
-                }
-                PropertyKind::Data { .. } => {}
-            }
-        }
-        match context.set_symbol_property(object, symbol, value.clone(), context.strict()) {
+        let property_key = PropertyKey::Symbol(symbol);
+        match proxy::internal_set(
+            self,
+            context,
+            receiver.clone(),
+            &property_key,
+            value.clone(),
+            receiver,
+        ) {
             Ok(true) => Ok(OperationResult::Value(value)),
+            Ok(false) if context.is_strict_code() => Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("cannot write property"),
+            ))),
             Ok(false) => Ok(OperationResult::Value(value)),
-            Err(error)
-                if matches!(
-                    error.kind,
-                    VmErrorKind::Type | VmErrorKind::Range | VmErrorKind::Reference
-                ) =>
-            {
-                Ok(OperationResult::Throw(vm_error_to_value(error)))
-            }
-            Err(error) => Err(error),
+            Err(error) => self.error_to_operation_result(error),
         }
     }
 
@@ -3323,12 +3657,30 @@ impl Vm {
             .function(function_id)
             .cloned()
             .ok_or_else(|| VmError::runtime("missing function value"))?;
-        let this_value = if !(context.strict() || context.is_strict_function(function_id))
-            && matches!(this_value, JsValue::Undefined | JsValue::Null)
-        {
-            context.global_this_value()
-        } else {
+        let this_value = if context.is_strict_function(function_id) {
             this_value
+        } else {
+            match this_value {
+                JsValue::Undefined | JsValue::Null => context.global_this_value(),
+                JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+                    this_value
+                }
+                primitive => match self.to_object(primitive, context) {
+                    Ok(object) => JsValue::Object(object),
+                    Err(error)
+                        if matches!(
+                            error.kind,
+                            VmErrorKind::Reference
+                                | VmErrorKind::Type
+                                | VmErrorKind::Syntax
+                                | VmErrorKind::Range
+                        ) =>
+                    {
+                        return Ok(OperationResult::Throw(vm_error_to_value(error)));
+                    }
+                    Err(error) => return Err(error),
+                },
+            }
         };
         if function.is_generator {
             return self
@@ -3483,61 +3835,136 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
         match constructor {
-            JsValue::Function(function_id) => {
-                if context
-                    .function(function_id)
-                    .is_some_and(|function| function.is_generator)
-                {
-                    return Ok(OperationResult::Throw(vm_error_to_value(
-                        VmError::type_error("generator functions are not constructors"),
-                    )));
+            JsValue::Object(object) if context.proxy_record(object).is_some() => {
+                match proxy::internal_construct(
+                    self,
+                    context,
+                    JsValue::Object(object),
+                    arguments,
+                    new_target,
+                ) {
+                    Ok(value) => Ok(OperationResult::Value(value)),
+                    Err(error) => self.error_to_operation_result_in_context(error, context),
                 }
-                let prototype = context.constructor_prototype(&new_target)?;
-                let instance = context.ordinary_object_with_prototype(prototype)?;
-                match self.call_user_function(function_id, instance.clone(), arguments, context)? {
-                    OperationResult::Value(result) if matches!(result, JsValue::Object(_)) => {
-                        Ok(OperationResult::Value(result))
+            }
+            JsValue::Function(function_id) => {
+                let activation = match context.realm_for_function(function_id) {
+                    Some(realm) if !context.is_current_realm(realm) => {
+                        Some(context.enter_realm(realm)?)
                     }
-                    OperationResult::Value(_) => Ok(OperationResult::Value(instance)),
-                    OperationResult::Throw(value) => Ok(OperationResult::Throw(value)),
+                    None => None,
+                    Some(_) => None,
+                };
+                let operation = (|| {
+                    if context
+                        .function(function_id)
+                        .is_some_and(|function| function.is_generator)
+                    {
+                        return Ok(OperationResult::Throw(vm_error_to_value(
+                            VmError::type_error("generator functions are not constructors"),
+                        )));
+                    }
+                    let prototype =
+                        self.get_prototype_from_constructor(new_target.clone(), context)?;
+                    let instance = context.ordinary_object_with_prototype(prototype)?;
+                    match self.call_user_function(
+                        function_id,
+                        instance.clone(),
+                        arguments,
+                        context,
+                    )? {
+                        OperationResult::Value(result) if matches!(result, JsValue::Object(_)) => {
+                            Ok(OperationResult::Value(result))
+                        }
+                        OperationResult::Value(_) => Ok(OperationResult::Value(instance)),
+                        OperationResult::Throw(value) => Ok(OperationResult::Throw(value)),
+                    }
+                })();
+                match (
+                    operation,
+                    activation.map(|activation| context.leave_realm(activation)),
+                ) {
+                    (Ok(value), None) => Ok(value),
+                    (Err(error), None) => Err(error),
+                    (Ok(value), Some(Ok(()))) => Ok(value),
+                    (Err(error), Some(Ok(()))) => Err(error),
+                    (Ok(_), Some(Err(error))) | (Err(error), Some(Err(_))) => Err(error),
                 }
             }
             JsValue::BuiltinFunction(id) => {
                 context.consume_call_depth()?;
                 let result: Result<OperationResult, VmError> = (|| {
-                    let def = context
-                        .builtin(id)
-                        .ok_or_else(|| VmError::runtime("invalid builtin id"))?
-                        .clone();
-                    // `new boundFn(...)` constructs the target with the bound
-                    // arguments prepended (the bound `this` is ignored for `new`).
-                    if let Some(bound) = &def.bound {
-                        let mut forwarded = bound.args.clone();
-                        forwarded.extend(arguments);
-                        let target = bound.target.clone();
-                        return self.construct_value_with_new_target(
-                            target, forwarded, new_target, context,
-                        );
-                    }
-                    match def.construct {
-                        Some(construct) => match construct(self, context, &arguments, new_target) {
-                            Ok(value) => Ok(OperationResult::Value(value)),
-                            Err(error) => match self.pending_exception.take() {
-                                Some(value) => Ok(OperationResult::Throw(value)),
-                                None => match error.kind {
-                                    VmErrorKind::Reference
-                                    | VmErrorKind::Type
-                                    | VmErrorKind::Syntax
-                                    | VmErrorKind::Range => {
-                                        Ok(OperationResult::Throw(vm_error_to_value(error)))
-                                    }
-                                    _ => Err(error),
-                                },
-                            },
-                        },
-                        None => Ok(OperationResult::Throw(vm_error_to_value(
-                            VmError::type_error(format!("{} is not a constructor", def.name)),
-                        ))),
+                    let activation = match context.realm_for_builtin(id) {
+                        Some(realm) if !context.is_current_realm(realm) => {
+                            Some(context.enter_realm(realm)?)
+                        }
+                        None => None,
+                        Some(_) => None,
+                    };
+                    let operation = (|| {
+                        let def = context
+                            .builtin(id)
+                            .ok_or_else(|| VmError::runtime("invalid builtin id"))?
+                            .clone();
+                        // `new boundFn(...)` constructs the target with the bound
+                        // arguments prepended (the bound `this` is ignored for `new`).
+                        if let Some(bound) = &def.bound {
+                            if def.construct.is_none() {
+                                return Ok(OperationResult::Throw(vm_error_to_value(
+                                    VmError::type_error(format!(
+                                        "{} is not a constructor",
+                                        def.name
+                                    )),
+                                )));
+                            }
+                            let mut forwarded = bound.args.clone();
+                            forwarded.extend(arguments);
+                            let target = bound.target.clone();
+                            let effective_new_target =
+                                if new_target.same_value(&JsValue::BuiltinFunction(id)) {
+                                    target.clone()
+                                } else {
+                                    new_target
+                                };
+                            return self.construct_value_with_new_target(
+                                target,
+                                forwarded,
+                                effective_new_target,
+                                context,
+                            );
+                        }
+                        match def.construct {
+                            Some(construct) => {
+                                match construct(self, context, &arguments, new_target) {
+                                    Ok(value) => Ok(OperationResult::Value(value)),
+                                    Err(error) => match self.pending_exception.take() {
+                                        Some(value) => Ok(OperationResult::Throw(value)),
+                                        None => match error.kind {
+                                            VmErrorKind::Reference
+                                            | VmErrorKind::Type
+                                            | VmErrorKind::Syntax
+                                            | VmErrorKind::Range => {
+                                                Ok(OperationResult::Throw(vm_error_to_value(error)))
+                                            }
+                                            _ => Err(error),
+                                        },
+                                    },
+                                }
+                            }
+                            None => Ok(OperationResult::Throw(vm_error_to_value(
+                                VmError::type_error(format!("{} is not a constructor", def.name)),
+                            ))),
+                        }
+                    })();
+                    match (
+                        operation,
+                        activation.map(|activation| context.leave_realm(activation)),
+                    ) {
+                        (Ok(value), None) => Ok(value),
+                        (Err(error), None) => Err(error),
+                        (Ok(value), Some(Ok(()))) => Ok(value),
+                        (Err(error), Some(Ok(()))) => Err(error),
+                        (Ok(_), Some(Err(error))) | (Err(error), Some(Err(_))) => Err(error),
                     }
                 })();
                 context.release_call_depth();
@@ -4179,6 +4606,23 @@ fn vm_error_to_value(error: VmError) -> JsValue {
     JsValue::Error(crate::runtime::NativeErrorValue::new(
         kind,
         error.to_string(),
+    ))
+}
+
+fn vm_error_to_value_with_realm(error: VmError, realm_global: ObjectId) -> JsValue {
+    let kind = match error.kind {
+        VmErrorKind::Reference => NativeErrorKind::Reference,
+        VmErrorKind::Type => NativeErrorKind::Type,
+        VmErrorKind::Syntax => NativeErrorKind::Syntax,
+        VmErrorKind::Range => NativeErrorKind::Range,
+        VmErrorKind::Test262 => NativeErrorKind::Test262,
+        VmErrorKind::RuntimeLimit => NativeErrorKind::RuntimeLimit,
+        VmErrorKind::Runtime => NativeErrorKind::Error,
+    };
+    JsValue::Error(crate::runtime::NativeErrorValue::new_with_realm(
+        kind,
+        error.to_string(),
+        realm_global,
     ))
 }
 

@@ -9,13 +9,18 @@ use super::{
     ArrayBufferId, ArrayBufferRecord, BoundFunction, BuiltinFunction, BuiltinId, CollectionStats,
     Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId, Heap, HeapStats,
     IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue, NativeCall,
-    NativeConstruct, NativeErrorKind, NativeJob, ObjectId, ObjectKind, PrimitiveValue,
-    PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
-    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, ProxyRecord,
-    RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
-    WellKnownSymbols, iterator::IteratorKind, object::array_index,
+    NativeConstruct, NativeErrorKind, NativeErrorValue, NativeJob, ObjectId, ObjectKind,
+    PrimitiveValue, PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord,
+    PromiseState, PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
+    ProxyRecord, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
+    TypedArrayViewId, WellKnownSymbols, iterator::IteratorKind, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
+
+/// Stable identifier for a secondary ECMAScript realm hosted by one native
+/// isolate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct RealmId(pub u32);
 
 /// Stable references to all fundamental constructors and prototypes installed during
 /// `install_foundation`. The V6 additions (string/number/boolean/error prototypes) are
@@ -35,6 +40,30 @@ pub struct Intrinsics {
     pub boolean_prototype: ObjectId,
     pub error_prototype: ObjectId,
     pub regexp_prototype: ObjectId,
+}
+
+#[derive(Debug, Clone)]
+struct RealmRecord {
+    global_environment: EnvironmentId,
+    global_object: ObjectId,
+    intrinsics: Intrinsics,
+    array_iterator_prototype: Option<ObjectId>,
+    function_prototype_call: Option<BuiltinId>,
+    function_prototype_apply: Option<BuiltinId>,
+    function_restricted_thrower: Option<JsValue>,
+    function_legacy_caller_getter: Option<JsValue>,
+    function_legacy_arguments_getter: Option<JsValue>,
+    function_legacy_setter: Option<JsValue>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RealmActivation {
+    previous_realm: Option<RealmId>,
+    previous_record: RealmRecord,
+    previous_current_environment: EnvironmentId,
+    previous_environment_stack: Vec<EnvironmentId>,
+    previous_top_level_this: JsValue,
+    previous_strict: bool,
 }
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
@@ -109,6 +138,7 @@ pub struct NativeContext {
     call_frames: Vec<CallFrame>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
     function_objects: HashMap<FunctionId, ObjectId>,
+    function_realm_globals: HashMap<FunctionId, ObjectId>,
     strict_functions: HashSet<FunctionId>,
     function_restricted_thrower: Option<JsValue>,
     function_legacy_caller_getter: Option<JsValue>,
@@ -118,6 +148,7 @@ pub struct NativeContext {
     error_objects: HashSet<ObjectId>,
     raw_json_objects: HashMap<ObjectId, String>,
     builtin_registry: Vec<BuiltinFunction>,
+    builtin_realm_globals: HashMap<BuiltinId, ObjectId>,
     intrinsics: Option<Intrinsics>,
     array_iterator_prototype: Option<ObjectId>,
     function_prototype_call: Option<BuiltinId>,
@@ -129,6 +160,9 @@ pub struct NativeContext {
     array_buffers: Vec<ArrayBufferRecord>,
     typed_array_views: Vec<TypedArrayView>,
     data_views: Vec<DataViewRecord>,
+    realms: Vec<RealmRecord>,
+    current_realm: Option<RealmId>,
+    realm_hosts: HashMap<ObjectId, RealmId>,
     strict: bool,
     top_level_this: JsValue,
     output: Vec<String>,
@@ -169,6 +203,7 @@ impl NativeContext {
             call_frames: Vec::new(),
             function_prototypes: HashMap::new(),
             function_objects: HashMap::new(),
+            function_realm_globals: HashMap::new(),
             strict_functions: HashSet::new(),
             function_restricted_thrower: None,
             function_legacy_caller_getter: None,
@@ -178,6 +213,7 @@ impl NativeContext {
             error_objects: HashSet::new(),
             raw_json_objects: HashMap::new(),
             builtin_registry: Vec::new(),
+            builtin_realm_globals: HashMap::new(),
             intrinsics: None,
             array_iterator_prototype: None,
             function_prototype_call: None,
@@ -189,6 +225,9 @@ impl NativeContext {
             array_buffers: Vec::new(),
             typed_array_views: Vec::new(),
             data_views: Vec::new(),
+            realms: Vec::new(),
+            current_realm: None,
+            realm_hosts: HashMap::new(),
             strict: false,
             top_level_this: JsValue::Object(global_object),
             output: Vec::new(),
@@ -196,10 +235,14 @@ impl NativeContext {
             call_depth: 0,
             gc_allocation_threshold: 10_000,
         };
-        context.declare_global("undefined", JsValue::Undefined);
-        context.declare_global("NaN", JsValue::Number(f64::NAN));
-        context.declare_global("Infinity", JsValue::Number(f64::INFINITY));
+        context.install_core_global_bindings();
         context
+    }
+
+    fn install_core_global_bindings(&mut self) {
+        self.declare_global("undefined", JsValue::Undefined);
+        self.declare_global("NaN", JsValue::Number(f64::NAN));
+        self.declare_global("Infinity", JsValue::Number(f64::INFINITY));
     }
 }
 
@@ -293,6 +336,39 @@ impl NativeContext {
         if let Some(array_iterator_prototype) = self.array_iterator_prototype {
             roots.object_roots.push(array_iterator_prototype);
         }
+        for realm in &self.realms {
+            roots.object_roots.push(realm.global_object);
+            roots.environment_stack.push(realm.global_environment);
+            roots.object_roots.extend([
+                realm.intrinsics.object_prototype,
+                realm.intrinsics.function_prototype,
+                realm.intrinsics.array_prototype,
+                realm.intrinsics.string_prototype,
+                realm.intrinsics.number_prototype,
+                realm.intrinsics.boolean_prototype,
+                realm.intrinsics.error_prototype,
+                realm.intrinsics.regexp_prototype,
+            ]);
+            roots.value_roots.extend([
+                realm.intrinsics.object_constructor.clone(),
+                realm.intrinsics.function_constructor.clone(),
+                realm.intrinsics.array_constructor.clone(),
+            ]);
+            if let Some(array_iterator_prototype) = realm.array_iterator_prototype {
+                roots.object_roots.push(array_iterator_prototype);
+            }
+            for value in [
+                &realm.function_restricted_thrower,
+                &realm.function_legacy_caller_getter,
+                &realm.function_legacy_arguments_getter,
+                &realm.function_legacy_setter,
+            ]
+            .into_iter()
+            .flatten()
+            {
+                roots.value_roots.push(value.clone());
+            }
+        }
         roots
             .object_roots
             .extend(self.function_prototypes.values().copied());
@@ -358,6 +434,9 @@ impl NativeContext {
         self.function_objects.retain(|function, object| {
             self.heap.contains_function(*function) && self.heap.contains_object(*object)
         });
+        self.function_realm_globals.retain(|function, global| {
+            self.heap.contains_function(*function) && self.heap.contains_object(*global)
+        });
         self.strict_functions
             .retain(|function| self.heap.contains_function(*function));
         self.object_values.retain(|object, value| {
@@ -367,6 +446,13 @@ impl NativeContext {
             .retain(|object| self.heap.contains_object(*object));
         self.raw_json_objects
             .retain(|object, _| self.heap.contains_object(*object));
+        let builtin_count = self.builtin_registry.len();
+        self.builtin_realm_globals.retain(|builtin, global| {
+            (builtin.0 as usize) < builtin_count && self.heap.contains_object(*global)
+        });
+        self.realm_hosts.retain(|object, realm| {
+            self.heap.contains_object(*object) && (realm.0 as usize) < self.realms.len()
+        });
         if self
             .array_iterator_prototype
             .is_some_and(|object| !self.heap.contains_object(object))
@@ -411,6 +497,7 @@ impl NativeContext {
             object: object_id,
             bound: None,
         });
+        self.builtin_realm_globals.insert(id, self.global_object);
         Ok(JsValue::BuiltinFunction(id))
     }
 
@@ -422,17 +509,19 @@ impl NativeContext {
         target: JsValue,
         this_value: JsValue,
         args: Vec<JsValue>,
-        length: u8,
+        length: f64,
+        display_name: String,
     ) -> Result<JsValue, VmError> {
+        let realm_global = self.callable_realm_global(&target);
         let mut object = JsObject::ordinary();
         object.prototype = self.function_prototype_object();
         object.define_property(
             "length",
-            PropertyDescriptor::data_with(JsValue::Number(f64::from(length)), false, false, true),
+            PropertyDescriptor::data_with(JsValue::Number(length), false, false, true),
         );
         object.define_property(
             "name",
-            PropertyDescriptor::data_with(JsValue::String("bound".into()), false, false, true),
+            PropertyDescriptor::data_with(JsValue::String(display_name), false, false, true),
         );
         let object_id = self
             .heap
@@ -443,7 +532,7 @@ impl NativeContext {
             BuiltinId(u16::try_from(idx).map_err(|_| VmError::runtime("builtin registry full"))?);
         self.builtin_registry.push(BuiltinFunction {
             name: "bound",
-            length,
+            length: 0,
             // Never invoked directly: the VM dispatches bound functions by
             // forwarding to the target. These are unreachable fallbacks.
             call: bound_call_unreachable,
@@ -455,12 +544,17 @@ impl NativeContext {
                 args,
             }),
         });
+        self.builtin_realm_globals.insert(id, realm_global);
         Ok(JsValue::BuiltinFunction(id))
     }
 
     #[must_use]
     pub fn builtin(&self, id: BuiltinId) -> Option<&BuiltinFunction> {
         self.builtin_registry.get(id.0 as usize)
+    }
+
+    pub fn builtin_mut(&mut self, id: BuiltinId) -> Option<&mut BuiltinFunction> {
+        self.builtin_registry.get_mut(id.0 as usize)
     }
 
     /// Find a registered builtin by name and return it as a `JsValue::BuiltinFunction`.
@@ -471,6 +565,61 @@ impl NativeContext {
             .enumerate()
             .find(|(_, bf)| bf.name == name)
             .map(|(i, _)| JsValue::BuiltinFunction(BuiltinId(i as u16)))
+    }
+
+    #[must_use]
+    pub fn realm_for_builtin(&self, id: BuiltinId) -> Option<RealmId> {
+        let global_object = self.builtin_realm_globals.get(&id)?;
+        self.realms
+            .iter()
+            .position(|realm| realm.global_object == *global_object)
+            .and_then(|index| u32::try_from(index).ok())
+            .map(RealmId)
+    }
+
+    #[must_use]
+    pub fn realm_for_callable(&self, value: &JsValue) -> Option<RealmId> {
+        let global_object = self.callable_realm_global(value);
+        self.realms
+            .iter()
+            .position(|realm| realm.global_object == global_object)
+            .and_then(|index| u32::try_from(index).ok())
+            .map(RealmId)
+    }
+
+    fn callable_realm_global(&self, value: &JsValue) -> ObjectId {
+        match value {
+            JsValue::Function(id) => self
+                .function_realm_globals
+                .get(id)
+                .copied()
+                .unwrap_or(self.global_object),
+            JsValue::BuiltinFunction(id) => self
+                .builtin(*id)
+                .and_then(|builtin| {
+                    builtin
+                        .bound
+                        .as_ref()
+                        .map(|bound| self.callable_realm_global(&bound.target))
+                })
+                .or_else(|| self.builtin_realm_globals.get(id).copied())
+                .unwrap_or(self.global_object),
+            JsValue::Object(object) => self
+                .proxy_record(*object)
+                .map(|record| self.callable_realm_global(&record.target))
+                .unwrap_or(self.global_object),
+            _ => self.global_object,
+        }
+    }
+
+    #[must_use]
+    pub fn realm_for_function(&self, id: FunctionId) -> Option<RealmId> {
+        let global_object = self.function_realm_globals.get(&id)?;
+        self.realms
+            .iter()
+            .position(|realm| realm.global_object == *global_object)
+            .and_then(|index| u32::try_from(index).ok())
+            .map(RealmId)
     }
 
     pub fn set_function_prototype_call(&mut self, id: BuiltinId) {
@@ -541,6 +690,153 @@ impl NativeContext {
 
     pub fn set_intrinsics(&mut self, intrinsics: Intrinsics) {
         self.intrinsics = Some(intrinsics);
+    }
+
+    fn capture_realm_record(&self) -> Result<RealmRecord, VmError> {
+        Ok(RealmRecord {
+            global_environment: self.global_environment,
+            global_object: self.global_object,
+            intrinsics: self
+                .intrinsics
+                .clone()
+                .ok_or_else(|| VmError::runtime("realm intrinsics are not installed"))?,
+            array_iterator_prototype: self.array_iterator_prototype,
+            function_prototype_call: self.function_prototype_call,
+            function_prototype_apply: self.function_prototype_apply,
+            function_restricted_thrower: self.function_restricted_thrower.clone(),
+            function_legacy_caller_getter: self.function_legacy_caller_getter.clone(),
+            function_legacy_arguments_getter: self.function_legacy_arguments_getter.clone(),
+            function_legacy_setter: self.function_legacy_setter.clone(),
+        })
+    }
+
+    fn apply_realm_record(&mut self, record: &RealmRecord) {
+        self.global_environment = record.global_environment;
+        self.global_object = record.global_object;
+        self.intrinsics = Some(record.intrinsics.clone());
+        self.array_iterator_prototype = record.array_iterator_prototype;
+        self.function_prototype_call = record.function_prototype_call;
+        self.function_prototype_apply = record.function_prototype_apply;
+        self.function_restricted_thrower = record.function_restricted_thrower.clone();
+        self.function_legacy_caller_getter = record.function_legacy_caller_getter.clone();
+        self.function_legacy_arguments_getter = record.function_legacy_arguments_getter.clone();
+        self.function_legacy_setter = record.function_legacy_setter.clone();
+    }
+
+    fn save_current_realm_record(&mut self) -> Result<(), VmError> {
+        let Some(realm) = self.current_realm else {
+            return Ok(());
+        };
+        let record = self.capture_realm_record()?;
+        let slot = self
+            .realms
+            .get_mut(realm.0 as usize)
+            .ok_or_else(|| VmError::runtime("missing current realm record"))?;
+        *slot = record;
+        Ok(())
+    }
+
+    pub fn allocate_realm_globals(&mut self) -> Result<(EnvironmentId, ObjectId), VmError> {
+        let global_environment = self
+            .heap
+            .allocate_environment(Environment::default())
+            .ok_or_else(|| VmError::runtime_limit("environment arena exhausted"))?;
+        let global_object = self
+            .heap
+            .allocate_object(JsObject::ordinary())
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+        Ok((global_environment, global_object))
+    }
+
+    pub fn enter_uninitialized_realm(
+        &mut self,
+        global_environment: EnvironmentId,
+        global_object: ObjectId,
+    ) -> Result<RealmActivation, VmError> {
+        let activation = RealmActivation {
+            previous_realm: self.current_realm,
+            previous_record: self.capture_realm_record()?,
+            previous_current_environment: self.current_environment,
+            previous_environment_stack: self.environment_stack.clone(),
+            previous_top_level_this: self.top_level_this.clone(),
+            previous_strict: self.strict,
+        };
+        self.save_current_realm_record()?;
+        self.current_realm = None;
+        self.global_environment = global_environment;
+        self.global_object = global_object;
+        self.current_environment = global_environment;
+        self.environment_stack.clear();
+        self.intrinsics = None;
+        self.array_iterator_prototype = None;
+        self.function_prototype_call = None;
+        self.function_prototype_apply = None;
+        self.function_restricted_thrower = None;
+        self.function_legacy_caller_getter = None;
+        self.function_legacy_arguments_getter = None;
+        self.function_legacy_setter = None;
+        self.top_level_this = JsValue::Object(global_object);
+        self.strict = false;
+        self.install_core_global_bindings();
+        Ok(activation)
+    }
+
+    pub fn register_current_realm(&mut self) -> Result<RealmId, VmError> {
+        let index = self.realms.len();
+        let id =
+            RealmId(u32::try_from(index).map_err(|_| VmError::runtime("realm registry full"))?);
+        self.realms.push(self.capture_realm_record()?);
+        self.current_realm = Some(id);
+        Ok(id)
+    }
+
+    pub fn register_realm_host(&mut self, host: ObjectId, realm: RealmId) {
+        self.realm_hosts.insert(host, realm);
+    }
+
+    #[must_use]
+    pub fn realm_for_host(&self, host: ObjectId) -> Option<RealmId> {
+        self.realm_hosts.get(&host).copied()
+    }
+
+    #[must_use]
+    pub fn is_current_realm(&self, realm: RealmId) -> bool {
+        self.current_realm == Some(realm)
+    }
+
+    pub fn enter_realm(&mut self, realm: RealmId) -> Result<RealmActivation, VmError> {
+        let activation = RealmActivation {
+            previous_realm: self.current_realm,
+            previous_record: self.capture_realm_record()?,
+            previous_current_environment: self.current_environment,
+            previous_environment_stack: self.environment_stack.clone(),
+            previous_top_level_this: self.top_level_this.clone(),
+            previous_strict: self.strict,
+        };
+        self.save_current_realm_record()?;
+        let record = self
+            .realms
+            .get(realm.0 as usize)
+            .cloned()
+            .ok_or_else(|| VmError::runtime("missing realm record"))?;
+        self.apply_realm_record(&record);
+        self.current_realm = Some(realm);
+        self.current_environment = record.global_environment;
+        self.environment_stack.clear();
+        self.top_level_this = JsValue::Object(record.global_object);
+        self.strict = activation.previous_strict;
+        Ok(activation)
+    }
+
+    pub fn leave_realm(&mut self, activation: RealmActivation) -> Result<(), VmError> {
+        self.save_current_realm_record()?;
+        self.apply_realm_record(&activation.previous_record);
+        self.current_realm = activation.previous_realm;
+        self.current_environment = activation.previous_current_environment;
+        self.environment_stack = activation.previous_environment_stack;
+        self.top_level_this = activation.previous_top_level_this;
+        self.strict = activation.previous_strict;
+        Ok(())
     }
 
     // ── Symbol registry ──────────────────────────────────────────────────────
@@ -849,6 +1145,17 @@ impl NativeContext {
         }
     }
 
+    #[must_use]
+    pub fn is_callable_value(&self, value: &JsValue) -> bool {
+        match value {
+            JsValue::Function(_) | JsValue::BuiltinFunction(_) => true,
+            JsValue::Object(object) => self
+                .proxy_record(*object)
+                .is_some_and(|record| record.callable),
+            _ => false,
+        }
+    }
+
     pub fn mark_error_object(&mut self, object: ObjectId) {
         self.error_objects.insert(object);
     }
@@ -897,6 +1204,11 @@ impl NativeContext {
         self.intrinsics
             .as_ref()
             .map(|intrinsics| intrinsics.function_prototype)
+    }
+
+    #[must_use]
+    pub fn is_function_prototype_object(&self, object: ObjectId) -> bool {
+        self.function_prototype_object() == Some(object)
     }
 
     #[must_use]
@@ -1241,6 +1553,7 @@ impl NativeContext {
             .allocate_function(function)
             .ok_or_else(|| VmError::runtime_limit("function arena exhausted"))?;
         self.register_function_object(id, function_object_id);
+        self.function_realm_globals.insert(id, self.global_object);
 
         let mut prototype = JsObject::ordinary();
         prototype.prototype = self.object_prototype();
@@ -1436,9 +1749,7 @@ impl NativeContext {
             return match key {
                 "message" => Ok(JsValue::String(error.message.clone())),
                 "name" => Ok(JsValue::String(error_kind_name(&error.kind).into())),
-                "constructor" => Ok(self
-                    .find_builtin_by_name(error_kind_name(&error.kind))
-                    .unwrap_or(JsValue::Undefined)),
+                "constructor" => Ok(self.error_constructor_value(error)),
                 "stack" | "cause" => Ok(JsValue::Undefined),
                 _ => Ok(JsValue::Undefined),
             };
@@ -1456,6 +1767,19 @@ impl NativeContext {
                 "accessor getter invocation requires the VM call path",
             )),
         }
+    }
+
+    #[must_use]
+    pub fn error_constructor_value(&self, error: &NativeErrorValue) -> JsValue {
+        let name = error_kind_name(&error.kind);
+        if let Some(global) = error.realm_global
+            && let Ok(Some((_, descriptor))) = self.find_property_descriptor(global, name)
+            && let Some(value) = descriptor.value_cloned()
+        {
+            return value;
+        }
+        self.find_builtin_by_name(name)
+            .unwrap_or(JsValue::Undefined)
     }
 
     fn property_lookup_object(&mut self, receiver: &JsValue) -> Result<ObjectId, VmError> {
@@ -1848,10 +2172,19 @@ impl NativeContext {
     #[must_use]
     pub fn is_constructable_value(&self, value: &JsValue) -> bool {
         match value {
-            JsValue::Function(_) => true,
-            JsValue::BuiltinFunction(id) => self
-                .builtin(*id)
-                .is_some_and(|builtin| builtin.construct.is_some()),
+            JsValue::Function(function) => self
+                .function(*function)
+                .is_some_and(|function| !function.is_generator),
+            JsValue::BuiltinFunction(id) => self.builtin(*id).is_some_and(|builtin| {
+                if let Some(bound) = &builtin.bound {
+                    self.is_constructable_value(&bound.target)
+                } else {
+                    builtin.construct.is_some()
+                }
+            }),
+            JsValue::Object(object) => self
+                .proxy_record(*object)
+                .is_some_and(|record| record.constructable),
             _ => false,
         }
     }
@@ -1867,7 +2200,49 @@ impl NativeContext {
             .find_property_descriptor(constructor_object, "prototype")?
             .and_then(|(_, descriptor)| descriptor.value_cloned())
             .and_then(|value| self.value_object(&value));
-        Ok(prototype.or_else(|| self.object_prototype()))
+        Ok(prototype.or_else(|| self.default_object_prototype_for_callable(constructor)))
+    }
+
+    #[must_use]
+    pub fn default_object_prototype_for_callable(&self, constructor: &JsValue) -> Option<ObjectId> {
+        self.default_intrinsic_prototype_for_callable(
+            constructor,
+            |intrinsics| intrinsics.object_prototype,
+            self.object_prototype(),
+        )
+    }
+
+    #[must_use]
+    pub fn default_array_prototype_for_callable(&self, constructor: &JsValue) -> Option<ObjectId> {
+        self.default_intrinsic_prototype_for_callable(
+            constructor,
+            |intrinsics| intrinsics.array_prototype,
+            self.array_prototype(),
+        )
+    }
+
+    #[must_use]
+    pub fn default_boolean_prototype_for_callable(
+        &self,
+        constructor: &JsValue,
+    ) -> Option<ObjectId> {
+        self.default_intrinsic_prototype_for_callable(
+            constructor,
+            |intrinsics| intrinsics.boolean_prototype,
+            self.boolean_prototype(),
+        )
+    }
+
+    fn default_intrinsic_prototype_for_callable(
+        &self,
+        constructor: &JsValue,
+        select: fn(&Intrinsics) -> ObjectId,
+        fallback: Option<ObjectId>,
+    ) -> Option<ObjectId> {
+        self.realm_for_callable(constructor)
+            .and_then(|realm| self.realms.get(realm.0 as usize))
+            .map(|realm| select(&realm.intrinsics))
+            .or(fallback)
     }
 
     pub fn get_property(&mut self, object: JsValue, name: &str) -> Result<JsValue, VmError> {
@@ -2572,6 +2947,16 @@ impl NativeContext {
         self.strict
     }
 
+    #[must_use]
+    pub fn is_strict_code(&self) -> bool {
+        self.strict
+            || self
+                .call_frames
+                .last()
+                .and_then(|frame| frame.function)
+                .is_some_and(|function| self.is_strict_function(function))
+    }
+
     pub fn set_strict(&mut self, strict: bool) {
         self.strict = strict;
     }
@@ -3047,19 +3432,45 @@ impl NativeContext {
         byte_offset: usize,
         byte_length: usize,
     ) -> Result<DataViewId, VmError> {
-        self.validate_buffer_range(buffer, byte_offset, byte_length)?;
+        self.create_data_view_with_tracking(buffer, byte_offset, byte_length, false)
+    }
+
+    pub fn create_data_view_with_tracking(
+        &mut self,
+        buffer: ArrayBufferId,
+        byte_offset: usize,
+        byte_length: usize,
+        length_tracking: bool,
+    ) -> Result<DataViewId, VmError> {
+        self.validate_data_view_creation(buffer, byte_offset, byte_length, length_tracking)?;
         let index = u32::try_from(self.data_views.len())
             .map_err(|_| VmError::runtime("DataView registry full"))?;
         self.data_views.push(DataViewRecord {
             buffer,
             byte_offset,
             byte_length,
+            length_tracking,
         });
         Ok(DataViewId(index))
     }
 
     pub fn data_view_record(&self, view: DataViewId) -> Option<&DataViewRecord> {
         self.data_views.get(view.0 as usize)
+    }
+
+    pub fn data_view_byte_length(&self, view: DataViewId) -> Result<usize, VmError> {
+        let record = self
+            .data_view_record(view)
+            .ok_or_else(|| VmError::runtime("invalid DataView id"))?;
+        self.data_view_current_byte_length(record)
+    }
+
+    pub fn data_view_byte_offset(&self, view: DataViewId) -> Result<usize, VmError> {
+        let record = self
+            .data_view_record(view)
+            .ok_or_else(|| VmError::runtime("invalid DataView id"))?;
+        self.data_view_current_byte_length(record)?;
+        Ok(record.byte_offset)
     }
 
     pub fn data_view_get(
@@ -3072,13 +3483,11 @@ impl NativeContext {
         let view = self
             .data_view_record(view)
             .ok_or_else(|| VmError::runtime("invalid DataView id"))?;
-        if self.is_array_buffer_detached(view.buffer)? {
-            return Err(VmError::type_error("ArrayBuffer is detached"));
-        }
+        let view_byte_length = self.data_view_current_byte_length(view)?;
         let width = element_kind.bytes_per_element();
         if request_index
             .checked_add(width)
-            .is_none_or(|end| end > view.byte_length)
+            .is_none_or(|end| end > view_byte_length)
         {
             return Err(VmError::range("DataView byteOffset is out of range"));
         }
@@ -3102,13 +3511,11 @@ impl NativeContext {
             .data_view_record(view)
             .ok_or_else(|| VmError::runtime("invalid DataView id"))?
             .clone();
-        if self.is_array_buffer_detached(view.buffer)? {
-            return Err(VmError::type_error("ArrayBuffer is detached"));
-        }
+        let view_byte_length = self.data_view_current_byte_length(&view)?;
         let width = element_kind.bytes_per_element();
         if request_index
             .checked_add(width)
-            .is_none_or(|end| end > view.byte_length)
+            .is_none_or(|end| end > view_byte_length)
         {
             return Err(VmError::range("DataView byteOffset is out of range"));
         }
@@ -3121,6 +3528,57 @@ impl NativeContext {
             bytes.reverse();
         }
         self.write_buffer_bytes(view.buffer, byte_offset, &bytes)
+    }
+
+    fn validate_data_view_creation(
+        &self,
+        buffer: ArrayBufferId,
+        byte_offset: usize,
+        byte_length: usize,
+        length_tracking: bool,
+    ) -> Result<(), VmError> {
+        let record = self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        let buffer_length = record.bytes.len();
+        if byte_offset > buffer_length {
+            return Err(VmError::range("DataView byteOffset is out of range"));
+        }
+        if !length_tracking
+            && byte_offset
+                .checked_add(byte_length)
+                .is_none_or(|end| end > buffer_length)
+        {
+            return Err(VmError::range("DataView byteLength is out of range"));
+        }
+        Ok(())
+    }
+
+    fn data_view_current_byte_length(&self, view: &DataViewRecord) -> Result<usize, VmError> {
+        let record = self
+            .array_buffer_record(view.buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if record.detached {
+            return Err(VmError::type_error("ArrayBuffer is detached"));
+        }
+        let buffer_length = record.bytes.len();
+        if view.byte_offset > buffer_length {
+            return Err(VmError::type_error("DataView is out of bounds"));
+        }
+        if view.length_tracking {
+            return Ok(buffer_length - view.byte_offset);
+        }
+        if view
+            .byte_offset
+            .checked_add(view.byte_length)
+            .is_none_or(|end| end > buffer_length)
+        {
+            return Err(VmError::type_error("DataView is out of bounds"));
+        }
+        Ok(view.byte_length)
     }
 
     fn validate_buffer_range(
@@ -3343,6 +3801,7 @@ fn bigint_to_u64_bits(value: i128) -> u64 {
 }
 
 fn f64_to_f16_bits(value: f64) -> u16 {
+    let value = round_f64_to_f16_value(value);
     let bits = (value as f32).to_bits();
     let sign = ((bits >> 16) & 0x8000) as u16;
     let exponent = ((bits >> 23) & 0xff) as i32;
@@ -3381,6 +3840,26 @@ fn f64_to_f16_bits(value: f64) -> u16 {
         half += 1;
     }
     half
+}
+
+fn round_f64_to_f16_value(value: f64) -> f64 {
+    if value.is_nan() || value.is_infinite() || value == 0.0 {
+        return value;
+    }
+    let sign = if value.is_sign_negative() { -1.0 } else { 1.0 };
+    let magnitude = value.abs();
+    let rounded = if magnitude < 2_f64.powi(-14) {
+        (magnitude / 2_f64.powi(-24)).round_ties_even() * 2_f64.powi(-24)
+    } else {
+        let exponent = magnitude.log2().floor() as i32;
+        let step = 2_f64.powi(exponent - 10);
+        (magnitude / step).round_ties_even() * step
+    };
+    if rounded >= 65_520.0 {
+        sign * f64::INFINITY
+    } else {
+        sign * rounded
+    }
 }
 
 fn f16_bits_to_f64(bits: u16) -> f64 {

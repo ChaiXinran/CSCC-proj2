@@ -4,11 +4,11 @@
 //! prototypes, descriptors, and deterministic Intl option objects. Operations
 //! that need real typed storage are present only when they can fail explicitly.
 
-use super::function;
+use super::{function, install_foundation, install_test262_harness};
 use crate::{
     runtime::{
-        ArrayBufferId, DataViewId, DataViewRecord, IteratorMode, JsObject, JsValue, NativeCall,
-        NativeContext, ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
+        ArrayBufferId, DataViewId, IteratorMode, JsObject, JsValue, NativeCall, NativeContext,
+        ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
         TypedArrayElementKind, TypedArrayViewId,
     },
     vm::{Vm, VmError},
@@ -905,30 +905,40 @@ fn data_view_construct(
     let buffer = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let buffer_object = context.require_object(&buffer, "DataView buffer")?;
     let buffer_id = array_buffer_id_from_object(context, buffer_object)?;
-    let buffer_length = context.array_buffer_byte_length(buffer_id)?;
     let byte_offset = to_index(
         vm,
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
+    if context.is_array_buffer_detached(buffer_id)? {
+        return Err(VmError::type_error("ArrayBuffer is detached"));
+    }
+    let buffer_length = context.array_buffer_byte_length(buffer_id)?;
     if byte_offset > buffer_length {
         return Err(VmError::range("DataView byteOffset is out of range"));
     }
-    let byte_length = if let Some(value) = arguments.get(2)
+    let (byte_length, length_tracking) = if let Some(value) = arguments.get(2)
         && !matches!(value, JsValue::Undefined)
     {
-        to_index(vm, context, value.clone())?
+        (to_index(vm, context, value.clone())?, false)
     } else {
-        buffer_length.saturating_sub(byte_offset)
+        (buffer_length - byte_offset, true)
     };
-    if byte_offset.saturating_add(byte_length) > buffer_length {
+    if !length_tracking
+        && byte_offset
+            .checked_add(byte_length)
+            .is_none_or(|end| end > buffer_length)
+    {
         return Err(VmError::range("DataView byteLength is out of range"));
     }
-    let prototype = context
-        .constructor_prototype(&new_target)?
-        .or_else(|| context.object_prototype())
-        .ok_or_else(|| VmError::runtime("DataView prototype missing"))?;
-    let view = context.create_data_view(buffer_id, byte_offset, byte_length)?;
+    let prototype = data_view_prototype_from_constructor(vm, context, new_target)?;
+    let view = context.create_data_view_with_tracking(
+        buffer_id,
+        byte_offset,
+        byte_length,
+        length_tracking,
+    )?;
+    let effective_byte_length = context.data_view_byte_length(view)?;
     let object = new_ordinary_object(context, Some(prototype))?;
     set_object_kind(context, object, ObjectKind::DataView { view })?;
     define_hidden(context, object, DATA_VIEW_MARKER, JsValue::Boolean(true))?;
@@ -937,7 +947,7 @@ fn data_view_construct(
         context,
         object,
         DATA_VIEW_BYTE_LENGTH,
-        JsValue::Number(byte_length as f64),
+        JsValue::Number(effective_byte_length as f64),
     )?;
     define_hidden(
         context,
@@ -946,6 +956,50 @@ fn data_view_construct(
         JsValue::Number(byte_offset as f64),
     )?;
     Ok(JsValue::Object(object))
+}
+
+fn data_view_prototype_from_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    new_target: JsValue,
+) -> Result<ObjectId, VmError> {
+    let prototype_value = vm.get_property_value_with_receiver_from_builtin(
+        new_target.clone(),
+        new_target.clone(),
+        "prototype",
+        context,
+    )?;
+    if let Some(prototype) = context.value_object(&prototype_value) {
+        return Ok(prototype);
+    }
+    let realm = context.realm_for_callable(&new_target);
+    if let Some(realm) = realm
+        && !context.is_current_realm(realm)
+    {
+        let activation = context.enter_realm(realm)?;
+        let result = data_view_intrinsic_prototype(context);
+        let leave_result = context.leave_realm(activation);
+        return match (result, leave_result) {
+            (Ok(value), Ok(())) => Ok(value),
+            (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+            (Err(error), Err(_)) => Err(error),
+        };
+    }
+    data_view_intrinsic_prototype(context)
+}
+
+fn data_view_intrinsic_prototype(context: &NativeContext) -> Result<ObjectId, VmError> {
+    let constructor = context
+        .get_global("DataView")
+        .ok_or_else(|| VmError::runtime("DataView constructor missing"))?;
+    let constructor_object = context
+        .value_object(&constructor)
+        .ok_or_else(|| VmError::runtime("DataView constructor object missing"))?;
+    context
+        .get_own_property_descriptor(constructor_object, "prototype")
+        .and_then(|descriptor| descriptor.value_cloned())
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("DataView prototype missing"))
 }
 
 fn require_data_view(
@@ -968,20 +1022,6 @@ fn data_view_buffer_get(
     Ok(own_data_value(context, object, DATA_VIEW_BUFFER).unwrap_or(JsValue::Undefined))
 }
 
-fn checked_data_view_record(
-    context: &NativeContext,
-    view: DataViewId,
-) -> Result<DataViewRecord, VmError> {
-    let record = context
-        .data_view_record(view)
-        .ok_or_else(|| VmError::runtime("invalid DataView id"))?
-        .clone();
-    if context.is_array_buffer_detached(record.buffer)? {
-        return Err(VmError::type_error("ArrayBuffer is detached"));
-    }
-    Ok(record)
-}
-
 fn data_view_byte_length_get(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -990,8 +1030,7 @@ fn data_view_byte_length_get(
 ) -> Result<JsValue, VmError> {
     let object = require_data_view(context, &this_value, "DataView.prototype.byteLength")?;
     let view = data_view_id_from_object(context, object)?;
-    let record = checked_data_view_record(context, view)?;
-    Ok(JsValue::Number(record.byte_length as f64))
+    Ok(JsValue::Number(context.data_view_byte_length(view)? as f64))
 }
 
 fn data_view_byte_offset_get(
@@ -1002,8 +1041,7 @@ fn data_view_byte_offset_get(
 ) -> Result<JsValue, VmError> {
     let object = require_data_view(context, &this_value, "DataView.prototype.byteOffset")?;
     let view = data_view_id_from_object(context, object)?;
-    let record = checked_data_view_record(context, view)?;
-    Ok(JsValue::Number(record.byte_offset as f64))
+    Ok(JsValue::Number(context.data_view_byte_offset(view)? as f64))
 }
 
 fn data_view_get(
@@ -3128,10 +3166,27 @@ fn install_test262_host_object_inner(context: &mut NativeContext) -> Result<(), 
 fn test262_eval_script(
     vm: &mut Vm,
     context: &mut NativeContext,
-    _this: JsValue,
+    this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    function::eval_call(vm, context, JsValue::Undefined, arguments)
+    let realm = match this {
+        JsValue::Object(host) => context.realm_for_host(host),
+        _ => None,
+    };
+    let Some(realm) = realm else {
+        return function::eval_call(vm, context, JsValue::Undefined, arguments);
+    };
+    if context.is_current_realm(realm) {
+        return function::eval_call(vm, context, JsValue::Undefined, arguments);
+    }
+    let activation = context.enter_realm(realm)?;
+    let result = function::eval_call(vm, context, JsValue::Undefined, arguments);
+    let leave_result = context.leave_realm(activation);
+    match (result, leave_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(_)) => Err(error),
+    }
 }
 
 fn test262_gc(
@@ -3172,5 +3227,19 @@ fn test262_create_realm(
     _this: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(context.get_global("$262").unwrap_or(JsValue::Undefined))
+    let (global_environment, global_object) = context.allocate_realm_globals()?;
+    let activation = context.enter_uninitialized_realm(global_environment, global_object)?;
+    install_foundation(context);
+    install_test262_harness(context);
+    let host = context
+        .get_global("$262")
+        .ok_or_else(|| VmError::runtime("new realm $262 host missing"))?;
+    let realm = context.register_current_realm()?;
+    let JsValue::Object(host_object) = host.clone() else {
+        let _ = context.leave_realm(activation);
+        return Err(VmError::runtime("new realm $262 host is not an object"));
+    };
+    context.register_realm_host(host_object, realm);
+    context.leave_realm(activation)?;
+    Ok(host)
 }

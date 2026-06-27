@@ -130,12 +130,18 @@ pub fn array_call(
 }
 
 pub fn array_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
-    _new_target: JsValue,
+    new_target: JsValue,
 ) -> Result<JsValue, VmError> {
-    create_array(context, arguments)
+    let array = create_array(context, arguments)?;
+    if let Some(prototype) = vm.get_array_prototype_from_constructor(new_target, context)?
+        && let Some(object) = context.value_object(&array)
+    {
+        context.set_prototype_of(object, Some(prototype))?;
+    }
+    Ok(array)
 }
 
 fn create_array(context: &mut NativeContext, arguments: &[JsValue]) -> Result<JsValue, VmError> {
@@ -1507,13 +1513,13 @@ fn compare_two(
 }
 
 fn array_keys(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.keys")?;
-    let length = array_like_length(context, object);
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
     context.create_array_iterator_object(
         this_value,
         length,
@@ -1523,13 +1529,13 @@ fn array_keys(
 }
 
 fn array_values(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.values")?;
-    let length = array_like_length(context, object);
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
     context.create_array_iterator_object(
         this_value,
         length,
@@ -1539,13 +1545,13 @@ fn array_values(
 }
 
 fn array_entries(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "Array.prototype.entries")?;
-    let length = array_like_length(context, object);
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
     context.create_array_iterator_object(
         this_value,
         length,

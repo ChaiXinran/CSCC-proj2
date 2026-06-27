@@ -156,6 +156,63 @@ fn function_prototype_exposes_standard_name_length_order() {
 }
 
 #[test]
+fn function_constructor_coerces_parameters_before_body() {
+    assert_eq!(
+        native_eval(
+            "var p = { toString: function () { throw 1; } }; \
+             var body = { toString: function () { throw 'body'; } }; \
+             var caught; try { Function(p, body); } catch (e) { caught = e; } \
+             caught;"
+        ),
+        "1"
+    );
+    assert_eq!(
+        native_eval(
+            "var p = { toString: function () { p = 1; return 'a'; } }; \
+             var body = { toString: function () { throw 'body'; } }; \
+             var caught; try { Function(p, body); } catch (e) { caught = e; } \
+             caught + ':' + p;"
+        ),
+        "body:1"
+    );
+}
+
+#[test]
+fn global_function_descriptor_and_prototype_call_shape_are_standard() {
+    assert_eq!(
+        native_eval(
+            "var d = Object.getOwnPropertyDescriptor(globalThis, 'Function'); \
+             d.writable + ':' + d.enumerable + ':' + d.configurable + ':' + \
+             Function.prototype();"
+        ),
+        "true:false:true:undefined"
+    );
+}
+
+#[test]
+fn bound_function_length_and_name_follow_target_properties() {
+    assert_eq!(
+        native_eval(
+            "var target = Object.defineProperty(function(a, b, c) {}, 'name', { value: 'target' }); \
+             var bound = target.bind(null, 1); \
+             bound.length + ':' + bound.name + ':' + \
+             Object.getOwnPropertyDescriptor(bound, 'name').enumerable + ':' + \
+             Object.getOwnPropertyDescriptor(bound, 'name').writable + ':' + \
+             Object.getOwnPropertyDescriptor(bound, 'name').configurable;"
+        ),
+        "2:bound target:false:false:true"
+    );
+    assert_eq!(
+        native_eval(
+            "function fn() {} \
+             Object.defineProperty(fn, 'length', { value: Infinity }); \
+             fn.bind(null, 1).length + ':' + fn.bind().bind().name;"
+        ),
+        "Infinity:bound bound fn"
+    );
+}
+
+#[test]
 fn strict_functions_restrict_caller_and_arguments_properties() {
     assert_eq!(
         native_eval_strict(

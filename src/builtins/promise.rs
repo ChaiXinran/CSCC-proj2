@@ -142,13 +142,15 @@ fn create_promise_capability(
         resolve_target,
         JsValue::Undefined,
         vec![promise_object.clone()],
-        1,
+        1.0,
+        "bound Promise.resolve".into(),
     )?;
     let reject = context.register_bound_function(
         reject_target,
         JsValue::Undefined,
         vec![promise_object.clone()],
-        1,
+        1.0,
+        "bound Promise.reject".into(),
     )?;
     Ok((promise_object, promise, resolve, reject))
 }

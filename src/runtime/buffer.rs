@@ -106,4 +106,5 @@ pub struct DataViewRecord {
     pub buffer: ArrayBufferId,
     pub byte_offset: usize,
     pub byte_length: usize,
+    pub length_tracking: bool,
 }

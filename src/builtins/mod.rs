@@ -5,7 +5,7 @@ mod function;
 mod json;
 mod object;
 mod promise;
-mod proxy;
+pub(crate) mod proxy;
 
 // C1/C2 pure algorithm modules. They contain no VM/runtime wiring; the thin
 // adapter layer in `std_primitives` bridges them into the runtime.
@@ -200,11 +200,20 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
         error_prototype,
         regexp_prototype,
     });
-    context.declare_global("Object", object_constructor);
-    context.declare_global("Function", function_constructor);
-    context.declare_global("Array", array_constructor);
-    context.declare_global("eval", eval_function);
-    context.declare_global("globalThis", JsValue::Object(context.global_object()));
+    for (name, value) in [
+        ("Object", object_constructor),
+        ("Function", function_constructor),
+        ("Array", array_constructor),
+        ("eval", eval_function),
+        ("globalThis", JsValue::Object(context.global_object())),
+    ] {
+        context.declare_global(name, value.clone());
+        context.define_own_property(
+            context.global_object(),
+            name.into(),
+            PropertyDescriptor::data_with(value, true, false, true),
+        )?;
+    }
     Ok(())
 }
 

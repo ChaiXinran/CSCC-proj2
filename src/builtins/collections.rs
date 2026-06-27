@@ -977,7 +977,7 @@ fn iterator_next(
         .object(iterator)
         .is_some_and(|object| matches!(&object.kind, ObjectKind::Iterator { .. }))
     {
-        let (value, done) = context.step_iterator_object(this_value)?;
+        let (value, done) = vm.step_native_iterator_object(this_value, context)?;
         return iterator_result(context, value, done);
     }
     if own_bool(context, iterator, ITERATOR_DONE).unwrap_or(false) {

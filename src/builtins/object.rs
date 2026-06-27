@@ -4,7 +4,7 @@ use super::proxy;
 use crate::{
     runtime::{
         JsObject, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-        PropertyDescriptorUpdate, PropertyKind, SymbolId,
+        PropertyDescriptorUpdate, PropertyKey, PropertyKind, SymbolId,
     },
     vm::{Vm, VmError},
 };
@@ -40,6 +40,11 @@ pub fn install_object(context: &mut NativeContext) {
             "getOwnPropertyNames",
             1,
             object_get_own_property_names as crate::runtime::NativeCall,
+        ),
+        (
+            "getOwnPropertySymbols",
+            1,
+            object_get_own_property_symbols as crate::runtime::NativeCall,
         ),
         (
             "getPrototypeOf",
@@ -213,26 +218,19 @@ fn object_define_property(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = context.require_object(&target, "define property")?;
     let key_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    let key = vm.to_property_key_from_builtin(key_arg, context)?;
+    let key = proxy::to_property_key(vm, context, key_arg)?;
     let descriptor_value = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
     let descriptor_object = context.require_object(&descriptor_value, "read descriptor")?;
-
-    if let JsValue::Symbol(sym_id) = key {
-        let update = descriptor_update_from_object(vm, context, descriptor_object)?;
-        if context.validate_and_apply_symbol_property_descriptor(object, sym_id, update)? {
-            return Ok(target);
-        } else {
-            return Err(VmError::type_error("cannot define property"));
-        }
-    }
-
-    let JsValue::String(key) = key else {
-        unreachable!("ToPropertyKey returns a string or symbol")
-    };
     let update = descriptor_update_from_object(vm, context, descriptor_object)?;
-    if context.validate_and_apply_property_descriptor(object, key, update)? {
+    if proxy::internal_define_own_property(
+        vm,
+        context,
+        target.clone(),
+        &key,
+        descriptor_value,
+        update,
+    )? {
         Ok(target)
     } else {
         Err(VmError::type_error("cannot define property"))
@@ -277,25 +275,28 @@ fn object_get_prototype_of(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = vm.to_object(target, context)?;
-    Ok(context
-        .get_prototype_of(object)
+    let object = vm.to_object(target.clone(), context)?;
+    let target = match target {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => target,
+        _ => context.object_value(object),
+    };
+    Ok(proxy::internal_get_prototype_of(vm, context, target)?
         .map_or(JsValue::Null, |prototype| context.object_value(prototype)))
 }
 
 fn object_set_prototype_of(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = context.require_object(&target, "set prototype")?;
+    context.require_object(&target, "set prototype")?;
     let prototype = match arguments.get(1).cloned().unwrap_or(JsValue::Undefined) {
         JsValue::Null => None,
         value => Some(context.require_object(&value, "set prototype")?),
     };
-    if context.set_prototype_of(object, prototype)? {
+    if proxy::internal_set_prototype_of(vm, context, target.clone(), prototype)? {
         Ok(target)
     } else {
         Err(VmError::type_error("cannot set prototype"))
@@ -309,20 +310,22 @@ fn object_keys(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = vm.to_object(target, context)?;
-    let keys = context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?
-        .own_property_keys()
-        .into_iter()
-        .filter(|key| {
-            context
-                .get_own_property_descriptor(object, key)
-                .is_some_and(|descriptor| descriptor.enumerable)
-        })
-        .map(JsValue::String)
-        .collect();
+    let object = vm.to_object(target.clone(), context)?;
+    let target = match target {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => target,
+        _ => context.object_value(object),
+    };
+    let mut keys = Vec::new();
+    for key in proxy::internal_own_property_keys(vm, context, target.clone())? {
+        let PropertyKey::String(name) = &key else {
+            continue;
+        };
+        if proxy::internal_get_own_property(vm, context, target.clone(), &key)?
+            .is_some_and(|descriptor| descriptor.enumerable)
+        {
+            keys.push(JsValue::String(name.clone()));
+        }
+    }
     context.create_array(keys)
 }
 
@@ -345,10 +348,10 @@ fn descriptor_update_from_object(
         update.configurable = Some(value.to_boolean());
     }
     if let Some(value) = descriptor_field(vm, context, descriptor_object, "get")? {
-        update.get = Some(optional_callable(value, "getter")?);
+        update.get = Some(optional_callable(context, value, "getter")?);
     }
     if let Some(value) = descriptor_field(vm, context, descriptor_object, "set")? {
-        update.set = Some(optional_callable(value, "setter")?);
+        update.set = Some(optional_callable(context, value, "setter")?);
     }
     Ok(update)
 }
@@ -371,11 +374,15 @@ fn descriptor_field(
     .map(Some)
 }
 
-fn optional_callable(value: JsValue, label: &str) -> Result<Option<JsValue>, VmError> {
+fn optional_callable(
+    context: &NativeContext,
+    value: JsValue,
+    label: &str,
+) -> Result<Option<JsValue>, VmError> {
     if matches!(value, JsValue::Undefined) {
         return Ok(None);
     }
-    if matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
+    if context.is_callable_value(&value) {
         return Ok(Some(value));
     }
     Err(VmError::type_error(format!(
@@ -566,7 +573,7 @@ fn object_define_properties(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = context.require_object(&target, "defineProperties")?;
+    context.require_object(&target, "defineProperties")?;
     let props_value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     if matches!(props_value, JsValue::Undefined | JsValue::Null) {
         return Ok(target);
@@ -588,7 +595,15 @@ fn object_define_properties(
         let descriptor_object =
             context.require_object(&descriptor_value, "read property descriptor")?;
         let update = descriptor_update_from_object(vm, context, descriptor_object)?;
-        if !context.validate_and_apply_property_descriptor(object, key, update)? {
+        let property_key = PropertyKey::String(key);
+        if !proxy::internal_define_own_property(
+            vm,
+            context,
+            target.clone(),
+            &property_key,
+            descriptor_value,
+            update,
+        )? {
             return Err(VmError::type_error("cannot define property"));
         }
     }
@@ -602,14 +617,39 @@ fn object_get_own_property_names(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = vm.to_object(target, context)?;
-    let keys: Vec<JsValue> = context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?
-        .own_property_keys()
+    let object = vm.to_object(target.clone(), context)?;
+    let target = match target {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => target,
+        _ => context.object_value(object),
+    };
+    let keys: Vec<JsValue> = proxy::internal_own_property_keys(vm, context, target)?
         .into_iter()
-        .map(JsValue::String)
+        .filter_map(|key| match key {
+            PropertyKey::String(key) => Some(JsValue::String(key)),
+            PropertyKey::Symbol(_) => None,
+        })
+        .collect();
+    context.create_array(keys)
+}
+
+fn object_get_own_property_symbols(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = vm.to_object(target.clone(), context)?;
+    let target = match target {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => target,
+        _ => context.object_value(object),
+    };
+    let keys: Vec<JsValue> = proxy::internal_own_property_keys(vm, context, target)?
+        .into_iter()
+        .filter_map(|key| match key {
+            PropertyKey::String(_) => None,
+            PropertyKey::Symbol(symbol) => Some(JsValue::Symbol(symbol)),
+        })
         .collect();
     context.create_array(keys)
 }
@@ -845,29 +885,33 @@ fn object_seal(
 }
 
 fn object_prevent_extensions(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    if let JsValue::Object(object) = &target {
-        context.prevent_extensions(*object)?;
+    if context.value_object(&target).is_some() {
+        if !proxy::internal_prevent_extensions(vm, context, target.clone())? {
+            return Err(VmError::type_error("cannot prevent extensions"));
+        }
     }
     Ok(target)
 }
 
 fn object_is_extensible(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let Some(object) = context.value_object(&target) else {
+    if context.value_object(&target).is_none() {
         return Ok(JsValue::Boolean(false));
-    };
-    Ok(JsValue::Boolean(context.is_extensible(object)?))
+    }
+    Ok(JsValue::Boolean(proxy::internal_is_extensible(
+        vm, context, target,
+    )?))
 }
 
 fn object_is_frozen(
