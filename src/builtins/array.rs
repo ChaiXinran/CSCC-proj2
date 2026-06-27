@@ -2,8 +2,8 @@
 
 use crate::{
     runtime::{
-        IteratorMode, JsValue, NativeContext, ObjectId, PrimitiveValue, PropertyDescriptor,
-        PropertyDescriptorUpdate,
+        IteratorKind, IteratorMode, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
+        PropertyDescriptor, PropertyDescriptorUpdate,
     },
     vm::{Vm, VmError},
 };
@@ -537,6 +537,9 @@ fn array_from_iterator(
     map_this: JsValue,
 ) -> Result<JsValue, VmError> {
     let iterator = call_callback(vm, context, iterator_method, source, Vec::new())?;
+    if is_native_iterator(context, &iterator) {
+        return array_from_native_iterator(vm, context, constructor, iterator, map_fn, map_this);
+    }
     let result = array_from_create_result(vm, context, constructor, None)?;
     let result_object = context.require_object(&result, "Array.from result")?;
     let mut length = 0usize;
@@ -622,6 +625,68 @@ fn array_from_close_iterator(
     }
     let _ = call_callback(vm, context, return_method, iterator, Vec::new())?;
     Ok(())
+}
+
+fn is_native_iterator(context: &NativeContext, value: &JsValue) -> bool {
+    context
+        .value_object(value)
+        .and_then(|object| context.heap().object(object))
+        .is_some_and(|object| {
+            matches!(
+                object.kind,
+                ObjectKind::Iterator {
+                    record: crate::runtime::IteratorRecord {
+                        kind: IteratorKind::Array { .. } | IteratorKind::String { .. },
+                        ..
+                    }
+                }
+            )
+        })
+}
+
+fn array_from_native_iterator(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    constructor: JsValue,
+    iterator: JsValue,
+    map_fn: Option<JsValue>,
+    map_this: JsValue,
+) -> Result<JsValue, VmError> {
+    let result = array_from_create_result(vm, context, constructor, None)?;
+    let result_object = context.require_object(&result, "Array.from result")?;
+    let mut length = 0usize;
+    while length < MAX_DENSE_ALLOC {
+        let (value, done) = context.step_iterator_object(iterator.clone())?;
+        if done {
+            set_array_from_length(vm, context, result.clone(), length)?;
+            return Ok(result);
+        }
+        let mapped = if let Some(ref func) = map_fn {
+            match call_callback(
+                vm,
+                context,
+                func.clone(),
+                map_this.clone(),
+                vec![value, JsValue::Number(length as f64)],
+            ) {
+                Ok(value) => value,
+                Err(error) => {
+                    let _ = context.close_iterator_object(iterator);
+                    return Err(error);
+                }
+            }
+        } else {
+            value
+        };
+        if let Err(error) = create_data_property_or_throw(context, result_object, length, mapped) {
+            let _ = context.close_iterator_object(iterator);
+            return Err(error);
+        }
+        length += 1;
+    }
+    Err(VmError::runtime_limit(
+        "Array.from iterator step limit exceeded",
+    ))
 }
 
 fn array_from_create_result(

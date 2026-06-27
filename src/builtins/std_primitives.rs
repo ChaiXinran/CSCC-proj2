@@ -1287,7 +1287,12 @@ fn install_string(context: &mut NativeContext) -> Result<(), VmError> {
         define_method(context, backing, spec.name, spec.length, call)?;
     }
 
-    context.declare_global("String", constructor);
+    context.declare_global("String", constructor.clone());
+    context.define_own_property(
+        context.global_object(),
+        "String".into(),
+        method_descriptor(constructor),
+    )?;
     Ok(())
 }
 
@@ -1371,6 +1376,24 @@ fn string_construct(
         .or_else(|| context.string_prototype())
         .ok_or_else(|| VmError::runtime("String prototype not installed"))?;
     context.create_primitive_wrapper(PrimitiveValue::String(value), prototype)
+}
+
+fn string_symbol_iterator(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = this_string(vm, context, this)?;
+    let iterator = context.create_iterator_object(JsValue::String(value))?;
+    if let Some(object) = context.value_object(&iterator) {
+        let prototype = context
+            .get_global("Iterator")
+            .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten())
+            .or_else(|| context.object_prototype());
+        context.set_prototype_of(object, prototype)?;
+    }
+    Ok(iterator)
 }
 
 fn string_value_of(
@@ -1901,8 +1924,7 @@ fn string_replace_all(
         }
         let replacement = vm.to_string_coerce(replace_arg, context)?;
         return Ok(JsValue::String(
-            regexp::replace_all(&re, &value, &replacement)
-                .map_err(map_regexp_replacement_error)?,
+            regexp::replace_all(&re, &value, &replacement).map_err(map_regexp_replacement_error)?,
         ));
     }
 
@@ -3572,8 +3594,22 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
     // Object.prototype.toString returns the correct "[object X]" tag.
     install_to_string_tags(context, wk.to_string_tag)?;
     install_array_iterator_alias(context, wk.iterator)?;
+    install_string_iterator(context, wk.iterator)?;
 
     context.declare_global("Symbol", symbol_fn);
+    Ok(())
+}
+
+fn install_string_iterator(
+    context: &mut NativeContext,
+    iterator: crate::runtime::SymbolId,
+) -> Result<(), VmError> {
+    let Some(string_prototype) = context.string_prototype() else {
+        return Ok(());
+    };
+    let function =
+        context.register_builtin("[Symbol.iterator]", 0, string_symbol_iterator, None)?;
+    context.define_symbol_own_property(string_prototype, iterator, method_descriptor(function))?;
     Ok(())
 }
 
