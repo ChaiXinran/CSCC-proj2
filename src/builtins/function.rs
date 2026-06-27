@@ -162,7 +162,9 @@ fn create_dynamic_function(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let (params, body) = dynamic_function_source_parts(vm, context, arguments)?;
-    let source = format!("(function anonymous({params}) {{\n{body}\n}})");
+    // Per spec §19.2.1.1.1, the closing ')' is always on a new line so that HTML
+    // comments at the end of the params string don't consume it.
+    let source = format!("(function anonymous({params}\n) {{\n{body}\n}})");
     let tokens = Lexer::new(&source)
         .tokenize()
         .map_err(dynamic_function_syntax_error)?;

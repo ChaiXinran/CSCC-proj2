@@ -1390,7 +1390,23 @@ impl Parser {
             }
 
             // Optional `static` keyword.
-            let is_static = self.eat_keyword(Keyword::Static);
+            // Disambiguate: `static` followed by `;`, `=`, `}`, or `(` means it
+            // is a field/method *name*, not the `static` modifier keyword.
+            // Note: `=` is Operator("="), not Punctuator('=').
+            let is_static = if self.peek().kind == TokenKind::Keyword(Keyword::Static) {
+                let after = self.tokens.get(self.cursor + 1);
+                let next_is_field_or_method_name = after.is_some_and(|t| {
+                    matches!(&t.kind, TokenKind::Punctuator(';' | '}' | '('))
+                        || matches!(&t.kind, TokenKind::Operator(op) if op == "=")
+                });
+                if next_is_field_or_method_name {
+                    false
+                } else {
+                    self.eat_keyword(Keyword::Static)
+                }
+            } else {
+                false
+            };
             if is_static && self.check_punctuator('{') {
                 let outer_async = self.is_async_context;
                 let outer_generator = self.is_generator_context;

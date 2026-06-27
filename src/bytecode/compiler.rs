@@ -1115,7 +1115,7 @@ impl Compiler {
             } => {
                 let prop_name = match property.as_ref() {
                     Expression::Identifier(name) => name.clone(),
-                    Expression::PrivateName(name) => format!("#{name}"),
+                    Expression::PrivateName(name) => format!("\x00#{name}"),
                     _ => {
                         return Err(CompileError::unsupported(
                             "non-identifier static property in `++`/`--`",
@@ -1981,7 +1981,7 @@ impl Compiler {
             } => {
                 let property_name = match property.as_ref() {
                     Expression::Identifier(name) => name.clone(),
-                    Expression::PrivateName(name) => format!("#{name}"),
+                    Expression::PrivateName(name) => format!("\x00#{name}"),
                     _ => {
                         return Err(CompileError::unsupported(
                             "non-identifier static member as assignment target",
@@ -2082,6 +2082,13 @@ impl Compiler {
                         let skip_default = chunk.emit(Instruction::JumpIfNotUndefined(usize::MAX));
                         chunk.emit(Instruction::Pop); // pop undefined
                         self.compile_expression(default_expr, chunk, context)?;
+                        // Spec: SetFunctionName when anon fn default assigned to identifier ref.
+                        if is_anonymous_function_definition(default_expr) {
+                            if let Expression::Identifier(binding_name) = target.as_ref() {
+                                let nm = self.add_name(binding_name, chunk)?;
+                                chunk.emit(Instruction::SetFunctionName(nm));
+                            }
+                        }
                         let after_default = chunk.current_offset();
                         chunk
                             .patch_jump(skip_default, after_default)
@@ -2106,6 +2113,12 @@ impl Compiler {
                     } = target_expr
                     {
                         self.compile_expression(default_expr, chunk, context)?;
+                        if is_anonymous_function_definition(default_expr) {
+                            if let Expression::Identifier(binding_name) = target.as_ref() {
+                                let nm = self.add_name(binding_name, chunk)?;
+                                chunk.emit(Instruction::SetFunctionName(nm));
+                            }
+                        }
                         self.assign_dstr_element_to_target(target, chunk, context)?;
                     } else {
                         chunk.emit(Instruction::Constant(undef_idx));
@@ -2282,6 +2295,13 @@ impl Compiler {
                         let skip_default = chunk.emit(Instruction::JumpIfNotUndefined(usize::MAX));
                         chunk.emit(Instruction::Pop);
                         self.compile_expression(default_expr, chunk, context)?;
+                        // Spec: SetFunctionName when anon fn default assigned to identifier ref.
+                        if is_anonymous_function_definition(default_expr) {
+                            if let Expression::Identifier(binding_name) = target.as_ref() {
+                                let nm = self.add_name(binding_name, chunk)?;
+                                chunk.emit(Instruction::SetFunctionName(nm));
+                            }
+                        }
                         let after_default = chunk.current_offset();
                         chunk
                             .patch_jump(skip_default, after_default)
@@ -2450,7 +2470,7 @@ impl Compiler {
             } => {
                 let property_name = match property.as_ref() {
                     Expression::Identifier(name) => name.clone(),
-                    Expression::PrivateName(name) => format!("#{name}"),
+                    Expression::PrivateName(name) => format!("\x00#{name}"),
                     _ => {
                         return Err(CompileError::unsupported(
                             "non-identifier static member as compound assignment target",
@@ -2538,7 +2558,7 @@ impl Compiler {
 
         let property_name = match property {
             Expression::Identifier(name) => name.clone(),
-            Expression::PrivateName(name) => format!("#{name}"),
+            Expression::PrivateName(name) => format!("\x00#{name}"),
             _ => {
                 return Err(CompileError::unsupported(format!(
                     "non-identifier member property {property:?}"
@@ -2578,7 +2598,7 @@ impl Compiler {
             } else {
                 let method_name = match property.as_ref() {
                     Expression::Identifier(name) => name.clone(),
-                    Expression::PrivateName(name) => format!("#{name}"),
+                    Expression::PrivateName(name) => format!("\x00#{name}"),
                     _ => {
                         return Err(CompileError::unsupported(format!(
                             "non-identifier method property {property:?}"
@@ -3138,6 +3158,17 @@ impl Compiler {
     /// DefineDataProperty("prototype") // [ctor, ctor_copy]
     /// Pop                          // [ctor]
     /// ```
+    /// Returns the property key used to store a class member named by `prop_name`.
+    /// Private names get a NUL-prefix so they are hidden from `hasOwnProperty("#name")`
+    /// checks while remaining accessible through private-access expressions that use the
+    /// same prefix.
+    fn class_member_storage_key(prop_name: &crate::ast::PropertyName) -> String {
+        match prop_name {
+            crate::ast::PropertyName::PrivateName(n) => format!("\x00#{n}"),
+            other => other.to_key_string(),
+        }
+    }
+
     fn compile_class_body(
         &mut self,
         name: Option<&str>,
@@ -3178,9 +3209,6 @@ impl Compiler {
                 initializer,
             } = element
             {
-                if matches!(prop_name, crate::ast::PropertyName::PrivateName(_)) {
-                    continue;
-                }
                 if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
                     // Open a synthetic lexical scope once (so the constructor can capture it).
                     if !computed_field_env {
@@ -3198,14 +3226,15 @@ impl Compiler {
                         initializer: initializer.as_ref().map(|b| *b.clone()),
                     });
                 } else {
-                    let key = prop_name.to_key_string();
-                    if !key.starts_with('#') {
-                        instance_field_specs.push(InstanceField {
-                            static_name: Some(key),
-                            computed_binding: None,
-                            initializer: initializer.as_ref().map(|b| *b.clone()),
-                        });
-                    }
+                    // Use the NUL-prefixed storage key for private fields so that
+                    // `hasOwnProperty("#name")` returns false while the field is still
+                    // accessible via `this.#name` (which also uses the NUL prefix).
+                    let key = Self::class_member_storage_key(prop_name);
+                    instance_field_specs.push(InstanceField {
+                        static_name: Some(key),
+                        computed_binding: None,
+                        initializer: initializer.as_ref().map(|b| *b.clone()),
+                    });
                 }
             }
         }
@@ -3297,6 +3326,7 @@ impl Compiler {
             } = element
             {
                 let fn_name = prop_name.to_key_string();
+                let storage_key = Self::class_member_storage_key(prop_name);
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
                 let fn_template = FunctionTemplate {
@@ -3327,7 +3357,7 @@ impl Compiler {
                     }
                 } else {
                     chunk.emit(Instruction::CreateFunction(fn_idx));
-                    let key = self.add_name(&fn_name, chunk)?;
+                    let key = self.add_name(&storage_key, chunk)?;
                     if *is_getter {
                         chunk.emit(Instruction::DefineClassGetter(key));
                     } else if *is_setter {
@@ -3365,6 +3395,7 @@ impl Compiler {
             } = element
             {
                 let fn_name = prop_name.to_key_string();
+                let storage_key = Self::class_member_storage_key(prop_name);
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
                 let fn_template = FunctionTemplate {
@@ -3394,7 +3425,7 @@ impl Compiler {
                     }
                 } else {
                     chunk.emit(Instruction::CreateFunction(fn_idx));
-                    let key = self.add_name(&fn_name, chunk)?;
+                    let key = self.add_name(&storage_key, chunk)?;
                     if *is_getter {
                         chunk.emit(Instruction::DefineClassGetter(key));
                     } else if *is_setter {
@@ -3445,11 +3476,7 @@ impl Compiler {
                         self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, key, val]
                         chunk.emit(Instruction::DefineDataPropertyComputed); // [ctor, ctor]
                     } else {
-                        let key = prop_name.to_key_string();
-                        if key.starts_with('#') {
-                            chunk.emit(Instruction::Pop); // remove the Duplicate
-                            continue; // skip private fields
-                        }
+                        let key = Self::class_member_storage_key(prop_name);
                         self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, val]
                         let key_idx = self.add_name(&key, chunk)?;
                         chunk.emit(Instruction::DefineDataProperty(key_idx)); // [ctor, ctor]
@@ -3529,37 +3556,41 @@ impl Compiler {
                 Ok(())
             }
             BindingPattern::Array { elements, rest } => {
-                for (i, maybe_elem) in elements.iter().enumerate() {
-                    let Some(elem) = maybe_elem else { continue };
-                    chunk.emit(Instruction::Duplicate);
-                    let idx_key = chunk
-                        .add_constant(Constant::String(i.to_string()))
-                        .map_err(CompileError::from_chunk)?;
-                    chunk.emit(Instruction::Constant(idx_key));
-                    chunk.emit(Instruction::GetElement);
-                    if let Some(default_expr) = &elem.default {
-                        let infer = if let BindingPattern::Identifier(n) = &elem.pattern {
-                            Some(n.as_str())
-                        } else {
-                            None
-                        };
-                        self.emit_binding_default_with_name(default_expr, infer, chunk, context)?;
+                // Stack: [rhs] — convert to iterator so any iterable works.
+                chunk.emit(Instruction::GetIterator); // [iterator]
+                for maybe_elem in elements.iter() {
+                    chunk.emit(Instruction::Duplicate); // [iterator, iterator]
+                    chunk.emit(Instruction::IteratorNext); // [iterator, value, done]
+                    chunk.emit(Instruction::Pop); // [iterator, value] — discard done flag
+                    if let Some(elem) = maybe_elem {
+                        if let Some(default_expr) = &elem.default {
+                            let infer = if let BindingPattern::Identifier(n) = &elem.pattern {
+                                Some(n.as_str())
+                            } else {
+                                None
+                            };
+                            self.emit_binding_default_with_name(
+                                default_expr,
+                                infer,
+                                chunk,
+                                context,
+                            )?;
+                        }
+                        self.compile_binding_pattern_store(&elem.pattern, chunk, context)?;
+                    } else {
+                        chunk.emit(Instruction::Pop); // elided slot — advance iterator, discard value
                     }
-                    self.compile_binding_pattern_store(&elem.pattern, chunk, context)?;
+                    // Stack: [iterator]
                 }
                 if let Some(rest_pat) = rest {
-                    chunk.emit(Instruction::Duplicate);
-                    chunk.emit(Instruction::IterableToArray);
-                    let slice_idx = self.add_name("slice", chunk)?;
-                    chunk.emit(Instruction::GetMethod(slice_idx));
-                    let n_const = chunk
-                        .add_constant(Constant::Number(elements.len() as f64))
-                        .map_err(CompileError::from_chunk)?;
-                    chunk.emit(Instruction::Constant(n_const));
-                    chunk.emit(Instruction::CallWithThis(1));
+                    // Drain remaining elements into an array, consuming the iterator.
+                    chunk.emit(Instruction::IterableToArray); // [rest_array]
                     self.compile_binding_pattern_store(rest_pat, chunk, context)?;
+                    // Stack: []
+                } else {
+                    // Close the iterator (calls return() if not exhausted).
+                    chunk.emit(Instruction::IteratorClose); // []
                 }
-                chunk.emit(Instruction::Pop);
                 Ok(())
             }
             BindingPattern::Object { props, rest } => {
@@ -3624,46 +3655,42 @@ impl Compiler {
                 Ok(())
             }
             BindingPattern::Array { elements, rest } => {
-                // Stack: [rhs]
-                for (i, maybe_elem) in elements.iter().enumerate() {
-                    let Some(elem) = maybe_elem else {
-                        continue; // hole — skip
-                    };
-                    chunk.emit(Instruction::Duplicate); // [rhs, rhs]
-                    let idx_key = chunk
-                        .add_constant(Constant::String(i.to_string()))
-                        .map_err(CompileError::from_chunk)?;
-                    chunk.emit(Instruction::Constant(idx_key)); // [rhs, rhs, "i"]
-                    chunk.emit(Instruction::GetElement); // [rhs, elem_val]
-                    if let Some(default_expr) = &elem.default {
-                        // Pass identifier name for function name inference in default values.
-                        let infer = if let crate::ast::BindingPattern::Identifier(n) = &elem.pattern
-                        {
-                            Some(n.as_str())
-                        } else {
-                            None
-                        };
-                        self.emit_binding_default_with_name(default_expr, infer, chunk, context)?;
+                // Stack: [rhs] — convert to iterator so any iterable works.
+                chunk.emit(Instruction::GetIterator); // [iterator]
+                for maybe_elem in elements.iter() {
+                    chunk.emit(Instruction::Duplicate); // [iterator, iterator]
+                    chunk.emit(Instruction::IteratorNext); // [iterator, value, done]
+                    chunk.emit(Instruction::Pop); // [iterator, value] — discard done flag
+                    if let Some(elem) = maybe_elem {
+                        if let Some(default_expr) = &elem.default {
+                            let infer =
+                                if let crate::ast::BindingPattern::Identifier(n) = &elem.pattern {
+                                    Some(n.as_str())
+                                } else {
+                                    None
+                                };
+                            self.emit_binding_default_with_name(
+                                default_expr,
+                                infer,
+                                chunk,
+                                context,
+                            )?;
+                        }
+                        self.compile_binding_pattern(kind, &elem.pattern, chunk, context)?;
+                    } else {
+                        chunk.emit(Instruction::Pop); // elided slot — advance iterator, discard value
                     }
-                    self.compile_binding_pattern(kind, &elem.pattern, chunk, context)?;
-                    // [rhs]
+                    // Stack: [iterator]
                 }
-                // Rest element: Array.from(rhs).slice(elements.len())
-                // Using Array.from ensures generators/iterables work, not just plain arrays.
                 if let Some(rest_pat) = rest {
-                    chunk.emit(Instruction::Duplicate); // [rhs, rhs]
-                    chunk.emit(Instruction::IterableToArray); // [rhs, array_copy]
-                    let slice_idx = self.add_name("slice", chunk)?;
-                    chunk.emit(Instruction::GetMethod(slice_idx)); // [rhs, slice_fn, array_copy]
-                    let n_const = chunk
-                        .add_constant(Constant::Number(elements.len() as f64))
-                        .map_err(CompileError::from_chunk)?;
-                    chunk.emit(Instruction::Constant(n_const)); // [rhs, slice_fn, array_copy, N]
-                    chunk.emit(Instruction::CallWithThis(1)); // [rhs, rest_array]
+                    // Drain remaining elements into an array, consuming the iterator.
+                    chunk.emit(Instruction::IterableToArray); // [rest_array]
                     self.compile_binding_pattern(kind, rest_pat, chunk, context)?;
-                    // [rhs]
+                    // Stack: []
+                } else {
+                    // Close the iterator (calls return() if not exhausted).
+                    chunk.emit(Instruction::IteratorClose); // []
                 }
-                chunk.emit(Instruction::Pop); // []
                 Ok(())
             }
             BindingPattern::Object { props, rest } => {

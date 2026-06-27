@@ -406,7 +406,7 @@ fn call_error_constructor(
     vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
-    constructor_name: &str,
+    constructor_name: &'static str,
 ) -> Result<JsValue, VmError> {
     let constructor = context
         .get_global(constructor_name)
@@ -415,7 +415,14 @@ fn call_error_constructor(
         .constructor_prototype(&constructor)?
         .or_else(|| context.error_prototype())
         .ok_or_else(|| VmError::runtime("error prototype missing"))?;
-    create_error_object(vm, context, arguments, prototype)
+    let result = create_error_object(vm, context, arguments, prototype)?;
+    // Record the constructor name so throw_value can produce a typed VmError.
+    if let JsValue::Object(id) = result {
+        context.set_error_object_name(id, constructor_name);
+        Ok(JsValue::Object(id))
+    } else {
+        Ok(result)
+    }
 }
 
 macro_rules! error_call_adapter {
@@ -479,11 +486,22 @@ fn error_construct(
     arguments: &[JsValue],
     new_target: JsValue,
 ) -> Result<JsValue, VmError> {
+    // Capture the constructor name before borrowing context mutably.
+    let constructor_name: Option<&'static str> = if let JsValue::BuiltinFunction(id) = &new_target
+    {
+        context.builtin(*id).map(|b| b.name)
+    } else {
+        None
+    };
     let prototype = context
         .constructor_prototype(&new_target)?
         .or_else(|| context.error_prototype())
         .ok_or_else(|| VmError::runtime("error prototype missing"))?;
-    create_error_object(vm, context, arguments, prototype)
+    let result = create_error_object(vm, context, arguments, prototype)?;
+    if let (JsValue::Object(id), Some(name)) = (&result, constructor_name) {
+        context.set_error_object_name(*id, name);
+    }
+    Ok(result)
 }
 
 fn error_is_error(

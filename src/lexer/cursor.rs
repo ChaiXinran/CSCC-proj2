@@ -50,6 +50,22 @@ impl<'source> Cursor<'source> {
         }
     }
 
+    /// Returns the full source text (from byte 0), regardless of the current cursor position.
+    #[must_use]
+    pub fn source(&self) -> &'source str {
+        self.source
+    }
+
+    /// Advances the cursor until the byte offset reaches `target`.
+    /// No-ops if the cursor is already at or past `target`.
+    pub fn advance_to(&mut self, target: usize) {
+        while self.offset < target {
+            if self.bump().is_none() {
+                break;
+            }
+        }
+    }
+
     #[must_use]
     pub fn slice(&self, span: super::Span) -> &'source str {
         &self.source[span.start..span.end]

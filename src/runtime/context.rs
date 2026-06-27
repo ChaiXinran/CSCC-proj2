@@ -146,6 +146,10 @@ pub struct NativeContext {
     function_legacy_setter: Option<JsValue>,
     object_values: HashMap<ObjectId, JsValue>,
     error_objects: HashSet<ObjectId>,
+    /// Maps JS error-object ids to their constructor name (e.g. "EvalError").
+    /// Populated when an error object is created via a named constructor so that
+    /// `throw_value` can produce a correctly-typed VmError for top-level throws.
+    error_object_names: HashMap<ObjectId, &'static str>,
     raw_json_objects: HashMap<ObjectId, String>,
     builtin_registry: Vec<BuiltinFunction>,
     builtin_realm_globals: HashMap<BuiltinId, ObjectId>,
@@ -211,6 +215,7 @@ impl NativeContext {
             function_legacy_setter: None,
             object_values: HashMap::new(),
             error_objects: HashSet::new(),
+            error_object_names: HashMap::new(),
             raw_json_objects: HashMap::new(),
             builtin_registry: Vec::new(),
             builtin_realm_globals: HashMap::new(),
@@ -1159,6 +1164,15 @@ impl NativeContext {
 
     pub fn mark_error_object(&mut self, object: ObjectId) {
         self.error_objects.insert(object);
+    }
+
+    pub fn set_error_object_name(&mut self, object: ObjectId, name: &'static str) {
+        self.error_object_names.insert(object, name);
+    }
+
+    #[must_use]
+    pub fn error_object_name(&self, object: ObjectId) -> Option<&'static str> {
+        self.error_object_names.get(&object).copied()
     }
 
     #[must_use]

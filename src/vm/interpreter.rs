@@ -182,7 +182,7 @@ impl Vm {
                 self.stack.clear();
                 self.pending_exception = None;
                 self.finally_stack.clear();
-                Err(throw_value(value))
+                Err(throw_value(value, context))
             }
             Completion::Break(label) => {
                 self.stack.clear();
@@ -229,7 +229,7 @@ impl Vm {
             Completion::Yield { .. } | Completion::YieldDelegate { .. } => Err(VmError::runtime(
                 "yield completion escaped outside a generator",
             )),
-            Completion::Throw(value) => Err(throw_value(value)),
+            Completion::Throw(value) => Err(throw_value(value, context)),
             Completion::Break(label) => Err(VmError::runtime(format!(
                 "break completion in eval context{}",
                 label_suffix(label.as_deref())
@@ -1030,98 +1030,158 @@ impl Vm {
                         if is_array {
                             self.stack.push(iterable);
                         } else {
-                            let elements = self.function_apply_arguments(iterable, context)?;
-                            let arr = context.create_array(elements)?;
-                            self.stack.push(arr);
+                            match self.collect_iterable_spread(iterable, context)? {
+                                Ok(elements) => {
+                                    let arr = context.create_array(elements)?;
+                                    self.stack.push(arr);
+                                }
+                                Err(throw_val) => {
+                                    abrupt = Some(Completion::Throw(throw_val));
+                                    discard_saved_finally = true;
+                                }
+                            }
                         }
                     } else {
-                        let elements = self.function_apply_arguments(iterable, context)?;
-                        let arr = context.create_array(elements)?;
-                        self.stack.push(arr);
+                        match self.collect_iterable_spread(iterable, context)? {
+                            Ok(elements) => {
+                                let arr = context.create_array(elements)?;
+                                self.stack.push(arr);
+                            }
+                            Err(throw_val) => {
+                                abrupt = Some(Completion::Throw(throw_val));
+                                discard_saved_finally = true;
+                            }
+                        }
                     }
                 }
                 Instruction::SpreadIntoArray => {
                     let iterable = self.pop_value()?;
                     let array_val = self.peek_value()?.clone();
                     let array_id = context.require_object(&array_val, "SpreadIntoArray")?;
-                    let elements = self.function_apply_arguments(iterable, context)?;
-                    let start_len = {
-                        let len_val = self.get_property_value(
-                            context.object_value(array_id),
-                            "length",
-                            context,
-                        )?;
-                        match len_val {
-                            JsValue::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
-                            _ => 0,
+                    match self.collect_iterable_spread(iterable, context)? {
+                        Ok(elements) => {
+                            let start_len = {
+                                let len_val = self.get_property_value(
+                                    context.object_value(array_id),
+                                    "length",
+                                    context,
+                                )?;
+                                match len_val {
+                                    JsValue::Number(n) if n.is_finite() && n >= 0.0 => n as usize,
+                                    _ => 0,
+                                }
+                            };
+                            let n_added = elements.len();
+                            for (i, elem) in elements.into_iter().enumerate() {
+                                context.define_own_property(
+                                    array_id,
+                                    (start_len + i).to_string(),
+                                    crate::runtime::PropertyDescriptor::data(elem),
+                                )?;
+                            }
+                            context.define_own_property(
+                                array_id,
+                                "length".to_string(),
+                                crate::runtime::PropertyDescriptor::data_with(
+                                    JsValue::Number((start_len + n_added) as f64),
+                                    true,
+                                    false,
+                                    true,
+                                ),
+                            )?;
                         }
-                    };
-                    let n_added = elements.len();
-                    for (i, elem) in elements.into_iter().enumerate() {
-                        context.define_own_property(
-                            array_id,
-                            (start_len + i).to_string(),
-                            crate::runtime::PropertyDescriptor::data(elem),
-                        )?;
+                        Err(throw_val) => {
+                            abrupt = Some(Completion::Throw(throw_val));
+                            discard_saved_finally = true;
+                        }
                     }
-                    context.define_own_property(
-                        array_id,
-                        "length".to_string(),
-                        crate::runtime::PropertyDescriptor::data_with(
-                            JsValue::Number((start_len + n_added) as f64),
-                            true,
-                            false,
-                            true,
-                        ),
-                    )?;
                 }
                 Instruction::SpreadCall(n_regular) => {
                     let spread_val = self.pop_value()?;
-                    let spread_args = self.function_apply_arguments(spread_val, context)?;
                     let n = n_regular as usize;
-                    let regular_args = self.pop_arguments(n_regular)?;
-                    let callee = self.pop_value()?;
-                    let mut all_args = regular_args;
-                    all_args.extend(spread_args);
-                    match self.call_value(callee, JsValue::Undefined, all_args, context)? {
-                        OperationResult::Value(v) => self.stack.push(v),
-                        OperationResult::Throw(v) => {
-                            abrupt = Some(Completion::Throw(v));
+                    match self.collect_iterable_spread(spread_val, context)? {
+                        Ok(spread_args) => {
+                            let regular_args = self.pop_arguments(n_regular)?;
+                            let callee = self.pop_value()?;
+                            let mut all_args = regular_args;
+                            all_args.extend(spread_args);
+                            match self.call_value(callee, JsValue::Undefined, all_args, context)? {
+                                OperationResult::Value(v) => self.stack.push(v),
+                                OperationResult::Throw(v) => {
+                                    abrupt = Some(Completion::Throw(v));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(throw_val) => {
+                            // Discard regular args and callee from stack before throwing
+                            for _ in 0..n {
+                                let _ = self.pop_value()?;
+                            }
+                            let _ = self.pop_value()?; // callee
+                            abrupt = Some(Completion::Throw(throw_val));
                             discard_saved_finally = true;
                         }
                     }
-                    let _ = n; // suppress unused warning
+                    let _ = n;
                 }
                 Instruction::SpreadCallWithThis(n_regular) => {
                     let spread_val = self.pop_value()?;
-                    let spread_args = self.function_apply_arguments(spread_val, context)?;
-                    let regular_args = self.pop_arguments(n_regular)?;
-                    let this_value = self.pop_value()?;
-                    let callee = self.pop_value()?;
-                    let mut all_args = regular_args;
-                    all_args.extend(spread_args);
-                    match self.call_value(callee, this_value, all_args, context)? {
-                        OperationResult::Value(v) => self.stack.push(v),
-                        OperationResult::Throw(v) => {
-                            abrupt = Some(Completion::Throw(v));
+                    let n = n_regular as usize;
+                    match self.collect_iterable_spread(spread_val, context)? {
+                        Ok(spread_args) => {
+                            let regular_args = self.pop_arguments(n_regular)?;
+                            let this_value = self.pop_value()?;
+                            let callee = self.pop_value()?;
+                            let mut all_args = regular_args;
+                            all_args.extend(spread_args);
+                            match self.call_value(callee, this_value, all_args, context)? {
+                                OperationResult::Value(v) => self.stack.push(v),
+                                OperationResult::Throw(v) => {
+                                    abrupt = Some(Completion::Throw(v));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(throw_val) => {
+                            for _ in 0..n {
+                                let _ = self.pop_value()?;
+                            }
+                            let _ = self.pop_value()?; // this
+                            let _ = self.pop_value()?; // callee
+                            abrupt = Some(Completion::Throw(throw_val));
                             discard_saved_finally = true;
                         }
                     }
+                    let _ = n;
                 }
                 Instruction::SpreadConstruct(n_regular) => {
                     let spread_val = self.pop_value()?;
-                    let spread_args = self.function_apply_arguments(spread_val, context)?;
-                    let regular_args = self.pop_arguments(n_regular)?;
-                    let callee = self.pop_value()?;
-                    let mut all_args = regular_args;
-                    all_args.extend(spread_args);
-                    match self.construct_value(callee, all_args, context)? {
-                        OperationResult::Value(v) => self.stack.push(v),
-                        OperationResult::Throw(v) => {
-                            abrupt = Some(Completion::Throw(v));
+                    let n = n_regular as usize;
+                    match self.collect_iterable_spread(spread_val, context)? {
+                        Ok(spread_args) => {
+                            let regular_args = self.pop_arguments(n_regular)?;
+                            let callee = self.pop_value()?;
+                            let mut all_args = regular_args;
+                            all_args.extend(spread_args);
+                            match self.construct_value(callee, all_args, context)? {
+                                OperationResult::Value(v) => self.stack.push(v),
+                                OperationResult::Throw(v) => {
+                                    abrupt = Some(Completion::Throw(v));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(throw_val) => {
+                            for _ in 0..n {
+                                let _ = self.pop_value()?;
+                            }
+                            let _ = self.pop_value()?; // callee
+                            abrupt = Some(Completion::Throw(throw_val));
                             discard_saved_finally = true;
                         }
                     }
+                    let _ = n;
                 }
 
                 // Iterator protocol — wired to IteratorRecord helpers in NativeContext.
@@ -2621,17 +2681,63 @@ impl Vm {
         Ok(values)
     }
 
+    /// Collect all values from an iterable using the iterator protocol.
+    /// Returns `Ok(Ok(values))` on success or `Ok(Err(throw_val))` when the iterator throws.
+    fn collect_iterable_spread(
+        &mut self,
+        iterable: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Result<Vec<JsValue>, JsValue>, VmError> {
+        let iterator = match self.create_iterator_object(iterable, context)? {
+            OperationResult::Value(iter) => iter,
+            OperationResult::Throw(throw_val) => return Ok(Err(throw_val)),
+        };
+        let mut values = Vec::new();
+        loop {
+            context.consume_loop_iteration()?;
+            match self.step_iterator_object(iterator.clone(), context)? {
+                IteratorStepResult::Value { done: true, .. } => return Ok(Ok(values)),
+                IteratorStepResult::Value { value, done: false } => values.push(value),
+                IteratorStepResult::Throw(throw_val) => return Ok(Err(throw_val)),
+            }
+        }
+    }
+
     fn create_iterator_object(
         &mut self,
         iterable: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        match context.create_iterator_object(iterable.clone()) {
-            Ok(iterator) => return Ok(OperationResult::Value(iterator)),
-            Err(error) if matches!(error.kind, VmErrorKind::Type) => {}
-            Err(error) => return Err(error),
+        // Fast paths: already an iterator, generator, or string — bypass Symbol.iterator lookup.
+        let is_already_handled = match &iterable {
+            JsValue::String(_) => true,
+            JsValue::Object(id) => context.heap().object(*id).is_some_and(|o| {
+                matches!(
+                    o.kind,
+                    ObjectKind::Iterator { .. } | ObjectKind::Generator { .. }
+                )
+            }),
+            _ => false,
+        };
+        if is_already_handled {
+            return match context.create_iterator_object(iterable.clone()) {
+                Ok(iterator) => Ok(OperationResult::Value(iterator)),
+                Err(error) if matches!(error.kind, VmErrorKind::Type) => Ok(
+                    OperationResult::Throw(vm_error_to_value(VmError::type_error(
+                        "value is not iterable",
+                    ))),
+                ),
+                Err(error) => Err(error),
+            };
         }
 
+        // Check whether the iterable is an Array object (which MUST use Symbol.iterator).
+        let is_array = matches!(&iterable, JsValue::Object(id) if context
+            .heap()
+            .object(*id)
+            .is_some_and(|o| matches!(o.kind, ObjectKind::Array { .. })));
+
+        // Spec-correct: look up Symbol.iterator first.
         let iterator_symbol = context.well_known_symbols().iterator;
         let method = match self.get_symbol_property_value_completion(
             iterable.clone(),
@@ -2641,11 +2747,27 @@ impl Vm {
             OperationResult::Value(value) => value,
             OperationResult::Throw(value) => return Ok(OperationResult::Throw(value)),
         };
+
         if matches!(method, JsValue::Undefined | JsValue::Null) {
-            return Ok(OperationResult::Throw(vm_error_to_value(
-                VmError::type_error("value is not iterable"),
-            )));
+            if is_array {
+                // Arrays without Symbol.iterator are not iterable (e.g., after deletion).
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error("value is not iterable"),
+                )));
+            }
+            // Non-array objects without Symbol.iterator: fall back to the native fast path
+            // (handles array-like objects such as `arguments` that lack Symbol.iterator in our impl).
+            return match context.create_iterator_object(iterable.clone()) {
+                Ok(iterator) => Ok(OperationResult::Value(iterator)),
+                Err(error) if matches!(error.kind, VmErrorKind::Type) => Ok(
+                    OperationResult::Throw(vm_error_to_value(VmError::type_error(
+                        "value is not iterable",
+                    ))),
+                ),
+                Err(error) => Err(error),
+            };
         }
+
         if !is_callable_value(&method) {
             return Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error("iterator method is not callable"),
@@ -2659,6 +2781,17 @@ impl Vm {
             return Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error("iterator method returned a non-object"),
             )));
+        }
+        // If Symbol.iterator returned a native iterator object (e.g., from Array.prototype.values),
+        // use it directly without wrapping.
+        if let JsValue::Object(id) = &iterator {
+            if context
+                .heap()
+                .object(*id)
+                .is_some_and(|o| matches!(o.kind, ObjectKind::Iterator { .. }))
+            {
+                return Ok(OperationResult::Value(iterator));
+            }
         }
         let object = JsObject::iterator(IteratorRecord::js(iterator));
         let id = context
@@ -2747,7 +2880,18 @@ impl Vm {
                 };
                 Ok(IteratorStepResult::Value { value, done })
             }
-            IteratorKind::Js { iterator, .. } => self.step_js_iterator(iterator, context),
+            IteratorKind::Js { iterator, .. } => {
+                let result = self.step_js_iterator(iterator, context)?;
+                // Update done flag in the stored record so IteratorClose knows if we're exhausted.
+                if let IteratorStepResult::Value { done: true, .. } = &result {
+                    if let Some(obj) = context.heap_mut().object_mut(id) {
+                        if let ObjectKind::Iterator { record } = &mut obj.kind {
+                            record.done = true;
+                        }
+                    }
+                }
+                Ok(result)
+            }
             IteratorKind::JsAsync { .. } => Ok(IteratorStepResult::Throw(vm_error_to_value(
                 VmError::type_error("async iterator requires AsyncIteratorNext"),
             ))),
@@ -3123,18 +3267,24 @@ impl Vm {
             JsValue::Object(id) => id,
             _ => return Ok(OperationResult::Value(JsValue::Undefined)),
         };
-        let kind = {
+        let (kind, already_done) = {
             let object = context
                 .heap()
                 .object(id)
                 .ok_or_else(|| VmError::runtime("invalid iterator object"))?;
             match &object.kind {
-                ObjectKind::Iterator { record } => record.kind.clone(),
+                ObjectKind::Iterator { record } => (record.kind.clone(), record.done),
                 _ => return Ok(OperationResult::Value(JsValue::Undefined)),
             }
         };
 
         context.close_iterator_object(JsValue::Object(id))?;
+
+        // Per spec BindingInitialization §13.3.3.5: only call return() if the iterator
+        // was NOT already exhausted naturally (iteratorRecord.[[Done]] was false before close).
+        if already_done {
+            return Ok(OperationResult::Value(JsValue::Undefined));
+        }
 
         let iterator = match kind {
             IteratorKind::Js { iterator, .. } | IteratorKind::JsAsync { iterator } => iterator,
@@ -3951,7 +4101,7 @@ impl Vm {
     ) -> Result<JsValue, VmError> {
         match self.get_property_value_completion(receiver, key, context)? {
             OperationResult::Value(value) => Ok(value),
-            OperationResult::Throw(value) => Err(throw_value(value)),
+            OperationResult::Throw(value) => Err(throw_value(value, context)),
         }
     }
 
@@ -5364,7 +5514,7 @@ fn parse_bigint_string(input: &str) -> Option<i128> {
     i128::from_str_radix(digits, radix).ok()
 }
 
-fn throw_value(value: JsValue) -> VmError {
+fn throw_value(value: JsValue, context: &NativeContext) -> VmError {
     match value {
         JsValue::Error(error) if error.kind == NativeErrorKind::Test262 => {
             VmError::test262(error.message)
@@ -5383,6 +5533,14 @@ fn throw_value(value: JsValue) -> VmError {
         }
         JsValue::Error(error) if error.kind == NativeErrorKind::RuntimeLimit => {
             VmError::runtime_limit(error.message)
+        }
+        // JS error objects created via `new EvalError(...)` etc. — include the
+        // constructor name in the message so failure_matches can detect the type.
+        JsValue::Object(id) if context.is_error_object(id) => {
+            let name = context.error_object_name(id).unwrap_or("Error");
+            // failure_matches checks error.message.contains(expected), so embedding
+            // the name here lets the test262 runner recognise e.g. "EvalError".
+            VmError::runtime(format!("uncaught {name}"))
         }
         value => VmError::runtime(format!("uncaught {value}")),
     }

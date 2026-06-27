@@ -51,6 +51,11 @@ pub struct Lexer<'source> {
     /// non-octal decimal escape is encountered. Consumed by `read_string` to
     /// stamp the resulting token with `has_legacy_escape`.
     string_has_legacy_escape: bool,
+    /// Whether the current position is at the logical start of a line (i.e.,
+    /// no non-whitespace/non-comment content since the last line terminator, or
+    /// at the very start of the input). Used to implement Annex B
+    /// `SingleLineHTMLCloseComment` (`-->`), which is only valid at line start.
+    at_line_start: bool,
 }
 
 impl<'source> Lexer<'source> {
@@ -59,6 +64,7 @@ impl<'source> Lexer<'source> {
         Self {
             cursor: Cursor::new(source),
             string_has_legacy_escape: false,
+            at_line_start: true,
         }
     }
 
@@ -75,9 +81,18 @@ impl<'source> Lexer<'source> {
         // One entry per nesting level; entry = how many unmatched '{' we've seen
         // inside that substitution (so we know when the matching '}' closes it).
         let mut tpl_stack: Vec<u32> = Vec::new();
+        // At the start of the file, `/` begins a regex literal, not division.
+        let mut last_allows_regex = true;
 
         loop {
             let line_terminator_before = self.skip_trivia()?;
+            // After consuming trivia, we are about to produce a real token, so
+            // the next trivia call starts NOT at line start (unless this token
+            // itself ends with a line terminator, which only happens for template
+            // literals, handled inside the token reader). Reset here; the
+            // at_line_start field is only true at file start or after a newline
+            // was consumed during trivia.
+            self.at_line_start = false;
             let start = self.cursor.offset();
             let Some(ch) = self.cursor.peek() else {
                 tokens.push(Token::with_line_terminator_before(
@@ -118,8 +133,33 @@ impl<'source> Lexer<'source> {
                 self.read_number()?
             } else if ch == '`' {
                 self.read_template_literal()?
-            } else if ch == '"' || ch == '\'' {
+            } else if ch == '\'' || ch == '"' {
                 self.read_string()?
+            } else if ch == '/'
+                && last_allows_regex
+                && {
+                    // Only advance past a regex literal when `/` cannot be `//` or `/*`
+                    // (those are handled as trivia before we reach this point, but guard
+                    // just in case the peek is stale after trivia removal).
+                    let r = self.cursor.rest();
+                    !r.starts_with("//") && !r.starts_with("/*")
+                }
+            {
+                // Regex context: advance the cursor past the entire regex literal
+                // (body + flags) so that characters like `'` inside the body are
+                // not mistakenly lexed as string starters on the next iteration.
+                // Emit Operator("/") so the parser can relex via parse_regex_literal().
+                let source = self.cursor.source();
+                match read_regex_literal_at(source, start) {
+                    Ok((_body, _flags, end)) => {
+                        self.cursor.advance_to(end);
+                        Token::new(
+                            TokenKind::Operator("/".to_owned()),
+                            Span::new(start, start + 1),
+                        )
+                    }
+                    Err(_) => self.read_operator_or_punctuator()?,
+                }
             } else {
                 self.read_operator_or_punctuator()?
             };
@@ -138,6 +178,34 @@ impl<'source> Lexer<'source> {
                 tpl_stack.push(0);
             }
 
+            // Update regex context: `true` means the next `/` starts a regex literal.
+            last_allows_regex = match &token.kind {
+                // After these, `/` is division.
+                TokenKind::Identifier(_)
+                | TokenKind::Number(_)
+                | TokenKind::BigInt(_)
+                | TokenKind::String(_)
+                | TokenKind::TemplateLiteral(_)
+                | TokenKind::TemplateTail(_)
+                | TokenKind::PrivateName(_) => false,
+                // Closing punctuators end an expression.
+                TokenKind::Punctuator(')' | ']') => false,
+                // `this`, `true`, `false`, `null`, `super` end a primary expression.
+                TokenKind::Keyword(
+                    Keyword::This
+                    | Keyword::True
+                    | Keyword::False
+                    | Keyword::Null
+                    | Keyword::Super,
+                ) => false,
+                // Postfix `++`/`--` end an expression; prefix would already have
+                // `last_allows_regex = true` from the preceding token.
+                TokenKind::Operator(op) if op == "++" || op == "--" => false,
+                // Everything else (operators, `(`, `[`, `{`, `}`, `,`, `;`, `:`
+                // keywords like `return`/`typeof`/`new`, template head/middle) allows regex.
+                _ => true,
+            };
+
             token.line_terminator_before = line_terminator_before;
             tokens.push(token);
         }
@@ -150,10 +218,15 @@ impl<'source> Lexer<'source> {
     /// productions such as `throw expression`.
     fn skip_trivia(&mut self) -> Result<bool, LexError> {
         let mut saw_line_terminator = false;
+        // Annex B SingleLineHTMLCloseComment ('-->') is only valid at the start
+        // of a logical line. Inherit the caller's line-start state; update it as
+        // we consume trivia so we can correctly gate '-->' recognition.
+        let mut at_line_start = self.at_line_start;
         loop {
             while let Some(ch) = self.cursor.peek() {
                 if is_line_terminator(ch) {
                     saw_line_terminator = true;
+                    at_line_start = true;
                     self.cursor.bump();
                 } else if is_whitespace(ch) {
                     self.cursor.bump();
@@ -166,6 +239,11 @@ impl<'source> Lexer<'source> {
                 self.cursor.bump();
                 self.cursor.bump();
                 self.cursor.skip_while(|c| !is_line_terminator(c));
+                // Consuming the rest of the line; next iteration's newline will
+                // set at_line_start = true.
+            } else if rest.starts_with("<!--") {
+                // Annex B SingleLineHTMLOpenComment: treat like '//' everywhere.
+                self.cursor.skip_while(|c| !is_line_terminator(c));
             } else if rest.starts_with("/*") {
                 let start = self.cursor.offset();
                 self.cursor.bump();
@@ -177,7 +255,10 @@ impl<'source> Lexer<'source> {
                         break;
                     }
                     match self.cursor.bump() {
-                        Some(ch) if is_line_terminator(ch) => saw_line_terminator = true,
+                        Some(ch) if is_line_terminator(ch) => {
+                            saw_line_terminator = true;
+                            at_line_start = true;
+                        }
                         Some(_) => {}
                         None => {
                             return Err(LexError {
@@ -187,6 +268,10 @@ impl<'source> Lexer<'source> {
                         }
                     }
                 }
+            } else if rest.starts_with("-->") && at_line_start {
+                // Annex B SingleLineHTMLCloseComment: only valid at line start
+                // (after optional whitespace and block comments since last newline).
+                self.cursor.skip_while(|c| !is_line_terminator(c));
             } else {
                 return Ok(saw_line_terminator);
             }
