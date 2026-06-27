@@ -190,7 +190,11 @@ impl Compiler {
                                 message: "destructuring declaration requires an initializer".into(),
                             })?;
                         self.compile_expression(init, chunk, context)?;
-                        self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+                        if *kind == VariableKind::Var {
+                            self.compile_binding_pattern_store(pattern, chunk, context)?;
+                        } else {
+                            self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+                        }
                     } else {
                         self.compile_variable_declaration(
                             *kind,
@@ -820,7 +824,11 @@ impl Compiler {
                                 chunk.emit(Instruction::Constant(undefined));
                             }
                         }
-                        self.compile_binding_pattern(VariableKind::Let, pattern, chunk, context)?;
+                        if *kind == VariableKind::Var {
+                            self.compile_binding_pattern_store(pattern, chunk, context)?;
+                        } else {
+                            self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+                        }
                     } else {
                         self.compile_variable_declaration(
                             *kind,
@@ -3409,33 +3417,62 @@ impl Compiler {
         // Static fields — initialized on the constructor after the class is created.
         // Stack: [ctor]
         for element in elements {
-            if let ClassElement::Field {
-                name: prop_name,
-                is_static: true,
-                initializer,
-            } = element
-            {
-                let init_val = initializer
-                    .as_ref()
-                    .map_or(Expression::Literal(Literal::Undefined), |b| *b.clone());
-                // Stack: [ctor]
-                chunk.emit(Instruction::Duplicate); // [ctor, ctor]
-                if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
-                    // Computed static field: evaluate key at class definition time.
-                    self.compile_expression(key_expr, chunk, context)?; // [ctor, ctor, key]
-                    self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, key, val]
-                    chunk.emit(Instruction::DefineDataPropertyComputed); // [ctor, ctor]
-                } else {
-                    let key = prop_name.to_key_string();
-                    if key.starts_with('#') {
-                        chunk.emit(Instruction::Pop); // remove the Duplicate
-                        continue; // skip private fields
+            match element {
+                ClassElement::Field {
+                    name: prop_name,
+                    is_static: true,
+                    initializer,
+                } => {
+                    let init_val = initializer
+                        .as_ref()
+                        .map_or(Expression::Literal(Literal::Undefined), |b| *b.clone());
+                    // Stack: [ctor]
+                    chunk.emit(Instruction::Duplicate); // [ctor, ctor]
+                    if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                        // Computed static field: evaluate key at class definition time.
+                        self.compile_expression(key_expr, chunk, context)?; // [ctor, ctor, key]
+                        self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, key, val]
+                        chunk.emit(Instruction::DefineDataPropertyComputed); // [ctor, ctor]
+                    } else {
+                        let key = prop_name.to_key_string();
+                        if key.starts_with('#') {
+                            chunk.emit(Instruction::Pop); // remove the Duplicate
+                            continue; // skip private fields
+                        }
+                        self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, val]
+                        let key_idx = self.add_name(&key, chunk)?;
+                        chunk.emit(Instruction::DefineDataProperty(key_idx)); // [ctor, ctor]
                     }
-                    self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, val]
-                    let key_idx = self.add_name(&key, chunk)?;
-                    chunk.emit(Instruction::DefineDataProperty(key_idx)); // [ctor, ctor]
+                    chunk.emit(Instruction::Pop); // [ctor]
                 }
-                chunk.emit(Instruction::Pop); // [ctor]
+                ClassElement::StaticBlock(statements) => {
+                    let block_body = FunctionBody {
+                        statements: statements.clone(),
+                        is_strict: true,
+                    };
+                    let block_fn = self.compile_function_body(&[], &block_body, context)?;
+                    let block_template = FunctionTemplate {
+                        name: None,
+                        params: block_fn.params,
+                        rest_param: block_fn.rest_param,
+                        length_override: Some(block_fn.length),
+                        chunk: block_fn.chunk,
+                        is_strict: true,
+                        is_generator: false,
+                        environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+                    };
+                    let block_idx = chunk
+                        .add_function(block_template)
+                        .map_err(CompileError::from_chunk)?;
+                    // ponytail: use a zero-arg function call so existing call-frame
+                    // machinery supplies the class constructor as `this`.
+                    chunk.emit(Instruction::Duplicate); // [ctor, ctor]
+                    chunk.emit(Instruction::CreateFunction(block_idx)); // [ctor, ctor, fn]
+                    chunk.emit(Instruction::Swap); // [ctor, fn, ctor]
+                    chunk.emit(Instruction::CallWithThis(0)); // [ctor, result]
+                    chunk.emit(Instruction::Pop); // [ctor]
+                }
+                _ => {}
             }
         }
 
@@ -3455,7 +3492,11 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         self.compile_expression(initializer, chunk, context)?;
-        self.compile_binding_pattern(kind, pattern, chunk, context)
+        if kind == VariableKind::Var {
+            self.compile_binding_pattern_store(pattern, chunk, context)
+        } else {
+            self.compile_binding_pattern(kind, pattern, chunk, context)
+        }
     }
 
     /// Like `compile_binding_pattern` but uses `StoreName` (write to existing binding)
@@ -4137,6 +4178,17 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
                     }
                 } else if !names.contains(&decl.name) {
                     names.push(decl.name.clone());
+                }
+            }
+        }
+        Statement::DestructuringDeclaration {
+            kind: crate::ast::VariableKind::Var,
+            pattern,
+            ..
+        } => {
+            for n in binding_pattern_names(pattern) {
+                if !names.contains(&n) {
+                    names.push(n);
                 }
             }
         }

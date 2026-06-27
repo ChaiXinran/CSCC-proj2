@@ -60,6 +60,15 @@ fn destructuring_assignment_updates_existing_bindings() {
 // ── C-style for ──────────────────────────────────────────────────────────────
 
 #[test]
+fn var_destructuring_declaration_writes_hoisted_bindings() {
+    assert_eq!(native_eval("var [x, y] = [1, 2]; x + y;"), "3");
+    assert_eq!(
+        native_eval("var count = 0; for (var [x] = [7]; count < 1;) { count = count + x; } count;"),
+        "7"
+    );
+}
+
+#[test]
 fn classic_for_accumulates_with_increment() {
     assert_eq!(
         native_eval("var s = 0; for (var i = 0; i < 5; i++) { s = s + i; } s;"),

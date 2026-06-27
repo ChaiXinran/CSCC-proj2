@@ -162,6 +162,9 @@ impl Parser {
         let outer_generator = self.is_generator_context;
         self.is_generator_context = is_generator;
         let params = self.parse_param_list()?;
+        if is_generator {
+            Self::check_generator_params_no_yield(&params)?;
+        }
         let is_nspl = Self::params_are_non_simple(&params);
         let body_strict = self.peek_body_has_use_strict();
         // NSPL + "use strict" in body is always a SyntaxError.
@@ -211,6 +214,9 @@ impl Parser {
         self.is_generator_context = is_generator;
         let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
+        if is_generator {
+            Self::check_generator_params_no_yield(&params)?;
+        }
         // Async (and async-generator) functions always require unique parameter names.
         self.check_duplicate_params(&params)?;
         let is_nspl = Self::params_are_non_simple(&params);
@@ -363,6 +369,18 @@ impl Parser {
                     | FunctionParam::Default(..)
             )
         })
+    }
+
+    pub(super) fn check_generator_params_no_yield(
+        params: &[FunctionParam],
+    ) -> Result<(), ParseError> {
+        if params.iter().any(function_param_contains_yield) {
+            return Err(ParseError {
+                span: crate::lexer::Span { start: 0, end: 0 },
+                message: "`yield` is not allowed in generator parameter initializers".into(),
+            });
+        }
+        Ok(())
     }
 
     /// Checks for duplicate bound names across all parameters, including those
@@ -2067,6 +2085,111 @@ fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
         | Expression::Class(_)
         | Expression::This
         | Expression::PrivateName(_) => false,
+    }
+}
+
+fn function_param_contains_yield(param: &FunctionParam) -> bool {
+    match param {
+        FunctionParam::Default(_, expr) => expr_contains_yield(expr),
+        FunctionParam::Pattern(pattern, default) => {
+            binding_pattern_contains_yield(pattern)
+                || default.as_deref().is_some_and(expr_contains_yield)
+        }
+        FunctionParam::RestPattern(pattern) => binding_pattern_contains_yield(pattern),
+        FunctionParam::Simple(_) | FunctionParam::Rest(_) => false,
+    }
+}
+
+fn binding_pattern_contains_yield(pattern: &BindingPattern) -> bool {
+    match pattern {
+        BindingPattern::Identifier(_) => false,
+        BindingPattern::Array { elements, rest } => {
+            elements.iter().flatten().any(|element| {
+                binding_pattern_contains_yield(&element.pattern)
+                    || element.default.as_deref().is_some_and(expr_contains_yield)
+            }) || rest.as_deref().is_some_and(binding_pattern_contains_yield)
+        }
+        BindingPattern::Object { props, rest } => {
+            props.iter().any(|prop| {
+                matches!(&prop.key, ObjectBindingKey::Computed(expr) if expr_contains_yield(expr))
+                    || binding_pattern_contains_yield(&prop.value)
+                    || prop.default.as_deref().is_some_and(expr_contains_yield)
+            }) || rest.as_deref().is_some_and(binding_pattern_contains_yield)
+        }
+    }
+}
+
+fn expr_contains_yield(expr: &Expression) -> bool {
+    match expr {
+        Expression::Yield { .. } => true,
+        Expression::Unary { argument, .. }
+        | Expression::Update { argument, .. }
+        | Expression::Spread(argument)
+        | Expression::Await(argument) => expr_contains_yield(argument),
+        Expression::Binary { left, right, .. }
+        | Expression::Logical { left, right, .. }
+        | Expression::Assignment {
+            target: left,
+            value: right,
+        }
+        | Expression::CompoundAssignment {
+            target: left,
+            value: right,
+            ..
+        }
+        | Expression::Member {
+            object: left,
+            property: right,
+            ..
+        } => expr_contains_yield(left) || expr_contains_yield(right),
+        Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
+            expr_contains_yield(callee) || arguments.iter().any(call_arg_contains_yield)
+        }
+        Expression::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            expr_contains_yield(test)
+                || expr_contains_yield(consequent)
+                || expr_contains_yield(alternate)
+        }
+        Expression::Array(elements) => elements.iter().any(|element| match element {
+            crate::ast::ArrayElement::Expression(expr) | crate::ast::ArrayElement::Spread(expr) => {
+                expr_contains_yield(expr)
+            }
+            crate::ast::ArrayElement::Hole => false,
+        }),
+        Expression::Object(properties) => properties.iter().any(|property| match property {
+            ObjectProperty::Data { value, .. } | ObjectProperty::PrototypeSetter { value } => {
+                expr_contains_yield(value)
+            }
+            ObjectProperty::ComputedData { key, value } => {
+                expr_contains_yield(key) || expr_contains_yield(value)
+            }
+            ObjectProperty::Spread(expr) => expr_contains_yield(expr),
+            ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
+        }),
+        Expression::TemplateLiteral(template) => {
+            template.expressions.iter().any(expr_contains_yield)
+        }
+        Expression::Sequence(expressions) => expressions.iter().any(expr_contains_yield),
+        Expression::Literal(_)
+        | Expression::Identifier(_)
+        | Expression::Function(_)
+        | Expression::Class(_)
+        | Expression::This
+        | Expression::Super
+        | Expression::NewTarget
+        | Expression::PrivateName(_) => false,
+    }
+}
+
+fn call_arg_contains_yield(arg: &crate::ast::CallArgument) -> bool {
+    match arg {
+        crate::ast::CallArgument::Expression(expr) | crate::ast::CallArgument::Spread(expr) => {
+            expr_contains_yield(expr)
+        }
     }
 }
 

@@ -128,14 +128,41 @@ impl Parser {
 
     /// In strict mode, `eval` and `arguments` cannot be assignment targets.
     fn check_strict_assignment_target(&self, expr: &Expression) -> Result<(), ParseError> {
-        if self.is_strict {
-            if let Expression::Identifier(name) = expr {
-                if name == "eval" || name == "arguments" {
-                    return Err(self.error(format!("cannot assign to '{name}' in strict mode")));
-                }
-            }
+        if !self.is_strict {
+            return Ok(());
         }
-        Ok(())
+        match expr {
+            Expression::Identifier(name) if name == "eval" || name == "arguments" => {
+                Err(self.error(format!("cannot assign to '{name}' in strict mode")))
+            }
+            Expression::Array(elements) => {
+                for element in elements {
+                    match element {
+                        ArrayElement::Expression(target) | ArrayElement::Spread(target) => {
+                            self.check_strict_assignment_target(target)?;
+                        }
+                        ArrayElement::Hole => {}
+                    }
+                }
+                Ok(())
+            }
+            Expression::Object(properties) => {
+                for property in properties {
+                    match property {
+                        ObjectProperty::Data { value, .. }
+                        | ObjectProperty::ComputedData { value, .. }
+                        | ObjectProperty::PrototypeSetter { value }
+                        | ObjectProperty::Spread(value) => {
+                            self.check_strict_assignment_target(value)?;
+                        }
+                        ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => {}
+                    }
+                }
+                Ok(())
+            }
+            Expression::Assignment { target, .. } => self.check_strict_assignment_target(target),
+            _ => Ok(()),
+        }
     }
 
     fn try_parse_arrow_function(&mut self) -> Result<Option<Expression>, ParseError> {
@@ -1092,6 +1119,9 @@ impl Parser {
             _ => None,
         };
         let params = self.parse_param_list()?;
+        if is_generator {
+            Self::check_generator_params_no_yield(&params)?;
+        }
         if is_generator || self.is_strict {
             self.check_duplicate_params(&params)?;
         }
@@ -1155,6 +1185,9 @@ impl Parser {
                 _ => None,
             };
             let params = self.parse_param_list()?;
+            if is_generator {
+                Self::check_generator_params_no_yield(&params)?;
+            }
             self.check_duplicate_params(&params)?;
             let is_nspl = Self::params_are_non_simple(&params);
             if is_nspl && self.peek_body_has_use_strict() {
@@ -1358,6 +1391,33 @@ impl Parser {
 
             // Optional `static` keyword.
             let is_static = self.eat_keyword(Keyword::Static);
+            if is_static && self.check_punctuator('{') {
+                let outer_async = self.is_async_context;
+                let outer_generator = self.is_generator_context;
+                let outer_function_depth = self.function_depth;
+                let outer_loop_depth = self.loop_depth;
+                let outer_switch_depth = self.switch_depth;
+                let outer_labels = std::mem::take(&mut self.label_stack);
+                self.is_async_context = false;
+                self.is_generator_context = false;
+                self.function_depth = 0;
+                self.loop_depth = 0;
+                self.switch_depth = 0;
+                let block = self.parse_block();
+                self.is_async_context = outer_async;
+                self.is_generator_context = outer_generator;
+                self.function_depth = outer_function_depth;
+                self.loop_depth = outer_loop_depth;
+                self.switch_depth = outer_switch_depth;
+                self.label_stack = outer_labels;
+                let Statement::Block(body) = block? else {
+                    unreachable!("parse_block returns a block statement")
+                };
+                self.check_static_block_early_errors(&body)?;
+                elements.push(ClassElement::StaticBlock(body));
+                while self.eat_punctuator(';') {}
+                continue;
+            }
 
             // Check for `async` contextual keyword (method modifier).
             // Only treat it as a modifier when the token after `async` on the SAME LINE
@@ -1586,6 +1646,9 @@ impl Parser {
                 self.is_generator_context = is_generator_method;
 
                 let params = self.parse_param_list()?;
+                if is_generator_method {
+                    Self::check_generator_params_no_yield(&params)?;
+                }
 
                 // Strict mode: duplicate simple param names are a SyntaxError.
                 // (All class methods are strict since the class body is strict.)
@@ -2118,6 +2181,376 @@ impl Parser {
             _ => Ok(()),
         }
     }
+
+    fn check_static_block_early_errors(
+        &self,
+        statements: &[crate::ast::Statement],
+    ) -> Result<(), ParseError> {
+        for stmt in statements {
+            self.walk_static_block_stmt(stmt)?;
+        }
+        Ok(())
+    }
+
+    fn walk_static_block_stmt(&self, stmt: &crate::ast::Statement) -> Result<(), ParseError> {
+        use crate::ast::Statement;
+        match stmt {
+            Statement::Expression(expr) | Statement::Throw(expr) => {
+                self.walk_static_block_expr(expr)
+            }
+            Statement::Return(_) => Err(ParseError {
+                span: self.peek().span,
+                message: "`return` is not allowed in class static blocks".into(),
+            }),
+            Statement::Block(statements) => {
+                for stmt in statements {
+                    self.walk_static_block_stmt(stmt)?;
+                }
+                Ok(())
+            }
+            Statement::VariableDeclaration { declarations, .. } => {
+                for declaration in declarations {
+                    if let Some(pattern) = &declaration.pattern {
+                        self.walk_static_block_binding_pattern(pattern)?;
+                    }
+                    if let Some(initializer) = &declaration.initializer {
+                        self.walk_static_block_expr(initializer)?;
+                    }
+                }
+                Ok(())
+            }
+            Statement::DestructuringDeclaration {
+                pattern,
+                initializer,
+                ..
+            } => {
+                self.walk_static_block_binding_pattern(pattern)?;
+                self.walk_static_block_expr(initializer)
+            }
+            Statement::If {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.walk_static_block_expr(test)?;
+                self.walk_static_block_stmt(consequent)?;
+                if let Some(alternate) = alternate {
+                    self.walk_static_block_stmt(alternate)?;
+                }
+                Ok(())
+            }
+            Statement::While { test, body } | Statement::DoWhile { test, body } => {
+                self.walk_static_block_expr(test)?;
+                self.walk_static_block_stmt(body)
+            }
+            Statement::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                if let Some(init) = init {
+                    self.walk_static_block_stmt(init)?;
+                }
+                if let Some(test) = test {
+                    self.walk_static_block_expr(test)?;
+                }
+                if let Some(update) = update {
+                    self.walk_static_block_expr(update)?;
+                }
+                self.walk_static_block_stmt(body)
+            }
+            Statement::ForIn { left, right, body }
+            | Statement::ForOf {
+                left, right, body, ..
+            } => {
+                self.walk_static_block_for_binding(left)?;
+                self.walk_static_block_expr(right)?;
+                self.walk_static_block_stmt(body)
+            }
+            Statement::Labelled { body, .. } => self.walk_static_block_stmt(body),
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => {
+                for stmt in block {
+                    self.walk_static_block_stmt(stmt)?;
+                }
+                if let Some(handler) = handler {
+                    for stmt in &handler.body {
+                        self.walk_static_block_stmt(stmt)?;
+                    }
+                }
+                if let Some(finalizer) = finalizer {
+                    for stmt in finalizer {
+                        self.walk_static_block_stmt(stmt)?;
+                    }
+                }
+                Ok(())
+            }
+            Statement::Switch {
+                discriminant,
+                cases,
+            } => {
+                self.walk_static_block_expr(discriminant)?;
+                for case in cases {
+                    if let Some(test) = &case.test {
+                        self.walk_static_block_expr(test)?;
+                    }
+                    for stmt in &case.consequent {
+                        self.walk_static_block_stmt(stmt)?;
+                    }
+                }
+                Ok(())
+            }
+            Statement::ClassDeclaration(class) => {
+                if class.name == "await" {
+                    return Err(ParseError {
+                        span: self.peek().span,
+                        message: "`await` is not allowed as a class static block binding".into(),
+                    });
+                }
+                if let Some(super_class) = &class.super_class {
+                    self.walk_static_block_expr(super_class)?;
+                }
+                for element in &class.elements {
+                    self.walk_static_block_class_element(element)?;
+                }
+                Ok(())
+            }
+            // Function bodies and module declarations form their own syntax boundaries here.
+            Statement::FunctionDeclaration { .. }
+            | Statement::ModuleDeclaration(_)
+            | Statement::Empty
+            | Statement::Break(_)
+            | Statement::Continue(_) => Ok(()),
+        }
+    }
+
+    fn walk_static_block_expr(&self, expr: &Expression) -> Result<(), ParseError> {
+        use crate::ast::{ArrayElement, CallArgument, ObjectProperty};
+        match expr {
+            Expression::Identifier(name) if name == "arguments" || name == "await" => {
+                Err(ParseError {
+                    span: self.peek().span,
+                    message: format!("`{name}` is not allowed in class static blocks"),
+                })
+            }
+            Expression::Await(_) => Err(ParseError {
+                span: self.peek().span,
+                message: "`await` is not allowed in class static blocks".into(),
+            }),
+            Expression::Call { callee, arguments } => {
+                if matches!(**callee, Expression::Super) {
+                    return Err(ParseError {
+                        span: self.peek().span,
+                        message: "`super()` is not allowed in class static blocks".into(),
+                    });
+                }
+                self.walk_static_block_expr(callee)?;
+                for arg in arguments {
+                    match arg {
+                        CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
+                            self.walk_static_block_expr(expr)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Expression::Function(_) => Ok(()),
+            Expression::Class(class) => {
+                if class.name.as_deref() == Some("await") {
+                    return Err(ParseError {
+                        span: self.peek().span,
+                        message: "`await` is not allowed as a class static block binding".into(),
+                    });
+                }
+                if let Some(super_class) = &class.super_class {
+                    self.walk_static_block_expr(super_class)?;
+                }
+                for element in &class.elements {
+                    self.walk_static_block_class_element(element)?;
+                }
+                Ok(())
+            }
+            Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
+                self.walk_static_block_expr(argument)
+            }
+            Expression::Binary { left, right, .. }
+            | Expression::Logical { left, right, .. }
+            | Expression::Assignment {
+                target: left,
+                value: right,
+            }
+            | Expression::CompoundAssignment {
+                target: left,
+                value: right,
+                ..
+            }
+            | Expression::Member {
+                object: left,
+                property: right,
+                ..
+            } => {
+                self.walk_static_block_expr(left)?;
+                self.walk_static_block_expr(right)
+            }
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.walk_static_block_expr(test)?;
+                self.walk_static_block_expr(consequent)?;
+                self.walk_static_block_expr(alternate)
+            }
+            Expression::Construct { callee, arguments } => {
+                self.walk_static_block_expr(callee)?;
+                for arg in arguments {
+                    match arg {
+                        CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
+                            self.walk_static_block_expr(expr)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Expression::Array(elements) => {
+                for element in elements {
+                    match element {
+                        ArrayElement::Expression(expr) | ArrayElement::Spread(expr) => {
+                            self.walk_static_block_expr(expr)?;
+                        }
+                        ArrayElement::Hole => {}
+                    }
+                }
+                Ok(())
+            }
+            Expression::Object(properties) => {
+                for property in properties {
+                    match property {
+                        ObjectProperty::Data { value, .. }
+                        | ObjectProperty::PrototypeSetter { value } => {
+                            self.walk_static_block_expr(value)?;
+                        }
+                        ObjectProperty::ComputedData { key, value } => {
+                            self.walk_static_block_expr(key)?;
+                            self.walk_static_block_expr(value)?;
+                        }
+                        ObjectProperty::Spread(expr) => self.walk_static_block_expr(expr)?,
+                        ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => {}
+                    }
+                }
+                Ok(())
+            }
+            Expression::Spread(expr) => self.walk_static_block_expr(expr),
+            Expression::Yield { argument, .. } => {
+                if let Some(argument) = argument {
+                    self.walk_static_block_expr(argument)?;
+                }
+                Ok(())
+            }
+            Expression::TemplateLiteral(template) => {
+                for expr in &template.expressions {
+                    self.walk_static_block_expr(expr)?;
+                }
+                Ok(())
+            }
+            Expression::Sequence(expressions) => {
+                for expr in expressions {
+                    self.walk_static_block_expr(expr)?;
+                }
+                Ok(())
+            }
+            Expression::Literal(_)
+            | Expression::This
+            | Expression::Super
+            | Expression::NewTarget
+            | Expression::Identifier(_)
+            | Expression::PrivateName(_) => Ok(()),
+        }
+    }
+
+    fn walk_static_block_class_element(&self, element: &ClassElement) -> Result<(), ParseError> {
+        match element {
+            ClassElement::Constructor(_) => Ok(()),
+            ClassElement::Method { name, .. } => self.walk_static_block_property_name(name),
+            ClassElement::Field {
+                name, initializer, ..
+            } => {
+                self.walk_static_block_property_name(name)?;
+                if let Some(initializer) = initializer {
+                    self.walk_static_block_expr(initializer)?;
+                }
+                Ok(())
+            }
+            ClassElement::StaticBlock(_) => Ok(()),
+        }
+    }
+
+    fn walk_static_block_property_name(&self, name: &PropertyName) -> Result<(), ParseError> {
+        if let PropertyName::Computed(expr) = name {
+            self.walk_static_block_expr(expr)?;
+        }
+        Ok(())
+    }
+
+    fn walk_static_block_for_binding(
+        &self,
+        binding: &crate::ast::ForBinding,
+    ) -> Result<(), ParseError> {
+        match binding {
+            crate::ast::ForBinding::Target(expr) => self.walk_static_block_expr(expr),
+            crate::ast::ForBinding::Declaration { pattern, .. } => {
+                self.walk_static_block_binding_pattern(pattern)
+            }
+        }
+    }
+
+    fn walk_static_block_binding_pattern(
+        &self,
+        pattern: &crate::ast::BindingPattern,
+    ) -> Result<(), ParseError> {
+        match pattern {
+            crate::ast::BindingPattern::Identifier(name)
+                if name == "arguments" || name == "await" =>
+            {
+                Err(ParseError {
+                    span: self.peek().span,
+                    message: format!("`{name}` is not allowed as a class static block binding"),
+                })
+            }
+            crate::ast::BindingPattern::Identifier(_) => Ok(()),
+            crate::ast::BindingPattern::Array { elements, rest } => {
+                for element in elements.iter().flatten() {
+                    self.walk_static_block_binding_pattern(&element.pattern)?;
+                    if let Some(default) = &element.default {
+                        self.walk_static_block_expr(default)?;
+                    }
+                }
+                if let Some(rest) = rest {
+                    self.walk_static_block_binding_pattern(rest)?;
+                }
+                Ok(())
+            }
+            crate::ast::BindingPattern::Object { props, rest } => {
+                for prop in props {
+                    if let crate::ast::ObjectBindingKey::Computed(key) = &prop.key {
+                        self.walk_static_block_expr(key)?;
+                    }
+                    self.walk_static_block_binding_pattern(&prop.value)?;
+                    if let Some(default) = &prop.default {
+                        self.walk_static_block_expr(default)?;
+                    }
+                }
+                if let Some(rest) = rest {
+                    self.walk_static_block_binding_pattern(rest)?;
+                }
+                Ok(())
+            }
+        }
+    }
 }
 
 /// Maps an operator spelling to its precedence, or `None` if it is not a binary
@@ -2322,6 +2755,20 @@ mod tests {
             Statement::Expression(expression) => expression,
             other => panic!("expected an expression statement, got {other:?}"),
         }
+    }
+
+    fn parse_program_ok(source: &str) {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        Parser::new(tokens)
+            .parse_program()
+            .expect("parsing succeeds");
+    }
+
+    fn parse_program_err(source: &str) {
+        let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+        Parser::new(tokens)
+            .parse_program()
+            .expect_err("parsing fails");
     }
 
     fn number(value: f64) -> Expression {
@@ -2771,6 +3218,43 @@ mod tests {
         Parser::new(tokens)
             .parse_program()
             .expect("computed class member names re-enable `in`");
+    }
+
+    #[test]
+    fn static_block_rejects_direct_arguments_and_super_call() {
+        parse_program_err("class C { static { arguments; } }");
+        parse_program_err("class C { static { super(); } }");
+        parse_program_err("class C { static { (class { [arguments]() {} }); } }");
+    }
+
+    #[test]
+    fn static_block_rejects_return_and_outer_loop_control() {
+        parse_program_err("function f() { class C { static { return; } } }");
+        parse_program_err("while (true) { class C { static { break; } } }");
+        parse_program_err("while (true) { class C { static { continue; } } }");
+    }
+
+    #[test]
+    fn static_block_keeps_function_arguments_boundary() {
+        parse_program_ok(
+            "class C { static { \
+                (function(x = arguments) { return arguments; }); \
+                (class { method(x = arguments) { return arguments; } }); \
+            } }",
+        );
+    }
+
+    #[test]
+    fn generator_method_rejects_yield_in_parameter_defaults() {
+        parse_program_err("class C { static *g(x = yield) {} }");
+        parse_program_err("0, class { static *g(x = yield) {} };");
+    }
+
+    #[test]
+    fn strict_destructuring_rejects_eval_arguments_targets() {
+        parse_program_err("\"use strict\"; [arguments] = [];");
+        parse_program_err("\"use strict\"; ({ eval } = {});");
+        parse_program_ok("\"use strict\"; var x; [x = arguments] = [];");
     }
 
     #[test]

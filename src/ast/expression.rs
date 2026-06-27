@@ -292,6 +292,8 @@ pub enum ClassElement {
         is_static: bool,
         initializer: Option<Box<Expression>>,
     },
+    /// `static { ... }` class initialization block.
+    StaticBlock(Vec<Statement>),
 }
 
 /// A class expression: `class [Name] [extends Super] { ... }`.

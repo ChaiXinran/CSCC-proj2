@@ -209,3 +209,23 @@ fn exposes_function_and_array_prototype_relationships() {
         "true"
     );
 }
+
+#[test]
+fn executes_class_static_blocks_with_class_this_and_source_order() {
+    assert_eq!(
+        eval("var value; class C { static { value = this; } } value === C;"),
+        "true"
+    );
+    assert_eq!(
+        eval(
+            "var seq = ''; \
+             class C { \
+               static x = seq = seq + 'a'; \
+               static { seq = seq + 'b'; } \
+               static y = seq = seq + 'c'; \
+             } \
+             seq;"
+        ),
+        "abc"
+    );
+}
