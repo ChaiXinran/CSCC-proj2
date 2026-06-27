@@ -19,12 +19,12 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
         "revocable".into(),
         PropertyDescriptor::data_with(revocable, true, false, true),
     )?;
+    context.declare_global("Proxy", constructor.clone());
     context.define_own_property(
         context.global_object(),
         "Proxy".into(),
         PropertyDescriptor::data_with(constructor.clone(), true, false, true),
     )?;
-    context.declare_global("Proxy", constructor);
 
     Ok(())
 }
@@ -49,8 +49,13 @@ fn proxy_construct(
     context.require_object(&target, "create Proxy target")?;
     context.require_object(&handler, "create Proxy handler")?;
 
-    let mut object = JsObject::proxy(target, handler);
-    object.prototype = context.object_prototype();
+    let callable = context.is_callable_value(&target);
+    let constructable = context.is_constructable_value(&target);
+    let mut object = JsObject::proxy(target.clone(), handler, callable, constructable);
+    object.prototype = context
+        .value_object(&target)
+        .and_then(|target| context.get_prototype_of(target))
+        .or_else(|| context.object_prototype());
     let id = context
         .heap_mut()
         .allocate_object(object)
@@ -71,8 +76,25 @@ fn proxy_revocable(
         revoke_target,
         JsValue::Undefined,
         vec![proxy.clone()],
-        0,
+        0.0,
+        "bound Proxy.revocable.revoke".into(),
     )?;
+    let revoke_object = if let JsValue::BuiltinFunction(id) = &revoke {
+        context.builtin_mut(*id).map(|function| {
+            function.name = "";
+            function.construct = None;
+            function.object
+        })
+    } else {
+        None
+    };
+    if let Some(object) = revoke_object {
+        context.define_own_property(
+            object,
+            "name".into(),
+            PropertyDescriptor::data_with(JsValue::String(String::new()), false, false, true),
+        )?;
+    }
     context.create_object([("proxy".into(), proxy), ("revoke".into(), revoke)])
 }
 
@@ -98,6 +120,8 @@ fn proxy_revoke(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Trap {
+    Apply,
+    Construct,
     DefineProperty,
     DeleteProperty,
     Get,
@@ -114,6 +138,8 @@ enum Trap {
 impl Trap {
     const fn name(self) -> &'static str {
         match self {
+            Self::Apply => "apply",
+            Self::Construct => "construct",
             Self::DefineProperty => "defineProperty",
             Self::DeleteProperty => "deleteProperty",
             Self::Get => "get",
@@ -129,7 +155,7 @@ impl Trap {
     }
 }
 
-pub(super) fn to_property_key(
+pub(crate) fn to_property_key(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: JsValue,
@@ -141,7 +167,69 @@ pub(super) fn to_property_key(
     }
 }
 
-pub(super) fn internal_get_prototype_of(
+pub(crate) fn internal_call(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+    this_argument: JsValue,
+    arguments: Vec<JsValue>,
+) -> Result<JsValue, VmError> {
+    let Some(record) = proxy_record(context, &target)? else {
+        return vm.call_value_from_builtin(target, this_argument, arguments, context);
+    };
+    if !record.callable {
+        return Err(VmError::type_error("proxy target is not callable"));
+    }
+    let Some(trap) = get_trap(vm, context, &record.handler, Trap::Apply)? else {
+        return vm.call_value_from_builtin(record.target, this_argument, arguments, context);
+    };
+    let argument_array = context.create_array(arguments)?;
+    vm.call_value_from_builtin(
+        trap,
+        record.handler.clone(),
+        vec![record.target, this_argument, argument_array],
+        context,
+    )
+}
+
+pub(crate) fn internal_construct(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+    arguments: Vec<JsValue>,
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    let Some(record) = proxy_record(context, &target)? else {
+        return vm
+            .construct_value_from_builtin_with_new_target(target, arguments, new_target, context);
+    };
+    if !record.constructable {
+        return Err(VmError::type_error("proxy target is not a constructor"));
+    }
+    let Some(trap) = get_trap(vm, context, &record.handler, Trap::Construct)? else {
+        return vm.construct_value_from_builtin_with_new_target(
+            record.target,
+            arguments,
+            new_target,
+            context,
+        );
+    };
+    let argument_array = context.create_array(arguments)?;
+    let result = vm.call_value_from_builtin(
+        trap,
+        record.handler.clone(),
+        vec![record.target, argument_array, new_target],
+        context,
+    )?;
+    if context.value_object(&result).is_none() {
+        return Err(VmError::type_error(
+            "proxy construct trap must return an object",
+        ));
+    }
+    Ok(result)
+}
+
+pub(crate) fn internal_get_prototype_of(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -149,7 +237,7 @@ pub(super) fn internal_get_prototype_of(
     get_prototype_of(vm, context, target)
 }
 
-pub(super) fn internal_set_prototype_of(
+pub(crate) fn internal_set_prototype_of(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -158,7 +246,7 @@ pub(super) fn internal_set_prototype_of(
     set_prototype_of(vm, context, target, prototype)
 }
 
-pub(super) fn internal_is_extensible(
+pub(crate) fn internal_is_extensible(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -166,7 +254,7 @@ pub(super) fn internal_is_extensible(
     is_extensible(vm, context, target)
 }
 
-pub(super) fn internal_prevent_extensions(
+pub(crate) fn internal_prevent_extensions(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -174,7 +262,7 @@ pub(super) fn internal_prevent_extensions(
     prevent_extensions(vm, context, target)
 }
 
-pub(super) fn internal_get_own_property(
+pub(crate) fn internal_get_own_property(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -183,7 +271,7 @@ pub(super) fn internal_get_own_property(
     get_own_property_descriptor(vm, context, target, key)
 }
 
-pub(super) fn internal_define_own_property(
+pub(crate) fn internal_define_own_property(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -194,7 +282,7 @@ pub(super) fn internal_define_own_property(
     define_own_property(vm, context, target, key, descriptor_arg, update)
 }
 
-pub(super) fn internal_has_property(
+pub(crate) fn internal_has_property(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -203,7 +291,7 @@ pub(super) fn internal_has_property(
     has_property(vm, context, target, key)
 }
 
-pub(super) fn internal_get(
+pub(crate) fn internal_get(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -213,7 +301,7 @@ pub(super) fn internal_get(
     get(vm, context, target, key, receiver)
 }
 
-pub(super) fn internal_set(
+pub(crate) fn internal_set(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -224,7 +312,7 @@ pub(super) fn internal_set(
     set(vm, context, target, key, value, receiver)
 }
 
-pub(super) fn internal_delete(
+pub(crate) fn internal_delete(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
@@ -233,12 +321,50 @@ pub(super) fn internal_delete(
     delete_property(vm, context, target, key)
 }
 
-pub(super) fn internal_own_property_keys(
+pub(crate) fn internal_own_property_keys(
     vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
 ) -> Result<Vec<PropertyKey>, VmError> {
     own_property_keys(vm, context, target)
+}
+
+pub(crate) fn internal_for_in_keys(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+) -> Result<Vec<String>, VmError> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    let mut current = Some(target);
+    let mut depth = 0usize;
+    while let Some(value) = current {
+        if depth > 1024 {
+            return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+        }
+        for key in own_property_keys(vm, context, value.clone())? {
+            let PropertyKey::String(name) = key else {
+                continue;
+            };
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            if get_own_property_descriptor(
+                vm,
+                context,
+                value.clone(),
+                &PropertyKey::String(name.clone()),
+            )?
+            .is_some_and(|descriptor| descriptor.enumerable)
+            {
+                result.push(name);
+            }
+        }
+        current =
+            get_prototype_of(vm, context, value)?.map(|prototype| context.object_value(prototype));
+        depth += 1;
+    }
+    Ok(result)
 }
 
 fn define_own_property(
@@ -266,7 +392,13 @@ fn define_own_property(
         return Ok(false);
     }
     let target_desc = get_own_property_descriptor(vm, context, record.target.clone(), key)?;
-    if target_desc.is_none() && !is_extensible(vm, context, record.target.clone())? {
+    let target_extensible = is_extensible(vm, context, record.target.clone())?;
+    if !is_compatible_property_descriptor(target_extensible, &update, target_desc.as_ref()) {
+        return Err(VmError::type_error(
+            "proxy defineProperty descriptor is not compatible with target",
+        ));
+    }
+    if target_desc.is_none() && !target_extensible {
         return Err(VmError::type_error(
             "proxy defineProperty cannot add property to non-extensible target",
         ));
@@ -278,6 +410,16 @@ fn define_own_property(
     {
         return Err(VmError::type_error(
             "proxy defineProperty cannot create non-configurable property",
+        ));
+    }
+    if update.writable == Some(false)
+        && target_desc.as_ref().is_some_and(|descriptor| {
+            !descriptor.configurable
+                && matches!(descriptor.kind, PropertyKind::Data { writable: true, .. })
+        })
+    {
+        return Err(VmError::type_error(
+            "proxy defineProperty cannot report non-configurable non-writable property",
         ));
     }
     Ok(true)
@@ -305,12 +447,18 @@ fn delete_property(
     if !deleted {
         return Ok(false);
     }
-    if get_own_property_descriptor(vm, context, record.target.clone(), key)?
-        .is_some_and(|descriptor| !descriptor.configurable)
+    if let Some(descriptor) = get_own_property_descriptor(vm, context, record.target.clone(), key)?
     {
-        return Err(VmError::type_error(
-            "proxy deleteProperty cannot report success for non-configurable property",
-        ));
+        if !descriptor.configurable {
+            return Err(VmError::type_error(
+                "proxy deleteProperty cannot report success for non-configurable property",
+            ));
+        }
+        if !is_extensible(vm, context, record.target)? {
+            return Err(VmError::type_error(
+                "proxy deleteProperty cannot report success on a non-extensible target",
+            ));
+        }
     }
     Ok(true)
 }
@@ -408,6 +556,22 @@ fn get_own_property_descriptor(
             "proxy getOwnPropertyDescriptor cannot report non-configurable property",
         ));
     }
+    if !descriptor.configurable
+        && matches!(
+            descriptor.kind,
+            PropertyKind::Data {
+                writable: false,
+                ..
+            }
+        )
+        && target_desc.as_ref().is_some_and(|target_desc| {
+            matches!(target_desc.kind, PropertyKind::Data { writable: true, .. })
+        })
+    {
+        return Err(VmError::type_error(
+            "proxy getOwnPropertyDescriptor cannot report non-writable for writable target",
+        ));
+    }
     if descriptor.configurable
         && target_desc
             .as_ref()
@@ -459,7 +623,7 @@ fn has_property(
     key: &PropertyKey,
 ) -> Result<bool, VmError> {
     let Some(record) = proxy_record(context, &target)? else {
-        return ordinary_has_property(context, target, key);
+        return ordinary_has_property(vm, context, target, key);
     };
     let Some(trap) = get_trap(vm, context, &record.handler, Trap::Has)? else {
         return has_property(vm, context, record.target, key);
@@ -715,7 +879,7 @@ fn get_trap(
     if matches!(value, JsValue::Undefined | JsValue::Null) {
         return Ok(None);
     }
-    if is_callable_value(&value) {
+    if context.is_callable_value(&value) {
         return Ok(Some(value));
     }
     Err(VmError::type_error(format!(
@@ -760,14 +924,23 @@ fn ordinary_get(
     key: &PropertyKey,
     receiver: JsValue,
 ) -> Result<JsValue, VmError> {
-    match key {
-        PropertyKey::String(key) => {
-            vm.get_property_value_with_receiver_from_builtin(target, receiver, key, context)
-        }
-        PropertyKey::Symbol(symbol) => vm.get_symbol_property_value_with_receiver_from_builtin(
-            target, receiver, *symbol, context,
-        ),
+    let object = context.require_object(&target, "get property")?;
+    if let Some(descriptor) = match key {
+        PropertyKey::String(key) => context.get_own_property_descriptor(object, key),
+        PropertyKey::Symbol(symbol) => context.get_own_symbol_property_descriptor(object, *symbol),
+    } {
+        return match descriptor.kind {
+            PropertyKind::Data { value, .. } => Ok(value),
+            PropertyKind::Accessor { get: None, .. } => Ok(JsValue::Undefined),
+            PropertyKind::Accessor {
+                get: Some(getter), ..
+            } => vm.call_value_from_builtin(getter, receiver, Vec::new(), context),
+        };
     }
+    let Some(parent) = get_prototype_of(vm, context, target)? else {
+        return Ok(JsValue::Undefined);
+    };
+    get(vm, context, context.object_value(parent), key, receiver)
 }
 
 fn ordinary_get_own_property_descriptor(
@@ -783,15 +956,25 @@ fn ordinary_get_own_property_descriptor(
 }
 
 fn ordinary_has_property(
-    context: &NativeContext,
+    vm: &mut Vm,
+    context: &mut NativeContext,
     target: JsValue,
     key: &PropertyKey,
 ) -> Result<bool, VmError> {
     let object = context.require_object(&target, "test property")?;
-    match key {
-        PropertyKey::String(key) => context.has_property(object, key),
-        PropertyKey::Symbol(symbol) => context.has_symbol_property(object, *symbol),
+    let has_own = match key {
+        PropertyKey::String(key) => context.get_own_property_descriptor(object, key).is_some(),
+        PropertyKey::Symbol(symbol) => context
+            .get_own_symbol_property_descriptor(object, *symbol)
+            .is_some(),
+    };
+    if has_own {
+        return Ok(true);
     }
+    let Some(parent) = get_prototype_of(vm, context, target)? else {
+        return Ok(false);
+    };
+    has_property(vm, context, context.object_value(parent), key)
 }
 
 fn ordinary_own_property_keys(
@@ -825,14 +1008,119 @@ fn ordinary_set(
     value: JsValue,
     receiver: JsValue,
 ) -> Result<bool, VmError> {
-    match key {
-        PropertyKey::String(key) => {
-            vm.set_property_value_with_receiver_from_builtin(target, receiver, key, value, context)
+    let own_desc = ordinary_get_own_property_descriptor(context, target.clone(), key)?;
+    ordinary_set_with_own_descriptor(vm, context, target, key, value, receiver, own_desc)
+}
+
+fn ordinary_set_with_own_descriptor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+    key: &PropertyKey,
+    value: JsValue,
+    receiver: JsValue,
+    own_desc: Option<PropertyDescriptor>,
+) -> Result<bool, VmError> {
+    let descriptor = if let Some(descriptor) = own_desc {
+        descriptor
+    } else if let Some(parent) = get_prototype_of(vm, context, target)? {
+        return set(
+            vm,
+            context,
+            context.object_value(parent),
+            key,
+            value,
+            receiver,
+        );
+    } else {
+        PropertyDescriptor::data_with(JsValue::Undefined, true, true, true)
+    };
+
+    match descriptor.kind {
+        PropertyKind::Accessor {
+            set: Some(setter), ..
+        } => {
+            let _ = vm.call_value_from_builtin(setter, receiver, vec![value], context)?;
+            Ok(true)
         }
-        PropertyKey::Symbol(symbol) => vm.set_symbol_property_value_with_receiver_from_builtin(
-            target, receiver, *symbol, value, context,
-        ),
+        PropertyKind::Accessor { set: None, .. } => Ok(false),
+        PropertyKind::Data {
+            writable: false, ..
+        } => Ok(false),
+        PropertyKind::Data { .. } => {
+            if context.value_object(&receiver).is_none() {
+                return Ok(false);
+            }
+            let receiver_desc = get_own_property_descriptor(vm, context, receiver.clone(), key)?;
+            let update = if let Some(receiver_desc) = receiver_desc {
+                match receiver_desc.kind {
+                    PropertyKind::Accessor { .. } => return Ok(false),
+                    PropertyKind::Data {
+                        writable: false, ..
+                    } => return Ok(false),
+                    PropertyKind::Data { .. } => PropertyDescriptorUpdate {
+                        value: Some(value),
+                        ..PropertyDescriptorUpdate::default()
+                    },
+                }
+            } else {
+                PropertyDescriptorUpdate {
+                    value: Some(value),
+                    writable: Some(true),
+                    enumerable: Some(true),
+                    configurable: Some(true),
+                    ..PropertyDescriptorUpdate::default()
+                }
+            };
+            let descriptor_arg = descriptor_object_from_update(context, &update)?;
+            define_own_property(vm, context, receiver, key, descriptor_arg, update)
+        }
     }
+}
+
+fn descriptor_object_from_update(
+    context: &mut NativeContext,
+    update: &PropertyDescriptorUpdate,
+) -> Result<JsValue, VmError> {
+    let mut object = JsObject::ordinary();
+    object.prototype = context
+        .intrinsics()
+        .map(|intrinsics| intrinsics.object_prototype);
+    if let Some(value) = &update.value {
+        define_descriptor_field(&mut object, "value", value.clone());
+    }
+    if let Some(writable) = update.writable {
+        define_descriptor_field(&mut object, "writable", JsValue::Boolean(writable));
+    }
+    if let Some(enumerable) = update.enumerable {
+        define_descriptor_field(&mut object, "enumerable", JsValue::Boolean(enumerable));
+    }
+    if let Some(configurable) = update.configurable {
+        define_descriptor_field(&mut object, "configurable", JsValue::Boolean(configurable));
+    }
+    if let Some(get) = &update.get {
+        define_descriptor_field(
+            &mut object,
+            "get",
+            get.clone().unwrap_or(JsValue::Undefined),
+        );
+    }
+    if let Some(set) = &update.set {
+        define_descriptor_field(
+            &mut object,
+            "set",
+            set.clone().unwrap_or(JsValue::Undefined),
+        );
+    }
+    let id = context
+        .heap_mut()
+        .allocate_object(object)
+        .ok_or_else(|| VmError::runtime("object arena exhausted"))?;
+    Ok(JsValue::Object(id))
+}
+
+fn define_descriptor_field(object: &mut JsObject, name: &str, value: JsValue) {
+    object.define_property(name, PropertyDescriptor::data_with(value, true, true, true));
 }
 
 fn create_list_from_array_like(
@@ -919,10 +1207,10 @@ fn descriptor_update_from_object(
         update.configurable = Some(value.to_boolean());
     }
     if let Some(value) = descriptor_field(vm, context, object, "get")? {
-        update.get = Some(optional_callable(value, "getter")?);
+        update.get = Some(optional_callable(context, value, "getter")?);
     }
     if let Some(value) = descriptor_field(vm, context, object, "set")? {
-        update.set = Some(optional_callable(value, "setter")?);
+        update.set = Some(optional_callable(context, value, "setter")?);
     }
     Ok(update)
 }
@@ -975,18 +1263,82 @@ fn descriptor_update_has_accessor(update: &PropertyDescriptorUpdate) -> bool {
     update.get.is_some() || update.set.is_some()
 }
 
-fn optional_callable(value: JsValue, label: &str) -> Result<Option<JsValue>, VmError> {
+fn same_optional_value(left: Option<&JsValue>, right: Option<&JsValue>) -> bool {
+    match (left, right) {
+        (Some(left), Some(right)) => left.same_value(right),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+fn is_compatible_property_descriptor(
+    extensible: bool,
+    update: &PropertyDescriptorUpdate,
+    current: Option<&PropertyDescriptor>,
+) -> bool {
+    let Some(current) = current else {
+        return extensible;
+    };
+
+    if current.configurable {
+        return true;
+    }
+    if update.configurable == Some(true) {
+        return false;
+    }
+    if let Some(enumerable) = update.enumerable
+        && enumerable != current.enumerable
+    {
+        return false;
+    }
+
+    match &current.kind {
+        PropertyKind::Data { value, writable } => {
+            if descriptor_update_has_accessor(update) {
+                return false;
+            }
+            if !*writable {
+                if update.writable == Some(true) {
+                    return false;
+                }
+                if let Some(new_value) = &update.value
+                    && !value.same_value(new_value)
+                {
+                    return false;
+                }
+            }
+        }
+        PropertyKind::Accessor { get, set } => {
+            if descriptor_update_has_data(update) {
+                return false;
+            }
+            if let Some(new_get) = &update.get
+                && !same_optional_value(get.as_ref(), new_get.as_ref())
+            {
+                return false;
+            }
+            if let Some(new_set) = &update.set
+                && !same_optional_value(set.as_ref(), new_set.as_ref())
+            {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn optional_callable(
+    context: &NativeContext,
+    value: JsValue,
+    label: &str,
+) -> Result<Option<JsValue>, VmError> {
     if matches!(value, JsValue::Undefined) {
         return Ok(None);
     }
-    if is_callable_value(&value) {
+    if context.is_callable_value(&value) {
         return Ok(Some(value));
     }
     Err(VmError::type_error(format!(
         "descriptor {label} is not callable"
     )))
-}
-
-fn is_callable_value(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
 }

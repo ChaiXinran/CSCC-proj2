@@ -256,6 +256,87 @@ fn typed_array_views_track_resizable_array_buffer_bounds() {
 }
 
 #[test]
+fn data_view_views_track_resizable_array_buffer_bounds() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(4, { maxByteLength: 5 }); \
+             var tracking = new DataView(b, 1); \
+             var fixed = new DataView(b, 1, 2); \
+             var initial = tracking.byteLength + ':' + fixed.byteLength; \
+             b.resize(5); \
+             var grown = tracking.byteLength + ':' + fixed.byteLength + ':' + tracking.byteOffset; \
+             b.resize(1); \
+             var boundary = tracking.byteLength + ':' + tracking.byteOffset; \
+             b.resize(0); \
+             var lengthThrow = false; \
+             var offsetThrow = false; \
+             try { tracking.byteLength; } catch (e) { lengthThrow = e instanceof TypeError; } \
+             try { fixed.byteOffset; } catch (e) { offsetThrow = e instanceof TypeError; } \
+             initial + ':' + grown + ':' + boundary + ':' + lengthThrow + ':' + offsetThrow;"
+        ),
+        "3:2:4:2:1:0:1:true:true"
+    );
+}
+
+#[test]
+fn data_view_constructor_revalidates_resizable_buffer_after_prototype_lookup() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(3, { maxByteLength: 3 }); \
+             var newTarget = function() {}.bind(null); \
+             Object.defineProperty(newTarget, 'prototype', { \
+               get: function() { b.resize(2); return DataView.prototype; } \
+             }); \
+             var valid = Reflect.construct(DataView, [b, 2], newTarget); \
+             b = new ArrayBuffer(3, { maxByteLength: 3 }); \
+             var newTarget2 = function() {}.bind(null); \
+             Object.defineProperty(newTarget2, 'prototype', { \
+               get: function() { b.resize(1); return DataView.prototype; } \
+             }); \
+             var invalid = false; \
+             try { Reflect.construct(DataView, [b, 2], newTarget2); } \
+             catch (e) { invalid = e instanceof RangeError; } \
+             valid.byteLength + ':' + valid.byteOffset + ':' + invalid;"
+        ),
+        "0:2:true"
+    );
+}
+
+#[test]
+fn data_view_constructor_prototype_getter_throw_is_catchable() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(8); \
+             var newTarget = function() {}.bind(null); \
+             Object.defineProperty(newTarget, 'prototype', { \
+               get: function() { throw new RangeError('proto'); } \
+             }); \
+             var caught = false; \
+             try { Reflect.construct(DataView, [b, 0], newTarget); } \
+             catch (e) { caught = e instanceof RangeError; } \
+             caught;"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn data_view_constructor_checks_detached_buffer_after_offset_conversion() {
+    assert_eq!(
+        native_eval(
+            "var b = new ArrayBuffer(4); \
+             var calls = 0; \
+             var offset = { valueOf: function() { calls++; return 2; } }; \
+             b.transfer(); \
+             var detached = false; \
+             try { new DataView(b, offset); } catch (e) { detached = e instanceof TypeError; } \
+             calls + ':' + detached;"
+        ),
+        "1:true"
+    );
+}
+
+#[test]
 fn typed_array_iterators_stay_exhausted_after_resizable_buffer_regrows() {
     assert_eq!(
         native_eval(
@@ -456,7 +537,7 @@ fn test262_host_object_is_available_only_when_requested() {
             "var b = new ArrayBuffer(4); \
              $262.detachArrayBuffer(b); \
              ($262.global === globalThis) + ':' + \
-             ($262.createRealm().global === globalThis) + ':' + \
+             ($262.createRealm().global !== globalThis) + ':' + \
              $262.evalScript('1 + 2') + ':' + b.detached;",
             ExecutionOptions::default(),
         )

@@ -21,6 +21,7 @@ pub enum NativeErrorKind {
 pub struct NativeErrorValue {
     pub kind: NativeErrorKind,
     pub message: String,
+    pub realm_global: Option<ObjectId>,
 }
 
 impl NativeErrorValue {
@@ -29,6 +30,20 @@ impl NativeErrorValue {
         Self {
             kind,
             message: message.into(),
+            realm_global: None,
+        }
+    }
+
+    #[must_use]
+    pub fn new_with_realm(
+        kind: NativeErrorKind,
+        message: impl Into<String>,
+        realm_global: ObjectId,
+    ) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            realm_global: Some(realm_global),
         }
     }
 }
@@ -173,8 +188,12 @@ impl Trace for JsValue {
             | Self::BigInt(_)
             | Self::String(_)
             | Self::Symbol(_)
-            | Self::BuiltinFunction(_)
-            | Self::Error(_) => {}
+            | Self::BuiltinFunction(_) => {}
+            Self::Error(error) => {
+                if let Some(global) = error.realm_global {
+                    tracer.mark_object(global);
+                }
+            }
         }
     }
 }

@@ -1218,14 +1218,14 @@ fn boolean_call(
 }
 
 fn boolean_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
 ) -> Result<JsValue, VmError> {
     let value = arguments.first().map(JsValue::to_boolean).unwrap_or(false);
-    let prototype = context
-        .constructor_prototype(&new_target)?
+    let prototype = vm
+        .get_boolean_prototype_from_constructor(new_target, context)?
         .or_else(|| context.boolean_prototype())
         .ok_or_else(|| VmError::runtime("Boolean prototype not installed"))?;
     context.create_primitive_wrapper(PrimitiveValue::Boolean(value), prototype)
@@ -3159,7 +3159,7 @@ fn reflect_apply(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    if !is_callable_value(&target) {
+    if !context.is_callable_value(&target) {
         return Err(VmError::type_error("Reflect.apply target is not callable"));
     }
     let this_arg = arg(arguments, 1);

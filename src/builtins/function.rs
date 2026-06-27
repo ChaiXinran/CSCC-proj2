@@ -4,7 +4,7 @@ use crate::{
     bytecode::Compiler,
     lexer::Lexer,
     parser::Parser,
-    runtime::{JsFunction, JsValue, NativeContext, PropertyDescriptor},
+    runtime::{JsFunction, JsValue, NativeContext, PropertyDescriptor, PropertyKind},
     vm::{Vm, VmError},
 };
 
@@ -86,6 +86,17 @@ pub fn install_function(context: &mut NativeContext) {
             PropertyDescriptor::data_with(bind, true, false, true),
         )
         .expect("define Function.prototype.bind");
+
+    let to_string = context
+        .register_builtin("toString", 0, function_prototype_to_string, None)
+        .expect("install Function.prototype.toString");
+    context
+        .define_own_property(
+            function_prototype,
+            "toString".into(),
+            PropertyDescriptor::data_with(to_string, true, false, true),
+        )
+        .expect("define Function.prototype.toString");
 
     let has_instance = context
         .register_builtin(
@@ -236,14 +247,14 @@ fn dynamic_function_source_parts(
     if arguments.is_empty() {
         return Ok((String::new(), String::new()));
     }
-    let body = vm.to_string_coerce(
-        arguments.last().cloned().unwrap_or(JsValue::Undefined),
-        context,
-    )?;
     let mut params = Vec::new();
     for argument in &arguments[..arguments.len().saturating_sub(1)] {
         params.push(vm.to_string_coerce(argument.clone(), context)?);
     }
+    let body = vm.to_string_coerce(
+        arguments.last().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
     Ok((params.join(","), body))
 }
 
@@ -296,13 +307,45 @@ fn function_prototype_apply(
 /// that calls the target with `thisArg` and `boundArgs` prepended. The VM
 /// dispatches the resulting value (see `call_value`/`construct_value`).
 fn function_prototype_has_instance(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(JsValue::Boolean(context.ordinary_instance_of(value, this)?))
+    if !context.is_callable_value(&this) {
+        return Ok(JsValue::Boolean(false));
+    }
+    Ok(JsValue::Boolean(
+        vm.ordinary_instance_of(value, this, context)?,
+    ))
+}
+
+fn function_prototype_to_string(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    if !context.is_callable_value(&this) {
+        return Err(VmError::type_error(
+            "Function.prototype.toString receiver is not callable",
+        ));
+    }
+    let name = match &this {
+        JsValue::Function(id) => context
+            .function(*id)
+            .and_then(|function| function.name.as_deref())
+            .unwrap_or(""),
+        JsValue::BuiltinFunction(id) => context
+            .builtin(*id)
+            .map(|function| function.name)
+            .unwrap_or(""),
+        _ => "",
+    };
+    Ok(JsValue::String(format!(
+        "function {name}() {{ [native code] }}"
+    )))
 }
 
 fn function_prototype_bind(
@@ -319,13 +362,38 @@ fn function_prototype_bind(
     let bound_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let bound_args: Vec<JsValue> = arguments.iter().skip(1).cloned().collect();
 
-    // length = max(0, target.length - boundArgs.length).
     let target_length = context
-        .get_property(this.clone(), "length")
-        .ok()
-        .and_then(|value| value.to_number())
+        .value_object(&this)
+        .and_then(|object| context.get_own_property_descriptor(object, "length"))
+        .and_then(|descriptor| match descriptor.kind {
+            PropertyKind::Data {
+                value: JsValue::Number(value),
+                ..
+            } => Some(value),
+            _ => None,
+        })
         .unwrap_or(0.0);
-    let length = (target_length - bound_args.len() as f64).clamp(0.0, 255.0) as u8;
+    let length = if target_length.is_infinite() {
+        if target_length.is_sign_positive() {
+            f64::INFINITY
+        } else {
+            0.0
+        }
+    } else if target_length.is_nan() {
+        0.0
+    } else {
+        (target_length.trunc() - bound_args.len() as f64).max(0.0)
+    };
 
-    context.register_bound_function(this, bound_this, bound_args, length)
+    let target_name = context
+        .get_property(this.clone(), "name")
+        .ok()
+        .and_then(|value| match value {
+            JsValue::String(name) => Some(name),
+            _ => None,
+        })
+        .unwrap_or_default();
+    let display_name = format!("bound {target_name}");
+
+    context.register_bound_function(this, bound_this, bound_args, length, display_name)
 }

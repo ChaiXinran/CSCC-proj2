@@ -83,7 +83,13 @@ fn gc_preserves_bound_function_targets_and_arguments() {
     let target_id = object_id(&target);
 
     let bound = context
-        .register_bound_function(target.clone(), JsValue::Undefined, vec![target], 0)
+        .register_bound_function(
+            target.clone(),
+            JsValue::Undefined,
+            vec![target],
+            0.0,
+            "bound target".into(),
+        )
         .unwrap();
     context.declare_global("bound", bound);
 

@@ -118,6 +118,8 @@ pub struct GeneratorRecord {
 pub struct ProxyRecord {
     pub target: JsValue,
     pub handler: JsValue,
+    pub callable: bool,
+    pub constructable: bool,
 }
 
 /// Ordinary object storage.
@@ -197,11 +199,16 @@ impl JsObject {
     }
 
     #[must_use]
-    pub fn proxy(target: JsValue, handler: JsValue) -> Self {
+    pub fn proxy(target: JsValue, handler: JsValue, callable: bool, constructable: bool) -> Self {
         Self {
             prototype: None,
             kind: ObjectKind::Proxy {
-                record: ProxyRecord { target, handler },
+                record: ProxyRecord {
+                    target,
+                    handler,
+                    callable,
+                    constructable,
+                },
             },
             properties: PropertyMap::default(),
             symbol_properties: Vec::new(),
