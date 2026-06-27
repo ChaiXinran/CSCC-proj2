@@ -10,8 +10,8 @@
 
 use super::{boolean, error, json, math, number, proxy, regexp, string};
 use crate::runtime::{
-    JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
-    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
+    IteratorMode, JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind,
+    PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
 };
 use crate::vm::{Vm, VmError, VmErrorKind};
 
@@ -1495,18 +1495,39 @@ fn try_symbol_dispatch(
     value: JsValue,
     string_this: String,
     rest_args: &[JsValue],
-) -> Option<Result<JsValue, VmError>> {
-    let JsValue::Object(oid) = &value else {
-        return None;
+) -> Result<Option<JsValue>, VmError> {
+    let Some(method) = get_symbol_method(vm, context, value.clone(), sym)? else {
+        return Ok(None);
     };
-    let method = context.get_symbol_property_value(*oid, sym)?;
-    if !is_callable_value(&method) {
-        return None;
-    }
     let mut call_args = Vec::with_capacity(1 + rest_args.len());
     call_args.push(JsValue::String(string_this));
     call_args.extend_from_slice(rest_args);
-    Some(vm.call_value_from_builtin(method, value, call_args, context))
+    vm.call_value_from_builtin(method, value, call_args, context)
+        .map(Some)
+}
+
+fn get_symbol_method(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    sym: crate::runtime::SymbolId,
+) -> Result<Option<JsValue>, VmError> {
+    if matches!(value, JsValue::Undefined | JsValue::Null) {
+        return Ok(None);
+    }
+    let method = vm.get_symbol_property_value_with_receiver_from_builtin(
+        value.clone(),
+        value,
+        sym,
+        context,
+    )?;
+    if matches!(method, JsValue::Undefined | JsValue::Null) {
+        return Ok(None);
+    }
+    if !is_callable_value(&method) {
+        return Err(VmError::type_error("symbol method is not callable"));
+    }
+    Ok(Some(method))
 }
 
 /// Extract (pattern, flags) from a value known to be a RegExp object.
@@ -1704,8 +1725,8 @@ fn string_split(
         first_arg.clone(),
         value.clone(),
         arguments.get(1..).unwrap_or_default(),
-    ) {
-        return r;
+    )? {
+        return Ok(r);
     }
     let limit = match arguments.get(1) {
         None | Some(JsValue::Undefined) => None,
@@ -1743,8 +1764,8 @@ fn string_search(
     let first_arg = arg(arguments, 0);
     // @@search dispatch
     let sym = context.well_known_symbols().search;
-    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[]) {
-        return r;
+    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[])? {
+        return Ok(r);
     }
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         let re = regexp::compile_regex(&pattern, &flags)
@@ -1774,8 +1795,8 @@ fn string_replace(
         first_arg.clone(),
         value.clone(),
         arguments.get(1..).unwrap_or_default(),
-    ) {
-        return r;
+    )? {
+        return Ok(r);
     }
     let replace_arg = arg(arguments, 1);
     let replace_is_fn = is_callable_value(&replace_arg);
@@ -1905,8 +1926,8 @@ fn string_replace_all(
         first_arg.clone(),
         value.clone(),
         arguments.get(1..).unwrap_or_default(),
-    ) {
-        return r;
+    )? {
+        return Ok(r);
     }
     let replace_arg = arg(arguments, 1);
     let replace_is_fn = is_callable_value(&replace_arg);
@@ -2010,8 +2031,8 @@ fn string_match(
     }
     // @@match dispatch
     let sym = context.well_known_symbols().match_;
-    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[]) {
-        return r;
+    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[])? {
+        return Ok(r);
     }
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         let re = regexp::compile_regex(&pattern, &flags)
@@ -2093,34 +2114,69 @@ fn string_match_all(
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let value = this_string(vm, context, this)?;
     let first_arg = arg(arguments, 0);
-    // @@matchAll dispatch
-    let sym = context.well_known_symbols().match_all;
-    if let Some(r) = try_symbol_dispatch(vm, context, sym, first_arg.clone(), value.clone(), &[]) {
-        return r;
+    if regexp_data(context, &first_arg).is_some() {
+        let flags_value = vm.get_property_value(first_arg.clone(), "flags", context)?;
+        if matches!(flags_value, JsValue::Undefined | JsValue::Null) {
+            return Err(VmError::type_error(
+                "String.prototype.matchAll requires RegExp flags",
+            ));
+        }
+        let flags = vm.to_string_coerce(flags_value, context)?;
+        if !flags.contains('g') {
+            return Err(VmError::type_error(
+                "String.prototype.matchAll called with a non-global RegExp",
+            ));
+        }
     }
-    let (pattern, flags) = match regexp_data(context, &first_arg) {
+    let value = this_string(vm, context, this)?;
+    let sym = context.well_known_symbols().match_all;
+    if context.value_object(&first_arg).is_some()
+        && let Some(method) = get_symbol_method(vm, context, first_arg.clone(), sym)?
+    {
+        return vm.call_value_from_builtin(
+            method,
+            first_arg,
+            vec![JsValue::String(value)],
+            context,
+        );
+    }
+    invoke_regexp_match_all_fallback(vm, context, first_arg, value)
+}
+
+fn invoke_regexp_match_all_fallback(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    pattern_value: JsValue,
+    string: String,
+) -> Result<JsValue, VmError> {
+    let (pattern, engine_flags) = match regexp_data(context, &pattern_value) {
         Some(pair) => pair,
         None => {
             // Coerce to string, treat as literal pattern with no flags.
-            let s = vm.to_string_coerce(first_arg, context)?;
+            let s = if matches!(pattern_value, JsValue::Undefined) {
+                String::new()
+            } else {
+                vm.to_string_coerce(pattern_value, context)?
+            };
             (s, String::new())
         }
     };
-    // matchAll requires the `g` or `y` flag on a regexp argument.
-    if !flags.is_empty() && !flags.contains('g') && !flags.contains('y') {
-        return Err(VmError::type_error(
-            "String.prototype.matchAll called with a non-global RegExp",
-        ));
+    let rx = context.create_regexp(pattern.clone(), "g".into())?;
+    let sym = context.well_known_symbols().match_all;
+    let Some(method) = get_symbol_method(vm, context, rx.clone(), sym)? else {
+        return Err(VmError::type_error("RegExp @@matchAll is not callable"));
+    };
+    if !is_builtin_regexp_symbol_match_all(context, &method) {
+        return vm.call_value_from_builtin(method, rx, vec![JsValue::String(string)], context);
     }
-    let re = regexp::compile_regex(&pattern, &flags)
+    let re = regexp::compile_regex(&pattern, &engine_flags)
         .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
 
     let mut entries = Vec::new();
-    for caps in re.captures_iter(&value) {
+    for caps in re.captures_iter(&string) {
         let m = caps.get(0).unwrap();
-        let index = value[..m.start()].encode_utf16().count();
+        let index = string[..m.start()].encode_utf16().count();
         let elements: Vec<JsValue> = (0..caps.len())
             .map(|i| {
                 caps.get(i).map_or(JsValue::Undefined, |c| {
@@ -2138,14 +2194,36 @@ fn string_match_all(
             context.define_own_property(
                 oid,
                 "input".into(),
-                PropertyDescriptor::data_with(JsValue::String(value.clone()), true, true, true),
+                PropertyDescriptor::data_with(JsValue::String(string.clone()), true, true, true),
             )?;
             entries.push(JsValue::Object(oid));
         }
     }
 
-    // Return a plain array (not a lazy iterator).
-    context.create_array(entries)
+    let length = entries.len();
+    let array = context.create_array(entries)?;
+    context.create_array_iterator_object(
+        array,
+        length,
+        IteratorMode::Value,
+        iterator_prototype_for_builtin(context),
+    )
+}
+
+fn is_builtin_regexp_symbol_match_all(context: &NativeContext, value: &JsValue) -> bool {
+    let JsValue::BuiltinFunction(id) = value else {
+        return false;
+    };
+    context
+        .builtin(*id)
+        .is_some_and(|function| function.name == "[Symbol.matchAll]")
+}
+
+fn iterator_prototype_for_builtin(context: &NativeContext) -> Option<ObjectId> {
+    context
+        .get_global("Iterator")
+        .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten())
+        .or_else(|| context.object_prototype())
 }
 
 fn string_pad_start(

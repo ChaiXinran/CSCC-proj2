@@ -123,6 +123,10 @@ pub(crate) const PROTOTYPE_METHODS: &[StringMethodSpec] = &[
         length: 1,
     },
     StringMethodSpec {
+        name: "matchAll",
+        length: 1,
+    },
+    StringMethodSpec {
         name: "padStart",
         length: 1,
     },

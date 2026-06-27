@@ -13,6 +13,8 @@ use crate::{
     vm::{Vm, VmError},
 };
 
+const MAX_REGEXP_REPLACE_OUTPUT_BYTES: usize = 1 << 23;
+
 pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_regexp_refinements(context)?;
     install_annex_b_refinements(context)?;
@@ -130,12 +132,7 @@ fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError
     ] {
         define_accessor(context, prototype, name, getter_name, getter, None, None)?;
     }
-    context.define_symbol_own_property(
-        prototype,
-        context.well_known_symbols().to_string_tag,
-        PropertyDescriptor::data_with(JsValue::String("RegExp".into()), false, false, true),
-    )?;
-
+    context.delete_symbol_property(prototype, context.well_known_symbols().to_string_tag, false)?;
     let wk = *context.well_known_symbols();
     for (name, symbol, length, call) in [
         (
@@ -155,6 +152,12 @@ fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError
             wk.search,
             1,
             regexp_symbol_search as NativeCall,
+        ),
+        (
+            "[Symbol.replace]",
+            wk.replace,
+            2,
+            regexp_symbol_replace as NativeCall,
         ),
         (
             "[Symbol.split]",
@@ -470,10 +473,11 @@ fn regexp_exec_value(
 ) -> Result<JsValue, VmError> {
     let (_, pattern, flags) = require_regexp(context, &this_value)?;
     let global_or_sticky = flags.contains('g') || flags.contains('y');
+    let last_index = vm.get_property_value(this_value.clone(), "lastIndex", context)?;
     let start_index = if global_or_sticky {
-        let last_index = vm.get_property_value(this_value.clone(), "lastIndex", context)?;
         to_length(vm.to_number(last_index, context)?)
     } else {
+        let _ = vm.to_number(last_index, context)?;
         0
     };
     let re = regexp::compile_regex(&pattern, &flags)
@@ -506,12 +510,7 @@ fn regexp_exec_value(
     let match_index = string[..absolute_start].encode_utf16().count();
     let match_end = string[..absolute_end].encode_utf16().count();
     if global_or_sticky {
-        let next_index = if absolute_start == absolute_end {
-            match_end.saturating_add(1)
-        } else {
-            match_end
-        };
-        set_last_index(vm, context, this_value.clone(), next_index)?;
+        set_last_index(vm, context, this_value.clone(), match_end)?;
     }
     let elements = (0..captures.len())
         .map(|index| {
@@ -543,9 +542,9 @@ fn regexp_exec_value(
 }
 
 fn to_length(value: f64) -> usize {
-    if !value.is_finite() || value <= 0.0 {
+    if value.is_nan() || value <= 0.0 {
         0
-    } else if value >= usize::MAX as f64 {
+    } else if !value.is_finite() || value >= usize::MAX as f64 {
         usize::MAX
     } else {
         value.trunc() as usize
@@ -569,12 +568,25 @@ fn set_last_index(
     receiver: JsValue,
     value: usize,
 ) -> Result<(), VmError> {
-    vm.set_property_value_strict_from_builtin(
-        receiver,
-        "lastIndex",
-        JsValue::Number(value as f64),
-        context,
-    )?;
+    set_last_index_number(vm, context, receiver, value as f64)
+}
+
+fn set_last_index_number(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    receiver: JsValue,
+    value: f64,
+) -> Result<(), VmError> {
+    set_last_index_value(vm, context, receiver, JsValue::Number(value))
+}
+
+fn set_last_index_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    receiver: JsValue,
+    value: JsValue,
+) -> Result<(), VmError> {
+    vm.set_property_value_strict_from_builtin(receiver, "lastIndex", value, context)?;
     Ok(())
 }
 
@@ -604,27 +616,9 @@ fn regexp_compile(
 fn refresh_regexp_own_properties(
     context: &mut NativeContext,
     object: ObjectId,
-    pattern: &str,
-    flags: &str,
+    _pattern: &str,
+    _flags: &str,
 ) -> Result<(), VmError> {
-    for (name, value) in [
-        ("source", JsValue::String(escape_regexp_source(pattern))),
-        ("flags", JsValue::String(sort_regexp_flags(flags))),
-        ("global", JsValue::Boolean(flags.contains('g'))),
-        ("ignoreCase", JsValue::Boolean(flags.contains('i'))),
-        ("multiline", JsValue::Boolean(flags.contains('m'))),
-        ("dotAll", JsValue::Boolean(flags.contains('s'))),
-        ("sticky", JsValue::Boolean(flags.contains('y'))),
-        ("unicode", JsValue::Boolean(flags.contains('u'))),
-        ("unicodeSets", JsValue::Boolean(flags.contains('v'))),
-        ("hasIndices", JsValue::Boolean(flags.contains('d'))),
-    ] {
-        context.define_own_property(
-            object,
-            name.into(),
-            PropertyDescriptor::data_with(value, false, false, true),
-        )?;
-    }
     context.define_own_property(
         object,
         "lastIndex".into(),
@@ -634,15 +628,14 @@ fn refresh_regexp_own_properties(
 }
 
 fn regexp_escape(
-    vm: &mut Vm,
-    context: &mut NativeContext,
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let string = vm.to_string_coerce(
-        arguments.first().cloned().unwrap_or(JsValue::Undefined),
-        context,
-    )?;
+    let Some(JsValue::String(string)) = arguments.first() else {
+        return Err(VmError::type_error("RegExp.escape requires a string"));
+    };
     Ok(JsValue::String(escape_regexp_pattern_literal(&string)))
 }
 
@@ -664,17 +657,41 @@ fn escape_regexp_pattern_literal(value: &str) -> String {
             '\t' => result.push_str("\\t"),
             '\u{000B}' => result.push_str("\\v"),
             '\u{000C}' => result.push_str("\\f"),
-            ' ' => result.push_str("\\x20"),
+            ' ' => push_hex_escape(&mut result, ch as u32, 2),
             ',' | '-' | '=' | '<' | '>' | '#' | '&' | '!' | '%' | ':' | ';' | '@' | '~' | '\''
             | '"' | '`'
                 if ch.is_ascii() =>
             {
                 push_hex_escape(&mut result, ch as u32, 2)
             }
+            _ if is_regexp_escape_whitespace_or_lineterminator(ch) => {
+                if (ch as u32) <= 0xff {
+                    push_hex_escape(&mut result, ch as u32, 2);
+                } else {
+                    let mut buffer = [0u16; 2];
+                    for unit in ch.encode_utf16(&mut buffer) {
+                        push_unicode_escape(&mut result, *unit as u32);
+                    }
+                }
+            }
             _ => result.push(ch),
         }
     }
     result
+}
+
+fn is_regexp_escape_whitespace_or_lineterminator(ch: char) -> bool {
+    matches!(
+        ch,
+        '\u{00A0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200A}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202F}'
+                | '\u{205F}'
+                | '\u{3000}'
+                | '\u{FEFF}'
+    )
 }
 
 fn regexp_symbol_match(
@@ -683,35 +700,92 @@ fn regexp_symbol_match(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_, _, flags) = require_regexp(context, &this_value)?;
     let string = vm.to_string_coerce(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    if flags.contains('g') {
-        set_last_index(vm, context, this_value.clone(), 0)?;
-        let mut values = Vec::new();
-        loop {
-            let result = regexp_exec_value(vm, context, this_value.clone(), string.clone())?;
-            let JsValue::Object(object) = result else {
-                break;
-            };
-            let value = context
-                .get_own_property_descriptor(object, "0")
-                .and_then(|descriptor| descriptor.value_cloned())
-                .unwrap_or(JsValue::Undefined);
-            values.push(value);
-            if values.len() > 1 << 20 {
-                return Err(VmError::runtime_limit("RegExp match result too large"));
-            }
-        }
-        return if values.is_empty() {
-            Ok(JsValue::Null)
-        } else {
-            context.create_array(values)
-        };
+    let flags_value = vm.get_property_value(this_value.clone(), "flags", context)?;
+    let flags = vm.to_string_coerce(flags_value, context)?;
+    let global = flags.contains('g');
+    if !global {
+        return regexp_exec_abstract(vm, context, this_value, string);
     }
-    regexp_exec_value(vm, context, this_value, string)
+    let full_unicode = flags.contains('u');
+    set_last_index_number(vm, context, this_value.clone(), 0.0)?;
+    let mut values = Vec::new();
+    loop {
+        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
+        let JsValue::Object(object) = result else {
+            break;
+        };
+        let result_value = JsValue::Object(object);
+        let match_value = vm.get_property_value(result_value.clone(), "0", context)?;
+        let match_string = vm.to_string_coerce(match_value, context)?;
+        values.push(JsValue::String(match_string.clone()));
+        if match_string.is_empty() {
+            let last_index = regexp_last_index(vm, context, this_value.clone())?;
+            let next_index = advance_string_index(&string, last_index, full_unicode);
+            set_last_index_number(vm, context, this_value.clone(), next_index as f64)?;
+        }
+        if values.len() > 1 << 20 {
+            return Err(VmError::runtime_limit("RegExp match result too large"));
+        }
+    }
+    if values.is_empty() {
+        Ok(JsValue::Null)
+    } else {
+        context.create_array(values)
+    }
+}
+
+fn regexp_exec_abstract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    regexp: JsValue,
+    string: String,
+) -> Result<JsValue, VmError> {
+    let exec = vm.get_property_value(regexp.clone(), "exec", context)?;
+    if is_callable(&exec) {
+        let result = vm.call_value_from_builtin(
+            exec,
+            regexp.clone(),
+            vec![JsValue::String(string)],
+            context,
+        )?;
+        if matches!(result, JsValue::Null) || context.value_object(&result).is_some() {
+            return Ok(result);
+        }
+        return Err(VmError::type_error(
+            "RegExp exec result must be an object or null",
+        ));
+    }
+    if regexp_data(context, &regexp).is_some() {
+        regexp_exec_value(vm, context, regexp, string)
+    } else {
+        Err(VmError::type_error("RegExp method called on non-RegExp"))
+    }
+}
+
+fn regexp_last_index(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    regexp: JsValue,
+) -> Result<usize, VmError> {
+    let value = vm.get_property_value(regexp, "lastIndex", context)?;
+    Ok(to_length(vm.to_number(value, context)?))
+}
+
+fn advance_string_index(string: &str, index: usize, unicode: bool) -> usize {
+    if !unicode {
+        return index.saturating_add(1);
+    }
+    let Some(byte_index) = byte_index_from_utf16(string, index) else {
+        return index.saturating_add(1);
+    };
+    let Some(ch) = string[byte_index..].chars().next() else {
+        return index.saturating_add(1);
+    };
+    index.saturating_add(ch.len_utf16())
 }
 
 fn regexp_symbol_match_all(
@@ -743,6 +817,16 @@ fn regexp_symbol_match_all(
         if matches!(result, JsValue::Null) {
             break;
         }
+        if let JsValue::Object(object) = &result {
+            let result_value = JsValue::Object(*object);
+            let match_value = vm.get_property_value(result_value, "0", context)?;
+            let match_string = vm.to_string_coerce(match_value, context)?;
+            if match_string.is_empty() {
+                let last_index = regexp_last_index(vm, context, this_value.clone())?;
+                let next_index = advance_string_index(&string, last_index, flags.contains('u'));
+                set_last_index_number(vm, context, this_value.clone(), next_index as f64)?;
+            }
+        }
         matches.push(result);
         if matches.len() > 1 << 20 {
             return Err(VmError::runtime_limit("RegExp matchAll result too large"));
@@ -762,22 +846,261 @@ fn regexp_symbol_search(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    let saved_last_index = vm
-        .get_property_value(this_value.clone(), "lastIndex", context)
-        .ok()
-        .and_then(|value| value.to_number())
-        .map(to_length)
-        .unwrap_or(0);
-    set_last_index(vm, context, this_value.clone(), 0)?;
-    let result = regexp_exec_value(vm, context, this_value.clone(), string)?;
-    set_last_index(vm, context, this_value, saved_last_index)?;
+    let previous_last_index = vm.get_property_value(this_value.clone(), "lastIndex", context)?;
+    if !previous_last_index.same_value(&JsValue::Number(0.0)) {
+        set_last_index_number(vm, context, this_value.clone(), 0.0)?;
+    }
+    let result = regexp_exec_abstract(vm, context, this_value.clone(), string)?;
+    let current_last_index = vm.get_property_value(this_value.clone(), "lastIndex", context)?;
+    if !current_last_index.same_value(&previous_last_index) {
+        set_last_index_value(vm, context, this_value.clone(), previous_last_index.clone())?;
+    }
     if let JsValue::Object(object) = result {
-        Ok(context
-            .get_own_property_descriptor(object, "index")
-            .and_then(|descriptor| descriptor.value_cloned())
-            .unwrap_or(JsValue::Number(-1.0)))
+        vm.get_property_value(JsValue::Object(object), "index", context)
     } else {
         Ok(JsValue::Number(-1.0))
+    }
+}
+
+#[derive(Clone)]
+struct ReplaceMatch {
+    matched: String,
+    position: usize,
+    captures: Vec<JsValue>,
+    groups: JsValue,
+}
+
+fn regexp_symbol_replace(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let string = vm.to_string_coerce(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    let replace_value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    let functional_replace = is_callable(&replace_value);
+    let replacement = if functional_replace {
+        None
+    } else {
+        Some(vm.to_string_coerce(replace_value.clone(), context)?)
+    };
+    let flags_value = vm.get_property_value(this_value.clone(), "flags", context)?;
+    let flags = vm.to_string_coerce(flags_value, context)?;
+    let global = flags.contains('g');
+    let full_unicode = flags.contains('u');
+    if global {
+        set_last_index_number(vm, context, this_value.clone(), 0.0)?;
+    }
+
+    let mut results = Vec::new();
+    loop {
+        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
+        let JsValue::Object(object) = result else {
+            break;
+        };
+        let result_value = JsValue::Object(object);
+        let matched_value = vm.get_property_value(result_value.clone(), "0", context)?;
+        let matched = vm.to_string_coerce(matched_value, context)?;
+        let index_value = vm.get_property_value(result_value.clone(), "index", context)?;
+        let position =
+            to_length(vm.to_number(index_value, context)?).min(string.encode_utf16().count());
+        let length_value = vm.get_property_value(result_value.clone(), "length", context)?;
+        let length = to_length(vm.to_number(length_value, context)?);
+        let mut captures = Vec::new();
+        for index in 1..length {
+            captures.push(vm.get_property_value(
+                result_value.clone(),
+                &index.to_string(),
+                context,
+            )?);
+        }
+        let groups = vm.get_property_value(result_value.clone(), "groups", context)?;
+        results.push(ReplaceMatch {
+            matched: matched.clone(),
+            position,
+            captures,
+            groups,
+        });
+        if !global {
+            break;
+        }
+        if matched.is_empty() {
+            let last_index = regexp_last_index(vm, context, this_value.clone())?;
+            let next_index = advance_string_index(&string, last_index, full_unicode);
+            set_last_index_number(vm, context, this_value.clone(), next_index as f64)?;
+        }
+        if results.len() > 1 << 20 {
+            return Err(VmError::runtime_limit("RegExp replace result too large"));
+        }
+    }
+
+    if results.is_empty() {
+        return Ok(JsValue::String(string));
+    }
+    let mut accumulated = String::new();
+    let mut next_source_position = 0usize;
+    for item in results {
+        let byte_position = byte_index_from_utf16(&string, item.position).unwrap_or(string.len());
+        let match_end = item
+            .position
+            .saturating_add(item.matched.encode_utf16().count());
+        let byte_match_end = byte_index_from_utf16(&string, match_end).unwrap_or(string.len());
+        if byte_position > next_source_position {
+            push_str_replacement(
+                &mut accumulated,
+                &string[next_source_position..byte_position],
+            )?;
+        }
+        let replacement_text = if functional_replace {
+            let mut args = Vec::with_capacity(item.captures.len() + 4);
+            args.push(JsValue::String(item.matched.clone()));
+            args.extend(item.captures.clone());
+            args.push(JsValue::Number(item.position as f64));
+            args.push(JsValue::String(string.clone()));
+            if !matches!(item.groups, JsValue::Undefined) {
+                args.push(item.groups.clone());
+            }
+            let value = vm.call_value_from_builtin(
+                replace_value.clone(),
+                JsValue::Undefined,
+                args,
+                context,
+            )?;
+            vm.to_string_coerce(value, context)?
+        } else {
+            get_substitution(
+                replacement.as_deref().unwrap_or_default(),
+                &item.matched,
+                &string[..byte_position],
+                &string[byte_match_end..],
+                &item.captures,
+                item.groups.clone(),
+                vm,
+                context,
+            )?
+        };
+        push_str_replacement(&mut accumulated, &replacement_text)?;
+        next_source_position = byte_match_end;
+    }
+    push_str_replacement(&mut accumulated, &string[next_source_position..])?;
+    Ok(JsValue::String(accumulated))
+}
+
+fn get_substitution(
+    template: &str,
+    matched: &str,
+    prefix: &str,
+    suffix: &str,
+    captures: &[JsValue],
+    groups: JsValue,
+    vm: &mut Vm,
+    context: &mut NativeContext,
+) -> Result<String, VmError> {
+    let mut result = String::new();
+    let bytes = template.as_bytes();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] != b'$' || index + 1 >= bytes.len() {
+            let ch = template[index..].chars().next().unwrap();
+            push_char_replacement(&mut result, ch)?;
+            index += ch.len_utf8();
+            continue;
+        }
+        match bytes[index + 1] {
+            b'$' => {
+                push_char_replacement(&mut result, '$')?;
+                index += 2;
+            }
+            b'&' => {
+                push_str_replacement(&mut result, matched)?;
+                index += 2;
+            }
+            b'`' => {
+                push_str_replacement(&mut result, prefix)?;
+                index += 2;
+            }
+            b'\'' => {
+                push_str_replacement(&mut result, suffix)?;
+                index += 2;
+            }
+            b'<' => {
+                if let Some(close_offset) = template[index + 2..].find('>') {
+                    if matches!(groups, JsValue::Undefined) {
+                        push_char_replacement(&mut result, '$')?;
+                        index += 1;
+                        continue;
+                    }
+                    let name_start = index + 2;
+                    let name_end = name_start + close_offset;
+                    let name = &template[name_start..name_end];
+                    let groups_object = vm.to_object(groups.clone(), context)?;
+                    let capture =
+                        vm.get_property_value(context.object_value(groups_object), name, context)?;
+                    if !matches!(capture, JsValue::Undefined) {
+                        let capture = vm.to_string_coerce(capture, context)?;
+                        push_str_replacement(&mut result, &capture)?;
+                    }
+                    index = name_end + 1;
+                } else {
+                    push_char_replacement(&mut result, '$')?;
+                    index += 1;
+                }
+            }
+            digit @ b'0'..=b'9' => {
+                let mut capture_index = (digit - b'0') as usize;
+                let mut advance = 2usize;
+                if index + 2 < bytes.len() && bytes[index + 2].is_ascii_digit() {
+                    let two_digit = capture_index * 10 + (bytes[index + 2] - b'0') as usize;
+                    if (1..=captures.len()).contains(&two_digit) {
+                        capture_index = two_digit;
+                        advance = 3;
+                    }
+                }
+                if (1..=captures.len()).contains(&capture_index) {
+                    let capture = captures[capture_index - 1].clone();
+                    if !matches!(capture, JsValue::Undefined) {
+                        let capture = vm.to_string_coerce(capture, context)?;
+                        push_str_replacement(&mut result, &capture)?;
+                    }
+                    index += advance;
+                } else {
+                    push_char_replacement(&mut result, '$')?;
+                    let ch = template[index + 1..].chars().next().unwrap();
+                    push_char_replacement(&mut result, ch)?;
+                    index += 1 + ch.len_utf8();
+                }
+            }
+            _ => {
+                push_char_replacement(&mut result, '$')?;
+                index += 1;
+            }
+        }
+    }
+    Ok(result)
+}
+
+fn push_char_replacement(output: &mut String, ch: char) -> Result<(), VmError> {
+    if output.len().saturating_add(ch.len_utf8()) > MAX_REGEXP_REPLACE_OUTPUT_BYTES {
+        Err(VmError::runtime_limit(
+            "regexp replacement allocation limit exceeded",
+        ))
+    } else {
+        output.push(ch);
+        Ok(())
+    }
+}
+
+fn push_str_replacement(output: &mut String, value: &str) -> Result<(), VmError> {
+    if output.len().saturating_add(value.len()) > MAX_REGEXP_REPLACE_OUTPUT_BYTES {
+        Err(VmError::runtime_limit(
+            "regexp replacement allocation limit exceeded",
+        ))
+    } else {
+        output.push_str(value);
+        Ok(())
     }
 }
 
@@ -1186,5 +1509,10 @@ html_method!(string_sup, "sup");
 
 fn push_hex_escape(output: &mut String, value: u32, width: usize) {
     output.push_str(if width == 2 { "\\x" } else { "\\u" });
-    output.push_str(&format!("{value:0width$X}"));
+    output.push_str(&format!("{value:0width$x}"));
+}
+
+fn push_unicode_escape(output: &mut String, value: u32) {
+    output.push_str("\\u");
+    output.push_str(&format!("{value:04x}"));
 }
