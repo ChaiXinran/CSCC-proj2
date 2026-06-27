@@ -148,6 +148,22 @@ impl Vm {
         self.pending_exception.clone()
     }
 
+    pub(crate) fn take_pending_exception_from_builtin(&mut self) -> Option<JsValue> {
+        self.pending_exception.take()
+    }
+
+    pub(crate) fn with_root_from_builtin<T>(
+        &mut self,
+        value: JsValue,
+        operation: impl FnOnce(&mut Self) -> Result<T, VmError>,
+    ) -> Result<T, VmError> {
+        let root_depth = self.stack.len();
+        self.stack.push(value);
+        let result = operation(self);
+        self.stack.truncate(root_depth);
+        result
+    }
+
     pub fn execute_with_context(
         &mut self,
         chunk: &Chunk,
@@ -2031,6 +2047,8 @@ impl Vm {
             EnvironmentCapturePolicy::None => None,
             EnvironmentCapturePolicy::CaptureCurrent => Some(context.current_environment()),
         };
+        let is_async = template.is_async;
+        let is_generator = template.is_generator;
         let id = context.allocate_function(JsFunction {
             name: template.name,
             params: template.params,
@@ -2038,9 +2056,16 @@ impl Vm {
             length_override: template.length_override,
             chunk: template.chunk,
             environment,
-            is_async: template.is_async,
-            is_generator: template.is_generator,
+            is_async,
+            is_generator,
         })?;
+        if is_generator
+            && !is_async
+            && let Some(generator_prototype) = context.function_prototype(id)
+            && let Some(iterator_prototype) = intrinsic_iterator_prototype(context)
+        {
+            context.set_prototype_of(generator_prototype, Some(iterator_prototype))?;
+        }
         if template.is_strict || context.strict() {
             context.mark_strict_function(id);
             context.install_restricted_function_properties(id)?;
@@ -2067,17 +2092,23 @@ impl Vm {
             delegate_iterator: None,
             delegate_return: None,
         };
+        let is_async = context
+            .function(function)
+            .is_some_and(|function| function.is_async);
         let mut object = JsObject::ordinary();
-        object.prototype = context.object_prototype();
+        object.prototype = if is_async {
+            context.object_prototype()
+        } else {
+            context
+                .function_prototype(function)
+                .or_else(|| context.object_prototype())
+        };
         object.kind = ObjectKind::Generator { record };
         let object = context
             .heap_mut()
             .allocate_object(object)
             .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
 
-        let is_async = context
-            .function(function)
-            .is_some_and(|function| function.is_async);
         let (next, return_, throw) = if is_async {
             (
                 context.register_builtin(
@@ -3475,6 +3506,68 @@ impl Vm {
                 self.pending_exception = Some(value);
                 Err(VmError::runtime("JavaScript callback threw"))
             }
+        }
+    }
+
+    pub(crate) fn close_iterator_from_builtin(
+        &mut self,
+        iterator: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<(), VmError> {
+        self.close_iterator_from_builtin_with_throw(iterator, None, context)
+    }
+
+    pub(crate) fn close_iterator_preserving_throw_from_builtin(
+        &mut self,
+        iterator: JsValue,
+        thrown: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<(), VmError> {
+        self.close_iterator_from_builtin_with_throw(iterator, Some(thrown), context)
+    }
+
+    fn close_iterator_from_builtin_with_throw(
+        &mut self,
+        iterator: JsValue,
+        original_throw: Option<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<(), VmError> {
+        let return_method =
+            match self.get_property_value_completion(iterator.clone(), "return", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => {
+                    self.pending_exception = original_throw.clone().or(Some(value));
+                    return Err(VmError::runtime("iterator return getter threw"));
+                }
+            };
+        if matches!(return_method, JsValue::Undefined | JsValue::Null) {
+            if let Some(thrown) = original_throw {
+                self.pending_exception = Some(thrown);
+                return Err(VmError::runtime("iterator operation threw"));
+            }
+            return Ok(());
+        }
+        if !is_callable_value(&return_method) {
+            if let Some(thrown) = original_throw {
+                self.pending_exception = Some(thrown);
+                return Err(VmError::runtime("iterator operation threw"));
+            }
+            return Err(VmError::type_error("iterator return is not callable"));
+        }
+        let inner_result = self.call_value(return_method, iterator, Vec::new(), context)?;
+        if let Some(thrown) = original_throw {
+            self.pending_exception = Some(thrown);
+            return Err(VmError::runtime("iterator operation threw"));
+        }
+        match inner_result {
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("iterator return method threw"))
+            }
+            OperationResult::Value(value) if !is_object_like(&value) => {
+                Err(VmError::type_error("iterator return returned a non-object"))
+            }
+            OperationResult::Value(_) => Ok(()),
         }
     }
 
@@ -4998,6 +5091,15 @@ fn is_object_like(value: &JsValue) -> bool {
 
 fn is_callable_value(value: &JsValue) -> bool {
     matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
+}
+
+fn intrinsic_iterator_prototype(context: &NativeContext) -> Option<ObjectId> {
+    let constructor = context.get_global("Iterator")?;
+    let constructor = context.value_object(&constructor)?;
+    context
+        .get_own_property_descriptor(constructor, "prototype")?
+        .value_cloned()
+        .and_then(|value| context.value_object(&value))
 }
 
 fn existing_accessor_getter(
