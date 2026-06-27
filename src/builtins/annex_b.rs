@@ -1176,24 +1176,131 @@ fn regexp_symbol_split(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_, pattern, flags) = require_regexp(context, &this_value)?;
+    context.require_object(&this_value, "RegExp.prototype[@@split] receiver")?;
     let string = vm.to_string_coerce(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    let limit = arguments
-        .get(1)
-        .filter(|value| !matches!(value, JsValue::Undefined))
-        .map(|value| vm.to_number(value.clone(), context))
-        .transpose()?
-        .map(to_length);
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|error| VmError::syntax_error(format!("invalid regular expression: {error}")))?;
-    let parts = regexp::split(&re, &string, limit)
-        .into_iter()
-        .map(|part| part.map_or(JsValue::Undefined, JsValue::String))
-        .collect();
-    context.create_array(parts)
+    let flags_value = vm.get_property_value(this_value.clone(), "flags", context)?;
+    let flags = vm.to_string_coerce(flags_value, context)?;
+    let new_flags = if flags.contains('y') {
+        flags.clone()
+    } else {
+        format!("{flags}y")
+    };
+    let constructor = regexp_species_constructor(vm, context, this_value.clone())?;
+    let splitter = vm.construct_value_from_builtin(
+        constructor,
+        vec![this_value.clone(), JsValue::String(new_flags.clone())],
+        context,
+    )?;
+    let limit = match arguments.get(1) {
+        Some(value) if !matches!(value, JsValue::Undefined) => {
+            to_uint32(vm.to_number(value.clone(), context)?) as usize
+        }
+        _ => u32::MAX as usize,
+    };
+    let mut output = Vec::new();
+    if limit == 0 {
+        return context.create_array(output);
+    }
+    let size = string.encode_utf16().count();
+    if size == 0 {
+        let z = regexp_exec_abstract(vm, context, splitter, string.clone())?;
+        if !matches!(z, JsValue::Null) {
+            return context.create_array(output);
+        }
+        output.push(JsValue::String(string));
+        return context.create_array(output);
+    }
+
+    let unicode_matching = new_flags.contains('u');
+    let mut p = 0usize;
+    let mut q = 0usize;
+    while q < size {
+        set_last_index(vm, context, splitter.clone(), q)?;
+        let z = regexp_exec_abstract(vm, context, splitter.clone(), string.clone())?;
+        if matches!(z, JsValue::Null) {
+            q = advance_string_index(&string, q, unicode_matching);
+            continue;
+        }
+        let JsValue::Object(match_object) = z else {
+            return Err(VmError::type_error(
+                "RegExp split result must be an object or null",
+            ));
+        };
+        let last_index = vm.get_property_value(splitter.clone(), "lastIndex", context)?;
+        let mut e = to_length(vm.to_number(last_index, context)?);
+        e = e.min(size);
+        if e == p {
+            q = advance_string_index(&string, q, unicode_matching);
+            continue;
+        }
+        output.push(JsValue::String(utf16_substring(&string, p, q)));
+        if output.len() == limit {
+            return context.create_array(output);
+        }
+        p = e;
+        let match_value = JsValue::Object(match_object);
+        let length_value = vm.get_property_value(match_value.clone(), "length", context)?;
+        let number_of_captures = to_length(vm.to_number(length_value, context)?);
+        for capture_index in 1..number_of_captures {
+            let capture =
+                vm.get_property_value(match_value.clone(), &capture_index.to_string(), context)?;
+            output.push(capture);
+            if output.len() == limit {
+                return context.create_array(output);
+            }
+        }
+        q = p;
+    }
+    output.push(JsValue::String(utf16_substring(&string, p, size)));
+    context.create_array(output)
+}
+
+fn regexp_species_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    rx: JsValue,
+) -> Result<JsValue, VmError> {
+    let default_constructor = context
+        .get_global("RegExp")
+        .ok_or_else(|| VmError::runtime("RegExp constructor missing"))?;
+    let constructor = vm.get_property_value(rx, "constructor", context)?;
+    if matches!(constructor, JsValue::Undefined) {
+        return Ok(default_constructor);
+    }
+    if context.value_object(&constructor).is_none() {
+        return Err(VmError::type_error("RegExp species constructor is not an object"));
+    }
+    let species_symbol = context.well_known_symbols().species;
+    let species = vm.get_symbol_property_value_with_receiver_from_builtin(
+        constructor.clone(),
+        constructor,
+        species_symbol,
+        context,
+    )?;
+    if matches!(species, JsValue::Undefined | JsValue::Null) {
+        return Ok(default_constructor);
+    }
+    if !context.is_constructable_value(&species) {
+        return Err(VmError::type_error("RegExp species is not a constructor"));
+    }
+    Ok(species)
+}
+
+fn to_uint32(value: f64) -> u32 {
+    if !value.is_finite() || value == 0.0 {
+        return 0;
+    }
+    let int = value.signum() * value.abs().floor();
+    int.rem_euclid(4_294_967_296.0) as u32
+}
+
+fn utf16_substring(value: &str, start: usize, end: usize) -> String {
+    let start = byte_index_from_utf16(value, start).unwrap_or(value.len());
+    let end = byte_index_from_utf16(value, end).unwrap_or(value.len());
+    value[start.min(value.len())..end.min(value.len()).max(start.min(value.len()))].to_string()
 }
 
 fn install_annex_b_refinements(context: &mut NativeContext) -> Result<(), VmError> {

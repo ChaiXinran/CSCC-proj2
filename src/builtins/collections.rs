@@ -1732,6 +1732,7 @@ fn install_map(context: &mut NativeContext, iterator: IteratorIntrinsic) -> Resu
         context.well_known_symbols().species,
         PropertyDescriptor::accessor(Some(species_getter), None, false, true),
     )?;
+    define_method(context, constructor_object, "groupBy", 2, map_group_by)?;
     context.define_own_property(
         prototype,
         "constructor".into(),
@@ -1801,6 +1802,80 @@ fn map_construct(
         false,
     )?;
     Ok(JsValue::Object(object))
+}
+
+fn map_group_by(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let items = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let callback = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if !is_callable(&callback) {
+        return Err(VmError::type_error("Map.groupBy callback is not callable"));
+    }
+    let map_constructor = context
+        .get_global("Map")
+        .ok_or_else(|| VmError::runtime("Map constructor missing"))?;
+    let prototype = context
+        .constructor_prototype(&map_constructor)?
+        .or_else(|| context.object_prototype())
+        .ok_or_else(|| VmError::runtime("Map prototype missing"))?;
+    let result = create_collection_object(context, prototype, "Map")?;
+    let JsValue::Object(map) = result.clone() else {
+        unreachable!()
+    };
+
+    let iterator = iterator_from(vm, context, JsValue::Undefined, &[items])?;
+    let mut index = 0usize;
+    while index < MAX_ITERATOR_STEPS {
+        let Some(value) = iterator_step(vm, context, iterator.clone())? else {
+            return Ok(result);
+        };
+        let mut key = match vm.call_value_from_builtin(
+            callback.clone(),
+            JsValue::Undefined,
+            vec![value.clone(), JsValue::Number(index as f64)],
+            context,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let Some(thrown) = vm.take_pending_exception_from_builtin() else {
+                    return Err(error);
+                };
+                return match vm.close_iterator_preserving_throw_from_builtin(
+                    iterator, thrown, context,
+                ) {
+                    Ok(()) => Err(error),
+                    Err(close_error) => Err(close_error),
+                };
+            }
+        };
+        if matches!(key, JsValue::Number(number) if number == 0.0) {
+            key = JsValue::Number(0.0);
+        }
+        if let Some(entry) = find_entry(context, map, &key) {
+            let group = collection_entry_value(context, map, entry).unwrap_or(JsValue::Undefined);
+            append_array_value(context, group, value)?;
+        } else {
+            let group = context.create_array(vec![value])?;
+            set_collection_entry(context, map, key, group)?;
+        }
+        index += 1;
+    }
+    Err(VmError::runtime_limit("Map.groupBy iterator step limit exceeded"))
+}
+
+fn append_array_value(
+    context: &mut NativeContext,
+    array: JsValue,
+    value: JsValue,
+) -> Result<(), VmError> {
+    let object = context.require_object(&array, "Map.groupBy group")?;
+    let length = array_like_length(context, object)?;
+    context.set_property(array, length.to_string(), value)?;
+    Ok(())
 }
 
 fn map_get(
