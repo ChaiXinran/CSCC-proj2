@@ -190,6 +190,28 @@ fn typed_array_constructor_and_from_consume_iterable_sources() {
 }
 
 #[test]
+fn typed_array_from_caches_next_and_maps_after_construction() {
+    assert_eq!(
+        native_eval(
+            "var nextGets = 0; var index = 0; var constructed = false; var seen = ''; \
+             var receiver = {}; var iterable = {}; \
+             iterable[Symbol.iterator] = function() { return { \
+               get next() { nextGets++; return function() { \
+                 return index < 2 ? { value: ++index, done: false } : { done: true }; \
+               }; } \
+             }; }; \
+             function C(length) { constructed = true; return new Uint8Array(length); } \
+             var result = Uint8Array.from.call(C, iterable, function(value, key) { \
+               seen += constructed + ':' + (this === receiver) + ':' + key + ';'; \
+               return value + 1; \
+             }, receiver); \
+             nextGets + ':' + seen + result.join(',');"
+        ),
+        "1:true:true:0;true:true:1;2,3"
+    );
+}
+
+#[test]
 fn array_iterator_objects_are_js_visible_and_live() {
     assert_eq!(
         native_eval(

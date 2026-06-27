@@ -8,7 +8,7 @@ use agentjs::{
     FailureKind,
     backend::NativeRuntime,
     engine::{ExecutionOptions, RuntimeConfig},
-    runtime::{ModuleStatus, resolve_module_specifier},
+    runtime::{ModuleEvaluationState, ModuleStatus, resolve_module_specifier},
 };
 
 #[test]
@@ -29,11 +29,35 @@ fn module_source_runs_in_strict_mode() {
         runtime.module_status_for_path(&path),
         Some(ModuleStatus::Evaluated)
     );
+    assert_eq!(
+        runtime.module_evaluation_state_for_path(&path),
+        Some(&ModuleEvaluationState::Fulfilled)
+    );
     let record = runtime
         .module_record_for_path(&path)
         .expect("module record should be stored");
     assert!(record.imports.is_empty());
     assert!(record.exports.is_empty());
+}
+
+#[test]
+fn failed_module_records_rejected_evaluation_state() {
+    let path = temp_module_path("rejected-state");
+    let mut runtime = NativeRuntime::new(RuntimeConfig::default());
+
+    runtime
+        .eval_module_source("throw 'module failed';", &path, true)
+        .expect_err("throwing module should reject evaluation");
+
+    assert_eq!(
+        runtime.module_status_for_path(&path),
+        Some(ModuleStatus::Failed)
+    );
+    assert!(matches!(
+        runtime.module_evaluation_state_for_path(&path),
+        Some(ModuleEvaluationState::Rejected(agentjs::runtime::JsValue::String(message)))
+            if message.contains("module failed")
+    ));
 }
 
 #[test]

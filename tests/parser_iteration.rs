@@ -323,6 +323,38 @@ fn for_of_uses_custom_symbol_iterator() {
 }
 
 #[test]
+fn for_of_next_getter_error_is_catchable_at_iterator_acquisition() {
+    let result = run_native(
+        "var gets = 0; var caught = ''; var iterable = {}; \
+         iterable[Symbol.iterator] = function() { return { \
+           get next() { gets = gets + 1; throw 'next-error'; } \
+         }; }; \
+         try { for (var value of iterable) {} } catch (error) { caught = error; } \
+         gets + ':' + caught;",
+    );
+    assert_eq!(
+        result.expect("next getter throw should be catchable"),
+        "1:next-error"
+    );
+}
+
+#[test]
+fn for_of_break_closes_iterator_but_natural_exhaustion_does_not() {
+    let result = run_native(
+        "var closes = 0; \
+         function make() { var i = 0; return { \
+           next: function() { i++; return { value: i, done: i > 2 }; }, \
+           return: function() { closes++; return {}; }, \
+           [Symbol.iterator]: function() { return this; } \
+         }; } \
+         for (var first of make()) { break; } \
+         for (var second of make()) {} \
+         closes;",
+    );
+    assert_eq!(result.expect("break should close iterator"), "1");
+}
+
+#[test]
 fn generator_next_runs_until_yield_and_completion() {
     let result = run_native(
         "function* g() { yield 1; return 2; } \
@@ -517,6 +549,49 @@ fn async_function_call_with_await_returns_a_promise() {
          result;",
     );
     assert_eq!(result.expect("async function should run"), "0");
+}
+
+#[test]
+fn generator_return_resumes_finally_around_yield_star() {
+    let result = run_native(
+        "var finalized = false; \
+         var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { next: function() { return { done: false }; } }; \
+         }; \
+         function* g() { \
+           try { yield* iterable; } finally { finalized = true; } \
+         } \
+         var iterator = g(); iterator.next(); \
+         var result = iterator.return(7); \
+         finalized + '/' + result.value + '/' + result.done;",
+    );
+    assert_eq!(result.expect("return should resume finally"), "true/7/true");
+}
+
+#[test]
+fn generator_throw_protocol_error_is_catchable_around_yield_star() {
+    let result = run_native(
+        "var closed = false; var caught = false; \
+         var iterable = {}; \
+         iterable[Symbol.iterator] = function() { \
+           return { \
+             next: function() { return { done: false }; }, \
+             return: function() { closed = true; return {}; } \
+           }; \
+         }; \
+         function* g() { \
+           try { yield* iterable; } \
+           catch (error) { caught = error.name === 'TypeError'; return 9; } \
+         } \
+         var iterator = g(); iterator.next(); \
+         var result = iterator.throw('boom'); \
+         closed + '/' + caught + '/' + result.value + '/' + result.done;",
+    );
+    assert_eq!(
+        result.expect("throw protocol error should enter catch"),
+        "true/true/9/true"
+    );
 }
 
 #[test]
