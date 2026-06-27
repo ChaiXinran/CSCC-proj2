@@ -46,6 +46,7 @@ fn runtime_can_allocate_function_values_with_captured_environment() {
         name: Some("add".into()),
         params: vec!["a".into(), "b".into()],
         rest_param: None,
+        length_override: None,
         chunk: empty_function_chunk(),
         environment: Some(captured),
         is_generator: false,

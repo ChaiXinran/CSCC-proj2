@@ -385,7 +385,13 @@ fn push_dependency(dependencies: &mut Vec<String>, source: &str) {
 fn classify_native_error(error: NativeError) -> EvalFailure {
     let kind = match &error {
         NativeError::Lex(_) | NativeError::Parse(_) => FailureKind::Syntax,
-        NativeError::Compile(_) => FailureKind::Unsupported,
+        NativeError::Compile(e) => {
+            if e.is_syntax {
+                FailureKind::Syntax
+            } else {
+                FailureKind::Unsupported
+            }
+        }
         NativeError::Execute(error) => match error.kind {
             VmErrorKind::Reference => FailureKind::Reference,
             VmErrorKind::Type => FailureKind::Type,

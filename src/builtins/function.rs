@@ -170,6 +170,7 @@ fn create_dynamic_function(
         name: template.name.or_else(|| Some("anonymous".into())),
         params: template.params,
         rest_param: template.rest_param,
+        length_override: template.length_override,
         chunk: template.chunk,
         // Dynamic Function is created in the global scope; it must not capture
         // the caller's local lexical environment.

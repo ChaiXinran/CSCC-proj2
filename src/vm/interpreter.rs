@@ -393,21 +393,22 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_binary(
-                            left.clone(),
-                            right.clone(),
-                            |left, right| left.checked_sub(right),
-                        ) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(left - right));
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                left.checked_sub(right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(left - right));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                                discard_saved_finally = true;
-                            }
-                        },
+                        }
                         Err(error) => {
                             abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
                             discard_saved_finally = true;
@@ -418,21 +419,22 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_binary(
-                            left.clone(),
-                            right.clone(),
-                            |left, right| left.checked_mul(right),
-                        ) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(left * right));
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                left.checked_mul(right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(left * right));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                                discard_saved_finally = true;
-                            }
-                        },
+                        }
                         Err(error) => {
                             abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
                             discard_saved_finally = true;
@@ -450,7 +452,8 @@ impl Vm {
                                 self.stack.push(JsValue::Number(left / right));
                             }
                             Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
                                 discard_saved_finally = true;
                             }
                         },
@@ -471,7 +474,8 @@ impl Vm {
                                 self.stack.push(JsValue::Number(left % right));
                             }
                             Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
                                 discard_saved_finally = true;
                             }
                         },
@@ -485,17 +489,20 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_exponentiation(left.clone(), right.clone()) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(left.powf(right)));
+                        Ok((left, right)) => {
+                            match bigint_exponentiation(left.clone(), right.clone()) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(left.powf(right)));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                                discard_saved_finally = true;
-                            }
-                        },
+                        }
                         Err(error) => {
                             abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
                             discard_saved_finally = true;
@@ -506,23 +513,24 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_binary(
-                            left.clone(),
-                            right.clone(),
-                            |left, right| Some(left & right),
-                        ) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(f64::from(
-                                    number_to_int32(left) & number_to_int32(right),
-                                )));
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                Some(left & right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) & number_to_int32(right),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                                discard_saved_finally = true;
-                            }
-                        },
+                        }
                         Err(error) => {
                             abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
                             discard_saved_finally = true;
@@ -533,23 +541,24 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_binary(
-                            left.clone(),
-                            right.clone(),
-                            |left, right| Some(left | right),
-                        ) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(f64::from(
-                                    number_to_int32(left) | number_to_int32(right),
-                                )));
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                Some(left | right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) | number_to_int32(right),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                                discard_saved_finally = true;
-                            }
-                        },
+                        }
                         Err(error) => {
                             abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
                             discard_saved_finally = true;
@@ -560,23 +569,24 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_binary(
-                            left.clone(),
-                            right.clone(),
-                            |left, right| Some(left ^ right),
-                        ) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(f64::from(
-                                    number_to_int32(left) ^ number_to_int32(right),
-                                )));
+                        Ok((left, right)) => {
+                            match bigint_binary(left.clone(), right.clone(), |left, right| {
+                                Some(left ^ right)
+                            }) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) ^ number_to_int32(right),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                                discard_saved_finally = true;
-                            }
-                        },
+                        }
                         Err(error) => {
                             abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
                             discard_saved_finally = true;
@@ -611,7 +621,8 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_shift(left.clone(), right.clone(), false) {
+                        Ok((left, right)) => match bigint_shift(left.clone(), right.clone(), false)
+                        {
                             Ok(Some(value)) => self.stack.push(value),
                             Ok(None) => {
                                 let (left, right) = numeric_number_pair(left, right)?;
@@ -620,7 +631,8 @@ impl Vm {
                                 )));
                             }
                             Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
                                 discard_saved_finally = true;
                             }
                         },
@@ -634,19 +646,22 @@ impl Vm {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_shift(left.clone(), right.clone(), true) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(f64::from(
-                                    number_to_int32(left) >> (number_to_uint32(right) & 0x1f),
-                                )));
+                        Ok((left, right)) => {
+                            match bigint_shift(left.clone(), right.clone(), true) {
+                                Ok(Some(value)) => self.stack.push(value),
+                                Ok(None) => {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_int32(left) >> (number_to_uint32(right) & 0x1f),
+                                    )));
+                                }
+                                Err(error) => {
+                                    abrupt =
+                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                                discard_saved_finally = true;
-                            }
-                        },
+                        }
                         Err(error) => {
                             abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
                             discard_saved_finally = true;
@@ -658,10 +673,14 @@ impl Vm {
                     let left = self.pop_value()?;
                     match self.to_numeric_operands(left, right, context) {
                         Ok((left, right)) => {
-                            if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
-                                abrupt = Some(Completion::Throw(vm_error_to_value(VmError::type_error(
-                                    "BigInt does not support unsigned right shift",
-                                ))));
+                            if matches!(left, JsValue::BigInt(_))
+                                || matches!(right, JsValue::BigInt(_))
+                            {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(
+                                    VmError::type_error(
+                                        "BigInt does not support unsigned right shift",
+                                    ),
+                                )));
                                 discard_saved_finally = true;
                             } else {
                                 let (left, right) = numeric_number_pair(left, right)?;
@@ -936,13 +955,25 @@ impl Vm {
                             }
                         }
                     } else {
-                        let key = to_property_key(&key)?;
-                        match self.get_property_value_completion(object, &key, context)? {
-                            OperationResult::Value(value) => self.stack.push(value),
+                        match self.coerce_to_property_key(key, context)? {
+                            OperationResult::Value(JsValue::String(key_str)) => {
+                                match self
+                                    .get_property_value_completion(object, &key_str, context)?
+                                {
+                                    OperationResult::Value(value) => self.stack.push(value),
+                                    OperationResult::Throw(value) => {
+                                        abrupt = Some(Completion::Throw(value));
+                                        discard_saved_finally = true;
+                                    }
+                                }
+                            }
                             OperationResult::Throw(value) => {
                                 abrupt = Some(Completion::Throw(value));
                                 discard_saved_finally = true;
                             }
+                            _ => unreachable!(
+                                "coerce_to_property_key always returns String or Throw"
+                            ),
                         }
                     }
                 }
@@ -980,6 +1011,28 @@ impl Vm {
                         "length".to_string(),
                         crate::runtime::PropertyDescriptor::data_with(new_len, true, false, true),
                     )?;
+                }
+                Instruction::IterableToArray => {
+                    let iterable = self.pop_value()?;
+                    // Fast path: already an array — return as-is.
+                    if let JsValue::Object(id) = &iterable {
+                        let is_array = context
+                            .heap()
+                            .object(*id)
+                            .map(|o| matches!(o.kind, crate::runtime::ObjectKind::Array { .. }))
+                            .unwrap_or(false);
+                        if is_array {
+                            self.stack.push(iterable);
+                        } else {
+                            let elements = self.function_apply_arguments(iterable, context)?;
+                            let arr = context.create_array(elements)?;
+                            self.stack.push(arr);
+                        }
+                    } else {
+                        let elements = self.function_apply_arguments(iterable, context)?;
+                        let arr = context.create_array(elements)?;
+                        self.stack.push(arr);
+                    }
                 }
                 Instruction::SpreadIntoArray => {
                     let iterable = self.pop_value()?;
@@ -1199,8 +1252,13 @@ impl Vm {
                     let result = if let JsValue::Symbol(sym_id) = key {
                         self.get_symbol_property_value_completion(object.clone(), sym_id, context)?
                     } else {
-                        let key = to_property_key(&key)?;
-                        self.get_property_value_completion(object.clone(), &key, context)?
+                        match self.coerce_to_property_key(key, context)? {
+                            OperationResult::Throw(v) => OperationResult::Throw(v),
+                            OperationResult::Value(JsValue::String(k)) => {
+                                self.get_property_value_completion(object.clone(), &k, context)?
+                            }
+                            _ => unreachable!(),
+                        }
                     };
                     match result {
                         OperationResult::Value(method) => {
@@ -1240,13 +1298,21 @@ impl Vm {
                             }
                         }
                     } else {
-                        let key = to_property_key(&key)?;
-                        match self.set_property_value(object, &key, value, context)? {
-                            OperationResult::Value(result) => self.stack.push(result),
-                            OperationResult::Throw(value) => {
-                                abrupt = Some(Completion::Throw(value));
+                        match self.coerce_to_property_key(key, context)? {
+                            OperationResult::Throw(v) => {
+                                abrupt = Some(Completion::Throw(v));
                                 discard_saved_finally = true;
                             }
+                            OperationResult::Value(JsValue::String(key_str)) => {
+                                match self.set_property_value(object, &key_str, value, context)? {
+                                    OperationResult::Value(result) => self.stack.push(result),
+                                    OperationResult::Throw(v) => {
+                                        abrupt = Some(Completion::Throw(v));
+                                        discard_saved_finally = true;
+                                    }
+                                }
+                            }
+                            _ => unreachable!(),
                         }
                     }
                 }
@@ -1276,6 +1342,16 @@ impl Vm {
                     let value = self.pop_value()?;
                     let object = context.require_object(self.peek_value()?, "define property")?;
                     context.define_own_property(object, name, PropertyDescriptor::data(value))?;
+                }
+                Instruction::DefineClassPrototype => {
+                    let proto = self.pop_value()?;
+                    let ctor =
+                        context.require_object(self.peek_value()?, "define class prototype")?;
+                    context.define_own_property(
+                        ctor,
+                        "prototype".into(),
+                        PropertyDescriptor::data_with(proto, true, false, false),
+                    )?;
                 }
                 Instruction::DefineGetter(index) => {
                     let name = self
@@ -1377,48 +1453,125 @@ impl Vm {
                 Instruction::DefineClassMethodComputed => {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define class method (computed)")?;
-                    context.define_own_property(
-                        object,
-                        name,
-                        PropertyDescriptor::data_with(value, true, false, true),
-                    )?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class method (computed)",
+                            )?;
+                            // Static method named "prototype" is a TypeError per spec.
+                            if name == "prototype"
+                                && matches!(self.peek_value()?, JsValue::Function(_))
+                            {
+                                let err = VmError::type_error(
+                                    "Classes may not have a static property named 'prototype'",
+                                );
+                                abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
+                                discard_saved_finally = true;
+                            } else {
+                                context.define_own_property(
+                                    object,
+                                    name,
+                                    PropertyDescriptor::data_with(value, true, false, true),
+                                )?;
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::DefineClassGetterComputed => {
                     let getter = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define class getter (computed)")?;
-                    let setter = existing_accessor_setter(context, object, &name);
-                    context.define_own_property(
-                        object,
-                        name,
-                        PropertyDescriptor::accessor(Some(getter), setter, false, true),
-                    )?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class getter (computed)",
+                            )?;
+                            // Static getter/setter named "prototype" is a TypeError per spec.
+                            if name == "prototype"
+                                && matches!(self.peek_value()?, JsValue::Function(_))
+                            {
+                                let err = VmError::type_error(
+                                    "Classes may not have a static property named 'prototype'",
+                                );
+                                abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
+                                discard_saved_finally = true;
+                            } else {
+                                let setter = existing_accessor_setter(context, object, &name);
+                                context.define_own_property(
+                                    object,
+                                    name,
+                                    PropertyDescriptor::accessor(Some(getter), setter, false, true),
+                                )?;
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::DefineClassSetterComputed => {
                     let setter = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define class setter (computed)")?;
-                    let getter = existing_accessor_getter(context, object, &name);
-                    context.define_own_property(
-                        object,
-                        name,
-                        PropertyDescriptor::accessor(getter, Some(setter), false, true),
-                    )?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class setter (computed)",
+                            )?;
+                            // Static setter named "prototype" is a TypeError per spec.
+                            if name == "prototype"
+                                && matches!(self.peek_value()?, JsValue::Function(_))
+                            {
+                                let err = VmError::type_error(
+                                    "Classes may not have a static property named 'prototype'",
+                                );
+                                abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
+                                discard_saved_finally = true;
+                            } else {
+                                let getter = existing_accessor_getter(context, object, &name);
+                                context.define_own_property(
+                                    object,
+                                    name,
+                                    PropertyDescriptor::accessor(getter, Some(setter), false, true),
+                                )?;
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::DefineDataPropertyComputed => {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
-                    let name = to_property_key(&key)?;
-                    let object = context
-                        .require_object(self.peek_value()?, "define data property (computed)")?;
-                    context.define_own_property(object, name, PropertyDescriptor::data(value))?;
+                    match self.coerce_to_property_key(key, context)? {
+                        OperationResult::Throw(v) => {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
+                        }
+                        OperationResult::Value(JsValue::String(name)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define data property (computed)",
+                            )?;
+                            context.define_own_property(
+                                object,
+                                name,
+                                PropertyDescriptor::data(value),
+                            )?;
+                        }
+                        _ => unreachable!(),
+                    }
                 }
                 Instruction::SpreadObject => {
                     let spread_val = self.pop_value()?;
@@ -1426,9 +1579,26 @@ impl Vm {
                     let target_id = context.require_object(&target_val, "SpreadObject")?;
                     if let JsValue::Object(source_id) = &spread_val {
                         let keys = context.own_enumerable_keys(*source_id);
+                        let mut threw: Option<JsValue> = None;
                         for key in keys {
-                            let value = context.get_property(spread_val.clone(), &key)?;
-                            context.set_property(JsValue::Object(target_id), key.clone(), value)?;
+                            // Use the VM call path to handle getter properties.
+                            match self.get_property_value_completion(
+                                spread_val.clone(),
+                                &key,
+                                context,
+                            )? {
+                                OperationResult::Throw(v) => {
+                                    threw = Some(v);
+                                    break;
+                                }
+                                OperationResult::Value(value) => {
+                                    context.set_property(JsValue::Object(target_id), key, value)?;
+                                }
+                            }
+                        }
+                        if let Some(v) = threw {
+                            abrupt = Some(Completion::Throw(v));
+                            discard_saved_finally = true;
                         }
                     }
                 }
@@ -1561,18 +1731,16 @@ impl Vm {
                                 _ => false, // accessor blocks inference
                             },
                         };
-                        if should_set {
-                            if let Some(obj) = context.heap_mut().object_mut(obj_id) {
-                                obj.define_property(
-                                    "name",
-                                    PropertyDescriptor::data_with(
-                                        JsValue::String(inferred_name.into()),
-                                        false,
-                                        false,
-                                        true,
-                                    ),
-                                );
-                            }
+                        if should_set && let Some(obj) = context.heap_mut().object_mut(obj_id) {
+                            obj.define_property(
+                                "name",
+                                PropertyDescriptor::data_with(
+                                    JsValue::String(inferred_name.to_string()),
+                                    false,
+                                    false,
+                                    true,
+                                ),
+                            );
                         }
                     }
                 }
@@ -1750,6 +1918,7 @@ impl Vm {
             name: template.name,
             params: template.params,
             rest_param: template.rest_param,
+            length_override: template.length_override,
             chunk: template.chunk,
             environment,
             is_generator: template.is_generator,
@@ -3284,12 +3453,91 @@ impl Vm {
         }
     }
 
+    /// ToPrimitive(hint: string) for property keys.
+    /// For objects, calls `toString()` then `valueOf()` until a primitive is obtained.
+    /// Returns `Ok(OperationResult::Value(JsValue::String(...)))` on success,
+    /// or `Ok(OperationResult::Throw(...))` when conversion fails.
+    fn coerce_to_property_key(
+        &mut self,
+        key: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        // Fast path: primitives that already convert cleanly.
+        match &key {
+            JsValue::String(_)
+            | JsValue::Number(_)
+            | JsValue::Boolean(_)
+            | JsValue::Null
+            | JsValue::Undefined
+            | JsValue::BigInt(_) => {
+                return match to_property_key(&key) {
+                    Ok(s) => Ok(OperationResult::Value(JsValue::String(s))),
+                    Err(e) => Ok(OperationResult::Throw(vm_error_to_value(e))),
+                };
+            }
+            JsValue::Symbol(_) => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error("Cannot convert a Symbol value to a string"),
+                )));
+            }
+            _ => {}
+        }
+        // Object path: try toString() then valueOf().
+        for method in ["toString", "valueOf"] {
+            match self.get_property_value_completion(key.clone(), method, context)? {
+                OperationResult::Throw(v) => return Ok(OperationResult::Throw(v)),
+                OperationResult::Value(fn_val) => {
+                    if matches!(fn_val, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
+                        match self.call_value(fn_val, key.clone(), Vec::new(), context)? {
+                            OperationResult::Throw(v) => return Ok(OperationResult::Throw(v)),
+                            OperationResult::Value(result) => {
+                                if !matches!(
+                                    result,
+                                    JsValue::Object(_)
+                                        | JsValue::Function(_)
+                                        | JsValue::BuiltinFunction(_)
+                                ) {
+                                    return match to_property_key(&result) {
+                                        Ok(s) => Ok(OperationResult::Value(JsValue::String(s))),
+                                        Err(e) => Ok(OperationResult::Throw(vm_error_to_value(e))),
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(OperationResult::Throw(vm_error_to_value(
+            VmError::type_error("Cannot convert object to primitive value"),
+        )))
+    }
+
     fn get_property_value_completion(
         &mut self,
         receiver: JsValue,
         key: &str,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
+        // null/undefined property access must be a catchable TypeError so that
+        // try-catch blocks in userland (and assert.throws) can intercept it.
+        match &receiver {
+            JsValue::Null => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error(format!(
+                        "Cannot read properties of null (reading '{key}')"
+                    )),
+                )));
+            }
+            JsValue::Undefined => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error(format!(
+                        "Cannot read properties of undefined (reading '{key}')"
+                    )),
+                )));
+            }
+            _ => {}
+        }
         if let JsValue::Error(error) = &receiver {
             let value = match key {
                 "message" => JsValue::String(error.message.clone()),
@@ -3346,6 +3594,19 @@ impl Vm {
         symbol: SymbolId,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
+        match &receiver {
+            JsValue::Null => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error("Cannot read properties of null (reading symbol)"),
+                )));
+            }
+            JsValue::Undefined => {
+                return Ok(OperationResult::Throw(vm_error_to_value(
+                    VmError::type_error("Cannot read properties of undefined (reading symbol)"),
+                )));
+            }
+            _ => {}
+        }
         let object = self.property_lookup_object(&receiver, context)?;
         let Some((_, descriptor)) = context.find_symbol_property_descriptor(object, symbol)? else {
             return Ok(OperationResult::Value(JsValue::Undefined));
@@ -4280,7 +4541,11 @@ fn bigint_exponentiation(left: JsValue, right: JsValue) -> Result<Option<JsValue
     }
 }
 
-fn bigint_shift(left: JsValue, right: JsValue, right_shift: bool) -> Result<Option<JsValue>, VmError> {
+fn bigint_shift(
+    left: JsValue,
+    right: JsValue,
+    right_shift: bool,
+) -> Result<Option<JsValue>, VmError> {
     let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) else {
         if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
             return Err(VmError::type_error(

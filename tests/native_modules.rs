@@ -172,14 +172,9 @@ fn module_import_export_metadata_is_recorded_without_linking() {
                 && entry.local_name.as_deref() == Some("localThing")
                 && entry.source.as_deref() == Some("./dep.mjs"))
     );
-    assert!(
-        record
-            .exports
-            .iter()
-            .any(|entry| entry.export_name == "own"
-                && entry.local_name.as_deref() == Some("own")
-                && entry.source.is_none())
-    );
+    assert!(record.exports.iter().any(|entry| entry.export_name == "own"
+        && entry.local_name.as_deref() == Some("own")
+        && entry.source.is_none()));
 }
 
 fn temp_module_path(label: &str) -> PathBuf {

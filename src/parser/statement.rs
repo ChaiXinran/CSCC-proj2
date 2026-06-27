@@ -826,9 +826,8 @@ impl Parser {
                 // ponytail: the lexer currently maps lone surrogate escapes to U+FFFD.
                 // Upgrade path: carry an explicit ill-formed-string flag on Token.
                 if value.contains(char::REPLACEMENT_CHARACTER) {
-                    return Err(self.error(
-                        "module export names must be well-formed Unicode strings".into(),
-                    ));
+                    return Err(self
+                        .error("module export names must be well-formed Unicode strings".into()));
                 }
                 self.advance();
                 Ok(value)
@@ -1257,7 +1256,11 @@ impl Parser {
         self.expect_punctuator(':')?;
         // Determine if this label wraps an IterationStatement (allows `continue label`)
         let is_iteration = self.peek_iteration_after_labels();
-        if self.label_stack.iter().any(|(existing, _)| existing == &label) {
+        if self
+            .label_stack
+            .iter()
+            .any(|(existing, _)| existing == &label)
+        {
             return Err(self.error(format!("duplicate label `{label}`")));
         }
         self.label_stack.push((label.clone(), is_iteration));
@@ -1836,12 +1839,18 @@ impl Parser {
             .into_iter()
             .map(str::to_owned)
             .collect();
-        local_names.extend(var_declared_names(statements).into_iter().map(str::to_owned));
+        local_names.extend(
+            var_declared_names(statements)
+                .into_iter()
+                .map(str::to_owned),
+        );
 
         let mut exported_names = HashSet::new();
         for statement in statements {
             if module_item_contains_forbidden_meta(statement) {
-                return Err(self.error("`super` and `new.target` are not allowed in module code".into()));
+                return Err(
+                    self.error("`super` and `new.target` are not allowed in module code".into())
+                );
             }
             let Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Export(decl)) =
                 statement
@@ -1851,10 +1860,9 @@ impl Parser {
 
             for entry in &decl.entries {
                 if entry.export_name != "*" && !exported_names.insert(entry.export_name.as_str()) {
-                    return Err(self.error(format!(
-                        "duplicate export name `{}`",
-                        entry.export_name
-                    )));
+                    return Err(
+                        self.error(format!("duplicate export name `{}`", entry.export_name))
+                    );
                 }
                 if decl.source.is_none()
                     && let Some(local_name) = &entry.local_name
@@ -1955,9 +1963,9 @@ fn module_item_contains_forbidden_meta(statement: &Statement) -> bool {
             finalizer,
         } => {
             block.iter().any(module_item_contains_forbidden_meta)
-                || handler
-                    .as_ref()
-                    .is_some_and(|handler| handler.body.iter().any(module_item_contains_forbidden_meta))
+                || handler.as_ref().is_some_and(|handler| {
+                    handler.body.iter().any(module_item_contains_forbidden_meta)
+                })
                 || finalizer
                     .as_ref()
                     .is_some_and(|body| body.iter().any(module_item_contains_forbidden_meta))
@@ -2044,9 +2052,10 @@ fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
             ObjectProperty::Spread(expr) => expr_contains_forbidden_meta(expr),
             ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
         }),
-        Expression::TemplateLiteral(template) => {
-            template.expressions.iter().any(expr_contains_forbidden_meta)
-        }
+        Expression::TemplateLiteral(template) => template
+            .expressions
+            .iter()
+            .any(expr_contains_forbidden_meta),
         Expression::Spread(expr) | Expression::Await(expr) => expr_contains_forbidden_meta(expr),
         Expression::Yield { argument, .. } => argument
             .as_deref()
@@ -2243,7 +2252,8 @@ fn add_export_decl_names(statement: &Statement, entries: &mut Vec<crate::ast::Ex
 
 fn export_default_decl_name(statement: &Statement) -> Option<String> {
     match statement {
-        Statement::FunctionDeclaration { name, .. } | Statement::ClassDeclaration(crate::ast::ClassDeclaration { name, .. })
+        Statement::FunctionDeclaration { name, .. }
+        | Statement::ClassDeclaration(crate::ast::ClassDeclaration { name, .. })
             if name != "*default*" =>
         {
             Some(name.clone())

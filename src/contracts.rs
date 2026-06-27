@@ -9,8 +9,8 @@ use std::{error::Error, fmt};
 pub use crate::{
     ast::{
         ArrayBindingElement, ArrayElement, AssignmentOperator, BinaryOperator, BindingPattern,
-        CallArgument, CatchClause, ClassDeclaration, ClassElement, ClassExpression, Expression,
-        ExportDeclaration, ExportEntry, FunctionBody, FunctionLiteral, FunctionParam,
+        CallArgument, CatchClause, ClassDeclaration, ClassElement, ClassExpression,
+        ExportDeclaration, ExportEntry, Expression, FunctionBody, FunctionLiteral, FunctionParam,
         ImportDeclaration, ImportEntry, Literal, LogicalOperator, ModuleDeclaration,
         ObjectBindingKey, ObjectBindingProp, ObjectProperty, Program, PropertyName, Statement,
         SwitchCase, TemplateLiteral, UnaryOperator, VariableDeclarator, VariableKind,

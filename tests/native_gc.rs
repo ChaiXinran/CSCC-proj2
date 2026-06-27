@@ -53,6 +53,7 @@ fn gc_preserves_closure_environment_and_captured_values() {
         name: Some("closure".into()),
         params: Vec::new(),
         rest_param: None,
+        length_override: None,
         chunk: Chunk {
             instructions: vec![Instruction::ReturnUndefined],
             constants: Vec::new(),

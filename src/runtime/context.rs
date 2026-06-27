@@ -506,6 +506,7 @@ impl NativeContext {
         self.function_legacy_setter = Some(setter);
     }
 
+    #[allow(dead_code)]
     fn restricted_function_descriptor(&self) -> Option<PropertyDescriptor> {
         let thrower = self.function_restricted_thrower.clone()?;
         Some(PropertyDescriptor::accessor(
@@ -766,11 +767,11 @@ impl NativeContext {
         let Some(object) = self.function_object(function) else {
             return Ok(());
         };
-        let Some(descriptor) = self.restricted_function_descriptor() else {
-            return Ok(());
-        };
-        self.define_own_property(object, "caller".into(), descriptor.clone())?;
-        self.define_own_property(object, "arguments".into(), descriptor)?;
+        // ES2015+: strict-mode functions (including class constructors/methods) must NOT have
+        // own `caller` or `arguments` properties. They are accessible only via Function.prototype.
+        // Delete any legacy accessors that `allocate_function` may have added.
+        self.delete_property(object, "caller", false)?;
+        self.delete_property(object, "arguments", false)?;
         Ok(())
     }
 
@@ -1228,7 +1229,10 @@ impl NativeContext {
 
     pub fn allocate_function(&mut self, function: JsFunction) -> Result<FunctionId, VmError> {
         let function_name = function.name.clone().unwrap_or_default();
-        let function_length = function.params.len();
+        let function_length = function
+            .length_override
+            .map(|n| n as usize)
+            .unwrap_or(function.params.len());
         let mut function_object = JsObject::ordinary();
         function_object.prototype = self.function_prototype_object();
         let function_object_id = self
@@ -3329,7 +3333,7 @@ fn to_bigint_for_buffer(context: &NativeContext, value: JsValue) -> Result<i128,
         JsValue::Object(object) => match context.primitive_value(object) {
             Some(PrimitiveValue::BigInt(value)) => Ok(*value),
             Some(PrimitiveValue::Boolean(value)) => Ok(i128::from(*value)),
-            Some(PrimitiveValue::String(value)) => parse_bigint_string(&value)
+            Some(PrimitiveValue::String(value)) => parse_bigint_string(value)
                 .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
             _ => Err(VmError::type_error("Cannot convert value to BigInt")),
         },

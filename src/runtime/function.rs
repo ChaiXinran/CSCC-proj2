@@ -18,6 +18,9 @@ pub struct JsFunction {
     pub params: Vec<String>,
     /// If present, collects remaining arguments into an array with this name.
     pub rest_param: Option<String>,
+    /// Function.length override: params before first default/rest/pattern param.
+    /// None means fall back to params.len().
+    pub length_override: Option<u32>,
     pub chunk: Chunk,
     pub environment: Option<EnvironmentId>,
     pub is_generator: bool,
