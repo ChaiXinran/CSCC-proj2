@@ -595,7 +595,7 @@ fn compiler_lowers_compound_assignment_targets() {
             Instruction::LoadGlobal(0),
             Instruction::Constant(1),
             Instruction::Add,
-            Instruction::StoreGlobal(2),
+            Instruction::StoreGlobal(0),
             Instruction::Return,
         ]
     );
@@ -903,14 +903,16 @@ fn v1_instructions_publish_their_stack_effects() {
 fn chunk_reports_constant_pool_overflow_without_truncating() {
     let mut chunk = Chunk {
         instructions: Vec::new(),
-        constants: vec![Constant::Null; usize::from(u16::MAX) + 1],
+        constants: (0..=u16::MAX)
+            .map(|value| Constant::Number(f64::from(value)))
+            .collect(),
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
     };
 
     assert_eq!(
-        chunk.add_constant(Constant::Null),
+        chunk.add_constant(Constant::String("overflow".into())),
         Err(ChunkError::ConstantPoolOverflow)
     );
     assert_eq!(chunk.constants.len(), usize::from(u16::MAX) + 1);

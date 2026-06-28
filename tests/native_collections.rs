@@ -187,6 +187,24 @@ fn array_iterator_exposes_iterator_prototype_symbol_iterator() {
 }
 
 #[test]
+fn array_iterator_prototype_exposes_next_and_to_string_tag() {
+    assert_eq!(
+        native_eval(
+            "var iter = [1].values(); \
+             var proto = Object.getPrototypeOf(iter); \
+             var next = Object.getOwnPropertyDescriptor(proto, 'next'); \
+             var tag = Object.getOwnPropertyDescriptor(proto, Symbol.toStringTag); \
+             var first = next.value.call(iter); \
+             var second = next.value.call(iter); \
+             next.value.name + ':' + next.writable + ':' + next.enumerable + ':' + next.configurable + ':' + \
+             tag.value + ':' + tag.writable + ':' + tag.enumerable + ':' + tag.configurable + ':' + \
+             Object.prototype.toString.call(iter) + ':' + first.value + ':' + second.done;"
+        ),
+        "next:true:false:true:Array Iterator:false:false:true:[object Array Iterator]:1:true"
+    );
+}
+
+#[test]
 fn iterator_prototype_symbol_dispose_calls_return() {
     assert_eq!(
         native_eval(

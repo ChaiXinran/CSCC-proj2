@@ -241,3 +241,173 @@ unrelated files (`src/builtins/annex_b.rs`, `src/builtins/collections.rs`,
 `src/builtins/date_intl.rs`, `src/bytecode/compiler.rs`, `src/lexer/mod.rs`,
 and `src/parser/statement.rs`). The files touched by this change pass the
 Rust 2024 rustfmt check above.
+
+## Fix9 P1 Temporal Skeleton Harvest
+
+Date: 2026-06-28
+
+### Changes
+
+- Added a tiny current-builtin call stack in `NativeContext` and maintained it
+  around native builtin calls in the VM. Temporal prototype getters now read
+  their hidden getter metadata from the current builtin function object instead
+  of accidentally treating the receiver as the getter object. This fixes
+  direct getter calls such as
+  `Object.getOwnPropertyDescriptor(Temporal.PlainDate.prototype, "year").get.call(date)`,
+  which Test262 Temporal helpers use heavily.
+- Installed `Temporal.Instant.fromEpochNanoseconds` and preserved BigInt
+  nanosecond storage for the returned Instant skeleton.
+- Installed `Temporal.Now.zonedDateTimeISO` and
+  `Temporal.Now[Symbol.toStringTag] = "Temporal.Now"`.
+- Added the low-risk `calendarName: "always"` string branch for
+  `Temporal.PlainYearMonth.prototype.toString` and
+  `Temporal.PlainMonthDay.prototype.toString`, including the stored reference
+  ISO day/year and calendar annotation. Other Temporal string options remain
+  future work.
+- Installed static `Temporal.PlainTime.compare` and
+  `Temporal.PlainDateTime.compare` using existing skeleton conversion and
+  internal ordering helpers.
+
+Files touched:
+
+```text
+src/runtime/context.rs
+src/vm/interpreter.rs
+src/builtins/date_intl.rs
+tests/native_date.rs
+reports/.version-report/v12-partC-report.md
+```
+
+### Focused Results
+
+| Suite | Before in this pass | After | Delta |
+| --- | ---: | ---: | ---: |
+| `test/built-ins/Temporal/PlainDate/prototype` | 202 / 520 | 223 / 520 | +21 |
+| `test/built-ins/Temporal/PlainDateTime/prototype` | 228 / 632 | 258 / 632 | +30 |
+| `test/built-ins/Temporal/ZonedDateTime/prototype` | 281 / 740 | 284 / 740 | +3 |
+| `test/built-ins/Temporal/Now` | 33 / 66 | 44 / 66 | +11 |
+| `test/built-ins/Temporal/Instant` | 152 / 465 | 157 / 465 | +5 |
+| `test/built-ins/Temporal/PlainYearMonth` | 173 / 509 | 193 / 509 | +20 |
+| `test/built-ins/Temporal/PlainMonthDay` | 79 / 199 | 87 / 199 | +8 |
+| `test/built-ins/Temporal/PlainTime/compare` | 0 / 32 | 11 / 32 | +11 |
+| `test/built-ins/Temporal/PlainDateTime/compare` | 1 / 42 | 17 / 42 | +16 |
+| `test/built-ins/Temporal` | 1720 / 4603 after getter fix | 1791 / 4603 | +71 after later skeleton fixes |
+
+The focused sub-suite deltas sum to roughly +125 newly passing Temporal cases
+across the harvested areas. The full Temporal directory moved to 1791 / 4603 in
+the final focused run. A full 53,379-case scan was not rerun in this patch.
+
+Representative artifacts:
+
+```text
+reports/.native-test262-tmp/fix9-temporal-pd-prototype-after-getter.json
+reports/.native-test262-tmp/fix9-temporal-pdt-prototype-after-getter.json
+reports/.native-test262-tmp/fix9-temporal-zdt-prototype-after-getter.json
+reports/.native-test262-tmp/fix9-temporal-now-after-skeleton.json
+reports/.native-test262-tmp/fix9-temporal-instant-after-skeleton.json
+reports/.native-test262-tmp/fix9-temporal-pym-after-calendar-always.json
+reports/.native-test262-tmp/fix9-temporal-pmd-after-calendar-always.json
+reports/.native-test262-tmp/fix9-temporal-plaintime-compare-after-static.json
+reports/.native-test262-tmp/fix9-temporal-pdt-compare-after-static.json
+reports/.native-test262-tmp/fix9-temporal-after-priority1-compare.json
+```
+
+### Validation
+
+Passed:
+
+```powershell
+cargo check --all-targets --no-default-features
+cargo test --release --no-default-features --test native_date
+cargo fmt --all -- --check
+git diff --check
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Temporal --jobs 4 --json reports/.native-test262-tmp/fix9-temporal-after-priority1-compare.json
+```
+
+### Remaining C-Relevant Limits
+
+- Temporal remaining failures are now mostly deep calendar/time-zone/arithmetic
+  semantics, exact options validation/coercion order, and ISO string rejection
+  edge cases.
+- Several visible failures still report parser/runtime binding issues such as
+  `binding arg is already initialized`; those are not good C-only Temporal
+  skeleton targets.
+- The `calendarName: "always"` branch is intentionally narrow and does not
+  implement complete Temporal string formatting options.
+
+## Fix9 P1 Array Generic/Iterator Shape Harvest
+
+Date: 2026-06-28
+
+### Changes
+
+- Converted high-traffic `Array.prototype` non-callback methods from direct
+  object-only receivers to `ToObject`-based array-like receivers. This removes
+  broad `cannot Array.prototype.* on true` style failures for primitive
+  receivers while keeping string length lookup on the primitive value.
+- Routed Array mutator index writes and length writes through the VM strict
+  setter path, so accessor setters on array-like receivers are invoked instead
+  of failing with the builtin-only context setter path.
+- Added an own `next` method and
+  `@@toStringTag = "Array Iterator"` to the shared Array Iterator prototype,
+  reusing `NativeContext::step_iterator_object`.
+- Added `arguments[Symbol.iterator]` by copying the existing
+  `Array.prototype[Symbol.iterator]` descriptor onto newly-created arguments
+  objects. This completes the remaining ArrayIteratorPrototype arguments
+  expansion/truncation cases.
+
+Files touched:
+
+```text
+src/builtins/array.rs
+src/runtime/context.rs
+src/vm/interpreter.rs
+tests/native_array_methods.rs
+tests/native_collections.rs
+tests/native_arguments.rs
+reports/.version-report/v12-partC-report.md
+```
+
+### Focused Results
+
+| Suite | Before in this pass | After | Delta |
+| --- | ---: | ---: | ---: |
+| `test/built-ins/Array/prototype` | 2351 / 2810 after index-setter pass | 2354 / 2810 | +3 |
+| `test/built-ins/Array` | 2505 / 3081 after index-setter pass | 2508 / 3081 | +3 |
+| `test/built-ins/ArrayIteratorPrototype` | 15 / 27 | 27 / 27 | +12 |
+
+Earlier in the same Array pass, the generic `ToObject` conversion and index
+setter routing had already moved the Array prototype focused result through
+2344 / 2810 and 2351 / 2810. This report section records the final measured
+state after the length-setter and iterator-shape follow-ups. A full 53,379-case
+scan was not rerun.
+
+Representative artifacts:
+
+```text
+reports/.native-test262-tmp/fix9-array-prototype-after-length-setter.json
+reports/.native-test262-tmp/fix9-array-after-length-setter.json
+reports/.native-test262-tmp/fix9-array-iterator-prototype-after-shape.json
+reports/.native-test262-tmp/fix9-array-iterator-prototype-after-arguments-iterator.json
+```
+
+### Validation
+
+Passed:
+
+```powershell
+cargo check --all-targets --no-default-features
+cargo test --release --no-default-features --test native_array_methods
+cargo test --release --no-default-features arguments_object_is_iterable_with_array_values --test native_arguments
+cargo test --release --no-default-features array_iterator_prototype_exposes_next_and_to_string_tag --test native_collections
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Array/prototype --jobs 4 --json reports/.native-test262-tmp/fix9-array-prototype-after-length-setter.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/Array --jobs 4 --json reports/.native-test262-tmp/fix9-array-after-length-setter.json
+cargo run --release --no-default-features -- test262 --backend native --root test262 --suite test/built-ins/ArrayIteratorPrototype --jobs 4 --json reports/.native-test262-tmp/fix9-array-iterator-prototype-after-arguments-iterator.json
+```
+
+### Remaining C-Relevant Limits
+
+- Array sorting, sparse-hole mutation, species, and deep descriptor ordering
+  semantics still account for most remaining Array failures.
+- The arguments object is now iterable, but it is still an ordinary object
+  skeleton rather than a complete mapped/unmapped arguments exotic object.

@@ -146,10 +146,10 @@ fn compiles_nested_function_call_with_the_correct_receiver() {
             Instruction::LoadGlobal(0),
             Instruction::GetProperty(1),
             Instruction::GetProperty(2),
-            Instruction::GetMethod(3),
+            Instruction::GetMethod(2),
+            Instruction::LoadGlobal(3),
             Instruction::LoadGlobal(4),
-            Instruction::LoadGlobal(5),
-            Instruction::Constant(6),
+            Instruction::Constant(5),
             Instruction::CallWithThis(3),
             Instruction::Return,
         ]
