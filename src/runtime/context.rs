@@ -153,6 +153,7 @@ pub struct NativeContext {
     raw_json_objects: HashMap<ObjectId, String>,
     builtin_registry: Vec<BuiltinFunction>,
     builtin_realm_globals: HashMap<BuiltinId, ObjectId>,
+    current_builtin_stack: Vec<BuiltinId>,
     intrinsics: Option<Intrinsics>,
     array_iterator_prototype: Option<ObjectId>,
     function_prototype_call: Option<BuiltinId>,
@@ -173,6 +174,19 @@ pub struct NativeContext {
     budget: ExecutionBudget,
     call_depth: u64,
     gc_allocation_threshold: usize,
+}
+
+fn array_iterator_next_builtin(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let (value, done) = context.step_iterator_object(this_value)?;
+    context.create_object([
+        ("value".into(), value),
+        ("done".into(), JsValue::Boolean(done)),
+    ])
 }
 
 impl Default for NativeContext {
@@ -219,6 +233,7 @@ impl NativeContext {
             raw_json_objects: HashMap::new(),
             builtin_registry: Vec::new(),
             builtin_realm_globals: HashMap::new(),
+            current_builtin_stack: Vec::new(),
             intrinsics: None,
             array_iterator_prototype: None,
             function_prototype_call: None,
@@ -560,6 +575,22 @@ impl NativeContext {
 
     pub fn builtin_mut(&mut self, id: BuiltinId) -> Option<&mut BuiltinFunction> {
         self.builtin_registry.get_mut(id.0 as usize)
+    }
+
+    pub fn push_current_builtin(&mut self, id: BuiltinId) {
+        self.current_builtin_stack.push(id);
+    }
+
+    pub fn pop_current_builtin(&mut self) {
+        self.current_builtin_stack.pop();
+    }
+
+    #[must_use]
+    pub fn current_builtin_object(&self) -> Option<ObjectId> {
+        self.current_builtin_stack
+            .last()
+            .and_then(|id| self.builtin(*id))
+            .map(|builtin| builtin.object)
     }
 
     /// Find a registered builtin by name and return it as a `JsValue::BuiltinFunction`.
@@ -2466,6 +2497,22 @@ impl NativeContext {
         let prototype = self.heap_mut().allocate_object(object).ok_or_else(|| {
             VmError::runtime("heap full: cannot allocate array iterator prototype")
         })?;
+        let next = self.register_builtin("next", 0, array_iterator_next_builtin, None)?;
+        self.define_own_property(
+            prototype,
+            "next".into(),
+            PropertyDescriptor::data_with(next, true, false, true),
+        )?;
+        self.define_symbol_own_property(
+            prototype,
+            self.well_known_symbols().to_string_tag,
+            PropertyDescriptor::data_with(
+                JsValue::String("Array Iterator".into()),
+                false,
+                false,
+                true,
+            ),
+        )?;
         self.array_iterator_prototype = Some(prototype);
         Ok(Some(prototype))
     }
