@@ -437,12 +437,15 @@ impl Vm {
                 }
                 Instruction::UnaryPlus => {
                     let value = self.pop_value()?;
-                    match self.to_number(value, context) {
-                        Ok(value) => self.stack.push(JsValue::Number(value)),
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
-                        }
+                    match value {
+                        JsValue::Number(_) => self.stack.push(value),
+                        value => match self.to_number(value, context) {
+                            Ok(value) => self.stack.push(JsValue::Number(value)),
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
                     }
                 }
                 Instruction::ToNumeric => {
@@ -460,36 +463,55 @@ impl Vm {
                 }
                 Instruction::Increment => {
                     let value = self.pop_value()?;
-                    match increment_numeric(self, context, value) {
-                        Ok(value) => self.stack.push(value),
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                    match value {
+                        JsValue::Number(value) => {
+                            self.stack.push(JsValue::Number(value + 1.0));
                         }
+                        value => match increment_numeric(self, context, value) {
+                            Ok(value) => self.stack.push(value),
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
                     }
                 }
                 Instruction::Decrement => {
                     let value = self.pop_value()?;
-                    match decrement_numeric(self, context, value) {
-                        Ok(value) => self.stack.push(value),
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                    match value {
+                        JsValue::Number(value) => {
+                            self.stack.push(JsValue::Number(value - 1.0));
                         }
+                        value => match decrement_numeric(self, context, value) {
+                            Ok(value) => self.stack.push(value),
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
                     }
                 }
                 Instruction::Negate => {
                     let value = self.pop_value()?;
-                    if let JsValue::BigInt(value) = value {
-                        self.stack.push(JsValue::BigInt(-value));
-                        continue;
-                    }
-                    match self.to_number(value, context) {
-                        Ok(value) => self.stack.push(JsValue::Number(-value)),
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                    match value {
+                        JsValue::Number(value) => self.stack.push(JsValue::Number(-value)),
+                        JsValue::BigInt(value) => {
+                            if let Some(value) = value.checked_neg() {
+                                self.stack.push(JsValue::BigInt(value));
+                            } else {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(
+                                    VmError::range("BigInt value is outside the native i128 range"),
+                                )));
+                                discard_saved_finally = true;
+                            }
                         }
+                        value => match self.to_number(value, context) {
+                            Ok(value) => self.stack.push(JsValue::Number(-value)),
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
                     }
                 }
                 Instruction::LogicalNot => {
@@ -499,107 +521,105 @@ impl Vm {
                 Instruction::Add => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match add_values(self, context, left, right) {
-                        Ok(value) => self.stack.push(value),
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                    match (left, right) {
+                        (JsValue::Number(left), JsValue::Number(right)) => {
+                            self.stack.push(JsValue::Number(left + right));
                         }
+                        (left, right) => match add_values(self, context, left, right) {
+                            Ok(value) => self.stack.push(value),
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
+                        },
                     }
                 }
                 Instruction::Subtract => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_binary(left.clone(), right.clone(), |left, right| {
-                                left.checked_sub(right)
-                            }) {
-                                Ok(Some(value)) => self.stack.push(value),
-                                Ok(None) => {
-                                    let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(left - right));
-                                }
-                                Err(error) => {
-                                    abrupt =
-                                        Some(Completion::Throw(self.throw_value_from_error(error)));
-                                    discard_saved_finally = true;
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
-                        }
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(left - right));
+                    } else if let Err(error) = self.execute_numeric_binary_slow(
+                        left,
+                        right,
+                        context,
+                        |left, right| left.checked_sub(right),
+                        |left, right| left - right,
+                    ) {
+                        abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                        discard_saved_finally = true;
                     }
                 }
                 Instruction::Multiply => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_binary(left.clone(), right.clone(), |left, right| {
-                                left.checked_mul(right)
-                            }) {
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(left * right));
+                    } else if let Err(error) = self.execute_numeric_binary_slow(
+                        left,
+                        right,
+                        context,
+                        |left, right| left.checked_mul(right),
+                        |left, right| left * right,
+                    ) {
+                        abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                        discard_saved_finally = true;
+                    }
+                }
+                Instruction::Divide => {
+                    let right = self.pop_value()?;
+                    let left = self.pop_value()?;
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(left / right));
+                    } else {
+                        match self.to_numeric_operands(left, right, context) {
+                            Ok((left, right)) => match bigint_divide(left.clone(), right.clone()) {
                                 Ok(Some(value)) => self.stack.push(value),
                                 Ok(None) => {
                                     let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(left * right));
+                                    self.stack.push(JsValue::Number(left / right));
                                 }
                                 Err(error) => {
                                     abrupt =
                                         Some(Completion::Throw(self.throw_value_from_error(error)));
                                     discard_saved_finally = true;
                                 }
-                            }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
-                        }
-                    }
-                }
-                Instruction::Divide => {
-                    let right = self.pop_value()?;
-                    let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_divide(left.clone(), right.clone()) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(left / right));
-                            }
+                            },
                             Err(error) => {
                                 abrupt =
                                     Some(Completion::Throw(self.throw_value_from_error(error)));
                                 discard_saved_finally = true;
                             }
-                        },
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
                         }
                     }
                 }
                 Instruction::Remainder => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_remainder(left.clone(), right.clone()) {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(left % right));
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(left % right));
+                    } else {
+                        match self.to_numeric_operands(left, right, context) {
+                            Ok((left, right)) => {
+                                match bigint_remainder(left.clone(), right.clone()) {
+                                    Ok(Some(value)) => self.stack.push(value),
+                                    Ok(None) => {
+                                        let (left, right) = numeric_number_pair(left, right)?;
+                                        self.stack.push(JsValue::Number(left % right));
+                                    }
+                                    Err(error) => {
+                                        abrupt = Some(Completion::Throw(
+                                            self.throw_value_from_error(error),
+                                        ));
+                                        discard_saved_finally = true;
+                                    }
+                                }
                             }
                             Err(error) => {
                                 abrupt =
                                     Some(Completion::Throw(self.throw_value_from_error(error)));
                                 discard_saved_finally = true;
                             }
-                        },
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
                         }
                     }
                 }
@@ -630,186 +650,189 @@ impl Vm {
                 Instruction::BitwiseAnd => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_binary(left.clone(), right.clone(), |left, right| {
-                                Some(left & right)
-                            }) {
-                                Ok(Some(value)) => self.stack.push(value),
-                                Ok(None) => {
-                                    let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(f64::from(
-                                        number_to_int32(left) & number_to_int32(right),
-                                    )));
-                                }
-                                Err(error) => {
-                                    abrupt =
-                                        Some(Completion::Throw(self.throw_value_from_error(error)));
-                                    discard_saved_finally = true;
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
-                        }
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(f64::from(
+                            number_to_int32(*left) & number_to_int32(*right),
+                        )));
+                    } else if let Err(error) = self.execute_numeric_binary_slow(
+                        left,
+                        right,
+                        context,
+                        |left, right| Some(left & right),
+                        |left, right| f64::from(number_to_int32(left) & number_to_int32(right)),
+                    ) {
+                        abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                        discard_saved_finally = true;
                     }
                 }
                 Instruction::BitwiseOr => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_binary(left.clone(), right.clone(), |left, right| {
-                                Some(left | right)
-                            }) {
-                                Ok(Some(value)) => self.stack.push(value),
-                                Ok(None) => {
-                                    let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(f64::from(
-                                        number_to_int32(left) | number_to_int32(right),
-                                    )));
-                                }
-                                Err(error) => {
-                                    abrupt =
-                                        Some(Completion::Throw(self.throw_value_from_error(error)));
-                                    discard_saved_finally = true;
-                                }
-                            }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
-                        }
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(f64::from(
+                            number_to_int32(*left) | number_to_int32(*right),
+                        )));
+                    } else if let Err(error) = self.execute_numeric_binary_slow(
+                        left,
+                        right,
+                        context,
+                        |left, right| Some(left | right),
+                        |left, right| f64::from(number_to_int32(left) | number_to_int32(right)),
+                    ) {
+                        abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                        discard_saved_finally = true;
                     }
                 }
                 Instruction::BitwiseXor => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_binary(left.clone(), right.clone(), |left, right| {
-                                Some(left ^ right)
-                            }) {
-                                Ok(Some(value)) => self.stack.push(value),
-                                Ok(None) => {
-                                    let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(f64::from(
-                                        number_to_int32(left) ^ number_to_int32(right),
-                                    )));
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(f64::from(
+                            number_to_int32(*left) ^ number_to_int32(*right),
+                        )));
+                    } else if let Err(error) = self.execute_numeric_binary_slow(
+                        left,
+                        right,
+                        context,
+                        |left, right| Some(left ^ right),
+                        |left, right| f64::from(number_to_int32(left) ^ number_to_int32(right)),
+                    ) {
+                        abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                        discard_saved_finally = true;
+                    }
+                }
+                Instruction::BitwiseNot => {
+                    let value = self.pop_value()?;
+                    match value {
+                        JsValue::Number(value) => self
+                            .stack
+                            .push(JsValue::Number(f64::from(!number_to_int32(value)))),
+                        JsValue::BigInt(value) => {
+                            match value.checked_neg().and_then(|value| value.checked_sub(1)) {
+                                Some(value) => {
+                                    self.stack.push(JsValue::BigInt(value));
                                 }
-                                Err(error) => {
+                                None => {
                                     abrupt =
-                                        Some(Completion::Throw(self.throw_value_from_error(error)));
+                                        Some(Completion::Throw(vm_error_to_value(VmError::range(
+                                            "BigInt value is outside the native i128 range",
+                                        ))));
                                     discard_saved_finally = true;
                                 }
                             }
                         }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
-                        }
-                    }
-                }
-                Instruction::BitwiseNot => {
-                    let val = self.pop_value()?;
-                    if let JsValue::BigInt(value) = val {
-                        match value.checked_neg().and_then(|v| v.checked_sub(1)) {
-                            Some(value) => {
-                                self.stack.push(JsValue::BigInt(value));
-                                continue;
+                        value => match self.to_int32(value, context) {
+                            Ok(value) => {
+                                self.stack.push(JsValue::Number(f64::from(!value)));
                             }
-                            None => {
-                                abrupt = Some(Completion::Throw(vm_error_to_value(
-                                    VmError::range("BigInt value is outside the native i128 range"),
-                                )));
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
                                 discard_saved_finally = true;
                             }
-                        }
-                    }
-                    match self.to_int32(val, context) {
-                        Ok(n) => self.stack.push(JsValue::Number(f64::from(!n))),
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
-                        }
+                        },
                     }
                 }
                 Instruction::LeftShift => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => match bigint_shift(left.clone(), right.clone(), false)
-                        {
-                            Ok(Some(value)) => self.stack.push(value),
-                            Ok(None) => {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(f64::from(
-                                    number_to_int32(left) << (number_to_uint32(right) & 0x1f),
-                                )));
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(f64::from(
+                            number_to_int32(*left) << (number_to_uint32(*right) & 0x1f),
+                        )));
+                    } else {
+                        match self.to_numeric_operands(left, right, context) {
+                            Ok((left, right)) => {
+                                match bigint_shift(left.clone(), right.clone(), false) {
+                                    Ok(Some(value)) => self.stack.push(value),
+                                    Ok(None) => {
+                                        let (left, right) = numeric_number_pair(left, right)?;
+                                        self.stack.push(JsValue::Number(f64::from(
+                                            number_to_int32(left)
+                                                << (number_to_uint32(right) & 0x1f),
+                                        )));
+                                    }
+                                    Err(error) => {
+                                        abrupt = Some(Completion::Throw(
+                                            self.throw_value_from_error(error),
+                                        ));
+                                        discard_saved_finally = true;
+                                    }
+                                }
                             }
                             Err(error) => {
                                 abrupt =
                                     Some(Completion::Throw(self.throw_value_from_error(error)));
                                 discard_saved_finally = true;
                             }
-                        },
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
                         }
                     }
                 }
                 Instruction::RightShift => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_shift(left.clone(), right.clone(), true) {
-                                Ok(Some(value)) => self.stack.push(value),
-                                Ok(None) => {
-                                    let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(f64::from(
-                                        number_to_int32(left) >> (number_to_uint32(right) & 0x1f),
-                                    )));
-                                }
-                                Err(error) => {
-                                    abrupt =
-                                        Some(Completion::Throw(self.throw_value_from_error(error)));
-                                    discard_saved_finally = true;
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(f64::from(
+                            number_to_int32(*left) >> (number_to_uint32(*right) & 0x1f),
+                        )));
+                    } else {
+                        match self.to_numeric_operands(left, right, context) {
+                            Ok((left, right)) => {
+                                match bigint_shift(left.clone(), right.clone(), true) {
+                                    Ok(Some(value)) => self.stack.push(value),
+                                    Ok(None) => {
+                                        let (left, right) = numeric_number_pair(left, right)?;
+                                        self.stack.push(JsValue::Number(f64::from(
+                                            number_to_int32(left)
+                                                >> (number_to_uint32(right) & 0x1f),
+                                        )));
+                                    }
+                                    Err(error) => {
+                                        abrupt = Some(Completion::Throw(
+                                            self.throw_value_from_error(error),
+                                        ));
+                                        discard_saved_finally = true;
+                                    }
                                 }
                             }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
+                            Err(error) => {
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
                 Instruction::UnsignedRightShift => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            if matches!(left, JsValue::BigInt(_))
-                                || matches!(right, JsValue::BigInt(_))
-                            {
-                                abrupt = Some(Completion::Throw(vm_error_to_value(
-                                    VmError::type_error(
-                                        "BigInt does not support unsigned right shift",
-                                    ),
-                                )));
-                                discard_saved_finally = true;
-                            } else {
-                                let (left, right) = numeric_number_pair(left, right)?;
-                                self.stack.push(JsValue::Number(f64::from(
-                                    number_to_uint32(left) >> (number_to_uint32(right) & 0x1f),
-                                )));
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(f64::from(
+                            number_to_uint32(*left) >> (number_to_uint32(*right) & 0x1f),
+                        )));
+                    } else {
+                        match self.to_numeric_operands(left, right, context) {
+                            Ok((left, right)) => {
+                                if matches!(left, JsValue::BigInt(_))
+                                    || matches!(right, JsValue::BigInt(_))
+                                {
+                                    abrupt = Some(Completion::Throw(vm_error_to_value(
+                                        VmError::type_error(
+                                            "BigInt does not support unsigned right shift",
+                                        ),
+                                    )));
+                                    discard_saved_finally = true;
+                                } else {
+                                    let (left, right) = numeric_number_pair(left, right)?;
+                                    self.stack.push(JsValue::Number(f64::from(
+                                        number_to_uint32(left) >> (number_to_uint32(right) & 0x1f),
+                                    )));
+                                }
                             }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
+                            Err(error) => {
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
@@ -840,29 +863,45 @@ impl Vm {
                 Instruction::LessThan => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let value =
-                        compare_values(self, context, left, right, |ordering| ordering.is_lt())?;
+                    let value = match (left, right) {
+                        (JsValue::Number(left), JsValue::Number(right)) => left < right,
+                        (left, right) => {
+                            compare_values(self, context, left, right, |ordering| ordering.is_lt())?
+                        }
+                    };
                     self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::LessThanOrEqual => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let value =
-                        compare_values(self, context, left, right, |ordering| ordering.is_le())?;
+                    let value = match (left, right) {
+                        (JsValue::Number(left), JsValue::Number(right)) => left <= right,
+                        (left, right) => {
+                            compare_values(self, context, left, right, |ordering| ordering.is_le())?
+                        }
+                    };
                     self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::GreaterThan => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let value =
-                        compare_values(self, context, left, right, |ordering| ordering.is_gt())?;
+                    let value = match (left, right) {
+                        (JsValue::Number(left), JsValue::Number(right)) => left > right,
+                        (left, right) => {
+                            compare_values(self, context, left, right, |ordering| ordering.is_gt())?
+                        }
+                    };
                     self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::GreaterThanOrEqual => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    let value =
-                        compare_values(self, context, left, right, |ordering| ordering.is_ge())?;
+                    let value = match (left, right) {
+                        (JsValue::Number(left), JsValue::Number(right)) => left >= right,
+                        (left, right) => {
+                            compare_values(self, context, left, right, |ordering| ordering.is_ge())?
+                        }
+                    };
                     self.stack.push(JsValue::Boolean(value));
                 }
                 Instruction::JumpIfFalse(target) => {
@@ -4391,6 +4430,26 @@ impl Vm {
         Ok((left, right))
     }
 
+    fn execute_numeric_binary_slow(
+        &mut self,
+        left: JsValue,
+        right: JsValue,
+        context: &mut NativeContext,
+        bigint_operation: impl FnOnce(i128, i128) -> Option<i128>,
+        number_operation: impl FnOnce(f64, f64) -> f64,
+    ) -> Result<(), VmError> {
+        let (left, right) = self.to_numeric_operands(left, right, context)?;
+        match bigint_binary(left.clone(), right.clone(), bigint_operation)? {
+            Some(value) => self.stack.push(value),
+            None => {
+                let (left, right) = numeric_number_pair(left, right)?;
+                self.stack
+                    .push(JsValue::Number(number_operation(left, right)));
+            }
+        }
+        Ok(())
+    }
+
     fn throw_value_from_error(&mut self, error: VmError) -> JsValue {
         self.pending_exception
             .take()
@@ -6045,17 +6104,14 @@ fn numeric_number_pair(left: JsValue, right: JsValue) -> Result<(f64, f64), VmEr
 }
 
 fn number_to_int32(value: f64) -> i32 {
-    if value.is_nan() || value.is_infinite() || value == 0.0 {
-        return 0;
-    }
-    value.trunc() as i64 as i32
+    number_to_uint32(value) as i32
 }
 
 fn number_to_uint32(value: f64) -> u32 {
-    if value.is_nan() || value.is_infinite() || value == 0.0 {
+    if !value.is_finite() || value == 0.0 {
         return 0;
     }
-    value.trunc() as i64 as u32
+    value.trunc().rem_euclid(4_294_967_296.0) as u32
 }
 
 fn bigint_divide(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
@@ -6422,7 +6478,7 @@ mod tests {
         vm::VmErrorKind,
     };
 
-    use super::Vm;
+    use super::{Vm, number_to_int32, number_to_uint32};
 
     fn constant(chunk: &mut Chunk, constant: Constant) -> u16 {
         chunk.add_constant(constant).unwrap()
@@ -6761,5 +6817,18 @@ mod tests {
         let error = vm.execute(&chunk).unwrap_err();
         assert_eq!(error.kind, VmErrorKind::Runtime);
         assert!(vm.stack.is_empty());
+    }
+
+    #[test]
+    fn int32_conversion_uses_ecmascript_modulo_semantics() {
+        assert_eq!(number_to_uint32(f64::NAN), 0);
+        assert_eq!(number_to_uint32(f64::INFINITY), 0);
+        assert_eq!(number_to_uint32(-0.0), 0);
+        assert_eq!(number_to_uint32(4_294_967_295.0), u32::MAX);
+        assert_eq!(number_to_uint32(4_294_967_296.0), 0);
+        assert_eq!(number_to_uint32(1e30), 0);
+        assert_eq!(number_to_int32(4_294_967_295.0), -1);
+        assert_eq!(number_to_int32(4_294_967_296.0), 0);
+        assert_eq!(number_to_int32(1e30), 0);
     }
 }
