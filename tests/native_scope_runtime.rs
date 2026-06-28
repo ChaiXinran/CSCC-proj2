@@ -10,6 +10,7 @@ fn empty_function_chunk() -> Chunk {
         constants: Vec::new(),
         functions: Vec::new(),
         handlers: Vec::new(),
+        function_body_start: 0,
     }
 }
 

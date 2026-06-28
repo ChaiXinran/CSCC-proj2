@@ -128,7 +128,10 @@ impl Parser {
     }
 
     /// In strict mode, `eval` and `arguments` cannot be assignment targets.
-    fn check_strict_assignment_target(&self, expr: &Expression) -> Result<(), ParseError> {
+    pub(super) fn check_strict_assignment_target(
+        &self,
+        expr: &Expression,
+    ) -> Result<(), ParseError> {
         if !self.is_strict {
             return Ok(());
         }
@@ -1026,9 +1029,15 @@ impl Parser {
             self.cursor = saved;
         }
 
-        // General property: parse the key first, then decide.
-        // Track whether the token was a plain `Identifier` (not a keyword) for shorthand.
-        let key_from_ident_token = matches!(self.peek().kind, TokenKind::Identifier(_));
+        // General property: parse the key first, then decide. Contextual
+        // keywords can be shorthand identifiers where they are not reserved.
+        let key_can_be_shorthand = match &self.peek().kind {
+            TokenKind::Identifier(_) => true,
+            TokenKind::Keyword(Keyword::Yield) => !self.is_generator_context && !self.is_strict,
+            TokenKind::Keyword(Keyword::Await) => !self.is_async_context,
+            TokenKind::Keyword(Keyword::Let) => !self.is_strict,
+            _ => false,
+        };
         let key = self.parse_property_name()?;
 
         // `__proto__: value` — PrototypeSetter (only the non-computed shorthand)
@@ -1066,7 +1075,7 @@ impl Parser {
 
         // Shorthand property: `{name}` or `{name = default}`.
         // Only when: token was Identifier (not keyword), and name is not a reserved word.
-        if key_from_ident_token && !self.check_punctuator(':') {
+        if key_can_be_shorthand && !self.check_punctuator(':') {
             if let PropertyName::Identifier(ref ident) = key {
                 // Truly reserved words can never appear as shorthand.
                 if is_reserved_identifier_name(ident)
@@ -2819,7 +2828,9 @@ fn binary_operator(operator: &str) -> BinaryOperator {
 }
 
 /// Validates that an array/object destructuring assignment target obeys ES spec early errors.
-fn validate_destructuring_assignment_target(expr: &Expression) -> Result<(), String> {
+pub(super) fn validate_destructuring_assignment_target(
+    expr: &Expression,
+) -> Result<(), String> {
     match expr {
         Expression::Array(elements) => {
             let len = elements.len();
@@ -2834,12 +2845,10 @@ fn validate_destructuring_assignment_target(expr: &Expression) -> Result<(), Str
                         if i + 1 < len {
                             return Err("rest element must be last element".into());
                         }
-                        // Recurse into nested destructuring.
-                        validate_destructuring_assignment_target(inner)?;
+                        validate_destructuring_assignment_subtarget(inner)?;
                     }
                     ArrayElement::Expression(inner) => {
-                        // Nested patterns also need validation.
-                        validate_destructuring_assignment_target(inner)?;
+                        validate_destructuring_assignment_element(inner)?;
                     }
                     ArrayElement::Hole => {}
                 }
@@ -2848,21 +2857,54 @@ fn validate_destructuring_assignment_target(expr: &Expression) -> Result<(), Str
         Expression::Object(props) => {
             let len = props.len();
             for (i, prop) in props.iter().enumerate() {
-                if let ObjectProperty::Spread(inner) = prop {
-                    if i + 1 < len {
-                        return Err("rest element must be last element".into());
+                match prop {
+                    ObjectProperty::Data { value, .. }
+                    | ObjectProperty::ComputedData { value, .. } => {
+                        validate_destructuring_assignment_element(value)?;
                     }
-                    validate_destructuring_assignment_target(inner)?;
+                    ObjectProperty::Spread(inner) => {
+                        if matches!(inner, Expression::Assignment { .. }) {
+                            return Err("rest element may not have a default value".into());
+                        }
+                        if i + 1 < len {
+                            return Err("rest element must be last element".into());
+                        }
+                        validate_destructuring_assignment_subtarget(inner)?;
+                    }
+                    ObjectProperty::Getter { .. }
+                    | ObjectProperty::Setter { .. }
+                    | ObjectProperty::PrototypeSetter { .. } => {
+                        return Err("invalid destructuring assignment target".into());
+                    }
                 }
             }
         }
-        // Nested array or object inside e.g. `[{a}] = ...`
-        Expression::Assignment { target, value: _ } => {
-            validate_destructuring_assignment_target(target)?;
+        Expression::Assignment { target, .. } => {
+            validate_destructuring_assignment_subtarget(target)?;
         }
-        _ => {}
+        Expression::Identifier(_) | Expression::Member { .. } => {}
+        _ => return Err("invalid destructuring assignment target".into()),
     }
     Ok(())
+}
+
+fn validate_destructuring_assignment_element(expr: &Expression) -> Result<(), String> {
+    match expr {
+        Expression::Assignment { target, .. } => {
+            validate_destructuring_assignment_subtarget(target)
+        }
+        _ => validate_destructuring_assignment_subtarget(expr),
+    }
+}
+
+fn validate_destructuring_assignment_subtarget(expr: &Expression) -> Result<(), String> {
+    match expr {
+        Expression::Identifier(_) | Expression::Member { .. } => Ok(()),
+        Expression::Array(_) | Expression::Object(_) => {
+            validate_destructuring_assignment_target(expr)
+        }
+        _ => Err("invalid destructuring assignment target".into()),
+    }
 }
 
 fn is_assignment_target(expression: &Expression) -> bool {

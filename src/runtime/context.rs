@@ -1370,6 +1370,29 @@ impl NativeContext {
         self.environment_stack.len()
     }
 
+    #[must_use]
+    pub fn environment_state(&self) -> (Vec<EnvironmentId>, EnvironmentId) {
+        (self.environment_stack.clone(), self.current_environment)
+    }
+
+    pub fn restore_environment_state(
+        &mut self,
+        environment_stack: Vec<EnvironmentId>,
+        current_environment: EnvironmentId,
+    ) -> Result<(), VmError> {
+        if self.heap.environment(current_environment).is_none() {
+            return Err(VmError::runtime("missing lexical environment"));
+        }
+        for environment in &environment_stack {
+            if self.heap.environment(*environment).is_none() {
+                return Err(VmError::runtime("missing lexical environment"));
+            }
+        }
+        self.environment_stack = environment_stack;
+        self.current_environment = current_environment;
+        Ok(())
+    }
+
     pub fn restore_environment_depth(&mut self, depth: usize) -> Result<(), VmError> {
         if depth > self.environment_stack.len() {
             return Err(VmError::runtime(format!(

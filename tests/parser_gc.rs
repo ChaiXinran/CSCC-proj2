@@ -35,6 +35,7 @@ fn vm_rejects_invalid_chunks_before_interpretation() {
         constants: Vec::new(),
         functions: Vec::new(),
         handlers: Vec::new(),
+        function_body_start: 0,
     };
 
     let error = Vm::default()

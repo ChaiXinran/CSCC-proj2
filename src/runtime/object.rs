@@ -104,6 +104,8 @@ pub enum GeneratorState {
 pub struct GeneratorRecord {
     pub function: FunctionId,
     pub environment: Option<EnvironmentId>,
+    pub environment_stack: Vec<EnvironmentId>,
+    pub current_environment: EnvironmentId,
     pub this_value: JsValue,
     pub arguments: Vec<JsValue>,
     pub next_ip: usize,
@@ -588,6 +590,10 @@ impl Trace for JsObject {
                 if let Some(environment) = record.environment {
                     tracer.mark_environment(environment);
                 }
+                tracer.mark_environment(record.current_environment);
+                for environment in &record.environment_stack {
+                    tracer.mark_environment(*environment);
+                }
                 record.this_value.trace(tracer);
                 for argument in &record.arguments {
                     argument.trace(tracer);
@@ -637,7 +643,10 @@ impl JsObject {
             ObjectKind::Generator { record } => std::mem::size_of::<GeneratorRecord>()
                 .saturating_add(record.arguments.capacity() * std::mem::size_of::<JsValue>())
                 .saturating_add(record.stack.capacity() * std::mem::size_of::<JsValue>())
-                .saturating_add(record.delegate_values.capacity() * std::mem::size_of::<JsValue>()),
+                .saturating_add(record.delegate_values.capacity() * std::mem::size_of::<JsValue>())
+                .saturating_add(
+                    record.environment_stack.capacity() * std::mem::size_of::<EnvironmentId>(),
+                ),
             ObjectKind::Promise { .. } => std::mem::size_of::<PromiseId>(),
             ObjectKind::Proxy { .. } => std::mem::size_of::<ProxyRecord>(),
         };

@@ -8,10 +8,10 @@ use crate::{
         Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
     },
     runtime::{
-        FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord, Job, JsFunction,
-        JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind, PreferredType,
-        PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor, PropertyKey,
-        PropertyKind, SymbolId, to_property_key,
+        EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
+        Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
+        PreferredType, PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor,
+        PropertyKey, PropertyKind, SymbolId, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -276,7 +276,7 @@ impl Vm {
         context: &mut NativeContext,
         start_ip: usize,
     ) -> Result<Completion, VmError> {
-        self.run_completion_from_with_initial(chunk, context, start_ip, None)
+        self.run_completion_from_with_initial(chunk, context, start_ip, None, None)
     }
 
     fn run_completion_from_with_initial(
@@ -285,6 +285,43 @@ impl Vm {
         context: &mut NativeContext,
         start_ip: usize,
         initial: Option<Completion>,
+        baseline_environment_depth: Option<usize>,
+    ) -> Result<Completion, VmError> {
+        self.run_completion_from_with_initial_until(
+            chunk,
+            context,
+            start_ip,
+            initial,
+            None,
+            baseline_environment_depth,
+        )
+    }
+
+    fn run_completion_until(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+        start_ip: usize,
+        stop_ip: usize,
+    ) -> Result<Completion, VmError> {
+        self.run_completion_from_with_initial_until(
+            chunk,
+            context,
+            start_ip,
+            None,
+            Some(stop_ip),
+            None,
+        )
+    }
+
+    fn run_completion_from_with_initial_until(
+        &mut self,
+        chunk: &Chunk,
+        context: &mut NativeContext,
+        start_ip: usize,
+        initial: Option<Completion>,
+        stop_ip: Option<usize>,
+        baseline_environment_depth: Option<usize>,
     ) -> Result<Completion, VmError> {
         let analysis = chunk
             .analyze_stack()
@@ -295,7 +332,7 @@ impl Vm {
         let mut instruction_pointer = start_ip;
         let baseline = RunBaseline {
             stack_depth: self.stack.len(),
-            environment_depth: context.environment_depth(),
+            environment_depth: baseline_environment_depth.unwrap_or_else(|| context.environment_depth()),
         };
         if let Some(completion) = initial
             && !self.enter_handler(
@@ -310,6 +347,11 @@ impl Vm {
             return Ok(completion);
         }
         while instruction_pointer < chunk.instructions.len() {
+            if let Some(stop_ip) = stop_ip
+                && instruction_pointer >= stop_ip
+            {
+                break;
+            }
             context.check_deadline()?;
             if context.should_collect_garbage() {
                 context.collect_garbage_for_vm(self)?;
@@ -1110,6 +1152,15 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::RequireObjectCoercible => {
+                    let value = self.peek_value()?;
+                    if matches!(value, JsValue::Null | JsValue::Undefined) {
+                        abrupt = Some(Completion::Throw(vm_error_to_value(VmError::type_error(
+                            "Cannot destructure null or undefined",
+                        ))));
+                        discard_saved_finally = true;
+                    }
+                }
                 Instruction::SpreadIntoArray => {
                     let iterable = self.pop_value()?;
                     let array_val = self.peek_value()?.clone();
@@ -1290,11 +1341,15 @@ impl Vm {
                 }
                 Instruction::IteratorClose => {
                     let iterator = self.pop_value()?;
+                    let preserve_throw_completion =
+                        matches!(self.finally_stack.last(), Some(Completion::Throw(_)));
                     match self.close_iterator_object_completion(iterator, context)? {
                         OperationResult::Value(_) => {}
                         OperationResult::Throw(value) => {
-                            abrupt = Some(Completion::Throw(value));
-                            discard_saved_finally = true;
+                            if !preserve_throw_completion {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
@@ -1746,6 +1801,45 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::CopyDataPropertiesExcluded(count) => {
+                    let mut raw_excluded = Vec::with_capacity(count as usize);
+                    for _ in 0..count {
+                        raw_excluded.push(self.pop_value()?);
+                    }
+                    raw_excluded.reverse();
+                    let source = self.pop_value()?;
+
+                    let mut excluded = Vec::with_capacity(count as usize);
+                    for raw_key in raw_excluded {
+                        match self.to_property_key_from_builtin(raw_key, context) {
+                            Ok(JsValue::String(key)) => {
+                                excluded.push(PropertyKey::String(key));
+                            }
+                            Ok(JsValue::Symbol(symbol)) => {
+                                excluded.push(PropertyKey::Symbol(symbol));
+                            }
+                            Ok(_) => unreachable!("ToPropertyKey returns string or symbol"),
+                            Err(error) => match self.error_to_operation_result(error)? {
+                                OperationResult::Value(_) => unreachable!(),
+                                OperationResult::Throw(value) => {
+                                    abrupt = Some(Completion::Throw(value));
+                                    discard_saved_finally = true;
+                                    break;
+                                }
+                            },
+                        }
+                    }
+
+                    if abrupt.is_none() {
+                        match self.copy_data_properties_excluded(source, &excluded, context)? {
+                            OperationResult::Value(value) => self.stack.push(value),
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                        }
+                    }
+                }
                 Instruction::SetObjectPrototype => {
                     let prototype = self.pop_value()?;
                     let object = context.require_object(self.peek_value()?, "set prototype")?;
@@ -1977,9 +2071,13 @@ impl Vm {
             }
         }
 
-        Err(VmError::runtime(
-            "bytecode ended without a return instruction",
-        ))
+        if stop_ip.is_some() {
+            Ok(Completion::Normal(JsValue::Undefined))
+        } else {
+            Err(VmError::runtime(
+                "bytecode ended without a return instruction",
+            ))
+        }
     }
 
     fn constant_at<'a>(
@@ -2116,16 +2214,22 @@ impl Vm {
     fn create_generator_object(
         &mut self,
         function: FunctionId,
+        environment: Option<EnvironmentId>,
+        environment_stack: Vec<EnvironmentId>,
+        current_environment: EnvironmentId,
         this_value: JsValue,
         arguments: Vec<JsValue>,
+        next_ip: usize,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
         let record = GeneratorRecord {
             function,
-            environment: None,
+            environment,
+            environment_stack,
+            current_environment,
             this_value,
             arguments,
-            next_ip: 0,
+            next_ip,
             state: GeneratorState::SuspendedStart,
             stack: Vec::new(),
             delegate_values: Vec::new(),
@@ -2285,22 +2389,34 @@ impl Vm {
             .function(record.function)
             .cloned()
             .ok_or_else(|| VmError::runtime("missing generator function"))?;
-        let caller_environment_depth = context.environment_depth();
+        let (caller_environment_stack, caller_current_environment) = context.environment_state();
         let stack_base = self.stack.len();
-        let environment = if let Some(environment) = record.environment {
-            context.push_existing_environment(environment)?;
-            environment
+        let frame_environment = if record.environment.is_some() {
+            context.restore_environment_state(
+                record.environment_stack.clone(),
+                record.current_environment,
+            )?;
+            record.current_environment
         } else {
             let environment = context.push_environment(function.environment)?;
-            self.bind_function_environment(
+            if let Err(error) = self.bind_function_environment(
                 record.function,
                 &function,
                 environment,
                 &record.arguments,
                 record.this_value.clone(),
                 context,
-            )?;
+            ) {
+                let _ = context.restore_environment_state(
+                    caller_environment_stack,
+                    caller_current_environment,
+                );
+                return Err(error);
+            }
             record.environment = Some(environment);
+            let (environment_stack, current_environment) = context.environment_state();
+            record.environment_stack = environment_stack;
+            record.current_environment = current_environment;
             environment
         };
 
@@ -2315,10 +2431,19 @@ impl Vm {
             self.stack.push(sent_value);
         }
 
+        let baseline_environment_depth = record
+            .environment
+            .and_then(|environment| {
+                record
+                    .environment_stack
+                    .iter()
+                    .position(|saved| *saved == environment)
+            })
+            .unwrap_or_else(|| context.environment_depth());
         let frame = CallFrame::new(
             Some(record.function),
             record.next_ip,
-            environment,
+            frame_environment,
             record.this_value.clone(),
             stack_base,
         );
@@ -2328,11 +2453,14 @@ impl Vm {
             context,
             record.next_ip,
             injected,
+            Some(baseline_environment_depth),
         );
         let saved_stack = self.stack[stack_base..].to_vec();
+        let (saved_environment_stack, saved_current_environment) = context.environment_state();
         self.stack.truncate(stack_base);
         let frame_result = context.pop_call_frame();
-        let environment_result = context.restore_environment_depth(caller_environment_depth);
+        let environment_result =
+            context.restore_environment_state(caller_environment_stack, caller_current_environment);
         frame_result?;
         environment_result?;
 
@@ -2341,6 +2469,8 @@ impl Vm {
                 record.next_ip = next_ip;
                 record.state = GeneratorState::SuspendedYield;
                 record.stack = saved_stack;
+                record.environment_stack = saved_environment_stack;
+                record.current_environment = saved_current_environment;
                 self.write_generator_record(context, object, record)?;
                 generator_result(context, value, false)
             }
@@ -2352,6 +2482,8 @@ impl Vm {
                 record.next_ip = next_ip;
                 record.state = GeneratorState::SuspendedYield;
                 record.stack = saved_stack;
+                record.environment_stack = saved_environment_stack;
+                record.current_environment = saved_current_environment;
                 record.delegate_iterator = Some(iterator);
                 self.write_generator_record(context, object, record)?;
                 Ok(value)
@@ -2362,6 +2494,10 @@ impl Vm {
                 record.delegate_values.clear();
                 record.delegate_iterator = None;
                 record.delegate_return = None;
+                record.environment_stack.clear();
+                if let Some(environment) = record.environment {
+                    record.current_environment = environment;
+                }
                 self.write_generator_record(context, object, record)?;
                 generator_result(context, value, true)
             }
@@ -2371,6 +2507,10 @@ impl Vm {
                 record.delegate_values.clear();
                 record.delegate_iterator = None;
                 record.delegate_return = None;
+                record.environment_stack.clear();
+                if let Some(environment) = record.environment {
+                    record.current_environment = environment;
+                }
                 self.write_generator_record(context, object, record)?;
                 self.pending_exception = Some(value);
                 Err(VmError::runtime("generator body threw"))
@@ -2970,7 +3110,10 @@ impl Vm {
             } => {
                 let result = self.step_js_iterator(iterator, next_method, context)?;
                 // Update done flag in the stored record so IteratorClose knows if we're exhausted.
-                if let IteratorStepResult::Value { done: true, .. } = &result {
+                if matches!(
+                    &result,
+                    IteratorStepResult::Value { done: true, .. } | IteratorStepResult::Throw(_)
+                ) {
                     if let Some(obj) = context.heap_mut().object_mut(id) {
                         if let ObjectKind::Iterator { record } = &mut obj.kind {
                             record.done = true;
@@ -3703,9 +3846,6 @@ impl Vm {
                 return Err(VmError::runtime("iterator next getter threw"));
             }
         };
-        if !is_callable_value(&next) {
-            return Err(VmError::type_error("iterator next is not callable"));
-        }
         let object = JsObject::iterator(IteratorRecord::js_with_next(iterator, next));
         let id = context
             .heap_mut()
@@ -4307,6 +4447,74 @@ impl Vm {
         }
     }
 
+    fn copy_data_properties_excluded(
+        &mut self,
+        source: JsValue,
+        excluded: &[PropertyKey],
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let source_object = match self.to_object(source.clone(), context) {
+            Ok(object) => object,
+            Err(error) => return self.error_to_operation_result(error),
+        };
+        let source_value = if context.value_object(&source).is_some() {
+            source.clone()
+        } else {
+            context.object_value(source_object)
+        };
+        let target = context.create_object(std::iter::empty::<(String, JsValue)>())?;
+        let target_object = context.require_object(&target, "object rest target")?;
+        let keys = match proxy::internal_own_property_keys(self, context, source_value.clone()) {
+            Ok(keys) => keys,
+            Err(error) => return self.error_to_operation_result(error),
+        };
+
+        for key in keys {
+            if excluded.contains(&key) {
+                continue;
+            }
+            let descriptor =
+                match proxy::internal_get_own_property(self, context, source_value.clone(), &key) {
+                    Ok(descriptor) => descriptor,
+                    Err(error) => return self.error_to_operation_result(error),
+                };
+            let Some(descriptor) = descriptor else {
+                continue;
+            };
+            if !descriptor.enumerable {
+                continue;
+            }
+            let value = match proxy::internal_get(
+                self,
+                context,
+                source_value.clone(),
+                &key,
+                source_value.clone(),
+            ) {
+                Ok(value) => value,
+                Err(error) => return self.error_to_operation_result(error),
+            };
+            match key {
+                PropertyKey::String(name) => {
+                    context.define_own_property(
+                        target_object,
+                        name,
+                        PropertyDescriptor::data(value),
+                    )?;
+                }
+                PropertyKey::Symbol(symbol) => {
+                    context.define_symbol_own_property(
+                        target_object,
+                        symbol,
+                        PropertyDescriptor::data(value),
+                    )?;
+                }
+            }
+        }
+
+        Ok(OperationResult::Value(target))
+    }
+
     pub(crate) fn get_property_value(
         &mut self,
         receiver: JsValue,
@@ -4745,9 +4953,78 @@ impl Vm {
             }
         };
         if function.is_generator {
-            return self
-                .create_generator_object(function_id, this_value, arguments, context)
-                .map(OperationResult::Value);
+            let stack_base = self.stack.len();
+            let caller_environment_depth = context.environment_depth();
+            let environment = context.push_environment(function.environment)?;
+            if let Err(error) = self.bind_function_environment(
+                function_id,
+                &function,
+                environment,
+                &arguments,
+                this_value.clone(),
+                context,
+            ) {
+                let _ = context.restore_environment_depth(caller_environment_depth);
+                return Err(error);
+            }
+
+            let frame = CallFrame::new(Some(function_id), 0, environment, this_value.clone(), stack_base);
+            if let Err(error) = context.push_call_frame(frame) {
+                let _ = context.restore_environment_depth(caller_environment_depth);
+                return Err(error);
+            }
+
+            let preamble_end = function.chunk.function_body_start;
+            let saved_finally_stack = self.finally_stack.clone();
+            let result = if preamble_end == 0 {
+                Ok(Completion::Normal(JsValue::Undefined))
+            } else {
+                self.run_completion_until(&function.chunk, context, 0, preamble_end)
+            };
+            self.finally_stack = saved_finally_stack;
+            let (generator_environment_stack, generator_current_environment) =
+                context.environment_state();
+            self.stack.truncate(stack_base);
+            let frame_result = context.pop_call_frame();
+            let environment_result = context.restore_environment_depth(caller_environment_depth);
+            frame_result?;
+            environment_result?;
+
+            match result? {
+                Completion::Normal(_) => {
+                    return self
+                        .create_generator_object(
+                            function_id,
+                            Some(environment),
+                            generator_environment_stack,
+                            generator_current_environment,
+                            this_value,
+                            arguments,
+                            preamble_end,
+                            context,
+                        )
+                        .map(OperationResult::Value);
+                }
+                Completion::Throw(value) => return Ok(OperationResult::Throw(value)),
+                Completion::Return(value) => return Ok(OperationResult::Value(value)),
+                Completion::Yield { .. } | Completion::YieldDelegate { .. } => {
+                    return Err(VmError::runtime(
+                        "yield completion escaped from generator parameter initialization",
+                    ));
+                }
+                Completion::Break(label) => {
+                    return Err(VmError::runtime(format!(
+                        "unhandled break completion{}",
+                        label_suffix(label.as_deref())
+                    )));
+                }
+                Completion::Continue(label) => {
+                    return Err(VmError::runtime(format!(
+                        "unhandled continue completion{}",
+                        label_suffix(label.as_deref())
+                    )));
+                }
+            }
         }
         let stack_base = self.stack.len();
         let caller_environment_depth = context.environment_depth();
@@ -4849,7 +5126,9 @@ impl Vm {
             return Err(error);
         }
 
+        let saved_finally_stack = self.finally_stack.clone();
         let result = self.run_completion(&function.chunk, context);
+        self.finally_stack = saved_finally_stack;
         self.stack.truncate(stack_base);
         let frame_result = context.pop_call_frame();
         let environment_result = context.restore_environment_depth(caller_environment_depth);
@@ -5998,6 +6277,7 @@ mod tests {
             constants: Vec::new(),
             functions: Vec::new(),
             handlers: Vec::new(),
+            function_body_start: 0,
         };
         let error = Vm::default().execute(&chunk).unwrap_err();
 
@@ -6239,6 +6519,7 @@ mod tests {
             constants: Vec::new(),
             functions: Vec::new(),
             handlers: Vec::new(),
+            function_body_start: 0,
         };
 
         let error = Vm::default()

@@ -72,6 +72,12 @@ struct BreakContext {
     environment_depth: u32,
 }
 
+#[derive(Debug, Clone)]
+enum ObjectRestExcludedKey {
+    Static(String),
+    Temp(String),
+}
+
 impl CompileContext {
     fn inside_function(&self) -> bool {
         self.function_depth > 0
@@ -374,7 +380,6 @@ impl Compiler {
             scope.insert(name.clone());
         }
         context.lexical_scopes.push(scope);
-
         // Hoist path-B fn decls (DeclareFunction into block env), skipping path-A ones.
         for stmt in statements {
             if let Statement::FunctionDeclaration {
@@ -1749,6 +1754,7 @@ impl Compiler {
                 )?;
             }
         }
+        fn_chunk.function_body_start = fn_chunk.current_offset();
         // Compile the body statements; no "completion expression" inside function bodies.
         for statement in &body.statements {
             if !matches!(statement, Statement::FunctionDeclaration { .. }) {
@@ -2198,6 +2204,23 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        if kind == VariableKind::Var {
+            if let Some(initializer) = initializer {
+                let name_index = self.add_name(name, chunk)?;
+                self.compile_expression(initializer, chunk, context)?;
+                if is_anonymous_function_definition(initializer) {
+                    chunk.emit(Instruction::SetFunctionName(name_index));
+                }
+                if context.inside_function() {
+                    chunk.emit(Instruction::StoreName(name_index));
+                } else {
+                    chunk.emit(Instruction::StoreGlobal(name_index));
+                }
+                chunk.emit(Instruction::Pop);
+            }
+            return Ok(());
+        }
+
         if kind == VariableKind::Const && initializer.is_none() {
             return Err(CompileError::unsupported(
                 "const declaration without an initializer",
@@ -2336,6 +2359,8 @@ impl Compiler {
             .map_err(CompileError::from_chunk)?;
         context.lexical_scopes.push(scope);
 
+        let protected_start = chunk.current_offset();
+        let handler_environment_depth = context.environment_depth;
         for elem in elements {
             match elem {
                 ArrayElement::Hole => {
@@ -2346,6 +2371,15 @@ impl Compiler {
                     chunk.emit(Instruction::Pop); // pop value
                 }
                 ArrayElement::Expression(target_expr) => {
+                    let assignment_target = if let Expression::Assignment { target, .. } =
+                        target_expr
+                    {
+                        target.as_ref()
+                    } else {
+                        target_expr
+                    };
+                    let precomputed_member = self
+                        .precompute_computed_member_target(assignment_target, chunk, context)?;
                     chunk.emit(Instruction::LoadName(iter_idx));
                     chunk.emit(Instruction::IteratorNext); // → [value, done]
 
@@ -2373,9 +2407,17 @@ impl Compiler {
                         chunk
                             .patch_jump(skip_default, after_default)
                             .map_err(CompileError::from_chunk)?;
-                        self.assign_dstr_element_to_target(target, chunk, context)?;
+                        if let Some((object_idx, key_idx)) = precomputed_member {
+                            self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
+                        } else {
+                            self.assign_dstr_element_to_target(target, chunk, context)?;
+                        }
                     } else {
-                        self.assign_dstr_element_to_target(target_expr, chunk, context)?;
+                        if let Some((object_idx, key_idx)) = precomputed_member {
+                            self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
+                        } else {
+                            self.assign_dstr_element_to_target(target_expr, chunk, context)?;
+                        }
                     }
 
                     let after_jump = chunk.emit(Instruction::Jump(usize::MAX));
@@ -2399,10 +2441,18 @@ impl Compiler {
                                 chunk.emit(Instruction::SetFunctionName(nm));
                             }
                         }
-                        self.assign_dstr_element_to_target(target, chunk, context)?;
+                        if let Some((object_idx, key_idx)) = precomputed_member {
+                            self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
+                        } else {
+                            self.assign_dstr_element_to_target(target, chunk, context)?;
+                        }
                     } else {
                         chunk.emit(Instruction::Constant(undef_idx));
-                        self.assign_dstr_element_to_target(target_expr, chunk, context)?;
+                        if let Some((object_idx, key_idx)) = precomputed_member {
+                            self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
+                        } else {
+                            self.assign_dstr_element_to_target(target_expr, chunk, context)?;
+                        }
                     }
 
                     let after_target = chunk.current_offset();
@@ -2411,6 +2461,8 @@ impl Compiler {
                         .map_err(CompileError::from_chunk)?;
                 }
                 ArrayElement::Spread(rest_target) => {
+                    let precomputed_member = self
+                        .precompute_computed_member_target(rest_target, chunk, context)?;
                     // Collect remaining iterator values into an array.
                     chunk.emit(Instruction::ArrayCreate(0)); // [] on stack
                     let loop_start = chunk.current_offset();
@@ -2426,15 +2478,94 @@ impl Compiler {
                         .map_err(CompileError::from_chunk)?;
                     chunk.emit(Instruction::Pop); // pop done=true → [array]
                     chunk.emit(Instruction::Pop); // pop iterator value placeholder
-                    self.assign_dstr_element_to_target(rest_target, chunk, context)?;
+                    if let Some((object_idx, key_idx)) = precomputed_member {
+                        self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
+                    } else {
+                        self.assign_dstr_element_to_target(rest_target, chunk, context)?;
+                    }
                 }
             }
         }
+        let protected_end = chunk.current_offset();
+        let normal_exit = chunk.emit(Instruction::Jump(usize::MAX));
 
+        let finally_target = chunk.current_offset();
+        chunk.emit(Instruction::LoadName(iter_idx));
+        chunk.emit(Instruction::IteratorClose);
+        chunk.emit(Instruction::EndFinally);
+
+        let after_finally = chunk.current_offset();
+        chunk
+            .patch_jump(normal_exit, after_finally)
+            .map_err(CompileError::from_chunk)?;
+        if protected_start < protected_end {
+            chunk.handlers.push(ExceptionHandler {
+                start: protected_start,
+                end: protected_end,
+                target: finally_target,
+                kind: HandlerKind::Finally,
+                stack_depth: 0,
+                environment_depth: handler_environment_depth,
+            });
+        }
+
+        chunk.emit(Instruction::LoadName(iter_idx));
+        chunk.emit(Instruction::IteratorClose);
         chunk.emit(Instruction::LoadName(rhs_idx));
         context.lexical_scopes.pop();
         chunk.emit(Instruction::PopEnvironment);
         context.environment_depth -= 1;
+        Ok(())
+    }
+
+    fn precompute_computed_member_target(
+        &mut self,
+        target: &Expression,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<Option<(u16, u16)>, CompileError> {
+        let Expression::Member {
+            object,
+            property,
+            computed: true,
+        } = target
+        else {
+            return Ok(None);
+        };
+
+        let suffix = chunk.current_offset();
+        let object_name = format!("\u{0}dstr_ref_obj{suffix}");
+        let key_name = format!("\u{0}dstr_ref_key{suffix}");
+        let object_idx = self.add_name(&object_name, chunk)?;
+        let key_idx = self.add_name(&key_name, chunk)?;
+        chunk.emit(Instruction::CreateMutableBinding(object_idx));
+        chunk.emit(Instruction::CreateMutableBinding(key_idx));
+        if let Some(scope) = context.lexical_scopes.last_mut() {
+            scope.insert(object_name);
+            scope.insert(key_name);
+        }
+        self.compile_expression(object, chunk, context)?;
+        chunk.emit(Instruction::InitializeBinding(object_idx));
+        self.compile_expression(property, chunk, context)?;
+        chunk.emit(Instruction::InitializeBinding(key_idx));
+        Ok(Some((object_idx, key_idx)))
+    }
+
+    fn assign_to_precomputed_member(
+        &mut self,
+        object_idx: u16,
+        key_idx: u16,
+        chunk: &mut Chunk,
+    ) -> Result<(), CompileError> {
+        let value_name = format!("\u{0}dstr_ref_val{}", chunk.current_offset());
+        let value_idx = self.add_name(&value_name, chunk)?;
+        chunk.emit(Instruction::CreateMutableBinding(value_idx));
+        chunk.emit(Instruction::InitializeBinding(value_idx));
+        chunk.emit(Instruction::LoadName(object_idx));
+        chunk.emit(Instruction::LoadName(key_idx));
+        chunk.emit(Instruction::LoadName(value_idx));
+        chunk.emit(Instruction::SetElement);
+        chunk.emit(Instruction::Pop);
         Ok(())
     }
 
@@ -2535,6 +2666,7 @@ impl Compiler {
 
         const RHS_SLOT: &str = "\u{0}dstr_obj_rhs";
 
+        chunk.emit(Instruction::RequireObjectCoercible);
         chunk.emit(Instruction::CreateLexicalEnvironment);
         context.environment_depth += 1;
         let mut scope = std::collections::HashSet::new();
@@ -2545,6 +2677,7 @@ impl Compiler {
         chunk.emit(Instruction::InitializeBinding(rhs_idx)); // store rhs (pops)
 
         context.lexical_scopes.push(scope);
+        let mut rest_excluded = Vec::new();
 
         for prop in props {
             match prop {
@@ -2553,15 +2686,14 @@ impl Compiler {
                     value: val_target,
                 } => {
                     let key_name = match key {
-                        PropertyName::Identifier(s) | PropertyName::String(s) => s.clone(),
-                        PropertyName::Number(n) => n.to_string(),
                         PropertyName::Computed(_) => {
                             return Err(CompileError::unsupported(
                                 "computed key in object destructuring assignment",
                             ));
                         }
-                        PropertyName::PrivateName(n) => format!("#{n}"),
+                        _ => key.to_key_string(),
                     };
+                    rest_excluded.push(ObjectRestExcludedKey::Static(key_name.clone()));
                     chunk.emit(Instruction::LoadName(rhs_idx));
                     let key_idx = self.add_name(&key_name, chunk)?;
                     chunk.emit(Instruction::GetProperty(key_idx)); // → [prop_value]
@@ -2597,10 +2729,27 @@ impl Compiler {
                 } => {
                     chunk.emit(Instruction::LoadName(rhs_idx));
                     self.compile_expression(key, chunk, context)?;
+                    let temp_name = format!("\u{0}dstr_obj_key{}", rest_excluded.len());
+                    let temp_idx = self.add_name(&temp_name, chunk)?;
+                    chunk.emit(Instruction::CreateMutableBinding(temp_idx));
+                    if let Some(scope) = context.lexical_scopes.last_mut() {
+                        scope.insert(temp_name.clone());
+                    }
+                    chunk.emit(Instruction::Duplicate);
+                    chunk.emit(Instruction::InitializeBinding(temp_idx));
+                    rest_excluded.push(ObjectRestExcludedKey::Temp(temp_name));
                     chunk.emit(Instruction::GetElement); // → [prop_value]
                     self.assign_dstr_element_to_target(val_target, chunk, context)?;
                 }
                 ObjectProperty::Spread(rest_target) => {
+                    chunk.emit(Instruction::LoadName(rhs_idx));
+                    if let Some(excluded_count) =
+                        Some(self.emit_object_rest_excluded_keys(&rest_excluded, chunk)?)
+                    {
+                        chunk.emit(Instruction::CopyDataPropertiesExcluded(excluded_count));
+                        self.assign_dstr_element_to_target(rest_target, chunk, context)?;
+                        continue;
+                    }
                     // Create a shallow copy of rhs into a new object (simplified: copies all props).
                     chunk.emit(Instruction::ObjectCreateEmpty); // → [{}]
                     chunk.emit(Instruction::LoadName(rhs_idx)); // → [{}, rhs]
@@ -2818,6 +2967,29 @@ impl Compiler {
         chunk
             .add_constant(Constant::String(name.into()))
             .map_err(CompileError::from_chunk)
+    }
+
+    fn emit_object_rest_excluded_keys(
+        &mut self,
+        excluded: &[ObjectRestExcludedKey],
+        chunk: &mut Chunk,
+    ) -> Result<u16, CompileError> {
+        let count = u16::try_from(excluded.len()).map_err(|_| {
+            CompileError::unsupported("too many excluded keys in object rest pattern")
+        })?;
+        for key in excluded {
+            match key {
+                ObjectRestExcludedKey::Static(name) => {
+                    let key_idx = self.add_name(name, chunk)?;
+                    chunk.emit(Instruction::Constant(key_idx));
+                }
+                ObjectRestExcludedKey::Temp(name) => {
+                    let key_idx = self.add_name(name, chunk)?;
+                    chunk.emit(Instruction::LoadName(key_idx));
+                }
+            }
+        }
+        Ok(count)
     }
 
     fn compile_member(
@@ -3874,16 +4046,41 @@ impl Compiler {
                 Ok(())
             }
             BindingPattern::Object { props, rest } => {
+                let has_rest = rest.is_some();
+                let needs_rest_env = has_rest
+                    && props
+                        .iter()
+                        .any(|prop| matches!(prop.key, crate::ast::ObjectBindingKey::Computed(_)));
+                if needs_rest_env {
+                    chunk.emit(Instruction::CreateLexicalEnvironment);
+                    context.environment_depth += 1;
+                    context.lexical_scopes.push(std::collections::HashSet::new());
+                }
+                chunk.emit(Instruction::RequireObjectCoercible);
+                let mut rest_excluded = Vec::new();
                 for prop in props {
                     chunk.emit(Instruction::Duplicate);
                     match &prop.key {
                         crate::ast::ObjectBindingKey::Static(key) => {
                             let key_str = key.to_key_string();
+                            rest_excluded.push(ObjectRestExcludedKey::Static(key_str.clone()));
                             let key_idx = self.add_name(&key_str, chunk)?;
                             chunk.emit(Instruction::GetProperty(key_idx));
                         }
                         crate::ast::ObjectBindingKey::Computed(key_expr) => {
                             self.compile_expression(key_expr, chunk, context)?;
+                            if needs_rest_env {
+                                let temp_name =
+                                    format!("\u{0}dstr_obj_key{}", rest_excluded.len());
+                                let temp_idx = self.add_name(&temp_name, chunk)?;
+                                chunk.emit(Instruction::CreateMutableBinding(temp_idx));
+                                if let Some(scope) = context.lexical_scopes.last_mut() {
+                                    scope.insert(temp_name.clone());
+                                }
+                                chunk.emit(Instruction::Duplicate);
+                                chunk.emit(Instruction::InitializeBinding(temp_idx));
+                                rest_excluded.push(ObjectRestExcludedKey::Temp(temp_name));
+                            }
                             chunk.emit(Instruction::GetElement);
                         }
                     }
@@ -3899,9 +4096,17 @@ impl Compiler {
                 }
                 if let Some(rest_pat) = rest {
                     chunk.emit(Instruction::Duplicate);
+                    let excluded_count =
+                        self.emit_object_rest_excluded_keys(&rest_excluded, chunk)?;
+                    chunk.emit(Instruction::CopyDataPropertiesExcluded(excluded_count));
                     self.compile_binding_pattern_store(rest_pat, chunk, context)?;
                 }
                 chunk.emit(Instruction::Pop);
+                if needs_rest_env {
+                    context.lexical_scopes.pop();
+                    chunk.emit(Instruction::PopEnvironment);
+                    context.environment_depth -= 1;
+                }
                 Ok(())
             }
         }
@@ -3975,17 +4180,42 @@ impl Compiler {
             }
             BindingPattern::Object { props, rest } => {
                 // Stack: [rhs]
+                let has_rest = rest.is_some();
+                let needs_rest_env = has_rest
+                    && props
+                        .iter()
+                        .any(|prop| matches!(prop.key, crate::ast::ObjectBindingKey::Computed(_)));
+                if needs_rest_env {
+                    chunk.emit(Instruction::CreateLexicalEnvironment);
+                    context.environment_depth += 1;
+                    context.lexical_scopes.push(std::collections::HashSet::new());
+                }
+                chunk.emit(Instruction::RequireObjectCoercible);
+                let mut rest_excluded = Vec::new();
                 for prop in props {
                     chunk.emit(Instruction::Duplicate); // [rhs, rhs]
                     match &prop.key {
                         crate::ast::ObjectBindingKey::Static(key) => {
                             let key_str = key.to_key_string();
+                            rest_excluded.push(ObjectRestExcludedKey::Static(key_str.clone()));
                             let key_idx = self.add_name(&key_str, chunk)?;
                             chunk.emit(Instruction::GetProperty(key_idx)); // [rhs, rhs.key]
                         }
                         crate::ast::ObjectBindingKey::Computed(key_expr) => {
                             // [rhs, rhs]
                             self.compile_expression(key_expr, chunk, context)?; // [rhs, rhs, computed_key]
+                            if needs_rest_env {
+                                let temp_name =
+                                    format!("\u{0}dstr_obj_key{}", rest_excluded.len());
+                                let temp_idx = self.add_name(&temp_name, chunk)?;
+                                chunk.emit(Instruction::CreateMutableBinding(temp_idx));
+                                if let Some(scope) = context.lexical_scopes.last_mut() {
+                                    scope.insert(temp_name.clone());
+                                }
+                                chunk.emit(Instruction::Duplicate);
+                                chunk.emit(Instruction::InitializeBinding(temp_idx));
+                                rest_excluded.push(ObjectRestExcludedKey::Temp(temp_name));
+                            }
                             chunk.emit(Instruction::GetElement); // [rhs, rhs[computed_key]]
                         }
                     }
@@ -4004,10 +4234,18 @@ impl Compiler {
                 // Object rest: shallow copy of rhs (simplified — doesn't exclude consumed keys)
                 if let Some(rest_pat) = rest {
                     chunk.emit(Instruction::Duplicate); // [rhs, rhs]
+                    let excluded_count =
+                        self.emit_object_rest_excluded_keys(&rest_excluded, chunk)?;
+                    chunk.emit(Instruction::CopyDataPropertiesExcluded(excluded_count));
                     self.compile_binding_pattern(kind, rest_pat, chunk, context)?;
                     // [rhs]
                 }
                 chunk.emit(Instruction::Pop); // []
+                if needs_rest_env {
+                    context.lexical_scopes.pop();
+                    chunk.emit(Instruction::PopEnvironment);
+                    context.environment_depth -= 1;
+                }
                 Ok(())
             }
         }
