@@ -194,6 +194,7 @@ fn create_dynamic_function(
             VmError::syntax_error("dynamic Function did not compile to a function")
         })?;
     let is_strict = template.is_strict;
+    let uses_arguments = template.uses_arguments;
     let id = context.allocate_function(JsFunction {
         name: template.name.or_else(|| Some("anonymous".into())),
         params: template.params,
@@ -206,6 +207,7 @@ fn create_dynamic_function(
         is_async: false,
         is_generator: false,
         is_arrow: false,
+        uses_arguments,
         lexical_this: None,
         lexical_new_target: None,
         home_object: None,

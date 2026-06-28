@@ -119,9 +119,7 @@ fn constructors_return_explicit_object_like_values() {
 #[test]
 fn constructing_generator_reports_function_name() {
     assert_eq!(
-        eval(
-            "function *G() {} var msg = ''; try { new G(); } catch (e) { msg = e.message; } msg;"
-        ),
+        eval("function *G() {} var msg = ''; try { new G(); } catch (e) { msg = e.message; } msg;"),
         "G is not a constructor"
     );
 }

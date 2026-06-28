@@ -153,6 +153,19 @@ fn array_mutators_use_vm_setter_path_for_index_writes() {
 }
 
 #[test]
+fn array_sort_uses_custom_comparator_for_larger_inputs() {
+    assert_eq!(
+        native_eval(
+            "var a = []; \
+             for (var i = 31; i >= 0; i--) { a.push({ key: i % 8, value: i }); } \
+             a.sort(function(left, right) { return left.key - right.key; }); \
+             a[0].key + ':' + a[0].value + ':' + a[31].key + ':' + a.length;"
+        ),
+        "0:24:7:32"
+    );
+}
+
+#[test]
 fn array_mutators_use_vm_setter_path_for_length_writes() {
     assert_eq!(
         native_eval(

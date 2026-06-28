@@ -28,11 +28,15 @@ fn string_raw_tagged_template_receives_raw_segments() {
 #[test]
 fn number_literals_allow_expected_member_access_forms() {
     assert_eq!(
-        native_eval("0.1.a === undefined && 0x1.a === undefined && 0b1.a === undefined && 01.a === undefined && 0o1.a === undefined;"),
+        native_eval(
+            "0.1.a === undefined && 0x1.a === undefined && 0b1.a === undefined && 01.a === undefined && 0o1.a === undefined;"
+        ),
         "true"
     );
     assert_eq!(
-        native_eval("var ok = false; try { eval('0.a'); } catch (e) { ok = e instanceof SyntaxError; } ok;"),
+        native_eval(
+            "var ok = false; try { eval('0.a'); } catch (e) { ok = e instanceof SyntaxError; } ok;"
+        ),
         "true"
     );
 }

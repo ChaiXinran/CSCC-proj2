@@ -2050,15 +2050,13 @@ impl Vm {
                                 },
                             }
                         }
-                        Err(error) => {
-                            match self.error_to_operation_result(error)? {
-                                OperationResult::Throw(value) => {
-                                    abrupt = Some(Completion::Throw(value));
-                                    discard_saved_finally = true;
-                                }
-                                OperationResult::Value(_) => unreachable!(),
+                        Err(error) => match self.error_to_operation_result(error)? {
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
                             }
-                        }
+                            OperationResult::Value(_) => unreachable!(),
+                        },
                     }
                 }
                 Instruction::DeleteElement => {
@@ -2396,6 +2394,7 @@ impl Vm {
             is_async,
             is_generator,
             is_arrow,
+            uses_arguments: template.uses_arguments,
             lexical_this,
             lexical_new_target,
             home_object,
@@ -2782,7 +2781,7 @@ impl Vm {
         let has_explicit_arguments = function.is_arrow
             || function.params.iter().any(|p| p == "arguments")
             || function.rest_param.as_deref() == Some("arguments");
-        if has_explicit_arguments {
+        if has_explicit_arguments || !function.uses_arguments {
             return Ok(());
         }
 
@@ -5497,7 +5496,7 @@ impl Vm {
             || function.params.iter().any(|p| p == "arguments")
             || function.rest_param.as_deref() == Some("arguments");
 
-        if !has_explicit_arguments {
+        if !has_explicit_arguments && function.uses_arguments {
             let proto = context.object_prototype();
             let arguments_obj = match context.ordinary_object_with_prototype(proto) {
                 Ok(obj) => obj,
@@ -6006,7 +6005,10 @@ fn add_values(
     if matches!(left, JsValue::String(_)) || matches!(right, JsValue::String(_)) {
         let left = vm.to_string_coerce(left, context)?;
         let right = vm.to_string_coerce(right, context)?;
-        return Ok(JsValue::String(format!("{left}{right}")));
+        let mut result = String::with_capacity(left.len().saturating_add(right.len()));
+        result.push_str(&left);
+        result.push_str(&right);
+        return Ok(JsValue::String(result));
     }
     if let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) {
         return left

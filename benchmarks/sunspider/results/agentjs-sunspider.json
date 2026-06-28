@@ -1,32 +1,32 @@
 {
   "meta": {
     "label_a": "agentjs",
-    "label_b": "boa",
+    "label_b": null,
     "engine_a": ".\\target\\release\\agentjs.exe",
-    "engine_b": "boa",
-    "repeat": 2,
-    "timeout": 120,
-    "tests_dir": "D:\\os\\CSCC\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+    "engine_b": null,
+    "repeat": 3,
+    "timeout": 60,
+    "tests_dir": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
   },
   "results": {
     "agentjs": {
       "3d-cube": {
         "status": "pass",
-        "median_ms": 3919.6,
+        "median_ms": 322.8,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 3943.5,
+            "time_ms": 322.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 3919.6,
+            "time_ms": 327.5,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 3907.9,
+            "time_ms": 312.2,
             "stderr": ""
           }
         ],
@@ -34,21 +34,21 @@
       },
       "3d-morph": {
         "status": "pass",
-        "median_ms": 289.9,
+        "median_ms": 180.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 271.2,
+            "time_ms": 175.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 290.9,
+            "time_ms": 180.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 289.9,
+            "time_ms": 181.6,
             "stderr": ""
           }
         ],
@@ -56,109 +56,109 @@
       },
       "3d-raytrace": {
         "status": "pass",
-        "median_ms": 12490.6,
+        "median_ms": 515.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 12446.9,
+            "time_ms": 515.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 12645.8,
+            "time_ms": 515.1,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 12490.6,
+            "time_ms": 542.9,
             "stderr": ""
           }
         ],
         "error": ""
       },
       "access-binary-trees": {
-        "status": "timeout",
-        "median_ms": null,
+        "status": "pass",
+        "median_ms": 745.5,
         "runs": [
           {
-            "status": "timeout",
-            "time_ms": 60026.9,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 745.5,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60040.4,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 733.0,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60019.8,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 762.7,
+            "stderr": ""
           }
         ],
-        "error": "timed out after 60s"
+        "error": ""
       },
       "access-fannkuch": {
         "status": "pass",
-        "median_ms": 845.7,
+        "median_ms": 630.3,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 821.3,
+            "time_ms": 643.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 845.7,
+            "time_ms": 607.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 860.2,
+            "time_ms": 630.3,
             "stderr": ""
           }
         ],
         "error": ""
       },
       "access-nbody": {
-        "status": "timeout",
-        "median_ms": null,
+        "status": "pass",
+        "median_ms": 536.1,
         "runs": [
           {
-            "status": "timeout",
-            "time_ms": 60029.5,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 539.2,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60027.8,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 536.1,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60018.8,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 535.6,
+            "stderr": ""
           }
         ],
-        "error": "timed out after 60s"
+        "error": ""
       },
       "access-nsieve": {
         "status": "pass",
-        "median_ms": 346.1,
+        "median_ms": 229.0,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 353.4,
+            "time_ms": 227.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 346.1,
+            "time_ms": 229.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 345.3,
+            "time_ms": 232.1,
             "stderr": ""
           }
         ],
@@ -166,21 +166,21 @@
       },
       "bitops-3bit-bits-in-byte": {
         "status": "pass",
-        "median_ms": 48353.5,
+        "median_ms": 535.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 43846.3,
+            "time_ms": 511.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 48353.5,
+            "time_ms": 535.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 48403.2,
+            "time_ms": 540.7,
             "stderr": ""
           }
         ],
@@ -188,21 +188,21 @@
       },
       "bitops-bits-in-byte": {
         "status": "pass",
-        "median_ms": 29825.8,
+        "median_ms": 563.2,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 29825.8,
+            "time_ms": 549.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 29837.3,
+            "time_ms": 568.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 20705.7,
+            "time_ms": 563.2,
             "stderr": ""
           }
         ],
@@ -210,21 +210,21 @@
       },
       "bitops-bitwise-and": {
         "status": "pass",
-        "median_ms": 292.4,
+        "median_ms": 262.2,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 295.8,
+            "time_ms": 262.7,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 292.4,
+            "time_ms": 257.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 285.9,
+            "time_ms": 262.2,
             "stderr": ""
           }
         ],
@@ -232,65 +232,65 @@
       },
       "bitops-nsieve-bits": {
         "status": "pass",
-        "median_ms": 488.6,
+        "median_ms": 323.2,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 490.8,
+            "time_ms": 325.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 488.6,
+            "time_ms": 321.5,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 471.2,
+            "time_ms": 323.2,
             "stderr": ""
           }
         ],
         "error": ""
       },
       "controlflow-recursive": {
-        "status": "timeout",
-        "median_ms": null,
+        "status": "pass",
+        "median_ms": 719.8,
         "runs": [
           {
-            "status": "timeout",
-            "time_ms": 60022.3,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 723.2,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60012.0,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 719.8,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60017.9,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 717.8,
+            "stderr": ""
           }
         ],
-        "error": "timed out after 60s"
+        "error": ""
       },
       "crypto-aes": {
         "status": "pass",
-        "median_ms": 2281.8,
+        "median_ms": 250.6,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 2407.4,
+            "time_ms": 250.6,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 2281.8,
+            "time_ms": 247.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 2225.3,
+            "time_ms": 251.0,
             "stderr": ""
           }
         ],
@@ -298,21 +298,21 @@
       },
       "crypto-md5": {
         "status": "pass",
-        "median_ms": 32603.2,
+        "median_ms": 670.2,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 39610.2,
+            "time_ms": 670.2,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 32603.2,
+            "time_ms": 669.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 27594.9,
+            "time_ms": 685.4,
             "stderr": ""
           }
         ],
@@ -320,21 +320,21 @@
       },
       "crypto-sha1": {
         "status": "pass",
-        "median_ms": 37988.5,
+        "median_ms": 494.1,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 30640.5,
+            "time_ms": 536.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 37988.5,
+            "time_ms": 494.1,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 40099.1,
+            "time_ms": 493.4,
             "stderr": ""
           }
         ],
@@ -342,21 +342,21 @@
       },
       "date-format-tofte": {
         "status": "pass",
-        "median_ms": 24087.2,
+        "median_ms": 353.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 24497.6,
+            "time_ms": 353.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 24087.2,
+            "time_ms": 352.5,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 19478.7,
+            "time_ms": 361.4,
             "stderr": ""
           }
         ],
@@ -364,21 +364,21 @@
       },
       "date-format-xparb": {
         "status": "pass",
-        "median_ms": 8800.2,
+        "median_ms": 260.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 8490.7,
+            "time_ms": 260.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 8800.2,
+            "time_ms": 236.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 11246.5,
+            "time_ms": 282.0,
             "stderr": ""
           }
         ],
@@ -386,21 +386,21 @@
       },
       "math-cordic": {
         "status": "pass",
-        "median_ms": 45826.7,
+        "median_ms": 636.0,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 46994.9,
+            "time_ms": 628.5,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 45670.4,
+            "time_ms": 636.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 45826.7,
+            "time_ms": 643.4,
             "stderr": ""
           }
         ],
@@ -408,21 +408,21 @@
       },
       "math-partial-sums": {
         "status": "pass",
-        "median_ms": 167.6,
+        "median_ms": 139.3,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 164.8,
+            "time_ms": 131.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 167.6,
+            "time_ms": 139.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 170.0,
+            "time_ms": 175.4,
             "stderr": ""
           }
         ],
@@ -430,21 +430,21 @@
       },
       "math-spectral-norm": {
         "status": "pass",
-        "median_ms": 30370.8,
+        "median_ms": 436.6,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 40587.9,
+            "time_ms": 441.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 30328.1,
+            "time_ms": 435.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 30370.8,
+            "time_ms": 436.6,
             "stderr": ""
           }
         ],
@@ -452,21 +452,21 @@
       },
       "regexp-dna": {
         "status": "pass",
-        "median_ms": 3362.0,
+        "median_ms": 3097.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 3420.8,
+            "time_ms": 3086.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 3362.0,
+            "time_ms": 3102.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 3330.2,
+            "time_ms": 3097.9,
             "stderr": ""
           }
         ],
@@ -474,21 +474,21 @@
       },
       "string-base64": {
         "status": "pass",
-        "median_ms": 887.3,
+        "median_ms": 955.3,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 879.1,
+            "time_ms": 982.5,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 889.8,
+            "time_ms": 955.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 887.3,
+            "time_ms": 936.1,
             "stderr": ""
           }
         ],
@@ -496,87 +496,87 @@
       },
       "string-fasta": {
         "status": "pass",
-        "median_ms": 27152.7,
+        "median_ms": 714.1,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 27164.9,
+            "time_ms": 714.1,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 27152.7,
+            "time_ms": 711.8,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 27146.6,
+            "time_ms": 745.2,
             "stderr": ""
           }
         ],
         "error": ""
       },
       "string-tagcloud": {
-        "status": "timeout",
-        "median_ms": null,
+        "status": "pass",
+        "median_ms": 8207.5,
         "runs": [
           {
-            "status": "timeout",
-            "time_ms": 60015.5,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 8207.5,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60025.7,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 8271.4,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60024.9,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 8193.7,
+            "stderr": ""
           }
         ],
-        "error": "timed out after 60s"
+        "error": ""
       },
       "string-unpack-code": {
-        "status": "timeout",
-        "median_ms": null,
+        "status": "pass",
+        "median_ms": 12195.7,
         "runs": [
           {
-            "status": "timeout",
-            "time_ms": 60083.1,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 12013.7,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60108.9,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 12195.7,
+            "stderr": ""
           },
           {
-            "status": "timeout",
-            "time_ms": 60136.8,
-            "stderr": "timed out after 60s"
+            "status": "pass",
+            "time_ms": 15807.3,
+            "stderr": ""
           }
         ],
-        "error": "timed out after 60s"
+        "error": ""
       },
       "string-validate-input": {
         "status": "pass",
-        "median_ms": 3137.5,
+        "median_ms": 1269.6,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 3096.0,
+            "time_ms": 1407.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 3166.2,
+            "time_ms": 1269.6,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 3137.5,
+            "time_ms": 1085.0,
             "stderr": ""
           }
         ],

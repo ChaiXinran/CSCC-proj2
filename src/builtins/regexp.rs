@@ -213,6 +213,9 @@ fn push_str_checked(result: &mut String, value: &str) -> ReplacementResult<()> {
 /// Replaces the first match of `regex` in `text` with `replacement`, expanding
 /// ES replacement patterns (`$&`, `$1`, etc.).
 pub fn replace_first(regex: &Regex, text: &str, replacement: &str) -> ReplacementResult<String> {
+    if !replacement.contains('$') {
+        return replace_first_literal(regex, text, replacement);
+    }
     let Some(caps) = regex.captures(text) else {
         return Ok(text.to_owned());
     };
@@ -232,6 +235,9 @@ pub fn replace_first(regex: &Regex, text: &str, replacement: &str) -> Replacemen
 /// Replaces all matches of `regex` in `text` with `replacement`, expanding ES
 /// replacement patterns.
 pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> ReplacementResult<String> {
+    if !replacement.contains('$') {
+        return replace_all_literal(regex, text, replacement);
+    }
     let mut result = String::new();
     let mut last_end = 0;
     for caps in regex.captures_iter(text) {
@@ -247,6 +253,42 @@ pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> ReplacementR
         push_str_checked(&mut result, &repl)?;
         last_end = m.end();
         // Zero-length match guard: advance by at least one char to avoid infinite loop.
+        if m.start() == m.end() && m.end() < text.len() {
+            let ch = text[m.end()..].chars().next().unwrap_or('\0');
+            push_checked(&mut result, ch)?;
+            last_end = m.end() + ch.len_utf8();
+        }
+    }
+    push_str_checked(&mut result, &text[last_end..])?;
+    Ok(result)
+}
+
+fn replace_first_literal(
+    regex: &Regex,
+    text: &str,
+    replacement: &str,
+) -> ReplacementResult<String> {
+    let Some(m) = regex.find(text) else {
+        return Ok(text.to_owned());
+    };
+    let mut result = String::with_capacity(
+        text.len()
+            .saturating_sub(m.end().saturating_sub(m.start()))
+            .saturating_add(replacement.len()),
+    );
+    push_str_checked(&mut result, &text[..m.start()])?;
+    push_str_checked(&mut result, replacement)?;
+    push_str_checked(&mut result, &text[m.end()..])?;
+    Ok(result)
+}
+
+fn replace_all_literal(regex: &Regex, text: &str, replacement: &str) -> ReplacementResult<String> {
+    let mut result = String::with_capacity(text.len());
+    let mut last_end = 0;
+    for m in regex.find_iter(text) {
+        push_str_checked(&mut result, &text[last_end..m.start()])?;
+        push_str_checked(&mut result, replacement)?;
+        last_end = m.end();
         if m.start() == m.end() && m.end() < text.len() {
             let ch = text[m.end()..].chars().next().unwrap_or('\0');
             push_checked(&mut result, ch)?;

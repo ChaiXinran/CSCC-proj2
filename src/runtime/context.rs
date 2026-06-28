@@ -1937,7 +1937,10 @@ impl NativeContext {
             .unwrap_or(JsValue::Undefined)
     }
 
-    pub(crate) fn property_lookup_object(&mut self, receiver: &JsValue) -> Result<ObjectId, VmError> {
+    pub(crate) fn property_lookup_object(
+        &mut self,
+        receiver: &JsValue,
+    ) -> Result<ObjectId, VmError> {
         match receiver {
             JsValue::Boolean(value) => {
                 let prototype = self

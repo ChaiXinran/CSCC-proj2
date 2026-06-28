@@ -1606,7 +1606,7 @@ fn array_sort(
         .filter(|v| !matches!(v, JsValue::Undefined));
 
     // Collect elements
-    let mut elements: Vec<JsValue> = {
+    let elements: Vec<JsValue> = {
         let mut v = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
         for i in 0..length.min(MAX_DENSE_ALLOC) {
             v.push(get_elem(vm, context, target.clone(), i)?);
@@ -1614,25 +1614,61 @@ fn array_sort(
         v
     };
 
-    // Insertion sort to allow calling vm.call_value per comparison
-    for i in 1..elements.len() {
-        let mut j = i;
-        while j > 0 {
-            let should_swap =
-                compare_two(vm, context, &elements[j - 1], &elements[j], &compare_fn)?;
-            if !should_swap {
-                break;
-            }
-            elements.swap(j - 1, j);
-            j -= 1;
-        }
-    }
+    let elements = merge_sort_array_elements(vm, context, elements, &compare_fn)?;
 
     // Write sorted elements back
     for (i, elem) in elements.into_iter().enumerate() {
         set_array_index_strict(vm, context, target.clone(), i, elem)?;
     }
     Ok(target)
+}
+
+fn merge_sort_array_elements(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    mut elements: Vec<JsValue>,
+    compare_fn: &Option<JsValue>,
+) -> Result<Vec<JsValue>, VmError> {
+    if elements.len() <= 1 {
+        return Ok(elements);
+    }
+
+    let right = elements.split_off(elements.len() / 2);
+    let left = merge_sort_array_elements(vm, context, elements, compare_fn)?;
+    let right = merge_sort_array_elements(vm, context, right, compare_fn)?;
+    merge_sorted_array_elements(vm, context, left, right, compare_fn)
+}
+
+fn merge_sorted_array_elements(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    left: Vec<JsValue>,
+    right: Vec<JsValue>,
+    compare_fn: &Option<JsValue>,
+) -> Result<Vec<JsValue>, VmError> {
+    let mut merged = Vec::with_capacity(left.len().saturating_add(right.len()));
+    let mut left_index = 0;
+    let mut right_index = 0;
+
+    while left_index < left.len() && right_index < right.len() {
+        let left_is_greater = compare_two(
+            vm,
+            context,
+            &left[left_index],
+            &right[right_index],
+            compare_fn,
+        )?;
+        if left_is_greater {
+            merged.push(right[right_index].clone());
+            right_index += 1;
+        } else {
+            merged.push(left[left_index].clone());
+            left_index += 1;
+        }
+    }
+    merged.extend_from_slice(&left[left_index..]);
+    merged.extend_from_slice(&right[right_index..]);
+    Ok(merged)
 }
 
 fn compare_two(

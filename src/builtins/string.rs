@@ -200,14 +200,25 @@ pub(crate) fn utf16_units(value: &str) -> Vec<u16> {
 }
 
 pub(crate) fn utf16_length(value: &str) -> usize {
+    if value.is_ascii() {
+        return value.len();
+    }
     value.encode_utf16().count()
 }
 
 pub(crate) fn utf16_code_unit_at(value: &str, index: usize) -> Option<u16> {
+    if value.is_ascii() {
+        return value.as_bytes().get(index).map(|unit| u16::from(*unit));
+    }
     value.encode_utf16().nth(index)
 }
 
 pub(crate) fn utf16_slice(value: &str, start: usize, end: usize) -> String {
+    if value.is_ascii() {
+        let start = start.min(value.len());
+        let end = end.min(value.len()).max(start);
+        return value[start..end].to_string();
+    }
     let units = utf16_units(value);
     decode_utf16(&units[start.min(units.len())..end.min(units.len()).max(start.min(units.len()))])
 }
@@ -246,6 +257,10 @@ pub(crate) fn includes(value: &str, search: &str, position: i64) -> bool {
 }
 
 pub(crate) fn index_of(value: &str, search: &str, position: i64) -> Option<usize> {
+    if value.is_ascii() && search.is_ascii() {
+        let start = clamp_index(position, value.len());
+        return value[start..].find(search).map(|index| start + index);
+    }
     let source = utf16_units(value);
     let search = utf16_units(search);
     let start = clamp_index(position, source.len());
@@ -355,10 +370,16 @@ pub(crate) fn trim_end(value: &str) -> String {
 }
 
 pub(crate) fn to_lower_case(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_ascii_lowercase();
+    }
     value.to_lowercase()
 }
 
 pub(crate) fn to_upper_case(value: &str) -> String {
+    if value.is_ascii() {
+        return value.to_ascii_uppercase();
+    }
     value.to_uppercase()
 }
 

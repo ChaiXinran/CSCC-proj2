@@ -1,0 +1,273 @@
+{
+  "label": "agentjs-supported-delivery",
+  "command": [
+    "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\release\\agentjs.exe",
+    "eval"
+  ],
+  "results": [
+    {
+      "name": "arithmetic_precedence",
+      "category": "expression",
+      "status": "pass",
+      "expected": "7",
+      "actual": "7",
+      "returncode": 0,
+      "elapsed_ms": 13.5,
+      "stdout": "7\n",
+      "stderr": ""
+    },
+    {
+      "name": "bitwise_unsigned_shift",
+      "category": "expression",
+      "status": "pass",
+      "expected": "true",
+      "actual": "true",
+      "returncode": 0,
+      "elapsed_ms": 51.9,
+      "stdout": "true\n",
+      "stderr": ""
+    },
+    {
+      "name": "parenthesized_unary_exponent",
+      "category": "expression",
+      "status": "pass",
+      "expected": "-8",
+      "actual": "-8",
+      "returncode": 0,
+      "elapsed_ms": 11.2,
+      "stdout": "-8\n",
+      "stderr": ""
+    },
+    {
+      "name": "object_is_same_value",
+      "category": "object",
+      "status": "pass",
+      "expected": "true:false",
+      "actual": "true:false",
+      "returncode": 0,
+      "elapsed_ms": 11.3,
+      "stdout": "true:false\n",
+      "stderr": ""
+    },
+    {
+      "name": "descriptor_delete_and_in",
+      "category": "object",
+      "status": "pass",
+      "expected": "false:true",
+      "actual": "false:true",
+      "returncode": 0,
+      "elapsed_ms": 11.4,
+      "stdout": "false:true\n",
+      "stderr": ""
+    },
+    {
+      "name": "delete_primitive_and_nullish",
+      "category": "object",
+      "status": "pass",
+      "expected": "true",
+      "actual": "true",
+      "returncode": 0,
+      "elapsed_ms": 10.6,
+      "stdout": "true\n",
+      "stderr": ""
+    },
+    {
+      "name": "prototype_lookup",
+      "category": "object",
+      "status": "pass",
+      "expected": "7",
+      "actual": "7",
+      "returncode": 0,
+      "elapsed_ms": 55.0,
+      "stdout": "7\n",
+      "stderr": ""
+    },
+    {
+      "name": "define_property_descriptor",
+      "category": "object",
+      "status": "pass",
+      "expected": "1:false:false:false",
+      "actual": "1:false:false:false",
+      "returncode": 0,
+      "elapsed_ms": 11.3,
+      "stdout": "1:false:false:false\n",
+      "stderr": ""
+    },
+    {
+      "name": "array_holes_and_length",
+      "category": "array",
+      "status": "pass",
+      "expected": "3:false:3",
+      "actual": "3:false:3",
+      "returncode": 0,
+      "elapsed_ms": 10.8,
+      "stdout": "3:false:3\n",
+      "stderr": ""
+    },
+    {
+      "name": "sparse_array_high_index",
+      "category": "array",
+      "status": "pass",
+      "expected": "70001:5",
+      "actual": "70001:5",
+      "returncode": 0,
+      "elapsed_ms": 11.0,
+      "stdout": "70001:5\n",
+      "stderr": ""
+    },
+    {
+      "name": "for_in_member_target",
+      "category": "iteration",
+      "status": "pass",
+      "expected": "x,y",
+      "actual": "x,y",
+      "returncode": 0,
+      "elapsed_ms": 54.8,
+      "stdout": "x,y\n",
+      "stderr": ""
+    },
+    {
+      "name": "for_let_closure_capture",
+      "category": "scope",
+      "status": "pass",
+      "expected": "0:1:2",
+      "actual": "0:1:2",
+      "returncode": 0,
+      "elapsed_ms": 11.1,
+      "stdout": "0:1:2\n",
+      "stderr": ""
+    },
+    {
+      "name": "eval_closure_for_let_capture",
+      "category": "scope",
+      "status": "pass",
+      "expected": "0:1:2",
+      "actual": "0:1:2",
+      "returncode": 0,
+      "elapsed_ms": 11.5,
+      "stdout": "0:1:2\n",
+      "stderr": ""
+    },
+    {
+      "name": "with_eval_lookup",
+      "category": "scope",
+      "status": "pass",
+      "expected": "o1:o1",
+      "actual": "o1:o1",
+      "returncode": 0,
+      "elapsed_ms": 53.9,
+      "stdout": "o1:o1\n",
+      "stderr": ""
+    },
+    {
+      "name": "arrow_lexical_arguments",
+      "category": "function",
+      "status": "pass",
+      "expected": "2",
+      "actual": "2",
+      "returncode": 0,
+      "elapsed_ms": 9.9,
+      "stdout": "2\n",
+      "stderr": ""
+    },
+    {
+      "name": "constructor_returns_function_object",
+      "category": "function",
+      "status": "pass",
+      "expected": "true",
+      "actual": "true",
+      "returncode": 0,
+      "elapsed_ms": 52.5,
+      "stdout": "true\n",
+      "stderr": ""
+    },
+    {
+      "name": "function_prototype_call_saved",
+      "category": "function",
+      "status": "pass",
+      "expected": "9",
+      "actual": "9",
+      "returncode": 0,
+      "elapsed_ms": 10.2,
+      "stdout": "9\n",
+      "stderr": ""
+    },
+    {
+      "name": "class_instance_static_and_getter_name",
+      "category": "class",
+      "status": "pass",
+      "expected": "-1:1:10:get y",
+      "actual": "-1:1:10:get y",
+      "returncode": 0,
+      "elapsed_ms": 54.2,
+      "stdout": "-1:1:10:get y\n",
+      "stderr": ""
+    },
+    {
+      "name": "class_extends_static_super_computed",
+      "category": "class",
+      "status": "pass",
+      "expected": "true:-1:-1:1",
+      "actual": "true:-1:-1:1",
+      "returncode": 0,
+      "elapsed_ms": 10.9,
+      "stdout": "true:-1:-1:1\n",
+      "stderr": ""
+    },
+    {
+      "name": "delete_super_reference_error",
+      "category": "class",
+      "status": "pass",
+      "expected": "true",
+      "actual": "true",
+      "returncode": 0,
+      "elapsed_ms": 51.8,
+      "stdout": "true\n",
+      "stderr": ""
+    },
+    {
+      "name": "try_catch_finally",
+      "category": "control",
+      "status": "pass",
+      "expected": "tcf",
+      "actual": "tcf",
+      "returncode": 0,
+      "elapsed_ms": 52.6,
+      "stdout": "tcf\n",
+      "stderr": ""
+    },
+    {
+      "name": "json_roundtrip",
+      "category": "stdlib",
+      "status": "pass",
+      "expected": "{\"x\":1,\"y\":[2,3]}",
+      "actual": "{\"x\":1,\"y\":[2,3]}",
+      "returncode": 0,
+      "elapsed_ms": 48.3,
+      "stdout": "{\"x\":1,\"y\":[2,3]}\n",
+      "stderr": ""
+    },
+    {
+      "name": "map_same_value_zero",
+      "category": "stdlib",
+      "status": "pass",
+      "expected": "1:2",
+      "actual": "1:2",
+      "returncode": 0,
+      "elapsed_ms": 54.0,
+      "stdout": "1:2\n",
+      "stderr": ""
+    },
+    {
+      "name": "string_raw_tagged_template",
+      "category": "stdlib",
+      "status": "pass",
+      "expected": "abcXd",
+      "actual": "abcXd",
+      "returncode": 0,
+      "elapsed_ms": 44.2,
+      "stdout": "abcXd\n",
+      "stderr": ""
+    }
+  ]
+}

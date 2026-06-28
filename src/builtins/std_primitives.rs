@@ -1985,6 +1985,26 @@ fn replace_string_substitution(
     replacement: &str,
     replace_all: bool,
 ) -> Result<String, VmError> {
+    if !replacement.contains('$') {
+        let mut output = String::with_capacity(value.len());
+        let mut last_end = 0usize;
+        let mut matched = false;
+        for (position, found) in value.match_indices(search) {
+            matched = true;
+            output.push_str(&value[last_end..position]);
+            output.push_str(replacement);
+            last_end = position + found.len();
+            if !replace_all {
+                break;
+            }
+        }
+        if !matched {
+            return Ok(value.to_string());
+        }
+        output.push_str(&value[last_end..]);
+        return Ok(output);
+    }
+
     let mut output = String::new();
     let mut last_end = 0usize;
     let captures = [Some(search)];

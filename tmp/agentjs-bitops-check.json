@@ -1,0 +1,37 @@
+{
+  "meta": {
+    "label_a": "agentjs-bitops-check",
+    "label_b": null,
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": null,
+    "repeat": 3,
+    "timeout": 60,
+    "tests_dir": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs-bitops-check": {
+      "bitops-bits-in-byte": {
+        "status": "pass",
+        "median_ms": 580.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 672.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 574.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 580.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}

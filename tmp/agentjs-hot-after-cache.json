@@ -1,0 +1,89 @@
+{
+  "meta": {
+    "label_a": "agentjs-hot-after-cache",
+    "label_b": "node",
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": "node",
+    "repeat": 1,
+    "timeout": 60,
+    "tests_dir": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs-hot-after-cache": {
+      "regexp-dna": {
+        "status": "pass",
+        "median_ms": 3464.4,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 3464.4,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-tagcloud": {
+        "status": "pass",
+        "median_ms": 3512.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 3512.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-unpack-code": {
+        "status": "pass",
+        "median_ms": 17706.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 17706.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    },
+    "node": {
+      "regexp-dna": {
+        "status": "pass",
+        "median_ms": 66.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 66.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-tagcloud": {
+        "status": "pass",
+        "median_ms": 93.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 93.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-unpack-code": {
+        "status": "pass",
+        "median_ms": 142.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 142.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}

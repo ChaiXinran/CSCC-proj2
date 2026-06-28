@@ -53,6 +53,7 @@ fn runtime_can_allocate_function_values_with_captured_environment() {
         is_async: false,
         is_generator: false,
         is_arrow: false,
+        uses_arguments: false,
         lexical_this: None,
         lexical_new_target: None,
         home_object: None,

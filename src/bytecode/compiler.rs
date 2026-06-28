@@ -1598,6 +1598,7 @@ impl Compiler {
             is_async,
             is_generator,
             is_arrow: false,
+            uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -1864,12 +1865,14 @@ impl Compiler {
         // Implicit undefined return at the end of the function
         fn_chunk.emit(Instruction::ReturnUndefined);
         fn_chunk.validate().map_err(CompileError::from_chunk)?;
+        let uses_arguments = function_needs_arguments_object(&fn_chunk);
         Ok(CompiledFunction {
             length,
             params: param_names,
             rest_param,
             chunk: fn_chunk,
             is_strict: body.is_strict,
+            uses_arguments,
         })
     }
 
@@ -3742,6 +3745,7 @@ impl Compiler {
             is_async: false,
             is_generator: false,
             is_arrow: false,
+            uses_arguments: compiled.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let index = chunk
@@ -4034,6 +4038,7 @@ impl Compiler {
             is_async: false,
             is_generator: false,
             is_arrow: false,
+            uses_arguments: ctor_fn.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let ctor_idx = chunk
@@ -4088,6 +4093,7 @@ impl Compiler {
                     is_async: function.is_async,
                     is_generator: function.is_generator,
                     is_arrow: false,
+                    uses_arguments: fn_compiled.uses_arguments,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
                 let fn_idx = chunk
@@ -4165,6 +4171,7 @@ impl Compiler {
                     is_async: function.is_async,
                     is_generator: function.is_generator,
                     is_arrow: false,
+                    uses_arguments: fn_compiled.uses_arguments,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
                 let fn_idx = chunk
@@ -4262,6 +4269,7 @@ impl Compiler {
                         is_generator: false,
                         is_async: false,
                         is_arrow: false,
+                        uses_arguments: block_fn.uses_arguments,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
                     let block_idx = chunk
@@ -4642,6 +4650,7 @@ impl Compiler {
             is_async: literal.is_async,
             is_generator: literal.is_generator,
             is_arrow: literal.is_arrow,
+            uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -4904,6 +4913,36 @@ struct CompiledFunction {
     rest_param: Option<String>,
     chunk: Chunk,
     is_strict: bool,
+    uses_arguments: bool,
+}
+
+fn function_needs_arguments_object(chunk: &Chunk) -> bool {
+    fn referenced_name(chunk: &Chunk, index: u16) -> Option<&str> {
+        match chunk.constants.get(index as usize) {
+            Some(Constant::String(name)) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
+    let direct_reference = chunk.instructions.iter().any(|instruction| {
+        let name = match instruction {
+            Instruction::LoadName(index)
+            | Instruction::StoreName(index)
+            | Instruction::TypeOfName(index)
+            | Instruction::DeclareLocal(index)
+            | Instruction::CreateMutableBinding(index)
+            | Instruction::CreateImmutableBinding(index)
+            | Instruction::InitializeBinding(index) => referenced_name(chunk, *index),
+            _ => None,
+        };
+        matches!(name, Some("arguments" | "eval"))
+    });
+
+    direct_reference
+        || chunk
+            .functions
+            .iter()
+            .any(|template| template.is_arrow && template.uses_arguments)
 }
 
 fn property_key(key: &PropertyName) -> String {
