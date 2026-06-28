@@ -36,11 +36,176 @@ mod string;
 
 use crate::{
     runtime::{
-        Intrinsics, JsObject, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
-        ObjectKind, PrimitiveValue, PropertyDescriptor,
+        Intrinsics, JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, NativeErrorKind,
+        NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
     },
     vm::{Vm, VmError},
 };
+
+// ── P1-A: Unified builtin installer helpers ───────────────────────────────────
+
+/// Descriptor attribute flags for builtin properties.
+#[derive(Clone, Copy)]
+pub struct BuiltinAttrs {
+    pub writable: bool,
+    pub enumerable: bool,
+    pub configurable: bool,
+}
+
+impl BuiltinAttrs {
+    /// Standard builtin method: writable, non-enumerable, configurable.
+    pub const METHOD: Self = Self {
+        writable: true,
+        enumerable: false,
+        configurable: true,
+    };
+    /// Standard constant: non-writable, non-enumerable, configurable.
+    pub const CONSTANT: Self = Self {
+        writable: false,
+        enumerable: false,
+        configurable: true,
+    };
+}
+
+/// Install a data property on an object with explicit descriptor attributes.
+pub fn define_data_property(
+    ctx: &mut NativeContext,
+    object: ObjectId,
+    key: &str,
+    value: JsValue,
+    attrs: BuiltinAttrs,
+) -> Result<(), VmError> {
+    ctx.define_own_property(
+        object,
+        key.into(),
+        PropertyDescriptor::data_with(value, attrs.writable, attrs.enumerable, attrs.configurable),
+    )?;
+    Ok(())
+}
+
+/// Install an accessor property (getter/setter) on an object.
+pub fn define_accessor_property(
+    ctx: &mut NativeContext,
+    object: ObjectId,
+    key: &str,
+    get: Option<JsValue>,
+    set: Option<JsValue>,
+    enumerable: bool,
+    configurable: bool,
+) -> Result<(), VmError> {
+    ctx.define_own_property(
+        object,
+        key.into(),
+        PropertyDescriptor::accessor(get, set, enumerable, configurable),
+    )?;
+    Ok(())
+}
+
+/// Install a builtin method on `target`. Descriptor: writable, non-enumerable, configurable.
+pub fn install_builtin_method(
+    ctx: &mut NativeContext,
+    target: ObjectId,
+    name: &'static str,
+    length: u8,
+    call: NativeCall,
+) -> Result<JsValue, VmError> {
+    let func = ctx.register_builtin(name, length, call, None)?;
+    define_data_property(ctx, target, name, func.clone(), BuiltinAttrs::METHOD)?;
+    Ok(func)
+}
+
+/// Install a builtin function (standalone, not on a prototype) on `target`.
+pub fn install_builtin_function(
+    ctx: &mut NativeContext,
+    target: ObjectId,
+    name: &'static str,
+    length: u8,
+    call: NativeCall,
+) -> Result<JsValue, VmError> {
+    install_builtin_method(ctx, target, name, length, call)
+}
+
+/// Install a builtin accessor (getter only for now) on `target`.
+pub fn install_builtin_accessor(
+    ctx: &mut NativeContext,
+    target: ObjectId,
+    name: &'static str,
+    getter_name: &'static str,
+    getter: Option<NativeCall>,
+    _setter_name: Option<&'static str>,
+    setter: Option<NativeCall>,
+) -> Result<(), VmError> {
+    let get = if let Some(call) = getter {
+        Some(ctx.register_builtin(getter_name, 0, call, None)?)
+    } else {
+        None
+    };
+    let set = if let Some(call) = setter {
+        let setter_name_str = _setter_name.unwrap_or(getter_name);
+        Some(ctx.register_builtin(setter_name_str, 1, call, None)?)
+    } else {
+        None
+    };
+    define_accessor_property(ctx, target, name, get, set, false, true)
+}
+
+/// Install a constructor on `namespace` and wire up its `prototype` property.
+/// The given `prototype` ObjectId must already exist.
+pub fn install_builtin_constructor(
+    ctx: &mut NativeContext,
+    namespace: ObjectId,
+    name: &'static str,
+    length: u8,
+    call: NativeCall,
+    construct: Option<NativeConstruct>,
+    prototype: ObjectId,
+) -> Result<JsValue, VmError> {
+    let constructor = ctx.register_builtin(name, length, call, construct)?;
+    let constructor_object = ctx
+        .value_object(&constructor)
+        .ok_or_else(|| VmError::runtime("constructor object missing"))?;
+    ctx.define_own_property(
+        constructor_object,
+        "prototype".into(),
+        PropertyDescriptor::data_with(JsValue::Object(prototype), false, false, false),
+    )?;
+    ctx.define_own_property(
+        prototype,
+        "constructor".into(),
+        PropertyDescriptor::data_with(constructor.clone(), true, false, true),
+    )?;
+    define_data_property(
+        ctx,
+        namespace,
+        name,
+        constructor.clone(),
+        BuiltinAttrs::METHOD,
+    )?;
+    Ok(constructor)
+}
+
+/// Get own property descriptor (wraps context method).
+pub fn get_own_property_descriptor(
+    ctx: &NativeContext,
+    object: ObjectId,
+    key: &str,
+) -> Option<PropertyDescriptor> {
+    ctx.get_own_property_descriptor(object, key)
+}
+
+/// Return property keys in ECMAScript integer-index-first order.
+pub fn ordinary_own_property_keys(ctx: &NativeContext, object: ObjectId) -> Vec<String> {
+    ctx.heap()
+        .object(object)
+        .map(|o| o.own_property_keys())
+        .unwrap_or_default()
+}
+
+/// Mark a builtin function value as non-constructable (no-op: register_builtin with
+/// construct=None already does this; this function exists for documentation/interface purposes).
+pub fn mark_not_constructor(_ctx: &mut NativeContext, _function: &JsValue) {
+    // register_builtin with construct = None already yields [[Construct]]:absent.
+}
 
 /// Installs the foundational constructors, prototypes, and V4 methods.
 pub fn install_foundation(context: &mut NativeContext) {

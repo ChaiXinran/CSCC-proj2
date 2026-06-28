@@ -1271,7 +1271,9 @@ fn regexp_species_constructor(
         return Ok(default_constructor);
     }
     if context.value_object(&constructor).is_none() {
-        return Err(VmError::type_error("RegExp species constructor is not an object"));
+        return Err(VmError::type_error(
+            "RegExp species constructor is not an object",
+        ));
     }
     let species_symbol = context.well_known_symbols().species;
     let species = vm.get_symbol_property_value_with_receiver_from_builtin(

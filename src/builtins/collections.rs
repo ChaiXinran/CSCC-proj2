@@ -2471,9 +2471,9 @@ fn map_group_by(
                 let Some(thrown) = vm.take_pending_exception_from_builtin() else {
                     return Err(error);
                 };
-                return match vm.close_iterator_preserving_throw_from_builtin(
-                    iterator, thrown, context,
-                ) {
+                return match vm
+                    .close_iterator_preserving_throw_from_builtin(iterator, thrown, context)
+                {
                     Ok(()) => Err(error),
                     Err(close_error) => Err(close_error),
                 };
@@ -2491,7 +2491,9 @@ fn map_group_by(
         }
         index += 1;
     }
-    Err(VmError::runtime_limit("Map.groupBy iterator step limit exceeded"))
+    Err(VmError::runtime_limit(
+        "Map.groupBy iterator step limit exceeded",
+    ))
 }
 
 fn append_array_value(

@@ -192,11 +192,7 @@ impl<'source> Lexer<'source> {
                 TokenKind::Punctuator(')' | ']') => false,
                 // `this`, `true`, `false`, `null`, `super` end a primary expression.
                 TokenKind::Keyword(
-                    Keyword::This
-                    | Keyword::True
-                    | Keyword::False
-                    | Keyword::Null
-                    | Keyword::Super,
+                    Keyword::This | Keyword::True | Keyword::False | Keyword::Null | Keyword::Super,
                 ) => false,
                 // Postfix `++`/`--` end an expression; prefix would already have
                 // `last_allows_regex = true` from the preceding token.
