@@ -16,6 +16,16 @@ pub fn install_array(context: &mut NativeContext) {
         return;
     };
     let constructor_object = context.builtin(constructor).unwrap().object;
+    let species_getter = context
+        .register_builtin("get [Symbol.species]", 0, array_species_get, None)
+        .expect("install Array @@species");
+    context
+        .define_symbol_own_property(
+            constructor_object,
+            context.well_known_symbols().species,
+            PropertyDescriptor::accessor(Some(species_getter), None, false, true),
+        )
+        .expect("define Array @@species");
 
     // Static methods on Array
     let is_array = context
@@ -118,6 +128,15 @@ pub fn install_array(context: &mut NativeContext) {
             )
             .expect("define Array prototype method");
     }
+}
+
+fn array_species_get(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(this_value)
 }
 
 pub fn array_call(

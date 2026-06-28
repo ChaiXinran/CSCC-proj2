@@ -302,6 +302,83 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
+fn temporal_day_of_week_from_day_number(day_number: i64) -> u32 {
+    let sunday_zero = (day_number + 4).rem_euclid(7) as u32;
+    if sunday_zero == 0 { 7 } else { sunday_zero }
+}
+
+fn temporal_day_of_week(year: i32, month: u32, day: u32) -> u32 {
+    temporal_day_of_week_from_day_number(days_from_civil(year, month, day))
+}
+
+fn temporal_day_of_year(year: i32, month: u32, day: u32) -> u32 {
+    (days_from_civil(year, month, day) - days_from_civil(year, 1, 1) + 1) as u32
+}
+
+fn iso_weeks_in_year(year: i32) -> u32 {
+    let jan_first = temporal_day_of_week(year, 1, 1);
+    if jan_first == 4 || (jan_first == 3 && is_leap_year(year)) {
+        53
+    } else {
+        52
+    }
+}
+
+fn temporal_week_fields(year: i32, month: u32, day: u32) -> (u32, i32) {
+    let day_of_week = temporal_day_of_week(year, month, day) as i32;
+    let day_of_year = temporal_day_of_year(year, month, day) as i32;
+    let mut week = (day_of_year - day_of_week + 10).div_euclid(7);
+    let mut week_year = year;
+    if week < 1 {
+        week_year -= 1;
+        week = iso_weeks_in_year(week_year) as i32;
+    } else if week > iso_weeks_in_year(year) as i32 {
+        week_year += 1;
+        week = 1;
+    }
+    (week as u32, week_year)
+}
+
+fn temporal_date_slots(
+    year: f64,
+    month: f64,
+    day: f64,
+    calendar_id: String,
+) -> Vec<(&'static str, JsValue)> {
+    let year_i = year.trunc() as i32;
+    let month_u = month.trunc() as u32;
+    let day_u = day.trunc() as u32;
+    let day_number = days_from_civil(year_i, month_u, day_u);
+    let day_of_year = temporal_day_of_year(year_i, month_u, day_u);
+    let (week_of_year, year_of_week) = temporal_week_fields(year_i, month_u, day_u);
+    let leap = is_leap_year(year_i);
+    vec![
+        ("year", JsValue::Number(year.trunc())),
+        ("month", JsValue::Number(month.trunc())),
+        ("monthCode", JsValue::String(month_code(month))),
+        ("day", JsValue::Number(day.trunc())),
+        ("calendarId", JsValue::String(calendar_id)),
+        (
+            "dayOfWeek",
+            JsValue::Number(temporal_day_of_week_from_day_number(day_number) as f64),
+        ),
+        ("dayOfYear", JsValue::Number(day_of_year as f64)),
+        ("weekOfYear", JsValue::Number(week_of_year as f64)),
+        ("yearOfWeek", JsValue::Number(year_of_week as f64)),
+        ("daysInWeek", JsValue::Number(7.0)),
+        (
+            "daysInMonth",
+            JsValue::Number(month_day_count(year_i, month_u) as f64),
+        ),
+        (
+            "daysInYear",
+            JsValue::Number(if leap { 366.0 } else { 365.0 }),
+        ),
+        ("monthsInYear", JsValue::Number(12.0)),
+        ("inLeapYear", JsValue::Boolean(leap)),
+    ]
+}
+
 fn date_value_from_this(context: &NativeContext, this_value: &JsValue) -> Result<f64, VmError> {
     let object = context.require_object(this_value, "Date method")?;
     if own_data_value(context, object, DATE_MARKER).is_none() {
@@ -830,7 +907,9 @@ fn date_to_json(
     }
     let to_iso_string = vm.get_property_value(this_value.clone(), "toISOString", context)?;
     if !is_callable(&to_iso_string) {
-        return Err(VmError::type_error("Date.prototype.toJSON toISOString is not callable"));
+        return Err(VmError::type_error(
+            "Date.prototype.toJSON toISOString is not callable",
+        ));
     }
     vm.call_value_from_builtin(to_iso_string, this_value, Vec::new(), context)
 }
@@ -2413,6 +2492,29 @@ fn install_temporal_duration(
     )?;
     define_method(
         context,
+        constructor_object,
+        "compare",
+        2,
+        temporal_duration_compare,
+    )?;
+    for (name, length, call) in [
+        ("abs", 0, temporal_duration_abs as NativeCall),
+        ("add", 1, temporal_duration_add as NativeCall),
+        ("negated", 0, temporal_duration_negated as NativeCall),
+        ("round", 1, temporal_duration_round as NativeCall),
+        ("subtract", 1, temporal_duration_subtract as NativeCall),
+        ("total", 1, temporal_duration_total as NativeCall),
+        ("with", 1, temporal_duration_with as NativeCall),
+        (
+            "toLocaleString",
+            0,
+            temporal_duration_to_string as NativeCall,
+        ),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
+    define_method(
+        context,
         prototype,
         "toString",
         0,
@@ -2434,6 +2536,19 @@ fn install_temporal_duration(
     ] {
         define_temporal_slot_getter(context, prototype, name, getter, "Duration", slot)?;
     }
+    let sign_getter = context.register_builtin("get sign", 0, temporal_duration_sign_get, None)?;
+    context.define_own_property(
+        prototype,
+        "sign".into(),
+        PropertyDescriptor::accessor(Some(sign_getter), None, false, true),
+    )?;
+    let blank_getter =
+        context.register_builtin("get blank", 0, temporal_duration_blank_get, None)?;
+    context.define_own_property(
+        prototype,
+        "blank".into(),
+        PropertyDescriptor::accessor(Some(blank_getter), None, false, true),
+    )?;
     Ok(())
 }
 
@@ -2518,6 +2633,31 @@ fn define_temporal_bool_slot_getter(
     Ok(())
 }
 
+fn define_temporal_undefined_getter(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    name: &'static str,
+    getter_name: &'static str,
+    kind: &'static str,
+) -> Result<(), VmError> {
+    let getter = context.register_builtin(getter_name, 0, temporal_undefined_get, None)?;
+    let getter_object = context
+        .value_object(&getter)
+        .ok_or_else(|| VmError::runtime("Temporal getter object missing"))?;
+    define_hidden(
+        context,
+        getter_object,
+        TEMPORAL_KIND,
+        JsValue::String(kind.into()),
+    )?;
+    context.define_own_property(
+        prototype,
+        name.into(),
+        PropertyDescriptor::accessor(Some(getter), None, false, true),
+    )?;
+    Ok(())
+}
+
 fn temporal_slot_get(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -2584,6 +2724,21 @@ fn temporal_bool_slot_get(
         .unwrap_or(JsValue::Boolean(false)))
 }
 
+fn temporal_undefined_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let getter = context.current_or_global_this();
+    let kind = context
+        .value_object(&getter)
+        .and_then(|object| own_string(context, object, TEMPORAL_KIND))
+        .unwrap_or_default();
+    require_temporal_kind(context, &this_value, Box::leak(kind.into_boxed_str()))?;
+    Ok(JsValue::Undefined)
+}
+
 fn temporal_duration_construct(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -2612,23 +2767,47 @@ struct DurationValues {
     nanoseconds: f64,
 }
 
+impl DurationValues {
+    fn map(self, mut f: impl FnMut(f64) -> f64) -> Self {
+        Self {
+            years: f(self.years),
+            months: f(self.months),
+            weeks: f(self.weeks),
+            days: f(self.days),
+            hours: f(self.hours),
+            minutes: f(self.minutes),
+            seconds: f(self.seconds),
+            milliseconds: f(self.milliseconds),
+            microseconds: f(self.microseconds),
+            nanoseconds: f(self.nanoseconds),
+        }
+    }
+}
+
 fn duration_values_from_args(
     vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
 ) -> Result<DurationValues, VmError> {
     Ok(DurationValues {
-        years: number_or_default(vm, context, arguments, 0, 0.0)?,
-        months: number_or_default(vm, context, arguments, 1, 0.0)?,
-        weeks: number_or_default(vm, context, arguments, 2, 0.0)?,
-        days: number_or_default(vm, context, arguments, 3, 0.0)?,
-        hours: number_or_default(vm, context, arguments, 4, 0.0)?,
-        minutes: number_or_default(vm, context, arguments, 5, 0.0)?,
-        seconds: number_or_default(vm, context, arguments, 6, 0.0)?,
-        milliseconds: number_or_default(vm, context, arguments, 7, 0.0)?,
-        microseconds: number_or_default(vm, context, arguments, 8, 0.0)?,
-        nanoseconds: number_or_default(vm, context, arguments, 9, 0.0)?,
+        years: duration_integer(number_or_default(vm, context, arguments, 0, 0.0)?)?,
+        months: duration_integer(number_or_default(vm, context, arguments, 1, 0.0)?)?,
+        weeks: duration_integer(number_or_default(vm, context, arguments, 2, 0.0)?)?,
+        days: duration_integer(number_or_default(vm, context, arguments, 3, 0.0)?)?,
+        hours: duration_integer(number_or_default(vm, context, arguments, 4, 0.0)?)?,
+        minutes: duration_integer(number_or_default(vm, context, arguments, 5, 0.0)?)?,
+        seconds: duration_integer(number_or_default(vm, context, arguments, 6, 0.0)?)?,
+        milliseconds: duration_integer(number_or_default(vm, context, arguments, 7, 0.0)?)?,
+        microseconds: duration_integer(number_or_default(vm, context, arguments, 8, 0.0)?)?,
+        nanoseconds: duration_integer(number_or_default(vm, context, arguments, 9, 0.0)?)?,
     })
+}
+
+fn duration_integer(value: f64) -> Result<f64, VmError> {
+    if !value.is_finite() || value.fract() != 0.0 {
+        return Err(VmError::range("invalid Temporal.Duration field"));
+    }
+    Ok(value)
 }
 
 fn create_duration(
@@ -2707,6 +2886,363 @@ fn temporal_duration_from(
     create_duration(context, prototype, values)
 }
 
+fn temporal_duration_constructor_prototype(context: &NativeContext) -> Result<ObjectId, VmError> {
+    context
+        .get_global("Temporal")
+        .and_then(|temporal| context.value_object(&temporal))
+        .and_then(|temporal| context.get_own_property_descriptor(temporal, "Duration"))
+        .and_then(|descriptor| descriptor.value_cloned())
+        .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten())
+        .ok_or_else(|| VmError::runtime("Temporal.Duration prototype missing"))
+}
+
+fn duration_values_from_object(context: &NativeContext, object: ObjectId) -> DurationValues {
+    DurationValues {
+        years: temporal_number_slot(context, object, "years"),
+        months: temporal_number_slot(context, object, "months"),
+        weeks: temporal_number_slot(context, object, "weeks"),
+        days: temporal_number_slot(context, object, "days"),
+        hours: temporal_number_slot(context, object, "hours"),
+        minutes: temporal_number_slot(context, object, "minutes"),
+        seconds: temporal_number_slot(context, object, "seconds"),
+        milliseconds: temporal_number_slot(context, object, "milliseconds"),
+        microseconds: temporal_number_slot(context, object, "microseconds"),
+        nanoseconds: temporal_number_slot(context, object, "nanoseconds"),
+    }
+}
+
+fn duration_values_from_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<DurationValues, VmError> {
+    match value {
+        JsValue::String(text) => {
+            parse_duration(&text).ok_or_else(|| VmError::range("invalid Temporal.Duration string"))
+        }
+        other => {
+            let object = context.require_object(&other, "Temporal.Duration value")?;
+            if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("Duration") {
+                Ok(duration_values_from_object(context, object))
+            } else {
+                Ok(DurationValues {
+                    years: temporal_object_number(vm, context, object, "years")?,
+                    months: temporal_object_number(vm, context, object, "months")?,
+                    weeks: temporal_object_number(vm, context, object, "weeks")?,
+                    days: temporal_object_number(vm, context, object, "days")?,
+                    hours: temporal_object_number(vm, context, object, "hours")?,
+                    minutes: temporal_object_number(vm, context, object, "minutes")?,
+                    seconds: temporal_object_number(vm, context, object, "seconds")?,
+                    milliseconds: temporal_object_number(vm, context, object, "milliseconds")?,
+                    microseconds: temporal_object_number(vm, context, object, "microseconds")?,
+                    nanoseconds: temporal_object_number(vm, context, object, "nanoseconds")?,
+                })
+            }
+        }
+    }
+}
+
+fn duration_this_values(
+    context: &NativeContext,
+    this_value: &JsValue,
+) -> Result<DurationValues, VmError> {
+    let object = require_temporal_kind(context, this_value, "Duration")?;
+    Ok(duration_values_from_object(context, object))
+}
+
+fn create_duration_with_default_prototype(
+    context: &mut NativeContext,
+    values: DurationValues,
+) -> Result<JsValue, VmError> {
+    let prototype = temporal_duration_constructor_prototype(context)?;
+    create_duration(context, prototype, values)
+}
+
+fn temporal_duration_abs(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let values = duration_this_values(context, &this_value)?;
+    create_duration_with_default_prototype(context, values.map(|value| value.abs()))
+}
+
+fn temporal_duration_negated(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let values = duration_this_values(context, &this_value)?;
+    create_duration_with_default_prototype(
+        context,
+        values.map(|value| if value == 0.0 { 0.0 } else { -value }),
+    )
+}
+
+fn temporal_duration_add(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    duration_additive(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_duration_subtract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    duration_additive(vm, context, this_value, arguments, -1.0)
+}
+
+fn duration_additive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let left = duration_this_values(context, &this_value)?;
+    let right = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    create_duration_with_default_prototype(
+        context,
+        balance_duration(DurationValues {
+            years: left.years + sign * right.years,
+            months: left.months + sign * right.months,
+            weeks: left.weeks + sign * right.weeks,
+            days: left.days + sign * right.days,
+            hours: left.hours + sign * right.hours,
+            minutes: left.minutes + sign * right.minutes,
+            seconds: left.seconds + sign * right.seconds,
+            milliseconds: left.milliseconds + sign * right.milliseconds,
+            microseconds: left.microseconds + sign * right.microseconds,
+            nanoseconds: left.nanoseconds + sign * right.nanoseconds,
+        }),
+    )
+}
+
+fn temporal_duration_round(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let values = duration_this_values(context, &this_value)?;
+    create_duration_with_default_prototype(context, balance_duration(values))
+}
+
+fn temporal_duration_total(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let values = balance_duration(duration_this_values(context, &this_value)?);
+    let unit = duration_total_unit(vm, context, arguments.first().cloned())?;
+    let total_ns = duration_time_nanoseconds(values);
+    let value = match unit.as_str() {
+        "year" | "years" => values.years,
+        "month" | "months" => values.months + values.years * 12.0,
+        "week" | "weeks" => values.weeks,
+        "day" | "days" => values.days + total_ns / NS_PER_DAY,
+        "hour" | "hours" => (values.days * NS_PER_DAY + total_ns) / NS_PER_HOUR,
+        "minute" | "minutes" => (values.days * NS_PER_DAY + total_ns) / NS_PER_MINUTE,
+        "second" | "seconds" => (values.days * NS_PER_DAY + total_ns) / NS_PER_SECOND,
+        "millisecond" | "milliseconds" => {
+            (values.days * NS_PER_DAY + total_ns) / NS_PER_MILLISECOND
+        }
+        "microsecond" | "microseconds" => {
+            (values.days * NS_PER_DAY + total_ns) / NS_PER_MICROSECOND
+        }
+        "nanosecond" | "nanoseconds" => values.days * NS_PER_DAY + total_ns,
+        _ => return Err(VmError::range("invalid Temporal.Duration total unit")),
+    };
+    Ok(JsValue::Number(value))
+}
+
+fn duration_total_unit(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: Option<JsValue>,
+) -> Result<String, VmError> {
+    match value.unwrap_or(JsValue::Undefined) {
+        JsValue::String(unit) => Ok(unit),
+        JsValue::Object(object) => {
+            let unit = context.get_property(JsValue::Object(object), "unit")?;
+            vm.to_string_coerce(unit, context)
+        }
+        _ => Err(VmError::type_error(
+            "Temporal.Duration total requires a unit",
+        )),
+    }
+}
+
+fn temporal_duration_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let mut values = duration_this_values(context, &this_value)?;
+    let object = context.require_object(
+        &arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        "Temporal.Duration.prototype.with",
+    )?;
+    values.years = duration_replacement(vm, context, object, "years", values.years)?;
+    values.months = duration_replacement(vm, context, object, "months", values.months)?;
+    values.weeks = duration_replacement(vm, context, object, "weeks", values.weeks)?;
+    values.days = duration_replacement(vm, context, object, "days", values.days)?;
+    values.hours = duration_replacement(vm, context, object, "hours", values.hours)?;
+    values.minutes = duration_replacement(vm, context, object, "minutes", values.minutes)?;
+    values.seconds = duration_replacement(vm, context, object, "seconds", values.seconds)?;
+    values.milliseconds =
+        duration_replacement(vm, context, object, "milliseconds", values.milliseconds)?;
+    values.microseconds =
+        duration_replacement(vm, context, object, "microseconds", values.microseconds)?;
+    values.nanoseconds =
+        duration_replacement(vm, context, object, "nanoseconds", values.nanoseconds)?;
+    create_duration_with_default_prototype(context, values)
+}
+
+fn duration_replacement(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    name: &str,
+    current: f64,
+) -> Result<f64, VmError> {
+    let value = context.get_property(JsValue::Object(object), name)?;
+    if matches!(value, JsValue::Undefined) {
+        Ok(current)
+    } else {
+        duration_integer(vm.to_number(value, context)?)
+    }
+}
+
+fn temporal_duration_compare(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let left = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let right = duration_values_from_value(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let left_total = duration_order_total(left);
+    let right_total = duration_order_total(right);
+    Ok(JsValue::Number(if left_total < right_total {
+        -1.0
+    } else if left_total > right_total {
+        1.0
+    } else {
+        0.0
+    }))
+}
+
+fn temporal_duration_sign_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let values = duration_this_values(context, &this_value)?;
+    Ok(JsValue::Number(duration_sign(values) as f64))
+}
+
+fn temporal_duration_blank_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let values = duration_this_values(context, &this_value)?;
+    Ok(JsValue::Boolean(duration_sign(values) == 0))
+}
+
+const NS_PER_MICROSECOND: f64 = 1_000.0;
+const NS_PER_MILLISECOND: f64 = 1_000_000.0;
+const NS_PER_SECOND: f64 = 1_000_000_000.0;
+const NS_PER_MINUTE: f64 = 60.0 * NS_PER_SECOND;
+const NS_PER_HOUR: f64 = 60.0 * NS_PER_MINUTE;
+const NS_PER_DAY: f64 = 24.0 * NS_PER_HOUR;
+
+fn duration_time_nanoseconds(values: DurationValues) -> f64 {
+    values.hours * NS_PER_HOUR
+        + values.minutes * NS_PER_MINUTE
+        + values.seconds * NS_PER_SECOND
+        + values.milliseconds * NS_PER_MILLISECOND
+        + values.microseconds * NS_PER_MICROSECOND
+        + values.nanoseconds
+}
+
+fn balance_duration(values: DurationValues) -> DurationValues {
+    let total_ns = duration_time_nanoseconds(values);
+    let sign = if total_ns < 0.0 { -1.0 } else { 1.0 };
+    let mut remainder = total_ns.abs().round();
+    let extra_days = (remainder / NS_PER_DAY).floor();
+    remainder -= extra_days * NS_PER_DAY;
+    let hours = (remainder / NS_PER_HOUR).floor();
+    remainder -= hours * NS_PER_HOUR;
+    let minutes = (remainder / NS_PER_MINUTE).floor();
+    remainder -= minutes * NS_PER_MINUTE;
+    let seconds = (remainder / NS_PER_SECOND).floor();
+    remainder -= seconds * NS_PER_SECOND;
+    let milliseconds = (remainder / NS_PER_MILLISECOND).floor();
+    remainder -= milliseconds * NS_PER_MILLISECOND;
+    let microseconds = (remainder / NS_PER_MICROSECOND).floor();
+    remainder -= microseconds * NS_PER_MICROSECOND;
+    DurationValues {
+        years: values.years,
+        months: values.months,
+        weeks: values.weeks,
+        days: values.days + sign * extra_days,
+        hours: clean_zero(sign * hours),
+        minutes: clean_zero(sign * minutes),
+        seconds: clean_zero(sign * seconds),
+        milliseconds: clean_zero(sign * milliseconds),
+        microseconds: clean_zero(sign * microseconds),
+        nanoseconds: clean_zero(sign * remainder),
+    }
+}
+
+fn clean_zero(value: f64) -> f64 {
+    if value == 0.0 { 0.0 } else { value }
+}
+
+fn duration_order_total(values: DurationValues) -> f64 {
+    values.years * 365.0 * NS_PER_DAY
+        + values.months * 30.0 * NS_PER_DAY
+        + values.weeks * 7.0 * NS_PER_DAY
+        + values.days * NS_PER_DAY
+        + duration_time_nanoseconds(values)
+}
+
+fn duration_sign(values: DurationValues) -> i8 {
+    let total = duration_order_total(values);
+    if total > 0.0 {
+        1
+    } else if total < 0.0 {
+        -1
+    } else {
+        0
+    }
+}
+
 fn temporal_object_number(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -2748,7 +3284,16 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
             'W' => values.weeks = amount,
             'D' => values.days = amount,
             'H' => values.hours = amount,
-            'S' => values.seconds = amount,
+            'S' => {
+                let seconds = amount.trunc();
+                let fraction = (amount.abs() - amount.abs().trunc()) * 1_000_000_000.0;
+                let sign = if amount.is_sign_negative() { -1.0 } else { 1.0 };
+                values.seconds = seconds;
+                let nanos = fraction.round();
+                values.milliseconds = sign * (nanos / 1_000_000.0).floor();
+                values.microseconds = sign * ((nanos % 1_000_000.0) / 1_000.0).floor();
+                values.nanoseconds = sign * (nanos % 1_000.0);
+            }
             _ => return None,
         }
     }
@@ -2855,6 +3400,28 @@ fn install_temporal_instant(
         temporal_instant_to_string,
     )?;
     define_method(context, prototype, "toJSON", 0, temporal_instant_to_string)?;
+    define_method(
+        context,
+        prototype,
+        "toLocaleString",
+        0,
+        temporal_instant_to_string,
+    )?;
+    for (name, length, call) in [
+        ("add", 1, temporal_instant_add as NativeCall),
+        ("subtract", 1, temporal_instant_subtract as NativeCall),
+        ("equals", 1, temporal_instant_equals as NativeCall),
+        ("round", 1, temporal_instant_round as NativeCall),
+        ("until", 1, temporal_instant_until as NativeCall),
+        ("since", 1, temporal_instant_since as NativeCall),
+        (
+            "toZonedDateTimeISO",
+            1,
+            temporal_instant_to_zoned_date_time_iso as NativeCall,
+        ),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     define_temporal_slot_getter(
         context,
@@ -2889,15 +3456,33 @@ fn create_instant(
     } else {
         0
     };
+    create_instant_from_epoch_ns(context, prototype, epoch_ns)
+}
+
+fn create_instant_from_epoch_ns(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    epoch_ns: i128,
+) -> Result<JsValue, VmError> {
+    let epoch_ms = time_clip(epoch_ns as f64 / 1_000_000.0);
     create_temporal_object(
         context,
         prototype,
         "Instant",
         [
-            ("epochMilliseconds", JsValue::Number(clipped)),
+            ("epochMilliseconds", JsValue::Number(epoch_ms)),
             ("epochNanoseconds", JsValue::BigInt(epoch_ns)),
         ],
     )
+}
+
+fn instant_epoch_ns(context: &NativeContext, object: ObjectId) -> i128 {
+    match own_data_value(context, object, "epochNanoseconds") {
+        Some(JsValue::BigInt(value)) => value,
+        Some(JsValue::Number(value)) => value as i128,
+        _ => (temporal_number_slot(context, object, "epochMilliseconds") as i128)
+            .saturating_mul(1_000_000),
+    }
 }
 
 fn temporal_instant_epoch_nanoseconds_get(
@@ -2919,11 +3504,11 @@ fn temporal_instant_construct(
     let prototype = context
         .constructor_prototype(&new_target)?
         .ok_or_else(|| VmError::runtime("Temporal.Instant prototype missing"))?;
-    let epoch_ns = vm.to_number(
-        arguments.first().cloned().unwrap_or(JsValue::Undefined),
-        context,
-    )?;
-    create_instant(context, prototype, epoch_ns / 1_000_000.0)
+    let epoch_ns = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
+        JsValue::BigInt(value) => value,
+        value => vm.to_number(value, context)? as i128,
+    };
+    create_instant_from_epoch_ns(context, prototype, epoch_ns)
 }
 
 fn temporal_instant_constructor_prototype(context: &NativeContext) -> Result<ObjectId, VmError> {
@@ -3042,6 +3627,146 @@ fn temporal_instant_to_string(
     ))?))
 }
 
+fn temporal_instant_additive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "Instant")?;
+    let duration = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let delta = (sign * duration_order_total(duration)).trunc() as i128;
+    let prototype = temporal_instant_constructor_prototype(context)?;
+    create_instant_from_epoch_ns(
+        context,
+        prototype,
+        instant_epoch_ns(context, object).saturating_add(delta),
+    )
+}
+
+fn temporal_instant_add(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_instant_additive(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_instant_subtract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_instant_additive(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_instant_equals(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "Instant")?;
+    let other = temporal_instant_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    Ok(JsValue::Boolean(
+        instant_epoch_ns(context, this_object) == instant_epoch_ns(context, other_object),
+    ))
+}
+
+fn temporal_instant_round(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "Instant")?;
+    let prototype = temporal_instant_constructor_prototype(context)?;
+    create_instant_from_epoch_ns(context, prototype, instant_epoch_ns(context, object))
+}
+
+fn temporal_instant_difference(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "Instant")?;
+    let other = temporal_instant_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    create_duration_with_default_prototype(
+        context,
+        balance_duration(DurationValues {
+            nanoseconds: sign
+                * (instant_epoch_ns(context, other_object) - instant_epoch_ns(context, this_object))
+                    as f64,
+            ..DurationValues::default()
+        }),
+    )
+}
+
+fn temporal_instant_until(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_instant_difference(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_instant_since(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_instant_difference(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_instant_to_zoned_date_time_iso(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "Instant")?;
+    let time_zone_value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if matches!(time_zone_value, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal.Instant.prototype.toZonedDateTimeISO requires a time zone",
+        ));
+    }
+    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let epoch_ns = instant_epoch_ns(context, object);
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time(
+        context,
+        prototype,
+        JsValue::BigInt(epoch_ns),
+        epoch_ns as f64,
+        time_zone_id,
+        "iso8601".into(),
+    )
+}
+
 fn install_temporal_plain_date(
     context: &mut NativeContext,
     temporal: ObjectId,
@@ -3084,14 +3809,80 @@ fn install_temporal_plain_date(
         0,
         temporal_plain_date_to_string,
     )?;
+    define_method(
+        context,
+        prototype,
+        "toLocaleString",
+        0,
+        temporal_plain_date_to_string,
+    )?;
+    for (name, length, call) in [
+        ("add", 1, temporal_plain_date_add as NativeCall),
+        ("subtract", 1, temporal_plain_date_subtract as NativeCall),
+        ("with", 1, temporal_plain_date_with as NativeCall),
+        (
+            "withCalendar",
+            1,
+            temporal_plain_date_with_calendar as NativeCall,
+        ),
+        ("equals", 1, temporal_plain_date_equals as NativeCall),
+        ("until", 1, temporal_plain_date_until as NativeCall),
+        ("since", 1, temporal_plain_date_since as NativeCall),
+        (
+            "toPlainDateTime",
+            0,
+            temporal_plain_date_to_plain_date_time as NativeCall,
+        ),
+        (
+            "toPlainYearMonth",
+            0,
+            temporal_plain_date_to_plain_year_month as NativeCall,
+        ),
+        (
+            "toPlainMonthDay",
+            0,
+            temporal_plain_date_to_plain_month_day as NativeCall,
+        ),
+        (
+            "toZonedDateTime",
+            1,
+            temporal_plain_date_to_zoned_date_time as NativeCall,
+        ),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     for (name, getter, slot) in [
         ("year", "get year", "year"),
         ("month", "get month", "month"),
         ("day", "get day", "day"),
+        ("dayOfWeek", "get dayOfWeek", "dayOfWeek"),
+        ("dayOfYear", "get dayOfYear", "dayOfYear"),
+        ("weekOfYear", "get weekOfYear", "weekOfYear"),
+        ("yearOfWeek", "get yearOfWeek", "yearOfWeek"),
+        ("daysInWeek", "get daysInWeek", "daysInWeek"),
+        ("daysInMonth", "get daysInMonth", "daysInMonth"),
+        ("daysInYear", "get daysInYear", "daysInYear"),
+        ("monthsInYear", "get monthsInYear", "monthsInYear"),
     ] {
         define_temporal_slot_getter(context, prototype, name, getter, "PlainDate", slot)?;
     }
+    for (name, getter, slot) in [
+        ("monthCode", "get monthCode", "monthCode"),
+        ("calendarId", "get calendarId", "calendarId"),
+    ] {
+        define_temporal_string_slot_getter(context, prototype, name, getter, "PlainDate", slot)?;
+    }
+    define_temporal_bool_slot_getter(
+        context,
+        prototype,
+        "inLeapYear",
+        "get inLeapYear",
+        "PlainDate",
+        "inLeapYear",
+    )?;
+    define_temporal_undefined_getter(context, prototype, "era", "get era", "PlainDate")?;
+    define_temporal_undefined_getter(context, prototype, "eraYear", "get eraYear", "PlainDate")?;
     Ok(())
 }
 
@@ -3102,15 +3893,22 @@ fn create_plain_date(
     month: f64,
     day: f64,
 ) -> Result<JsValue, VmError> {
+    create_plain_date_with_calendar(context, prototype, year, month, day, "iso8601".into())
+}
+
+fn create_plain_date_with_calendar(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    year: f64,
+    month: f64,
+    day: f64,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
     create_temporal_object(
         context,
         prototype,
         "PlainDate",
-        [
-            ("year", JsValue::Number(year.trunc())),
-            ("month", JsValue::Number(month.trunc())),
-            ("day", JsValue::Number(day.trunc())),
-        ],
+        temporal_date_slots(year, month, day, calendar_id),
     )
 }
 
@@ -3135,8 +3933,9 @@ fn temporal_plain_date_construct(
         arguments.get(2).cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
+    let calendar_id = temporal_calendar_from_argument(vm, context, arguments.get(3))?;
     validate_plain_date(year, month, day)?;
-    create_plain_date(context, prototype, year, month, day)
+    create_plain_date_with_calendar(context, prototype, year, month, day, calendar_id)
 }
 
 fn validate_plain_date(year: f64, month: f64, day: f64) -> Result<(), VmError> {
@@ -3167,7 +3966,13 @@ fn temporal_constructor_prototype(
 }
 
 fn parse_plain_date(text: &str) -> Option<(f64, f64, f64)> {
-    let date = text.split('T').next().unwrap_or(text);
+    let date = text
+        .split('T')
+        .next()
+        .unwrap_or(text)
+        .split('[')
+        .next()
+        .unwrap_or(text);
     let mut parts = date.split('-');
     let year = parts.next()?.parse::<i32>().ok()?;
     let month = parse_fixed_digits(parts.next()?, 2)?;
@@ -3186,20 +3991,41 @@ fn temporal_plain_date_from(
 ) -> Result<JsValue, VmError> {
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let (year, month, day) = match item {
+    let (year, month, day, calendar_id) = match item {
         JsValue::String(text) => parse_plain_date(&text)
+            .map(|(year, month, day)| (year, month, day, "iso8601".into()))
             .ok_or_else(|| VmError::range("invalid Temporal.PlainDate string"))?,
         value => {
             let object = context.require_object(&value, "Temporal.PlainDate.from")?;
-            (
-                temporal_object_number(vm, context, object, "year")?,
-                temporal_object_number(vm, context, object, "month")?,
-                temporal_object_number(vm, context, object, "day")?,
-            )
+            if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("PlainDate") {
+                (
+                    temporal_number_slot(context, object, "year"),
+                    temporal_number_slot(context, object, "month"),
+                    temporal_number_slot(context, object, "day"),
+                    own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                )
+            } else {
+                let month_value = context.get_property(JsValue::Object(object), "month")?;
+                let month = if matches!(month_value, JsValue::Undefined) {
+                    let month_code_value =
+                        context.get_property(JsValue::Object(object), "monthCode")?;
+                    let month_code = vm.to_string_coerce(month_code_value, context)?;
+                    parse_month_code(&month_code)
+                        .ok_or_else(|| VmError::range("invalid Temporal.PlainDate monthCode"))?
+                } else {
+                    vm.to_number(month_value, context)?
+                };
+                (
+                    temporal_object_number(vm, context, object, "year")?,
+                    month,
+                    temporal_object_number(vm, context, object, "day")?,
+                    temporal_calendar_id_from_object(vm, context, object)?,
+                )
+            }
         }
     };
     validate_plain_date(year, month, day)?;
-    create_plain_date(context, prototype, year, month, day)
+    create_plain_date_with_calendar(context, prototype, year, month, day, calendar_id)
 }
 
 fn plain_date_order_key(context: &NativeContext, object: ObjectId) -> i64 {
@@ -3253,6 +4079,396 @@ fn temporal_plain_date_to_string(
     )))
 }
 
+fn temporal_calendar_from_argument(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: Option<&JsValue>,
+) -> Result<String, VmError> {
+    match value.cloned().unwrap_or(JsValue::Undefined) {
+        JsValue::Undefined => Ok("iso8601".into()),
+        value => {
+            let calendar = vm.to_string_coerce(value, context)?.to_ascii_lowercase();
+            if calendar.is_empty() {
+                Err(VmError::range("invalid Temporal calendar"))
+            } else {
+                Ok(calendar)
+            }
+        }
+    }
+}
+
+fn temporal_date_replacement(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    name: &str,
+    current: f64,
+) -> Result<f64, VmError> {
+    let value = context.get_property(JsValue::Object(object), name)?;
+    if matches!(value, JsValue::Undefined) {
+        Ok(current)
+    } else {
+        Ok(vm.to_number(value, context)?.trunc())
+    }
+}
+
+fn temporal_month_from_object(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    current: f64,
+) -> Result<f64, VmError> {
+    let month_value = context.get_property(JsValue::Object(object), "month")?;
+    if !matches!(month_value, JsValue::Undefined) {
+        return Ok(vm.to_number(month_value, context)?.trunc());
+    }
+    let month_code_value = context.get_property(JsValue::Object(object), "monthCode")?;
+    if matches!(month_code_value, JsValue::Undefined) {
+        Ok(current)
+    } else {
+        let month_code = vm.to_string_coerce(month_code_value, context)?;
+        parse_month_code(&month_code).ok_or_else(|| VmError::range("invalid Temporal monthCode"))
+    }
+}
+
+fn apply_duration_to_date(
+    year: f64,
+    month: f64,
+    day: f64,
+    duration: DurationValues,
+    sign: f64,
+) -> (f64, f64, f64) {
+    let year_i = year.trunc() as i32;
+    let month_i = month.trunc() as i32;
+    let month_delta = (sign * (duration.years * 12.0 + duration.months)).trunc() as i64;
+    let month_index = year_i as i64 * 12 + month_i as i64 - 1 + month_delta;
+    let new_year = month_index.div_euclid(12) as i32;
+    let new_month = month_index.rem_euclid(12) as u32 + 1;
+    let clamped_day = (day.trunc() as u32).min(month_day_count(new_year, new_month));
+    let extra_days = (sign * (duration.weeks * 7.0 + duration.days)).trunc() as i64;
+    let day_number = days_from_civil(new_year, new_month, clamped_day) + extra_days;
+    let (year, month, day) = civil_from_days(day_number);
+    (year as f64, month as f64, day as f64)
+}
+
+fn duration_between_dates(
+    context: &mut NativeContext,
+    start: ObjectId,
+    end: ObjectId,
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let start_days = plain_date_order_key(context, start);
+    let end_days = plain_date_order_key(context, end);
+    create_duration_with_default_prototype(
+        context,
+        DurationValues {
+            days: sign * (end_days - start_days) as f64,
+            ..DurationValues::default()
+        },
+    )
+}
+
+fn temporal_plain_date_additive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let duration = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let (year, month, day) = apply_duration_to_date(
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        duration,
+        sign,
+    );
+    let prototype = temporal_constructor_prototype(context, "PlainDate")?;
+    create_plain_date_with_calendar(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_add(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_additive(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_plain_date_subtract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_additive(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_plain_date_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let replacement = context.require_object(
+        &arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        "Temporal.PlainDate.prototype.with",
+    )?;
+    let year = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "year",
+        temporal_number_slot(context, this_object, "year"),
+    )?;
+    let month = temporal_month_from_object(
+        vm,
+        context,
+        replacement,
+        temporal_number_slot(context, this_object, "month"),
+    )?;
+    let day = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "day",
+        temporal_number_slot(context, this_object, "day"),
+    )?;
+    validate_plain_date(year, month, day)?;
+    let prototype = temporal_constructor_prototype(context, "PlainDate")?;
+    create_plain_date_with_calendar(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_with_calendar(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let calendar_id = temporal_calendar_from_argument(vm, context, arguments.first())?;
+    let prototype = temporal_constructor_prototype(context, "PlainDate")?;
+    create_plain_date_with_calendar(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        calendar_id,
+    )
+}
+
+fn temporal_plain_date_equals(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let other = temporal_plain_date_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    Ok(JsValue::Boolean(
+        temporal_number_slot(context, this_object, "year")
+            == temporal_number_slot(context, other_object, "year")
+            && temporal_number_slot(context, this_object, "month")
+                == temporal_number_slot(context, other_object, "month")
+            && temporal_number_slot(context, this_object, "day")
+                == temporal_number_slot(context, other_object, "day")
+            && own_string(context, this_object, "calendarId")
+                == own_string(context, other_object, "calendarId"),
+    ))
+}
+
+fn temporal_plain_date_until(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let other = temporal_plain_date_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    duration_between_dates(
+        context,
+        this_object,
+        context.value_object(&other).unwrap(),
+        1.0,
+    )
+}
+
+fn temporal_plain_date_since(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let other = temporal_plain_date_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    duration_between_dates(
+        context,
+        this_object,
+        context.value_object(&other).unwrap(),
+        -1.0,
+    )
+}
+
+fn temporal_plain_date_to_plain_date_time(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let time = plain_time_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
+    create_plain_date_time_with_calendar(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        time,
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_to_plain_year_month(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let prototype = temporal_constructor_prototype(context, "PlainYearMonth")?;
+    create_plain_year_month(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_to_plain_month_day(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let prototype = temporal_constructor_prototype(context, "PlainMonthDay")?;
+    create_plain_month_day(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        temporal_number_slot(context, object, "year"),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn epoch_nanoseconds_from_plain_parts(
+    year: f64,
+    month: f64,
+    day: f64,
+    time: PlainTimeValues,
+) -> f64 {
+    let days = days_from_civil(year as i32, month as u32, day as u32) as f64;
+    (days * MS_PER_DAY
+        + time.hour * MS_PER_HOUR
+        + time.minute * MS_PER_MINUTE
+        + time.second * MS_PER_SECOND
+        + time.millisecond)
+        * 1_000_000.0
+        + time.microsecond * 1_000.0
+        + time.nanosecond
+}
+
+fn temporal_plain_date_to_zoned_date_time(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let (time_zone_value, time) = if let Some(item_object) = context.value_object(&item) {
+        let time_zone = context.get_property(JsValue::Object(item_object), "timeZone")?;
+        let plain_time = context.get_property(JsValue::Object(item_object), "plainTime")?;
+        (
+            if matches!(time_zone, JsValue::Undefined) {
+                item.clone()
+            } else {
+                time_zone
+            },
+            plain_time_values_from_value(vm, context, plain_time)?,
+        )
+    } else {
+        (item, PlainTimeValues::default())
+    };
+    if matches!(time_zone_value, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal.PlainDate.prototype.toZonedDateTime requires a time zone",
+        ));
+    }
+    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let epoch_nanoseconds = epoch_nanoseconds_from_plain_parts(
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        time,
+    );
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time(
+        context,
+        prototype,
+        JsValue::BigInt(epoch_nanoseconds as i128),
+        epoch_nanoseconds,
+        time_zone_id,
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
 fn install_temporal_plain_time(
     context: &mut NativeContext,
     temporal: ObjectId,
@@ -3288,6 +4504,24 @@ fn install_temporal_plain_time(
         0,
         temporal_plain_time_to_string,
     )?;
+    define_method(
+        context,
+        prototype,
+        "toLocaleString",
+        0,
+        temporal_plain_time_to_string,
+    )?;
+    for (name, length, call) in [
+        ("add", 1, temporal_plain_time_add as NativeCall),
+        ("subtract", 1, temporal_plain_time_subtract as NativeCall),
+        ("with", 1, temporal_plain_time_with as NativeCall),
+        ("equals", 1, temporal_plain_time_equals as NativeCall),
+        ("round", 1, temporal_plain_time_round as NativeCall),
+        ("until", 1, temporal_plain_time_until as NativeCall),
+        ("since", 1, temporal_plain_time_since as NativeCall),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     for (name, getter, slot) in [
         ("hour", "get hour", "hour"),
@@ -3395,7 +4629,16 @@ fn temporal_plain_time_construct(
 
 fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
     let time = text.split('T').next_back().unwrap_or(text);
-    let time = time.strip_suffix('Z').unwrap_or(time);
+    if time.ends_with('Z') {
+        return None;
+    }
+    let time = time.split('[').next().unwrap_or(time);
+    let time = time
+        .char_indices()
+        .skip(1)
+        .find(|(_, ch)| *ch == '+' || *ch == '-')
+        .map(|(index, _)| &time[..index])
+        .unwrap_or(time);
     let mut parts = time.split(':');
     let hour = parse_fixed_digits(parts.next()?, 2)? as f64;
     let minute = parse_fixed_digits(parts.next().unwrap_or("00"), 2)? as f64;
@@ -3454,6 +4697,30 @@ fn temporal_plain_time_from(
     create_plain_time(context, prototype, values)
 }
 
+fn plain_time_values_from_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<PlainTimeValues, VmError> {
+    match value {
+        JsValue::Undefined => Ok(PlainTimeValues::default()),
+        JsValue::String(text) => {
+            parse_plain_time(&text).ok_or_else(|| VmError::range("invalid Temporal.PlainTime"))
+        }
+        value => {
+            let object = context.require_object(&value, "Temporal.PlainTime value")?;
+            Ok(PlainTimeValues {
+                hour: temporal_object_number(vm, context, object, "hour")?,
+                minute: temporal_object_number(vm, context, object, "minute")?,
+                second: temporal_object_number(vm, context, object, "second")?,
+                millisecond: temporal_object_number(vm, context, object, "millisecond")?,
+                microsecond: temporal_object_number(vm, context, object, "microsecond")?,
+                nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
+            })
+        }
+    }
+}
+
 fn format_plain_time(values: PlainTimeValues) -> String {
     let mut text = format!(
         "{}:{}:{}",
@@ -3492,6 +4759,203 @@ fn temporal_plain_time_to_string(
     })))
 }
 
+fn plain_time_values_from_temporal(context: &NativeContext, object: ObjectId) -> PlainTimeValues {
+    PlainTimeValues {
+        hour: temporal_number_slot(context, object, "hour"),
+        minute: temporal_number_slot(context, object, "minute"),
+        second: temporal_number_slot(context, object, "second"),
+        millisecond: temporal_number_slot(context, object, "millisecond"),
+        microsecond: temporal_number_slot(context, object, "microsecond"),
+        nanosecond: temporal_number_slot(context, object, "nanosecond"),
+    }
+}
+
+fn create_plain_time_from_total_nanoseconds(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    total: f64,
+) -> Result<JsValue, VmError> {
+    let (_, time) = plain_time_from_nanoseconds(total.rem_euclid(NS_PER_DAY));
+    create_plain_time(context, prototype, time)
+}
+
+fn temporal_plain_time_additive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainTime")?;
+    let duration = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let total = time_nanoseconds(plain_time_values_from_temporal(context, object))
+        + sign * duration_time_nanoseconds(duration);
+    let prototype = temporal_constructor_prototype(context, "PlainTime")?;
+    create_plain_time_from_total_nanoseconds(context, prototype, total)
+}
+
+fn temporal_plain_time_add(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_time_additive(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_plain_time_subtract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_time_additive(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_plain_time_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainTime")?;
+    let replacement = context.require_object(
+        &arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        "Temporal.PlainTime.prototype.with",
+    )?;
+    let time = PlainTimeValues {
+        hour: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "hour",
+            temporal_number_slot(context, this_object, "hour"),
+        )?,
+        minute: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "minute",
+            temporal_number_slot(context, this_object, "minute"),
+        )?,
+        second: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "second",
+            temporal_number_slot(context, this_object, "second"),
+        )?,
+        millisecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "millisecond",
+            temporal_number_slot(context, this_object, "millisecond"),
+        )?,
+        microsecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "microsecond",
+            temporal_number_slot(context, this_object, "microsecond"),
+        )?,
+        nanosecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "nanosecond",
+            temporal_number_slot(context, this_object, "nanosecond"),
+        )?,
+    };
+    validate_plain_time(time)?;
+    let prototype = temporal_constructor_prototype(context, "PlainTime")?;
+    create_plain_time(context, prototype, time)
+}
+
+fn temporal_plain_time_equals(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainTime")?;
+    let other = temporal_plain_time_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    Ok(JsValue::Boolean(
+        time_nanoseconds(plain_time_values_from_temporal(context, this_object))
+            == time_nanoseconds(plain_time_values_from_temporal(context, other_object)),
+    ))
+}
+
+fn temporal_plain_time_round(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainTime")?;
+    let prototype = temporal_constructor_prototype(context, "PlainTime")?;
+    create_plain_time(
+        context,
+        prototype,
+        plain_time_values_from_temporal(context, object),
+    )
+}
+
+fn temporal_plain_time_difference(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainTime")?;
+    let other = temporal_plain_time_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    let delta = sign
+        * (time_nanoseconds(plain_time_values_from_temporal(context, other_object))
+            - time_nanoseconds(plain_time_values_from_temporal(context, this_object)));
+    create_duration_with_default_prototype(
+        context,
+        balance_duration(DurationValues {
+            nanoseconds: delta,
+            ..DurationValues::default()
+        }),
+    )
+}
+
+fn temporal_plain_time_until(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_time_difference(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_plain_time_since(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_time_difference(vm, context, this_value, arguments, -1.0)
+}
+
 fn install_temporal_plain_date_time(
     context: &mut NativeContext,
     temporal: ObjectId,
@@ -3527,6 +4991,53 @@ fn install_temporal_plain_date_time(
         0,
         temporal_plain_date_time_to_string,
     )?;
+    define_method(
+        context,
+        prototype,
+        "toLocaleString",
+        0,
+        temporal_plain_date_time_to_string,
+    )?;
+    for (name, length, call) in [
+        ("add", 1, temporal_plain_date_time_add as NativeCall),
+        (
+            "subtract",
+            1,
+            temporal_plain_date_time_subtract as NativeCall,
+        ),
+        ("with", 1, temporal_plain_date_time_with as NativeCall),
+        (
+            "withCalendar",
+            1,
+            temporal_plain_date_time_with_calendar as NativeCall,
+        ),
+        (
+            "withPlainTime",
+            0,
+            temporal_plain_date_time_with_plain_time as NativeCall,
+        ),
+        ("equals", 1, temporal_plain_date_time_equals as NativeCall),
+        ("round", 1, temporal_plain_date_time_round as NativeCall),
+        ("until", 1, temporal_plain_date_time_until as NativeCall),
+        ("since", 1, temporal_plain_date_time_since as NativeCall),
+        (
+            "toPlainDate",
+            0,
+            temporal_plain_date_time_to_plain_date as NativeCall,
+        ),
+        (
+            "toPlainTime",
+            0,
+            temporal_plain_date_time_to_plain_time as NativeCall,
+        ),
+        (
+            "toZonedDateTime",
+            1,
+            temporal_plain_date_time_to_zoned_date_time as NativeCall,
+        ),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     for (name, getter, slot) in [
         ("year", "get year", "year"),
@@ -3538,9 +5049,46 @@ fn install_temporal_plain_date_time(
         ("millisecond", "get millisecond", "millisecond"),
         ("microsecond", "get microsecond", "microsecond"),
         ("nanosecond", "get nanosecond", "nanosecond"),
+        ("dayOfWeek", "get dayOfWeek", "dayOfWeek"),
+        ("dayOfYear", "get dayOfYear", "dayOfYear"),
+        ("weekOfYear", "get weekOfYear", "weekOfYear"),
+        ("yearOfWeek", "get yearOfWeek", "yearOfWeek"),
+        ("daysInWeek", "get daysInWeek", "daysInWeek"),
+        ("daysInMonth", "get daysInMonth", "daysInMonth"),
+        ("daysInYear", "get daysInYear", "daysInYear"),
+        ("monthsInYear", "get monthsInYear", "monthsInYear"),
     ] {
         define_temporal_slot_getter(context, prototype, name, getter, "PlainDateTime", slot)?;
     }
+    for (name, getter, slot) in [
+        ("monthCode", "get monthCode", "monthCode"),
+        ("calendarId", "get calendarId", "calendarId"),
+    ] {
+        define_temporal_string_slot_getter(
+            context,
+            prototype,
+            name,
+            getter,
+            "PlainDateTime",
+            slot,
+        )?;
+    }
+    define_temporal_bool_slot_getter(
+        context,
+        prototype,
+        "inLeapYear",
+        "get inLeapYear",
+        "PlainDateTime",
+        "inLeapYear",
+    )?;
+    define_temporal_undefined_getter(context, prototype, "era", "get era", "PlainDateTime")?;
+    define_temporal_undefined_getter(
+        context,
+        prototype,
+        "eraYear",
+        "get eraYear",
+        "PlainDateTime",
+    )?;
     Ok(())
 }
 
@@ -3566,9 +5114,10 @@ fn temporal_plain_date_time_construct(
         context,
     )?;
     let time = plain_time_from_args(vm, context, arguments.get(3..).unwrap_or(&[]))?;
+    let calendar_id = temporal_calendar_from_argument(vm, context, arguments.get(9))?;
     validate_plain_date(year, month, day)?;
     validate_plain_time(time)?;
-    create_plain_date_time(context, prototype, year, month, day, time)
+    create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
 }
 
 fn create_plain_date_time(
@@ -3579,22 +5128,36 @@ fn create_plain_date_time(
     day: f64,
     time: PlainTimeValues,
 ) -> Result<JsValue, VmError> {
-    create_temporal_object(
+    create_plain_date_time_with_calendar(
         context,
         prototype,
-        "PlainDateTime",
-        [
-            ("year", JsValue::Number(year.trunc())),
-            ("month", JsValue::Number(month.trunc())),
-            ("day", JsValue::Number(day.trunc())),
-            ("hour", JsValue::Number(time.hour.trunc())),
-            ("minute", JsValue::Number(time.minute.trunc())),
-            ("second", JsValue::Number(time.second.trunc())),
-            ("millisecond", JsValue::Number(time.millisecond.trunc())),
-            ("microsecond", JsValue::Number(time.microsecond.trunc())),
-            ("nanosecond", JsValue::Number(time.nanosecond.trunc())),
-        ],
+        year,
+        month,
+        day,
+        time,
+        "iso8601".into(),
     )
+}
+
+fn create_plain_date_time_with_calendar(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    year: f64,
+    month: f64,
+    day: f64,
+    time: PlainTimeValues,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
+    let mut slots = temporal_date_slots(year, month, day, calendar_id);
+    slots.extend([
+        ("hour", JsValue::Number(time.hour.trunc())),
+        ("minute", JsValue::Number(time.minute.trunc())),
+        ("second", JsValue::Number(time.second.trunc())),
+        ("millisecond", JsValue::Number(time.millisecond.trunc())),
+        ("microsecond", JsValue::Number(time.microsecond.trunc())),
+        ("nanosecond", JsValue::Number(time.nanosecond.trunc())),
+    ]);
+    create_temporal_object(context, prototype, "PlainDateTime", slots)
 }
 
 fn temporal_plain_date_time_from(
@@ -3605,7 +5168,7 @@ fn temporal_plain_date_time_from(
 ) -> Result<JsValue, VmError> {
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let (year, month, day, time) = match item {
+    let (year, month, day, time, calendar_id) = match item {
         JsValue::String(text) => {
             let (year, month, day) = parse_plain_date(&text)
                 .ok_or_else(|| VmError::range("invalid Temporal.PlainDateTime"))?;
@@ -3615,28 +5178,47 @@ fn temporal_plain_date_time_from(
             } else {
                 PlainTimeValues::default()
             };
-            (year, month, day, time)
+            (year, month, day, time, "iso8601".into())
         }
         value => {
             let object = context.require_object(&value, "Temporal.PlainDateTime.from")?;
-            (
-                temporal_object_number(vm, context, object, "year")?,
-                temporal_object_number(vm, context, object, "month")?,
-                temporal_object_number(vm, context, object, "day")?,
-                PlainTimeValues {
-                    hour: temporal_object_number(vm, context, object, "hour")?,
-                    minute: temporal_object_number(vm, context, object, "minute")?,
-                    second: temporal_object_number(vm, context, object, "second")?,
-                    millisecond: temporal_object_number(vm, context, object, "millisecond")?,
-                    microsecond: temporal_object_number(vm, context, object, "microsecond")?,
-                    nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
-                },
-            )
+            if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("PlainDateTime") {
+                (
+                    temporal_number_slot(context, object, "year"),
+                    temporal_number_slot(context, object, "month"),
+                    temporal_number_slot(context, object, "day"),
+                    PlainTimeValues {
+                        hour: temporal_number_slot(context, object, "hour"),
+                        minute: temporal_number_slot(context, object, "minute"),
+                        second: temporal_number_slot(context, object, "second"),
+                        millisecond: temporal_number_slot(context, object, "millisecond"),
+                        microsecond: temporal_number_slot(context, object, "microsecond"),
+                        nanosecond: temporal_number_slot(context, object, "nanosecond"),
+                    },
+                    own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                )
+            } else {
+                let month = temporal_month_from_object(vm, context, object, 0.0)?;
+                (
+                    temporal_object_number(vm, context, object, "year")?,
+                    month,
+                    temporal_object_number(vm, context, object, "day")?,
+                    PlainTimeValues {
+                        hour: temporal_object_number(vm, context, object, "hour")?,
+                        minute: temporal_object_number(vm, context, object, "minute")?,
+                        second: temporal_object_number(vm, context, object, "second")?,
+                        millisecond: temporal_object_number(vm, context, object, "millisecond")?,
+                        microsecond: temporal_object_number(vm, context, object, "microsecond")?,
+                        nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
+                    },
+                    temporal_calendar_id_from_object(vm, context, object)?,
+                )
+            }
         }
     };
     validate_plain_date(year, month, day)?;
     validate_plain_time(time)?;
-    create_plain_date_time(context, prototype, year, month, day, time)
+    create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
 }
 
 fn temporal_plain_date_time_to_string(
@@ -3661,6 +5243,409 @@ fn temporal_plain_date_time_to_string(
         nanosecond: temporal_number_slot(context, object, "nanosecond"),
     });
     Ok(JsValue::String(format!("{date}T{time}")))
+}
+
+fn plain_date_time_values(context: &NativeContext, object: ObjectId) -> PlainTimeValues {
+    PlainTimeValues {
+        hour: temporal_number_slot(context, object, "hour"),
+        minute: temporal_number_slot(context, object, "minute"),
+        second: temporal_number_slot(context, object, "second"),
+        millisecond: temporal_number_slot(context, object, "millisecond"),
+        microsecond: temporal_number_slot(context, object, "microsecond"),
+        nanosecond: temporal_number_slot(context, object, "nanosecond"),
+    }
+}
+
+fn time_nanoseconds(values: PlainTimeValues) -> f64 {
+    values.hour * NS_PER_HOUR
+        + values.minute * NS_PER_MINUTE
+        + values.second * NS_PER_SECOND
+        + values.millisecond * NS_PER_MILLISECOND
+        + values.microsecond * NS_PER_MICROSECOND
+        + values.nanosecond
+}
+
+fn plain_time_from_nanoseconds(total: f64) -> (i64, PlainTimeValues) {
+    let days = (total / NS_PER_DAY).floor() as i64;
+    let mut remainder = (total - days as f64 * NS_PER_DAY).round();
+    let hours = (remainder / NS_PER_HOUR).floor();
+    remainder -= hours * NS_PER_HOUR;
+    let minutes = (remainder / NS_PER_MINUTE).floor();
+    remainder -= minutes * NS_PER_MINUTE;
+    let seconds = (remainder / NS_PER_SECOND).floor();
+    remainder -= seconds * NS_PER_SECOND;
+    let milliseconds = (remainder / NS_PER_MILLISECOND).floor();
+    remainder -= milliseconds * NS_PER_MILLISECOND;
+    let microseconds = (remainder / NS_PER_MICROSECOND).floor();
+    remainder -= microseconds * NS_PER_MICROSECOND;
+    (
+        days,
+        PlainTimeValues {
+            hour: clean_zero(hours),
+            minute: clean_zero(minutes),
+            second: clean_zero(seconds),
+            millisecond: clean_zero(milliseconds),
+            microsecond: clean_zero(microseconds),
+            nanosecond: clean_zero(remainder),
+        },
+    )
+}
+
+fn temporal_plain_date_time_additive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let duration = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let (mut year, mut month, mut day) = apply_duration_to_date(
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        duration,
+        sign,
+    );
+    let time_ns = time_nanoseconds(plain_date_time_values(context, object))
+        + sign * duration_time_nanoseconds(duration);
+    let (extra_days, time) = plain_time_from_nanoseconds(time_ns);
+    if extra_days != 0 {
+        let day_number = days_from_civil(year as i32, month as u32, day as u32) + extra_days;
+        let fields = civil_from_days(day_number);
+        year = fields.0 as f64;
+        month = fields.1 as f64;
+        day = fields.2 as f64;
+    }
+    let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
+    create_plain_date_time_with_calendar(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        time,
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_time_add(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_time_additive(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_plain_date_time_subtract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_time_additive(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_plain_date_time_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let replacement = context.require_object(
+        &arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        "Temporal.PlainDateTime.prototype.with",
+    )?;
+    let year = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "year",
+        temporal_number_slot(context, this_object, "year"),
+    )?;
+    let month = temporal_month_from_object(
+        vm,
+        context,
+        replacement,
+        temporal_number_slot(context, this_object, "month"),
+    )?;
+    let day = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "day",
+        temporal_number_slot(context, this_object, "day"),
+    )?;
+    let time = PlainTimeValues {
+        hour: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "hour",
+            temporal_number_slot(context, this_object, "hour"),
+        )?,
+        minute: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "minute",
+            temporal_number_slot(context, this_object, "minute"),
+        )?,
+        second: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "second",
+            temporal_number_slot(context, this_object, "second"),
+        )?,
+        millisecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "millisecond",
+            temporal_number_slot(context, this_object, "millisecond"),
+        )?,
+        microsecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "microsecond",
+            temporal_number_slot(context, this_object, "microsecond"),
+        )?,
+        nanosecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "nanosecond",
+            temporal_number_slot(context, this_object, "nanosecond"),
+        )?,
+    };
+    validate_plain_date(year, month, day)?;
+    validate_plain_time(time)?;
+    let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
+    create_plain_date_time_with_calendar(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        time,
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_time_with_calendar(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let calendar_id = temporal_calendar_from_argument(vm, context, arguments.first())?;
+    let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
+    create_plain_date_time_with_calendar(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        plain_date_time_values(context, object),
+        calendar_id,
+    )
+}
+
+fn temporal_plain_date_time_with_plain_time(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let time = plain_time_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
+    create_plain_date_time_with_calendar(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        time,
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_time_equals(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let other = temporal_plain_date_time_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    Ok(JsValue::Boolean(
+        temporal_number_slot(context, this_object, "year")
+            == temporal_number_slot(context, other_object, "year")
+            && temporal_number_slot(context, this_object, "month")
+                == temporal_number_slot(context, other_object, "month")
+            && temporal_number_slot(context, this_object, "day")
+                == temporal_number_slot(context, other_object, "day")
+            && time_nanoseconds(plain_date_time_values(context, this_object))
+                == time_nanoseconds(plain_date_time_values(context, other_object))
+            && own_string(context, this_object, "calendarId")
+                == own_string(context, other_object, "calendarId"),
+    ))
+}
+
+fn temporal_plain_date_time_round(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
+    create_plain_date_time_with_calendar(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        plain_date_time_values(context, object),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_time_difference(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let other = temporal_plain_date_time_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    let this_days = plain_date_order_key(context, this_object);
+    let other_days = plain_date_order_key(context, other_object);
+    let day_delta = other_days - this_days;
+    let time_delta = time_nanoseconds(plain_date_time_values(context, other_object))
+        - time_nanoseconds(plain_date_time_values(context, this_object));
+    let total_ns = sign * (day_delta as f64 * NS_PER_DAY + time_delta);
+    let day_part = (total_ns / NS_PER_DAY).trunc();
+    let remainder = total_ns - day_part * NS_PER_DAY;
+    let (_, time) = plain_time_from_nanoseconds(remainder);
+    create_duration_with_default_prototype(
+        context,
+        DurationValues {
+            days: day_part,
+            hours: time.hour,
+            minutes: time.minute,
+            seconds: time.second,
+            milliseconds: time.millisecond,
+            microseconds: time.microsecond,
+            nanoseconds: time.nanosecond,
+            ..DurationValues::default()
+        },
+    )
+}
+
+fn temporal_plain_date_time_until(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_time_difference(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_plain_date_time_since(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_time_difference(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_plain_date_time_to_plain_date(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let prototype = temporal_constructor_prototype(context, "PlainDate")?;
+    create_plain_date_with_calendar(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_date_time_to_plain_time(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let prototype = temporal_constructor_prototype(context, "PlainTime")?;
+    create_plain_time(context, prototype, plain_date_time_values(context, object))
+}
+
+fn temporal_plain_date_time_to_zoned_date_time(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let time_zone_value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if matches!(time_zone_value, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal.PlainDateTime.prototype.toZonedDateTime requires a time zone",
+        ));
+    }
+    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let epoch_nanoseconds = epoch_nanoseconds_from_plain_parts(
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        plain_date_time_values(context, object),
+    );
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time(
+        context,
+        prototype,
+        JsValue::BigInt(epoch_nanoseconds as i128),
+        epoch_nanoseconds,
+        time_zone_id,
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
 }
 
 fn month_code(month: f64) -> String {
@@ -3758,6 +5743,19 @@ fn install_temporal_plain_year_month(
         1,
         temporal_plain_year_month_equals,
     )?;
+    for (name, length, call) in [
+        ("add", 1, temporal_plain_year_month_add as NativeCall),
+        (
+            "subtract",
+            1,
+            temporal_plain_year_month_subtract as NativeCall,
+        ),
+        ("with", 1, temporal_plain_year_month_with as NativeCall),
+        ("until", 1, temporal_plain_year_month_until as NativeCall),
+        ("since", 1, temporal_plain_year_month_since as NativeCall),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     for (name, getter, slot) in [
         ("year", "get year", "year"),
@@ -3781,6 +5779,22 @@ fn install_temporal_plain_year_month(
             slot,
         )?;
     }
+    define_temporal_bool_slot_getter(
+        context,
+        prototype,
+        "inLeapYear",
+        "get inLeapYear",
+        "PlainYearMonth",
+        "inLeapYear",
+    )?;
+    define_temporal_undefined_getter(context, prototype, "era", "get era", "PlainYearMonth")?;
+    define_temporal_undefined_getter(
+        context,
+        prototype,
+        "eraYear",
+        "get eraYear",
+        "PlainYearMonth",
+    )?;
     Ok(())
 }
 
@@ -3814,6 +5828,7 @@ fn create_plain_year_month(
                 JsValue::Number(if is_leap_year(year_i) { 366.0 } else { 365.0 }),
             ),
             ("monthsInYear", JsValue::Number(12.0)),
+            ("inLeapYear", JsValue::Boolean(is_leap_year(year_i))),
         ],
     )
 }
@@ -4010,6 +6025,141 @@ fn temporal_plain_year_month_equals(
     ))
 }
 
+fn temporal_plain_year_month_additive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "PlainYearMonth")?;
+    let duration = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let month_delta = (sign * (duration.years * 12.0 + duration.months)).trunc() as i64;
+    let month_index = temporal_number_slot(context, object, "year") as i64 * 12
+        + temporal_number_slot(context, object, "month") as i64
+        - 1
+        + month_delta;
+    let year = month_index.div_euclid(12) as f64;
+    let month = (month_index.rem_euclid(12) + 1) as f64;
+    let prototype = temporal_constructor_prototype(context, "PlainYearMonth")?;
+    create_plain_year_month(
+        context,
+        prototype,
+        year,
+        month,
+        temporal_number_slot(context, object, "referenceISODay").max(1.0),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_year_month_add(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_year_month_additive(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_plain_year_month_subtract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_year_month_additive(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_plain_year_month_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainYearMonth")?;
+    let replacement = context.require_object(
+        &arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        "Temporal.PlainYearMonth.prototype.with",
+    )?;
+    let year = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "year",
+        temporal_number_slot(context, this_object, "year"),
+    )?;
+    let month = temporal_month_from_object(
+        vm,
+        context,
+        replacement,
+        temporal_number_slot(context, this_object, "month"),
+    )?;
+    let day = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "day",
+        temporal_number_slot(context, this_object, "referenceISODay").max(1.0),
+    )?;
+    let prototype = temporal_constructor_prototype(context, "PlainYearMonth")?;
+    create_plain_year_month(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_plain_year_month_difference(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainYearMonth")?;
+    let other = temporal_plain_year_month_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    let months = plain_year_month_order_key(context, other_object)
+        - plain_year_month_order_key(context, this_object);
+    create_duration_with_default_prototype(
+        context,
+        DurationValues {
+            months: sign * months as f64,
+            ..DurationValues::default()
+        },
+    )
+}
+
+fn temporal_plain_year_month_until(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_year_month_difference(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_plain_year_month_since(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_year_month_difference(vm, context, this_value, arguments, -1.0)
+}
+
 fn install_temporal_plain_month_day(
     context: &mut NativeContext,
     temporal: ObjectId,
@@ -4066,6 +6216,7 @@ fn install_temporal_plain_month_day(
         1,
         temporal_plain_month_day_equals,
     )?;
+    define_method(context, prototype, "with", 1, temporal_plain_month_day_with)?;
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     for (name, getter, slot) in [("month", "get month", "month"), ("day", "get day", "day")] {
         define_temporal_slot_getter(context, prototype, name, getter, "PlainMonthDay", slot)?;
@@ -4260,6 +6411,48 @@ fn temporal_plain_month_day_equals(
     ))
 }
 
+fn temporal_plain_month_day_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "PlainMonthDay")?;
+    let replacement = context.require_object(
+        &arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        "Temporal.PlainMonthDay.prototype.with",
+    )?;
+    let month = temporal_month_from_object(
+        vm,
+        context,
+        replacement,
+        temporal_number_slot(context, this_object, "month"),
+    )?;
+    let day = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "day",
+        temporal_number_slot(context, this_object, "day"),
+    )?;
+    let reference_year = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "year",
+        temporal_number_slot(context, this_object, "referenceISOYear").max(1972.0),
+    )?;
+    let prototype = temporal_constructor_prototype(context, "PlainMonthDay")?;
+    create_plain_month_day(
+        context,
+        prototype,
+        month,
+        day,
+        reference_year,
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
 fn install_temporal_zoned_date_time(
     context: &mut NativeContext,
     temporal: ObjectId,
@@ -4344,6 +6537,45 @@ fn install_temporal_zoned_date_time(
         1,
         temporal_zoned_date_time_equals,
     )?;
+    for (name, length, call) in [
+        ("add", 1, temporal_zoned_date_time_add as NativeCall),
+        (
+            "subtract",
+            1,
+            temporal_zoned_date_time_subtract as NativeCall,
+        ),
+        ("round", 1, temporal_zoned_date_time_round as NativeCall),
+        ("until", 1, temporal_zoned_date_time_until as NativeCall),
+        ("since", 1, temporal_zoned_date_time_since as NativeCall),
+        ("with", 1, temporal_zoned_date_time_with as NativeCall),
+        (
+            "withCalendar",
+            1,
+            temporal_zoned_date_time_with_calendar as NativeCall,
+        ),
+        (
+            "withPlainTime",
+            0,
+            temporal_zoned_date_time_with_plain_time as NativeCall,
+        ),
+        (
+            "withTimeZone",
+            1,
+            temporal_zoned_date_time_with_time_zone as NativeCall,
+        ),
+        (
+            "startOfDay",
+            0,
+            temporal_zoned_date_time_start_of_day as NativeCall,
+        ),
+        (
+            "getTimeZoneTransition",
+            0,
+            temporal_zoned_date_time_get_time_zone_transition as NativeCall,
+        ),
+    ] {
+        define_method(context, prototype, name, length, call)?;
+    }
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     for (name, getter, slot) in [
         (
@@ -4368,10 +6600,12 @@ fn install_temporal_zoned_date_time(
         ("dayOfWeek", "get dayOfWeek", "dayOfWeek"),
         ("dayOfYear", "get dayOfYear", "dayOfYear"),
         ("weekOfYear", "get weekOfYear", "weekOfYear"),
+        ("yearOfWeek", "get yearOfWeek", "yearOfWeek"),
         ("daysInWeek", "get daysInWeek", "daysInWeek"),
         ("daysInMonth", "get daysInMonth", "daysInMonth"),
         ("daysInYear", "get daysInYear", "daysInYear"),
         ("monthsInYear", "get monthsInYear", "monthsInYear"),
+        ("hoursInDay", "get hoursInDay", "hoursInDay"),
     ] {
         define_temporal_slot_getter(context, prototype, name, getter, "ZonedDateTime", slot)?;
     }
@@ -4397,6 +6631,14 @@ fn install_temporal_zoned_date_time(
         "get inLeapYear",
         "ZonedDateTime",
         "inLeapYear",
+    )?;
+    define_temporal_undefined_getter(context, prototype, "era", "get era", "ZonedDateTime")?;
+    define_temporal_undefined_getter(
+        context,
+        prototype,
+        "eraYear",
+        "get eraYear",
+        "ZonedDateTime",
     )?;
     define_accessor(
         context,
@@ -4444,6 +6686,8 @@ fn create_zoned_date_time(
     let day_of_year = days_from_civil(fields.year, fields.month, fields.day)
         - days_from_civil(fields.year, 1, 1)
         + 1;
+    let day_of_week = temporal_day_of_week(fields.year, fields.month, fields.day);
+    let (week_of_year, year_of_week) = temporal_week_fields(fields.year, fields.month, fields.day);
     let leap = is_leap_year(fields.year);
     create_temporal_object(
         context,
@@ -4476,12 +6720,10 @@ fn create_zoned_date_time(
                 "nanosecond",
                 JsValue::Number((epoch_nanoseconds.trunc() % 1_000.0).abs()),
             ),
-            ("dayOfWeek", JsValue::Number(fields.weekday as f64)),
+            ("dayOfWeek", JsValue::Number(day_of_week as f64)),
             ("dayOfYear", JsValue::Number(day_of_year as f64)),
-            (
-                "weekOfYear",
-                JsValue::Number(((day_of_year - 1) / 7 + 1) as f64),
-            ),
+            ("weekOfYear", JsValue::Number(week_of_year as f64)),
+            ("yearOfWeek", JsValue::Number(year_of_week as f64)),
             ("daysInWeek", JsValue::Number(7.0)),
             (
                 "daysInMonth",
@@ -4492,6 +6734,7 @@ fn create_zoned_date_time(
                 JsValue::Number(if leap { 366.0 } else { 365.0 }),
             ),
             ("monthsInYear", JsValue::Number(12.0)),
+            ("hoursInDay", JsValue::Number(24.0)),
             ("inLeapYear", JsValue::Boolean(leap)),
         ],
     )
@@ -4780,6 +7023,357 @@ fn temporal_zoned_date_time_equals(
             && own_string(context, this_object, "calendarId")
                 == own_string(context, other_object, "calendarId"),
     ))
+}
+
+fn create_zoned_date_time_from_parts(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    year: f64,
+    month: f64,
+    day: f64,
+    time: PlainTimeValues,
+    time_zone_id: String,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
+    validate_plain_date(year, month, day)?;
+    validate_plain_time(time)?;
+    let epoch_nanoseconds = epoch_nanoseconds_from_plain_parts(year, month, day, time);
+    create_zoned_date_time(
+        context,
+        prototype,
+        JsValue::BigInt(epoch_nanoseconds as i128),
+        epoch_nanoseconds,
+        time_zone_id,
+        calendar_id,
+    )
+}
+
+fn temporal_zoned_date_time_additive(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let duration = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let (mut year, mut month, mut day) = apply_duration_to_date(
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        duration,
+        sign,
+    );
+    let time_ns = time_nanoseconds(plain_date_time_values(context, object))
+        + sign * duration_time_nanoseconds(duration);
+    let (extra_days, time) = plain_time_from_nanoseconds(time_ns);
+    if extra_days != 0 {
+        let day_number = days_from_civil(year as i32, month as u32, day as u32) + extra_days;
+        let fields = civil_from_days(day_number);
+        year = fields.0 as f64;
+        month = fields.1 as f64;
+        day = fields.2 as f64;
+    }
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time_from_parts(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        time,
+        own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_zoned_date_time_add(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_zoned_date_time_additive(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_zoned_date_time_subtract(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_zoned_date_time_additive(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_zoned_date_time_round(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time(
+        context,
+        prototype,
+        own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)),
+        temporal_number_slot(context, object, "epochNanosecondsNumber"),
+        own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_zoned_date_time_difference(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+    sign: f64,
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let other = temporal_zoned_date_time_from(
+        vm,
+        context,
+        JsValue::Undefined,
+        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
+    )?;
+    let other_object = context.value_object(&other).unwrap();
+    let delta = sign
+        * (temporal_number_slot(context, other_object, "epochNanosecondsNumber")
+            - temporal_number_slot(context, this_object, "epochNanosecondsNumber"));
+    create_duration_with_default_prototype(
+        context,
+        balance_duration(DurationValues {
+            nanoseconds: delta,
+            ..DurationValues::default()
+        }),
+    )
+}
+
+fn temporal_zoned_date_time_until(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_zoned_date_time_difference(vm, context, this_value, arguments, 1.0)
+}
+
+fn temporal_zoned_date_time_since(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_zoned_date_time_difference(vm, context, this_value, arguments, -1.0)
+}
+
+fn temporal_zoned_date_time_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let this_object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let replacement = context.require_object(
+        &arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        "Temporal.ZonedDateTime.prototype.with",
+    )?;
+    let year = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "year",
+        temporal_number_slot(context, this_object, "year"),
+    )?;
+    let month = temporal_month_from_object(
+        vm,
+        context,
+        replacement,
+        temporal_number_slot(context, this_object, "month"),
+    )?;
+    let day = temporal_date_replacement(
+        vm,
+        context,
+        replacement,
+        "day",
+        temporal_number_slot(context, this_object, "day"),
+    )?;
+    let time = PlainTimeValues {
+        hour: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "hour",
+            temporal_number_slot(context, this_object, "hour"),
+        )?,
+        minute: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "minute",
+            temporal_number_slot(context, this_object, "minute"),
+        )?,
+        second: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "second",
+            temporal_number_slot(context, this_object, "second"),
+        )?,
+        millisecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "millisecond",
+            temporal_number_slot(context, this_object, "millisecond"),
+        )?,
+        microsecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "microsecond",
+            temporal_number_slot(context, this_object, "microsecond"),
+        )?,
+        nanosecond: temporal_date_replacement(
+            vm,
+            context,
+            replacement,
+            "nanosecond",
+            temporal_number_slot(context, this_object, "nanosecond"),
+        )?,
+    };
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time_from_parts(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        time,
+        own_string(context, this_object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_zoned_date_time_with_calendar(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let calendar_id = temporal_calendar_from_argument(vm, context, arguments.first())?;
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time(
+        context,
+        prototype,
+        own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)),
+        temporal_number_slot(context, object, "epochNanosecondsNumber"),
+        own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
+        calendar_id,
+    )
+}
+
+fn temporal_zoned_date_time_with_plain_time(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let time = plain_time_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time_from_parts(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        time,
+        own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_zoned_date_time_with_time_zone(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let time_zone_value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if matches!(time_zone_value, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal.ZonedDateTime.prototype.withTimeZone requires a time zone",
+        ));
+    }
+    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time(
+        context,
+        prototype,
+        own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)),
+        temporal_number_slot(context, object, "epochNanosecondsNumber"),
+        time_zone_id,
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_zoned_date_time_start_of_day(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    create_zoned_date_time_from_parts(
+        context,
+        prototype,
+        temporal_number_slot(context, object, "year"),
+        temporal_number_slot(context, object, "month"),
+        temporal_number_slot(context, object, "day"),
+        PlainTimeValues::default(),
+        own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
+        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+    )
+}
+
+fn temporal_zoned_date_time_get_time_zone_transition(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let option = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if matches!(option, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal.ZonedDateTime.prototype.getTimeZoneTransition requires a direction",
+        ));
+    }
+    let direction_value = if let Some(object) = context.value_object(&option) {
+        context.get_property(JsValue::Object(object), "direction")?
+    } else {
+        option
+    };
+    let direction = vm.to_string_coerce(direction_value, context)?;
+    match direction.as_str() {
+        "next" | "previous" => Ok(JsValue::Null),
+        _ => Err(VmError::range(
+            "invalid Temporal time zone transition direction",
+        )),
+    }
 }
 
 fn temporal_zoned_date_time_to_string(

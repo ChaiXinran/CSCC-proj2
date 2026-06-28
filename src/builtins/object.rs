@@ -59,6 +59,11 @@ pub fn install_object(context: &mut NativeContext) {
         ("keys", 1, object_keys as crate::runtime::NativeCall),
         ("values", 1, object_values as crate::runtime::NativeCall),
         ("entries", 2, object_entries as crate::runtime::NativeCall),
+        (
+            "fromEntries",
+            1,
+            object_from_entries as crate::runtime::NativeCall,
+        ),
         ("assign", 2, object_assign as crate::runtime::NativeCall),
         ("freeze", 1, object_freeze as crate::runtime::NativeCall),
         ("seal", 1, object_seal as crate::runtime::NativeCall),
@@ -107,6 +112,11 @@ pub fn install_object(context: &mut NativeContext) {
             "toString",
             0,
             object_to_string as crate::runtime::NativeCall,
+        ),
+        (
+            "toLocaleString",
+            0,
+            object_to_locale_string as crate::runtime::NativeCall,
         ),
         ("valueOf", 0, object_value_of as crate::runtime::NativeCall),
         (
@@ -480,6 +490,21 @@ fn object_to_string(
     Ok(JsValue::String(format!("[object {tag}]")))
 }
 
+fn object_to_locale_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let to_string = vm.get_property_value(this_value.clone(), "toString", context)?;
+    if !context.is_callable_value(&to_string) {
+        return Err(VmError::type_error(
+            "Object.prototype.toLocaleString toString is not callable",
+        ));
+    }
+    vm.call_value_from_builtin(to_string, this_value, Vec::new(), context)
+}
+
 fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'static str, VmError> {
     if matches!(
         context.object_value(object),
@@ -706,6 +731,37 @@ fn object_entries(
         pairs.push(pair);
     }
     context.create_array(pairs)
+}
+
+fn object_from_entries(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let result = context.ordinary_object_with_prototype(context.object_prototype())?;
+    let JsValue::Object(result_object) = result.clone() else {
+        unreachable!()
+    };
+    let mut iterator =
+        context.get_iterator(arguments.first().cloned().unwrap_or(JsValue::Undefined))?;
+    while let Some(entry) = context.iterator_next(&mut iterator)? {
+        let entry_object = context.require_object(&entry, "Object.fromEntries entry")?;
+        let entry_value = JsValue::Object(entry_object);
+        let key_value = vm.get_property_value(entry_value.clone(), "0", context)?;
+        let key = proxy::to_property_key(vm, context, key_value)?;
+        let value = vm.get_property_value(entry_value, "1", context)?;
+        let descriptor = PropertyDescriptor::data_with(value, true, true, true);
+        match key {
+            PropertyKey::String(key) => {
+                context.define_own_property(result_object, key, descriptor)?;
+            }
+            PropertyKey::Symbol(symbol) => {
+                context.define_symbol_own_property(result_object, symbol, descriptor)?;
+            }
+        }
+    }
+    Ok(result)
 }
 
 fn object_assign(
