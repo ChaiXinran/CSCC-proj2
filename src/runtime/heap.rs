@@ -313,6 +313,10 @@ mod tests {
             environment: None,
             is_async: false,
             is_generator: false,
+            is_arrow: false,
+            lexical_this: None,
+            lexical_new_target: None,
+            home_object: None,
         }
     }
 

@@ -1,0 +1,153 @@
+{
+  "meta": {
+    "label_a": "agentjs",
+    "label_b": "boa",
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": "boa",
+    "repeat": 3,
+    "timeout": 120,
+    "cases": [
+      "descriptor-side-table-array",
+      "large-index-dense-array",
+      "rule-filter-dense-window"
+    ]
+  },
+  "results": {
+    "agentjs": {
+      "descriptor-side-table-array": {
+        "status": "pass",
+        "median_ms": 770.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 927.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 736.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 770.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "large-index-dense-array": {
+        "status": "pass",
+        "median_ms": 1147.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 1124.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1147.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1147.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "rule-filter-dense-window": {
+        "status": "pass",
+        "median_ms": 808.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 864.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 808.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 786.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    },
+    "boa": {
+      "descriptor-side-table-array": {
+        "status": "pass",
+        "median_ms": 1282.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 1343.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1216.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1282.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "large-index-dense-array": {
+        "status": "pass",
+        "median_ms": 2740.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 2740.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 2926.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 2516.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "rule-filter-dense-window": {
+        "status": "pass",
+        "median_ms": 982.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 1013.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 982.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 938.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}
