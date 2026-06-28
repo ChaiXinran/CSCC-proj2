@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-    builtins::proxy,
+    builtins::{proxy, string},
     bytecode::{
         Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
     },
@@ -11,7 +11,7 @@ use crate::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
         Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
         PreferredType, PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor,
-        PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, to_property_key,
+        PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, array_index, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -5015,17 +5015,14 @@ impl Vm {
         if let JsValue::String(value) = &receiver {
             if key == "length" {
                 return Ok(OperationResult::Value(JsValue::Number(
-                    value.encode_utf16().count() as f64,
+                    string::utf16_length(value) as f64,
                 )));
             }
-            if let Ok(index) = key.parse::<usize>() {
+            if let Some(index) = array_index(key) {
                 return Ok(OperationResult::Value(
-                    value
-                        .encode_utf16()
-                        .nth(index)
-                        .map_or(JsValue::Undefined, |unit| {
-                            JsValue::String(String::from_utf16_lossy(&[unit]))
-                        }),
+                    string::utf16_code_unit_at(value, index).map_or(JsValue::Undefined, |unit| {
+                        JsValue::String(string::decode_utf16(&[unit]))
+                    }),
                 ));
             }
         }
