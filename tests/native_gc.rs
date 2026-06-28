@@ -103,3 +103,32 @@ fn gc_preserves_bound_function_targets_and_arguments() {
 
     assert!(context.heap().object(target_id).is_some());
 }
+
+#[test]
+fn gc_reuses_object_slots_after_pruning_id_keyed_metadata() {
+    let mut context = NativeContext::default();
+    let stale = context
+        .create_object([("stale".into(), JsValue::Boolean(true))])
+        .unwrap();
+    let stale_id = object_id(&stale);
+    context.mark_raw_json_object(stale_id, "stale metadata".into());
+    let slots_before = context.heap_stats().object_slots;
+
+    context.collect_garbage_for_vm(&Vm::default()).unwrap();
+
+    let replacement = context
+        .create_object([("fresh".into(), JsValue::Boolean(true))])
+        .unwrap();
+    let replacement_id = object_id(&replacement);
+    assert_eq!(replacement_id, stale_id);
+    assert_eq!(context.heap_stats().object_slots, slots_before);
+    assert!(context.raw_json_value(replacement_id).is_none());
+    assert!(
+        context
+            .heap()
+            .object(replacement_id)
+            .unwrap()
+            .own_property("stale")
+            .is_none()
+    );
+}

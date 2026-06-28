@@ -1,12 +1,12 @@
 {
   "meta": {
     "label_a": "agentjs",
-    "label_b": null,
+    "label_b": "boa",
     "engine_a": ".\\target\\release\\agentjs.exe",
-    "engine_b": null,
-    "repeat": 3,
-    "timeout": 60,
-    "tests_dir": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+    "engine_b": "boa",
+    "repeat": 2,
+    "timeout": 120,
+    "tests_dir": "D:\\os\\CSCC\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
   },
   "results": {
     "agentjs": {

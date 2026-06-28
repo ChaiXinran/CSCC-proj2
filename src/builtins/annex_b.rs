@@ -334,8 +334,7 @@ fn make_regexp(
         vm.to_string_coerce(flags_arg, context)?
     };
     validate_regexp_flags(&flags)?;
-    regexp::compile_regex(&pattern, &flags)
-        .map_err(|error| VmError::syntax_error(format!("invalid regular expression: {error}")))?;
+    compile_cached_regexp(context, &pattern, &flags)?;
 
     if new_target.is_none() && pattern_is_regexp && arguments.get(1).is_none() {
         return Ok(arguments.first().cloned().unwrap_or(JsValue::Undefined));
@@ -388,6 +387,16 @@ fn validate_regexp_flags(flags: &str) -> Result<(), VmError> {
         ));
     }
     Ok(())
+}
+
+fn compile_cached_regexp(
+    context: &mut NativeContext,
+    pattern: &str,
+    flags: &str,
+) -> Result<regex::Regex, VmError> {
+    context
+        .cached_regexp(pattern, flags, regexp::compile_regex)
+        .map_err(|error| VmError::syntax_error(format!("invalid regular expression: {error}")))
 }
 
 fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, String, String)> {
@@ -614,8 +623,7 @@ fn regexp_exec_value(
         let _ = vm.to_number(last_index, context)?;
         0
     };
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|error| VmError::syntax_error(format!("invalid regular expression: {error}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     let Some(byte_start) = byte_index_from_utf16(&string, start_index) else {
         if global_or_sticky {
             set_last_index(vm, context, this_value, 0)?;

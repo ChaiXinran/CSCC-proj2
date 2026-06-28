@@ -59,9 +59,9 @@ fn internalize_json_property(
                 .object(object)
                 .ok_or_else(|| VmError::runtime("missing JSON object"))?;
             match &object_value.kind {
-                ObjectKind::Array { elements, .. } => {
-                    (0..elements.len()).map(|index| index.to_string()).collect()
-                }
+                ObjectKind::Array { .. } => (0..object_value.array_length().unwrap_or(0))
+                    .map(|index| index.to_string())
+                    .collect(),
                 ObjectKind::Ordinary
                 | ObjectKind::PrimitiveWrapper(_)
                 | ObjectKind::RegExp { .. }
@@ -678,15 +678,16 @@ fn stringify_object(
         .object(object)
         .ok_or_else(|| VmError::runtime("missing object"))?;
     let result = match &object_value.kind {
-        ObjectKind::Array { elements, .. } => {
-            let mut parts = Vec::with_capacity(elements.len());
-            for element in elements {
-                let value = element
-                    .as_ref()
-                    .and_then(|descriptor| descriptor.value())
-                    .unwrap_or(&JsValue::Undefined);
+        ObjectKind::Array { .. } => {
+            let length = object_value.array_length().unwrap_or(0);
+            let mut parts = Vec::with_capacity(length);
+            for index in 0..length {
+                let value = object_value
+                    .array_element_descriptor(index)
+                    .and_then(|descriptor| descriptor.value_cloned())
+                    .unwrap_or(JsValue::Undefined);
                 parts.push(
-                    stringify_value(value, context, stack, true)?.unwrap_or_else(|| "null".into()),
+                    stringify_value(&value, context, stack, true)?.unwrap_or_else(|| "null".into()),
                 );
             }
             format!("[{}]", parts.join(","))

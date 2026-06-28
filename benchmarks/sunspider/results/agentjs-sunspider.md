@@ -1,4 +1,4 @@
-# SunSpider 1.0.2 — agentjs
+# SunSpider 1.0.2 — agentjs vs boa
 
 ## Correctness Summary
 

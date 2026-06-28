@@ -40,7 +40,11 @@ pub enum PrimitiveValue {
 /// Dense storage is capped at this many slots to prevent OOM from large-length arrays.
 /// Indices >= this threshold are stored in the regular property map.
 /// 64K × ~56 bytes ≈ 3.5 MB max per array; keeps 4 concurrent workers bounded.
-const MAX_DENSE_SIZE: usize = 1 << 16; // 65536 elements
+const INLINE_DENSE_SIZE: usize = 1 << 16; // 65536 elements
+const DENSE_SEGMENT_SIZE: usize = 1 << 12; // 4096 elements per lazy segment
+const MAX_DENSE_SIZE: usize = 1 << 20; // 1,048,576 elements
+
+type DenseSegment = Vec<Option<PropertyDescriptor>>;
 
 /// Object storage variants.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -49,6 +53,7 @@ pub enum ObjectKind {
     Ordinary,
     Array {
         elements: Vec<Option<PropertyDescriptor>>,
+        dense_segments: Vec<Option<DenseSegment>>,
         /// Logical ECMAScript [[Length]] — may exceed `elements.len()` for sparse arrays.
         length: u32,
         length_writable: bool,
@@ -136,6 +141,149 @@ pub struct JsObject {
     pub extensible: bool,
 }
 
+fn dense_segment_position(index: usize) -> Option<(usize, usize)> {
+    if !(INLINE_DENSE_SIZE..MAX_DENSE_SIZE).contains(&index) {
+        return None;
+    }
+    let shifted = index - INLINE_DENSE_SIZE;
+    Some((shifted / DENSE_SEGMENT_SIZE, shifted % DENSE_SEGMENT_SIZE))
+}
+
+fn dense_descriptor_ref<'a>(
+    elements: &'a [Option<PropertyDescriptor>],
+    dense_segments: &'a [Option<DenseSegment>],
+    index: usize,
+) -> Option<&'a PropertyDescriptor> {
+    if index < INLINE_DENSE_SIZE {
+        return elements.get(index)?.as_ref();
+    }
+    let (segment_index, offset) = dense_segment_position(index)?;
+    dense_segments
+        .get(segment_index)?
+        .as_ref()?
+        .get(offset)?
+        .as_ref()
+}
+
+fn dense_descriptor_cloned(
+    elements: &[Option<PropertyDescriptor>],
+    dense_segments: &[Option<DenseSegment>],
+    index: usize,
+) -> Option<PropertyDescriptor> {
+    dense_descriptor_ref(elements, dense_segments, index).cloned()
+}
+
+fn define_dense_descriptor(
+    elements: &mut Vec<Option<PropertyDescriptor>>,
+    dense_segments: &mut Vec<Option<DenseSegment>>,
+    index: usize,
+    descriptor: PropertyDescriptor,
+) -> bool {
+    if index < INLINE_DENSE_SIZE {
+        if index >= elements.len() {
+            elements.resize(index + 1, None);
+        }
+        elements[index] = Some(descriptor);
+        return true;
+    }
+    let Some((segment_index, offset)) = dense_segment_position(index) else {
+        return false;
+    };
+    if segment_index >= dense_segments.len() {
+        dense_segments.resize_with(segment_index + 1, || None);
+    }
+    let segment =
+        dense_segments[segment_index].get_or_insert_with(|| vec![None; DENSE_SEGMENT_SIZE]);
+    segment[offset] = Some(descriptor);
+    true
+}
+
+fn delete_dense_descriptor(
+    elements: &mut [Option<PropertyDescriptor>],
+    dense_segments: &mut [Option<DenseSegment>],
+    index: usize,
+) -> Option<Option<PropertyDescriptor>> {
+    if index < INLINE_DENSE_SIZE {
+        return elements.get_mut(index).map(Option::take);
+    }
+    let (segment_index, offset) = dense_segment_position(index)?;
+    let Some(segment) = dense_segments.get_mut(segment_index) else {
+        return Some(None);
+    };
+    Some(
+        segment
+            .as_mut()
+            .and_then(|segment| segment.get_mut(offset))
+            .and_then(Option::take),
+    )
+}
+
+fn truncate_dense_storage(
+    elements: &mut Vec<Option<PropertyDescriptor>>,
+    dense_segments: &mut Vec<Option<DenseSegment>>,
+    new_len: usize,
+) {
+    if new_len < elements.len() {
+        for slot in &mut elements[new_len..] {
+            *slot = None;
+        }
+        elements.truncate(new_len);
+    }
+
+    if new_len <= INLINE_DENSE_SIZE {
+        dense_segments.clear();
+        return;
+    }
+
+    let keep = new_len - INLINE_DENSE_SIZE;
+    let full_segments = keep / DENSE_SEGMENT_SIZE;
+    let tail_len = keep % DENSE_SEGMENT_SIZE;
+    let needed_segments = full_segments + usize::from(tail_len > 0);
+    dense_segments.truncate(needed_segments);
+    if tail_len > 0
+        && let Some(Some(segment)) = dense_segments.get_mut(full_segments)
+    {
+        for slot in &mut segment[tail_len..] {
+            *slot = None;
+        }
+    }
+}
+
+fn dense_allocated_upper_bound(
+    elements: &[Option<PropertyDescriptor>],
+    dense_segments: &[Option<DenseSegment>],
+) -> usize {
+    let segmented = INLINE_DENSE_SIZE.saturating_add(dense_segments.len() * DENSE_SEGMENT_SIZE);
+    elements.len().max(segmented).min(MAX_DENSE_SIZE)
+}
+
+fn push_dense_keys(
+    keys: &mut Vec<String>,
+    elements: &[Option<PropertyDescriptor>],
+    dense_segments: &[Option<DenseSegment>],
+) {
+    keys.extend(
+        elements
+            .iter()
+            .enumerate()
+            .filter(|(_, value)| value.is_some())
+            .map(|(index, _)| index.to_string()),
+    );
+    for (segment_index, segment) in dense_segments.iter().enumerate() {
+        let Some(segment) = segment else {
+            continue;
+        };
+        let base = INLINE_DENSE_SIZE + segment_index * DENSE_SEGMENT_SIZE;
+        keys.extend(
+            segment
+                .iter()
+                .enumerate()
+                .filter(|(_, value)| value.is_some())
+                .map(|(offset, _)| (base + offset).to_string()),
+        );
+    }
+}
+
 impl Default for JsObject {
     fn default() -> Self {
         Self {
@@ -165,6 +313,7 @@ impl JsObject {
             prototype: None,
             kind: ObjectKind::Array {
                 elements: elems,
+                dense_segments: Vec::new(),
                 length: len,
                 length_writable: true,
             },
@@ -180,6 +329,7 @@ impl JsObject {
             prototype: None,
             kind: ObjectKind::Array {
                 elements: Vec::new(),
+                dense_segments: Vec::new(),
                 length: length.min(u32::MAX as usize) as u32,
                 length_writable: true,
             },
@@ -223,7 +373,7 @@ impl JsObject {
     }
 
     /// Update the logical length if an index write extends past the current length.
-    fn update_length_for_index(length: &mut u32, index: usize) {
+    pub fn update_length_for_index(length: &mut u32, index: usize) {
         let new_len = (index + 1).min(u32::MAX as usize) as u32;
         if new_len > *length {
             *length = new_len;
@@ -273,18 +423,19 @@ impl JsObject {
     #[must_use]
     pub fn get_own_property_value(&self, name: &str) -> Option<JsValue> {
         if let ObjectKind::Array {
-            elements, length, ..
+            elements,
+            dense_segments,
+            length,
+            ..
         } = &self.kind
         {
             if name == "length" {
                 return Some(JsValue::Number(*length as f64));
             }
             if let Some(index) = array_index(name)
-                && index < elements.len()
+                && let Some(descriptor) = dense_descriptor_ref(elements, dense_segments, index)
             {
-                return elements[index]
-                    .as_ref()
-                    .and_then(PropertyDescriptor::value_cloned);
+                return descriptor.value_cloned();
                 // index beyond dense range — fall through to property map
             }
         }
@@ -297,6 +448,7 @@ impl JsObject {
         let name = name.into();
         if let ObjectKind::Array {
             elements,
+            dense_segments,
             length,
             length_writable,
         } = &mut self.kind
@@ -309,15 +461,22 @@ impl JsObject {
                     return false;
                 }
                 if index < MAX_DENSE_SIZE {
-                    if index >= elements.len() {
-                        elements.resize(index + 1, None);
-                    }
-                    if let Some(descriptor) = &mut elements[index] {
+                    if let Some(existing) = dense_descriptor_cloned(elements, dense_segments, index)
+                    {
+                        let mut descriptor = existing;
                         let ok = descriptor.set_value(value);
+                        if ok {
+                            define_dense_descriptor(elements, dense_segments, index, descriptor);
+                        }
                         Self::update_length_for_index(length, index);
                         return ok;
                     }
-                    elements[index] = Some(PropertyDescriptor::data(value));
+                    define_dense_descriptor(
+                        elements,
+                        dense_segments,
+                        index,
+                        PropertyDescriptor::data(value),
+                    );
                     Self::update_length_for_index(length, index);
                     return true;
                 }
@@ -349,14 +508,19 @@ impl JsObject {
                 return index < value.encode_utf16().count();
             }
         }
-        if let ObjectKind::Array { elements, .. } = &self.kind {
+        if let ObjectKind::Array {
+            elements,
+            dense_segments,
+            ..
+        } = &self.kind
+        {
             if name == "length" {
                 return true;
             }
             if let Some(index) = array_index(name)
-                && index < elements.len()
+                && dense_descriptor_ref(elements, dense_segments, index).is_some()
             {
-                return elements[index].is_some();
+                return true;
                 // beyond dense range — fall through to property map
             }
         }
@@ -364,16 +528,15 @@ impl JsObject {
     }
 
     pub fn delete_own_property(&mut self, name: &str) -> Option<PropertyDescriptor> {
-        if let ObjectKind::Array { elements, .. } = &mut self.kind
+        if let ObjectKind::Array {
+            elements,
+            dense_segments,
+            ..
+        } = &mut self.kind
             && let Some(index) = array_index(name)
-            && index < elements.len()
+            && index < MAX_DENSE_SIZE
         {
-            if let Some(slot) = elements.get_mut(index)
-                && let Some(descriptor) = slot.take()
-            {
-                return Some(descriptor);
-            }
-            return None; // in dense range but not set
+            return delete_dense_descriptor(elements, dense_segments, index).flatten();
             // huge index: fall through to property map
         }
         self.properties.delete(name)
@@ -454,11 +617,17 @@ impl JsObject {
             .map(|(index, _, _)| *index)
             .max();
         let dense_blocker = match &self.kind {
-            ObjectKind::Array { elements, .. } => (new_len..elements.len()).rev().find(|index| {
-                elements[*index]
-                    .as_ref()
-                    .is_some_and(|descriptor| !descriptor.configurable)
-            }),
+            ObjectKind::Array {
+                elements,
+                dense_segments,
+                ..
+            } => {
+                let allocated_upper = dense_allocated_upper_bound(elements, dense_segments);
+                (new_len..allocated_upper).rev().find(|index| {
+                    dense_descriptor_ref(elements, dense_segments, *index)
+                        .is_some_and(|descriptor| !descriptor.configurable)
+                })
+            }
             _ => None,
         };
 
@@ -469,16 +638,14 @@ impl JsObject {
                 }
             }
             if let ObjectKind::Array {
-                elements, length, ..
+                elements,
+                dense_segments,
+                length,
+                ..
             } = &mut self.kind
             {
                 let restored_len = blocker + 1;
-                if restored_len < elements.len() {
-                    for index in restored_len..elements.len() {
-                        elements[index] = None;
-                    }
-                    elements.truncate(restored_len);
-                }
+                truncate_dense_storage(elements, dense_segments, restored_len);
                 *length = restored_len.min(u32::MAX as usize) as u32;
             }
             return false;
@@ -490,30 +657,23 @@ impl JsObject {
 
         let new_len32 = new_len.min(u32::MAX as usize) as u32;
         let ObjectKind::Array {
-            elements, length, ..
+            elements,
+            dense_segments,
+            length,
+            ..
         } = &mut self.kind
         else {
             return false;
         };
-        if new_len >= elements.len() {
+        let allocated_upper = dense_allocated_upper_bound(elements, dense_segments);
+        if new_len >= allocated_upper {
             // Growing: just update the logical length; no allocation needed.
             *length = new_len32;
             return true;
         }
 
-        // Shrinking: delete dense elements from the end.
-        for index in (new_len..elements.len()).rev() {
-            if elements[index]
-                .as_ref()
-                .is_some_and(|descriptor| !descriptor.configurable)
-            {
-                elements.truncate(index + 1);
-                *length = (index + 1) as u32;
-                return false;
-            }
-            elements[index] = None;
-        }
-        elements.truncate(new_len);
+        // Shrinking: all blockers were checked above, so the dense tail can be dropped.
+        truncate_dense_storage(elements, dense_segments, new_len);
         *length = new_len32;
         true
     }
@@ -531,33 +691,55 @@ impl JsObject {
 
     #[must_use]
     pub fn array_element_descriptor(&self, index: usize) -> Option<PropertyDescriptor> {
-        let ObjectKind::Array { elements, .. } = &self.kind else {
+        let ObjectKind::Array {
+            elements,
+            dense_segments,
+            ..
+        } = &self.kind
+        else {
             return None;
         };
-        elements.get(index).cloned().flatten()
+        dense_descriptor_cloned(elements, dense_segments, index)
+    }
+
+    #[must_use]
+    pub fn array_element_value(&self, index: usize) -> Option<JsValue> {
+        let ObjectKind::Array {
+            elements,
+            dense_segments,
+            ..
+        } = &self.kind
+        else {
+            return None;
+        };
+        dense_descriptor_ref(elements, dense_segments, index)
+            .and_then(PropertyDescriptor::value_cloned)
     }
 
     pub fn define_array_element(&mut self, index: usize, descriptor: PropertyDescriptor) -> bool {
-        let ObjectKind::Array {
+        // Dense path: handle directly inside the Array variant.
+        if let ObjectKind::Array {
             elements,
+            dense_segments,
             length,
             length_writable,
         } = &mut self.kind
-        else {
-            return false;
-        };
-        if index >= *length as usize && !*length_writable {
-            return false;
-        }
-        if index < MAX_DENSE_SIZE {
-            if index >= elements.len() {
-                elements.resize(index + 1, None);
+        {
+            if index >= *length as usize && !*length_writable {
+                return false;
             }
-            elements[index] = Some(descriptor);
+            if index < MAX_DENSE_SIZE {
+                define_dense_descriptor(elements, dense_segments, index, descriptor);
+                Self::update_length_for_index(length, index);
+                return true;
+            }
+            // Large index: update length now, then fall through to properties HashMap.
             Self::update_length_for_index(length, index);
-            return true;
+            // (borrow of self.kind ends here)
+        } else {
+            return false;
         }
-        Self::update_length_for_index(length, index);
+        // Store large-index properties in the unordered map like ordinary properties.
         self.properties.define(index.to_string(), descriptor);
         true
     }
@@ -565,14 +747,13 @@ impl JsObject {
     #[must_use]
     pub fn own_property_keys(&self) -> Vec<String> {
         let mut keys = Vec::new();
-        if let ObjectKind::Array { elements, .. } = &self.kind {
-            keys.extend(
-                elements
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, value)| value.is_some())
-                    .map(|(index, _)| index.to_string()),
-            );
+        if let ObjectKind::Array {
+            elements,
+            dense_segments,
+            ..
+        } = &self.kind
+        {
+            push_dense_keys(&mut keys, elements, dense_segments);
             keys.push("length".into());
         } else if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &self.kind {
             keys.extend((0..value.encode_utf16().count()).map(|index| index.to_string()));
@@ -589,14 +770,13 @@ impl JsObject {
     #[must_use]
     pub fn enumerable_own_keys(&self) -> Vec<String> {
         let mut keys = Vec::new();
-        if let ObjectKind::Array { elements, .. } = &self.kind {
-            keys.extend(
-                elements
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, value)| value.is_some())
-                    .map(|(index, _)| index.to_string()),
-            );
+        if let ObjectKind::Array {
+            elements,
+            dense_segments,
+            ..
+        } = &self.kind
+        {
+            push_dense_keys(&mut keys, elements, dense_segments);
         } else if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &self.kind {
             keys.extend((0..value.encode_utf16().count()).map(|index| index.to_string()));
         } else if let ObjectKind::TypedArray { length, .. } = &self.kind {
@@ -613,9 +793,18 @@ impl Trace for JsObject {
             tracer.mark_object(prototype);
         }
         match &self.kind {
-            ObjectKind::Array { elements, .. } => {
+            ObjectKind::Array {
+                elements,
+                dense_segments,
+                ..
+            } => {
                 for descriptor in elements.iter().flatten() {
                     descriptor.trace(tracer);
+                }
+                for segment in dense_segments.iter().flatten() {
+                    for descriptor in segment.iter().flatten() {
+                        descriptor.trace(tracer);
+                    }
                 }
             }
             ObjectKind::Ordinary
@@ -685,14 +874,34 @@ impl JsObject {
     pub(crate) fn estimated_bytes(&self) -> usize {
         let kind_bytes = match &self.kind {
             ObjectKind::Ordinary => 0,
-            ObjectKind::Array { elements, .. } => elements
-                .iter()
-                .flatten()
-                .map(PropertyDescriptor::estimated_bytes)
-                .sum::<usize>()
-                .saturating_add(
-                    elements.capacity() * std::mem::size_of::<Option<PropertyDescriptor>>(),
-                ),
+            ObjectKind::Array {
+                elements,
+                dense_segments,
+                ..
+            } => {
+                let inline_bytes = elements
+                    .iter()
+                    .flatten()
+                    .map(PropertyDescriptor::estimated_bytes)
+                    .sum::<usize>()
+                    .saturating_add(
+                        elements.capacity() * std::mem::size_of::<Option<PropertyDescriptor>>(),
+                    );
+                dense_segments.iter().fold(inline_bytes, |total, segment| {
+                    total.saturating_add(match segment {
+                        Some(segment) => segment
+                            .iter()
+                            .flatten()
+                            .map(PropertyDescriptor::estimated_bytes)
+                            .sum::<usize>()
+                            .saturating_add(
+                                segment.capacity()
+                                    * std::mem::size_of::<Option<PropertyDescriptor>>(),
+                            ),
+                        None => std::mem::size_of::<Option<DenseSegment>>(),
+                    })
+                })
+            }
             ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) => value.len(),
             ObjectKind::PrimitiveWrapper(_) => std::mem::size_of::<PrimitiveValue>(),
             ObjectKind::RegExp { pattern, flags } => pattern.len().saturating_add(flags.len()),

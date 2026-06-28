@@ -32,7 +32,13 @@ pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
+    let needs_dot = pattern.contains('.');
+    // \0 in JS regex = null char; Rust regex treats \0 as a backreference (error).
+    let needs_null = pattern.contains("\\0");
     let unicode_mode = flags.contains('u') || flags.contains('v');
+    if !needs_null && (!needs_dot || (flags.contains('s') && unicode_mode)) {
+        return pattern.to_string();
+    }
     let dot_replacement = if flags.contains('s') && unicode_mode {
         None
     } else if flags.contains('s') {
@@ -42,7 +48,7 @@ fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
     } else {
         Some(r"[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]")
     };
-    let mut output = String::with_capacity(pattern.len());
+    let mut output = String::with_capacity(pattern.len() + 16);
     let mut chars = pattern.chars().peekable();
     let mut in_class = false;
     while let Some(ch) = chars.next() {
