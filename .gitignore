@@ -4,8 +4,9 @@
 
 # Generated benchmark runners and raw measurements
 /benchmarks/generated/
-/reports/unimportant
-/reports/jetstream2
+/reports/
+!/reports/.test262
+!/reports/.version-report
 /reports/.native-test262-tmp
 # Local editor and agent state
 /.vscode/
@@ -43,4 +44,5 @@ CUsers31247AppDataLocalTemptest_native_pipeline.rs
 /AGENTS.md
 
 /.obsidian/
-benchmarks
+
+/thoughts/

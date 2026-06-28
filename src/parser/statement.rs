@@ -4,9 +4,9 @@ use std::collections::HashSet;
 
 use crate::{
     ast::{
-        ArrayBindingElement, BindingPattern, CatchClause, Expression, ForBinding, FunctionBody,
-        FunctionParam, ObjectBindingKey, ObjectBindingProp, ObjectProperty, PropertyName,
-        Statement, SwitchCase, VariableDeclarator, VariableKind,
+        ArrayBindingElement, ArrayElement, BindingPattern, CatchClause, Expression, ForBinding,
+        FunctionBody, FunctionParam, ObjectBindingKey, ObjectBindingProp, ObjectProperty,
+        PropertyName, Statement, SwitchCase, VariableDeclarator, VariableKind,
     },
     lexer::{Keyword, TokenKind},
     parser::{
@@ -1456,10 +1456,18 @@ impl Parser {
 
         // Expression head: either a for-in/for-of target or a C-style init expression.
         // `in` is suppressed at the top level so `x in obj` stops at `in`.
-        self.no_in = true;
-        let expression = self.parse_expression();
-        self.no_in = false;
-        let expression = expression?;
+        // Potential destructuring targets use AssignmentPattern semantics, where
+        // default initializers may contain `in`.
+        let expression_starts_with_destructuring =
+            self.check_punctuator('[') || self.check_punctuator('{');
+        let expression = if expression_starts_with_destructuring {
+            self.allowing_in(|p| p.parse_expression())?
+        } else {
+            self.no_in = true;
+            let expression = self.parse_expression();
+            self.no_in = false;
+            expression?
+        };
 
         if self.check_keyword(Keyword::In) {
             if !matches!(
@@ -1489,6 +1497,27 @@ impl Parser {
                     | Expression::Object(_)
             ) {
                 return Err(self.error("invalid left-hand side in for-of loop".into()));
+            }
+            if matches!(expression, Expression::Array(_) | Expression::Object(_)) {
+                self.check_strict_assignment_target(&expression)?;
+                super::expression::validate_destructuring_assignment_target(&expression)
+                    .map_err(|msg| self.error(msg))?;
+                if let Expression::Array(elements) = &expression
+                    && elements
+                        .last()
+                        .is_some_and(|element| matches!(element, ArrayElement::Spread(_)))
+                    && self.cursor >= 2
+                    && matches!(
+                        self.tokens.get(self.cursor - 1).map(|token| &token.kind),
+                        Some(TokenKind::Punctuator(']'))
+                    )
+                    && matches!(
+                        self.tokens.get(self.cursor - 2).map(|token| &token.kind),
+                        Some(TokenKind::Punctuator(','))
+                    )
+                {
+                    return Err(self.error("rest element must be last element".into()));
+                }
             }
             self.advance(); // `of`
             let right = self.allowing_in(|p| p.parse_assignment())?;
@@ -2842,11 +2871,7 @@ mod tests {
                 .message
                 .contains("duplicate")
         );
-        assert!(
-            parse_error("function f() {} function f() {}")
-                .message
-                .contains("duplicate")
-        );
+        parse("function f() {} function f() {}");
     }
 
     #[test]

@@ -123,6 +123,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
         constants: Vec::new(),
         functions: Vec::new(),
         handlers: Vec::new(),
+        function_body_start: 0,
     };
     let parent = Chunk {
         instructions: vec![Instruction::CreateFunction(0), Instruction::Return],
@@ -139,6 +140,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
             environment_policy: EnvironmentCapturePolicy::None,
         }],
         handlers: Vec::new(),
+        function_body_start: 0,
     };
 
     assert_eq!(

@@ -260,6 +260,10 @@ pub enum Instruction {
     /// Stack: [iterable] → [array]
     IterableToArray,
 
+    /// Ensures the top-of-stack value is neither `null` nor `undefined`.
+    /// Stack: [value] -> [value]
+    RequireObjectCoercible,
+
     /// Iterates an array-like iterable and appends every element to the array
     /// sitting just below it on the stack.
     /// Stack: [array, iterable] → [array]
@@ -269,6 +273,11 @@ pub enum Instruction {
     /// object sitting just below it on the stack (Object.assign semantics).
     /// Stack: [object, spread_value] → [object]
     SpreadObject,
+
+    /// Copies enumerable own string and symbol properties from `source` into a
+    /// new ordinary object, excluding the following `n` property keys.
+    /// Stack: [source, key0, ..., keyN-1] -> [object]
+    CopyDataPropertiesExcluded(u16),
 
     /// Calls a function using a single trailing spread argument.
     /// `n` = number of regular arguments already pushed before the spread.
@@ -411,7 +420,8 @@ impl Instruction {
             Self::JumpIfFalse(_)
             | Self::JumpIfTrue(_)
             | Self::JumpIfNotNullish(_)
-            | Self::JumpIfNotUndefined(_) => StackEffect::with_required(1, 0, 0),
+            | Self::JumpIfNotUndefined(_)
+            | Self::RequireObjectCoercible => StackEffect::with_required(1, 0, 0),
 
             // no stack effect
             Self::Jump(_)
@@ -474,6 +484,10 @@ impl Instruction {
 
             // IterableToArray: [iterable] → [array]
             Self::IterableToArray => StackEffect::new(1, 1),
+
+            Self::CopyDataPropertiesExcluded(count) => {
+                StackEffect::with_required(count as u32 + 1, count as u32 + 1, 1)
+            }
 
             // ArrayPush: [array, value] → [array]
             Self::ArrayPush | Self::SpreadIntoArray | Self::SpreadObject => {

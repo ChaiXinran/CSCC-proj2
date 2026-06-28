@@ -365,11 +365,26 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
         error_prototype,
         regexp_prototype,
     });
+
+    let mut console_object = JsObject::ordinary();
+    console_object.prototype = Some(object_prototype);
+    let console = context
+        .heap_mut()
+        .allocate_object(console_object)
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    let console_log = context.register_builtin("log", 0, console_log, None)?;
+    context.define_own_property(
+        console,
+        "log".into(),
+        PropertyDescriptor::data_with(console_log, true, true, true),
+    )?;
+
     for (name, value) in [
         ("Object", object_constructor),
         ("Function", function_constructor),
         ("Array", array_constructor),
         ("eval", eval_function),
+        ("console", JsValue::Object(console)),
         ("globalThis", JsValue::Object(context.global_object())),
     ] {
         context.declare_global(name, value.clone());
@@ -407,18 +422,37 @@ pub fn install_test262_harness(context: &mut NativeContext) {
     binary_data::install_test262_host_object(context);
 }
 
+fn console_log(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    push_joined_output(vm, context, arguments)?;
+    Ok(JsValue::Undefined)
+}
+
 fn test262_print(
     vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    push_joined_output(vm, context, arguments)?;
+    Ok(JsValue::Undefined)
+}
+
+fn push_joined_output(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+) -> Result<(), VmError> {
     let mut fields = Vec::with_capacity(arguments.len());
     for value in arguments {
         fields.push(vm.to_string_coerce(value.clone(), context)?);
     }
     context.push_output(fields.join(" "));
-    Ok(JsValue::Undefined)
+    Ok(())
 }
 
 fn test262_error_call(

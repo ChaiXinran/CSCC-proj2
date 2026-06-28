@@ -16,6 +16,16 @@ fn native_eval(source: &str) -> String {
         .value
 }
 
+#[test]
+fn arguments_object_is_iterable_with_array_values() {
+    assert_eq!(
+        native_eval(
+            "function f() { return typeof arguments[Symbol.iterator] + ':' + Array.from(arguments).join(','); } f(1, 2);"
+        ),
+        "function:1,2"
+    );
+}
+
 // ── Basic length and indexed access ──────────────────────────────────────────
 
 #[test]

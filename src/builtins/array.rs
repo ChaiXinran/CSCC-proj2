@@ -323,6 +323,38 @@ fn create_array_data_property(
     }
 }
 
+fn set_array_index_strict(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+    index: usize,
+    value: JsValue,
+) -> Result<(), VmError> {
+    if vm.set_property_value_strict_from_builtin(target, &index.to_string(), value, context)? {
+        Ok(())
+    } else {
+        Err(VmError::type_error("cannot write array index"))
+    }
+}
+
+fn set_array_length_strict(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+    length: usize,
+) -> Result<(), VmError> {
+    if vm.set_property_value_strict_from_builtin(
+        target,
+        "length",
+        JsValue::Number(length as f64),
+        context,
+    )? {
+        Ok(())
+    } else {
+        Err(VmError::type_error("cannot write array length"))
+    }
+}
+
 fn array_callback_target(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -337,6 +369,22 @@ fn array_callback_target(
     };
     let length = array_like_length_from_value(vm, context, receiver.clone(), object)?;
     Ok((object, receiver, object_value, length))
+}
+
+fn array_object_target(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+) -> Result<(ObjectId, JsValue, usize), VmError> {
+    let object = vm.to_object(this_value.clone(), context)?;
+    let object_value = context.object_value(object);
+    let receiver = if matches!(this_value, JsValue::String(_)) {
+        this_value
+    } else {
+        object_value.clone()
+    };
+    let length = array_like_length_from_value(vm, context, receiver, object)?;
+    Ok((object, object_value, length))
 }
 
 fn normalize_index(raw: f64, length: usize) -> usize {
@@ -807,41 +855,37 @@ fn array_of(
 // ── Array.prototype methods ───────────────────────────────────────────────────
 
 fn array_push(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.push")?;
-    let mut length = array_like_length(context, object);
+    let (_object, target, mut length) = array_object_target(vm, context, this_value)?;
     for value in arguments {
         // Spec step 4a: ? Set(O, ToString(len), E, true) — always strict
-        context.set_element_strict(
-            this_value.clone(),
-            JsValue::Number(length as f64),
-            value.clone(),
-        )?;
+        set_array_index_strict(vm, context, target.clone(), length, value.clone())?;
         length += 1;
     }
+    set_array_length_strict(vm, context, target, length)?;
     Ok(JsValue::Number(length as f64))
 }
 
 fn array_pop(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.pop")?;
-    let length = array_like_length(context, object);
+    let (object, target, length) = array_object_target(vm, context, this_value)?;
     if length == 0 {
+        set_array_length_strict(vm, context, target, 0)?;
         return Ok(JsValue::Undefined);
     }
     let new_length = length - 1;
     let key = new_length.to_string();
-    let value = context.get_property(this_value.clone(), &key)?;
+    let value = get_elem(vm, context, target.clone(), new_length)?;
     context.delete_property(object, &key, false)?;
-    context.set_array_length(object, new_length)?;
+    set_array_length_strict(vm, context, target, new_length)?;
     Ok(value)
 }
 
@@ -860,15 +904,14 @@ fn array_join(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.join")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let sep = match arguments.first() {
         None | Some(JsValue::Undefined) => ",".to_string(),
         Some(value) => vm.to_string_coerce(value.clone(), context)?,
     };
     let mut parts: Vec<String> = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
     for i in 0..length.min(MAX_DENSE_ALLOC) {
-        let val = get_elem(vm, context, this_value.clone(), i)?;
+        let val = get_elem(vm, context, target.clone(), i)?;
         parts.push(match val {
             JsValue::Undefined | JsValue::Null => String::new(),
             value => vm.to_string_coerce(value, context)?,
@@ -883,17 +926,16 @@ fn array_reverse(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.reverse")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let mid = length / 2;
     for i in 0..mid {
         let j = length - 1 - i;
-        let a = get_elem(vm, context, this_value.clone(), i)?;
-        let b = get_elem(vm, context, this_value.clone(), j)?;
-        context.set_element(this_value.clone(), JsValue::Number(i as f64), b)?;
-        context.set_element(this_value.clone(), JsValue::Number(j as f64), a)?;
+        let a = get_elem(vm, context, target.clone(), i)?;
+        let b = get_elem(vm, context, target.clone(), j)?;
+        set_array_index_strict(vm, context, target.clone(), i, b)?;
+        set_array_index_strict(vm, context, target.clone(), j, a)?;
     }
-    Ok(this_value)
+    Ok(target)
 }
 
 fn array_concat(
@@ -961,8 +1003,7 @@ fn array_splice(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.splice")?;
-    let length = array_like_length(context, object);
+    let (object, target, length) = array_object_target(vm, context, this_value)?;
 
     let start = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
     let delete_count = argument_number(vm, context, arguments, 1, (length - start) as f64)?
@@ -973,7 +1014,7 @@ fn array_splice(
     // Collect removed elements
     let mut removed = Vec::with_capacity(delete_count.min(MAX_DENSE_ALLOC));
     for i in 0..delete_count {
-        let val = get_elem(vm, context, this_value.clone(), start + i)?;
+        let val = get_elem(vm, context, target.clone(), start + i)?;
         removed.push(val);
     }
 
@@ -986,8 +1027,8 @@ fn array_splice(
         for i in 0..tail_len {
             let src = start + delete_count + i;
             let dst = start + insert_items.len() + i;
-            let val = get_elem(vm, context, this_value.clone(), src)?;
-            context.set_element(this_value.clone(), JsValue::Number(dst as f64), val)?;
+            let val = get_elem(vm, context, target.clone(), src)?;
+            set_array_index_strict(vm, context, target.clone(), dst, val)?;
         }
         // Delete trailing slots
         for i in new_length..length {
@@ -998,21 +1039,17 @@ fn array_splice(
         for i in (0..tail_len).rev() {
             let src = start + delete_count + i;
             let dst = start + insert_items.len() + i;
-            let val = get_elem(vm, context, this_value.clone(), src)?;
-            context.set_element(this_value.clone(), JsValue::Number(dst as f64), val)?;
+            let val = get_elem(vm, context, target.clone(), src)?;
+            set_array_index_strict(vm, context, target.clone(), dst, val)?;
         }
     }
 
     // Write inserted items
     for (i, item) in insert_items.into_iter().enumerate() {
-        context.set_element(
-            this_value.clone(),
-            JsValue::Number((start + i) as f64),
-            item,
-        )?;
+        set_array_index_strict(vm, context, target.clone(), start + i, item)?;
     }
 
-    context.set_array_length(object, new_length)?;
+    set_array_length_strict(vm, context, target, new_length)?;
     context.create_array(removed)
 }
 
@@ -1069,8 +1106,7 @@ fn array_fill(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.fill")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let start = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     let end = normalize_index(
@@ -1078,9 +1114,9 @@ fn array_fill(
         length,
     );
     for i in start..end {
-        context.set_element(this_value.clone(), JsValue::Number(i as f64), value.clone())?;
+        set_array_index_strict(vm, context, target.clone(), i, value.clone())?;
     }
-    Ok(this_value)
+    Ok(target)
 }
 
 fn array_includes(
@@ -1107,18 +1143,18 @@ fn array_shift(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.shift")?;
-    let length = array_like_length(context, object);
+    let (object, target, length) = array_object_target(vm, context, this_value)?;
     if length == 0 {
+        set_array_length_strict(vm, context, target, 0)?;
         return Ok(JsValue::Undefined);
     }
-    let first = get_elem(vm, context, this_value.clone(), 0)?;
+    let first = get_elem(vm, context, target.clone(), 0)?;
     for i in 1..length {
-        let val = get_elem(vm, context, this_value.clone(), i)?;
-        context.set_element(this_value.clone(), JsValue::Number((i - 1) as f64), val)?;
+        let val = get_elem(vm, context, target.clone(), i)?;
+        set_array_index_strict(vm, context, target.clone(), i - 1, val)?;
     }
     context.delete_property(object, &(length - 1).to_string(), false)?;
-    context.set_array_length(object, length - 1)?;
+    set_array_length_strict(vm, context, target, length - 1)?;
     Ok(first)
 }
 
@@ -1128,23 +1164,22 @@ fn array_unshift(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.unshift")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     if length > MAX_DENSE_ALLOC {
         return Err(VmError::range("Array.prototype.unshift: array too large"));
     }
     let count = arguments.len();
     // Shift existing elements right
     for i in (0..length).rev() {
-        let val = get_elem(vm, context, this_value.clone(), i)?;
-        context.set_element(this_value.clone(), JsValue::Number((i + count) as f64), val)?;
+        let val = get_elem(vm, context, target.clone(), i)?;
+        set_array_index_strict(vm, context, target.clone(), i + count, val)?;
     }
     // Insert new elements at front
     for (i, item) in arguments.iter().enumerate() {
-        context.set_element(this_value.clone(), JsValue::Number(i as f64), item.clone())?;
+        set_array_index_strict(vm, context, target.clone(), i, item.clone())?;
     }
     let new_length = length + count;
-    context.set_array_length(object, new_length)?;
+    set_array_length_strict(vm, context, target, new_length)?;
     Ok(JsValue::Number(new_length as f64))
 }
 
@@ -1489,13 +1524,12 @@ fn array_flat(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.flat")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let depth = match argument_number(vm, context, arguments, 0, 1.0)? {
         value if value.is_infinite() && value > 0.0 => usize::MAX,
         value => value.max(0.0) as usize,
     };
-    let result = flat_collect(vm, context, &this_value, length, depth)?;
+    let result = flat_collect(vm, context, &target, length, depth)?;
     context.create_array(result)
 }
 
@@ -1530,19 +1564,18 @@ fn array_flat_map(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.flatMap")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let mut result = Vec::new();
     for i in 0..length.min(MAX_DENSE_ALLOC) {
-        let val = get_elem(vm, context, this_value.clone(), i)?;
+        let val = get_elem(vm, context, target.clone(), i)?;
         let mapped = call_callback(
             vm,
             context,
             callback.clone(),
             this_arg.clone(),
-            vec![val, JsValue::Number(i as f64), this_value.clone()],
+            vec![val, JsValue::Number(i as f64), target.clone()],
         )?;
         if let Some(id) = context
             .value_object(&mapped)
@@ -1566,8 +1599,7 @@ fn array_sort(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.sort")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let compare_fn = arguments
         .first()
         .cloned()
@@ -1577,7 +1609,7 @@ fn array_sort(
     let mut elements: Vec<JsValue> = {
         let mut v = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
         for i in 0..length.min(MAX_DENSE_ALLOC) {
-            v.push(get_elem(vm, context, this_value.clone(), i)?);
+            v.push(get_elem(vm, context, target.clone(), i)?);
         }
         v
     };
@@ -1598,9 +1630,9 @@ fn array_sort(
 
     // Write sorted elements back
     for (i, elem) in elements.into_iter().enumerate() {
-        context.set_element(this_value.clone(), JsValue::Number(i as f64), elem)?;
+        set_array_index_strict(vm, context, target.clone(), i, elem)?;
     }
-    Ok(this_value)
+    Ok(target)
 }
 
 fn compare_two(
@@ -1632,10 +1664,9 @@ fn array_keys(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.keys")?;
-    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     context.create_array_iterator_object(
-        this_value,
+        target,
         length,
         IteratorMode::Key,
         iterator_prototype(context),
@@ -1648,10 +1679,9 @@ fn array_values(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.values")?;
-    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     context.create_array_iterator_object(
-        this_value,
+        target,
         length,
         IteratorMode::Value,
         iterator_prototype(context),
@@ -1664,10 +1694,9 @@ fn array_entries(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.entries")?;
-    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     context.create_array_iterator_object(
-        this_value,
+        target,
         length,
         IteratorMode::KeyAndValue,
         iterator_prototype(context),
@@ -1687,30 +1716,25 @@ fn array_copy_within(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.copyWithin")?;
-    let length = array_like_length(context, object);
-    let target = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
+    let (_object, target_value, length) = array_object_target(vm, context, this_value)?;
+    let target_index = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
     let start = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     let end = normalize_index(
         argument_number(vm, context, arguments, 2, length as f64)?,
         length,
     );
-    let copy_len = (end - start).min(length - target);
+    let copy_len = (end - start).min(length - target_index);
     let src: Vec<JsValue> = {
         let mut v = Vec::with_capacity(copy_len);
         for i in 0..copy_len {
-            v.push(get_elem(vm, context, this_value.clone(), start + i)?);
+            v.push(get_elem(vm, context, target_value.clone(), start + i)?);
         }
         v
     };
     for (i, val) in src.into_iter().enumerate() {
-        context.set_element(
-            this_value.clone(),
-            JsValue::Number((target + i) as f64),
-            val,
-        )?;
+        set_array_index_strict(vm, context, target_value.clone(), target_index + i, val)?;
     }
-    Ok(this_value)
+    Ok(target_value)
 }
 
 fn array_at(
@@ -1719,8 +1743,7 @@ fn array_at(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "Array.prototype.at")?;
-    let length = array_like_length(context, object);
+    let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let index_raw = argument_number(vm, context, arguments, 0, 0.0)? as i64;
     let index = if index_raw < 0 {
         let from_end = (-index_raw) as usize;
@@ -1735,7 +1758,7 @@ fn array_at(
         }
         i
     };
-    get_elem(vm, context, this_value, index)
+    get_elem(vm, context, target, index)
 }
 
 // ── Change-array-by-copy methods (ES2023) ─────────────────────────────────────

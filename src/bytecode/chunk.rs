@@ -264,6 +264,9 @@ pub struct Chunk {
     pub functions: Vec<FunctionTemplate>,
     /// Structured catch/finally entries used by the V5 VM.
     pub handlers: Vec<ExceptionHandler>,
+    /// For function chunks, the first instruction belonging to the executable
+    /// body after parameter/default/destructuring and declaration instantiation.
+    pub function_body_start: usize,
 }
 
 /// Stack requirements computed from all reachable bytecode paths.

@@ -451,8 +451,8 @@ fn compiler_lowers_v4_object_property_kinds_in_source_order() {
             Instruction::CreateFunction(0),
             Instruction::DefineGetter(2),
             Instruction::CreateFunction(1),
-            Instruction::DefineSetter(3),
-            Instruction::LoadGlobal(4),
+            Instruction::DefineSetter(2),
+            Instruction::LoadGlobal(3),
             Instruction::SetObjectPrototype,
             Instruction::Return,
         ]
