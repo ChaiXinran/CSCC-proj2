@@ -228,6 +228,7 @@ pub struct RunnerOptions {
     pub suites: Vec<PathBuf>,
     pub progress: bool,
     pub skip_unsupported: bool,
+    pub skip_runtime_errors: bool,
     pub runtime: RuntimeConfig,
 }
 
@@ -244,6 +245,7 @@ impl Default for RunnerOptions {
             suites: Vec::new(),
             progress: false,
             skip_unsupported: false,
+            skip_runtime_errors: false,
             runtime: RuntimeConfig {
                 loop_limit: 100_000_000,
                 // Kept at 256 (half the old 512) to leave headroom on the 32 MB
@@ -543,6 +545,7 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
     let total = paths.len();
     let progress = options.progress;
     let skip_unsupported = options.skip_unsupported;
+    let skip_runtime_errors = options.skip_runtime_errors;
     let queue = Arc::new(Mutex::new(VecDeque::from(paths)));
     let worker_count = options.jobs.max(1).min(total.max(1));
     let (sender, receiver) = mpsc::channel();
@@ -581,7 +584,14 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
                         };
                         let result =
                             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                run_case(&path, &harness, backend, config, skip_unsupported)
+                                run_case(
+                                    &path,
+                                    &harness,
+                                    backend,
+                                    config,
+                                    skip_unsupported,
+                                    skip_runtime_errors,
+                                )
                             })) {
                                 Ok(result) => result,
                                 Err(payload) => CaseResult {
@@ -681,6 +691,7 @@ fn run_case(
     backend: BackendKind,
     config: RuntimeConfig,
     skip_unsupported: bool,
+    skip_runtime_errors: bool,
 ) -> CaseResult {
     let started = Instant::now();
     let result = (|| {
@@ -721,6 +732,7 @@ fn run_case(
                 source_kind,
                 strict: *strict,
                 skip_unsupported,
+                skip_runtime_errors,
             }) {
                 Ok(()) => {}
                 Err(VariantFailure::Skipped(detail)) => {
@@ -772,6 +784,7 @@ struct VariantRun<'a> {
     source_kind: SourceKind,
     strict: bool,
     skip_unsupported: bool,
+    skip_runtime_errors: bool,
 }
 
 fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
@@ -785,8 +798,11 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
         source_kind,
         strict,
         skip_unsupported,
+        skip_runtime_errors,
     } = run;
-    let mut runtime = Runtime::with_backend(backend, config).map_err(|error| error.to_string())?;
+    let mut runtime = Runtime::with_backend(backend, config).map_err(|error| {
+        runtime_error_failure("runtime creation failed", error, skip_runtime_errors)
+    })?;
     runtime.clear_output();
     runtime.set_strict(false);
 
@@ -806,26 +822,30 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
 
     #[cfg(feature = "boa-backend")]
     if backend == BackendKind::Boa && !metadata.flags.contains("raw") {
-        runtime
-            .eval_fragment(&harness.assert)
-            .map_err(|error| format!("assert.js failed: {error}"))?;
+        runtime.eval_fragment(&harness.assert).map_err(|error| {
+            runtime_error_failure("assert.js failed", error, skip_runtime_errors)
+        })?;
         runtime
             .eval_fragment(&harness.sta)
-            .map_err(|error| format!("sta.js failed: {error}"))?;
+            .map_err(|error| runtime_error_failure("sta.js failed", error, skip_runtime_errors))?;
 
         if metadata.flags.contains("async") {
-            runtime
-                .eval_fragment(&harness.doneprint)
-                .map_err(|error| format!("doneprintHandle.js failed: {error}"))?;
+            runtime.eval_fragment(&harness.doneprint).map_err(|error| {
+                runtime_error_failure("doneprintHandle.js failed", error, skip_runtime_errors)
+            })?;
         }
         for include in &metadata.includes {
             let code = harness
                 .includes
                 .get(include)
                 .ok_or_else(|| format!("missing harness include `{include}`"))?;
-            runtime
-                .eval_fragment(code)
-                .map_err(|error| format!("harness `{include}` failed: {error}"))?;
+            runtime.eval_fragment(code).map_err(|error| {
+                runtime_error_failure(
+                    format!("harness `{include}` failed"),
+                    error,
+                    skip_runtime_errors,
+                )
+            })?;
         }
     }
 
@@ -838,13 +858,13 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
         // sta.js is intentionally skipped: it redefines Test262Error as a plain JS class
         // which would shadow the Rust host function and break error detection.
         if !metadata.flags.contains("raw") {
-            runtime
-                .eval_fragment(&harness.assert)
-                .map_err(|error| format!("assert.js failed: {error}"))?;
+            runtime.eval_fragment(&harness.assert).map_err(|error| {
+                runtime_error_failure("assert.js failed", error, skip_runtime_errors)
+            })?;
             if metadata.flags.contains("async") {
-                runtime
-                    .eval_fragment(&harness.doneprint)
-                    .map_err(|error| format!("doneprintHandle.js failed: {error}"))?;
+                runtime.eval_fragment(&harness.doneprint).map_err(|error| {
+                    runtime_error_failure("doneprintHandle.js failed", error, skip_runtime_errors)
+                })?;
             }
         }
         for include in &metadata.includes {
@@ -857,9 +877,11 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                         "unsupported native feature in harness `{include}`: {error}"
                     )));
                 }
-                return Err(VariantFailure::Failed(format!(
-                    "harness `{include}` failed: {error}"
-                )));
+                return Err(runtime_error_failure(
+                    format!("harness `{include}` failed"),
+                    error,
+                    skip_runtime_errors,
+                ));
             }
             if include == "regExpUtils.js" {
                 // ponytail: generated Unicode property-escape tests build
@@ -869,9 +891,11 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                 runtime
                     .eval_fragment("buildString = $262.buildString;")
                     .map_err(|error| {
-                        VariantFailure::Failed(format!(
-                            "native regExpUtils buildString override failed: {error}"
-                        ))
+                        runtime_error_failure(
+                            "native regExpUtils buildString override failed",
+                            error,
+                            skip_runtime_errors,
+                        )
                     })?;
             }
         }
@@ -912,10 +936,11 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                     path.display()
                 )));
             }
-            return Err(VariantFailure::Failed(format!(
-                "unexpected {error} in `{}`",
-                path.display()
-            )));
+            return Err(runtime_error_failure(
+                format!("unexpected error in `{}`", path.display()),
+                error,
+                skip_runtime_errors,
+            ));
         }
         (Some(expected), Ok(_)) => {
             return Err(VariantFailure::Failed(format!(
@@ -930,14 +955,18 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
                     path.display()
                 )));
             }
-            return Err(VariantFailure::Failed(format!(
-                "expected {expected}, got {error}"
-            )));
+            return Err(runtime_error_failure(
+                format!("expected {expected}, got different error"),
+                error,
+                skip_runtime_errors,
+            ));
         }
     }
 
     if metadata.flags.contains("async") {
-        runtime.run_jobs().map_err(|error| error.to_string())?;
+        runtime.run_jobs().map_err(|error| {
+            runtime_error_failure("async job drain failed", error, skip_runtime_errors)
+        })?;
         let output = runtime.take_output();
         if let Some(failure) = output
             .iter()
@@ -1043,6 +1072,19 @@ enum VariantFailure {
 impl From<String> for VariantFailure {
     fn from(value: String) -> Self {
         Self::Failed(value)
+    }
+}
+
+fn runtime_error_failure(
+    context: impl Into<String>,
+    error: EvalFailure,
+    skip_runtime_errors: bool,
+) -> VariantFailure {
+    let detail = format!("{}: {error}", context.into());
+    if skip_runtime_errors && error.kind != FailureKind::Test262 {
+        VariantFailure::Skipped(detail)
+    } else {
+        VariantFailure::Failed(detail)
     }
 }
 
@@ -1243,6 +1285,7 @@ mod tests {
             source_kind: SourceKind::Script,
             strict: false,
             skip_unsupported: false,
+            skip_runtime_errors: false,
         });
 
         let Err(VariantFailure::Failed(detail)) = result else {
@@ -1271,6 +1314,7 @@ mod tests {
             source_kind: SourceKind::Script,
             strict: false,
             skip_unsupported: false,
+            skip_runtime_errors: false,
         })
         .expect("parse phase SyntaxError should satisfy negative metadata");
     }
@@ -1297,6 +1341,7 @@ mod tests {
             BackendKind::Native,
             test_config(),
             true,
+            false,
         );
 
         let _ = fs::remove_file(&path);

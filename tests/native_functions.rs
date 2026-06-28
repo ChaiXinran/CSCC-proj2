@@ -58,6 +58,37 @@ fn preserves_this_for_member_calls() {
 }
 
 #[test]
+fn direct_eval_resolves_function_locals() {
+    assert_eq!(
+        eval("function f() { var x = 5; return eval('x + 2'); } f();"),
+        "7"
+    );
+    assert_eq!(
+        eval(
+            "function f() { \
+             function Y() { return 1; } \
+             var ia = ['Y']; \
+             return eval(ia[0] + '()'); \
+             } f();"
+        ),
+        "1"
+    );
+    assert_eq!(
+        eval("function f() { eval('var y = 11'); return y; } f();"),
+        "11"
+    );
+}
+
+#[test]
+fn function_name_does_not_overwrite_parameters_or_arguments() {
+    assert_eq!(eval("function f(x, f) { return x * f; } f(3, 4);"), "12");
+    assert_eq!(
+        eval("function arguments() { return typeof arguments + ':' + arguments.length; } arguments(1, 2);"),
+        "object:2"
+    );
+}
+
+#[test]
 fn executes_checked_in_v3_example() {
     assert_eq!(eval(include_str!("../examples/v3.js")), "5");
 }

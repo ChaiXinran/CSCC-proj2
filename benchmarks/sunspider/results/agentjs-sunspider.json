@@ -1,0 +1,59 @@
+{
+  "meta": {
+    "label_a": "agentjs",
+    "label_b": null,
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": null,
+    "repeat": 3,
+    "timeout": 60,
+    "tests_dir": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs": {
+      "access-nsieve": {
+        "status": "pass",
+        "median_ms": 339.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 339.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 381.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 330.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-aes": {
+        "status": "pass",
+        "median_ms": 2193.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 2193.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 2139.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 2260.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}

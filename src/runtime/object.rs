@@ -424,17 +424,77 @@ impl JsObject {
 
     pub fn set_array_length(&mut self, new_len: usize) -> bool {
         let ObjectKind::Array {
-            elements,
-            length,
-            length_writable,
-        } = &mut self.kind
+            length_writable, ..
+        } = &self.kind
         else {
             return false;
         };
         if !*length_writable {
             return false;
         }
+
+        let sparse_deletions: Vec<(usize, String, bool)> = self
+            .properties
+            .keys()
+            .into_iter()
+            .filter_map(|key| {
+                let index = array_index(&key)?;
+                (index >= new_len).then(|| {
+                    let configurable = self
+                        .properties
+                        .get(&key)
+                        .is_none_or(|descriptor| descriptor.configurable);
+                    (index, key, configurable)
+                })
+            })
+            .collect();
+        let sparse_blocker = sparse_deletions
+            .iter()
+            .filter(|(_, _, configurable)| !*configurable)
+            .map(|(index, _, _)| *index)
+            .max();
+        let dense_blocker = match &self.kind {
+            ObjectKind::Array { elements, .. } => (new_len..elements.len()).rev().find(|index| {
+                elements[*index]
+                    .as_ref()
+                    .is_some_and(|descriptor| !descriptor.configurable)
+            }),
+            _ => None,
+        };
+
+        if let Some(blocker) = dense_blocker.max(sparse_blocker) {
+            for (index, key, _) in &sparse_deletions {
+                if *index > blocker {
+                    self.properties.delete(key);
+                }
+            }
+            if let ObjectKind::Array {
+                elements, length, ..
+            } = &mut self.kind
+            {
+                let restored_len = blocker + 1;
+                if restored_len < elements.len() {
+                    for index in restored_len..elements.len() {
+                        elements[index] = None;
+                    }
+                    elements.truncate(restored_len);
+                }
+                *length = restored_len.min(u32::MAX as usize) as u32;
+            }
+            return false;
+        }
+
+        for (_, key, _) in sparse_deletions {
+            self.properties.delete(&key);
+        }
+
         let new_len32 = new_len.min(u32::MAX as usize) as u32;
+        let ObjectKind::Array {
+            elements, length, ..
+        } = &mut self.kind
+        else {
+            return false;
+        };
         if new_len >= elements.len() {
             // Growing: just update the logical length; no allocation needed.
             *length = new_len32;
@@ -497,8 +557,9 @@ impl JsObject {
             Self::update_length_for_index(length, index);
             return true;
         }
-        // huge index: not supported in dense storage
-        false
+        Self::update_length_for_index(length, index);
+        self.properties.define(index.to_string(), descriptor);
+        true
     }
 
     #[must_use]
@@ -661,6 +722,59 @@ impl JsObject {
             )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn array_high_index_uses_sparse_property_storage() {
+        let mut array = JsObject::sparse_array(0);
+
+        assert!(array.define_array_element(
+            70_000,
+            PropertyDescriptor::data(JsValue::String("ok".into())),
+        ));
+
+        assert_eq!(array.array_length(), Some(70_001));
+        assert_eq!(
+            array.get_own_property_value("70000"),
+            Some(JsValue::String("ok".into()))
+        );
+    }
+
+    #[test]
+    fn array_length_shrink_deletes_sparse_indices() {
+        let mut array = JsObject::sparse_array(0);
+        assert!(array.define_array_element(70_000, PropertyDescriptor::data(JsValue::Number(1.0))));
+        assert!(array.set_array_length(10));
+
+        assert_eq!(array.array_length(), Some(10));
+        assert_eq!(array.get_own_property_value("70000"), None);
+    }
+
+    #[test]
+    fn array_length_shrink_respects_sparse_non_configurable_indices() {
+        let mut array = JsObject::sparse_array(0);
+        assert!(array.define_array_element(
+            70_000,
+            PropertyDescriptor::data_with(JsValue::Number(1.0), true, true, false),
+        ));
+        assert!(
+            array.define_array_element(70_001, PropertyDescriptor::data(JsValue::Number(2.0)),)
+        );
+
+        assert!(!array.set_array_length(10));
+
+        assert_eq!(array.array_length(), Some(70_001));
+        assert_eq!(
+            array.get_own_property_value("70000"),
+            Some(JsValue::Number(1.0))
+        );
+        assert_eq!(array.get_own_property_value("70001"), None);
+    }
+}
+
 pub(crate) fn array_index(name: &str) -> Option<usize> {
     if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_digit()) {
         return None;

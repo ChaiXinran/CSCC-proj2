@@ -209,6 +209,7 @@ fn command_test262(args: &[String]) -> Result<(), String> {
                 json_path = Some(PathBuf::from(required_value(args, index, "--json")?));
             }
             "--progress" => options.progress = true,
+            "--skip-runtime-errors" => options.skip_runtime_errors = true,
             "--verbose" | "-v" => verbose = true,
             unknown => return Err(format!("unknown test262 option `{unknown}`")),
         }
@@ -513,7 +514,7 @@ USAGE:
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend boa|native] [--limit N] [--jobs N]
                   [--native-v1|--native-v2|--native-v3|--native-v4|--native-v4-scan|--native-v5|--native-v5-scan|--native-v6|--native-v6-scan|--native-v7|--native-v7-scan|--native-v8-scan|--native-v9-scan|--native-v10-scan|--native-v11-scan]
-                  [--progress] [--json result.json] [-v]
+                  [--progress] [--skip-runtime-errors] [--json result.json] [-v]
   agentjs bench [--backend boa|native] [iterations]
 
 BACKENDS:
