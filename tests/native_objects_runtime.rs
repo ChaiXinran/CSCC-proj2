@@ -154,6 +154,60 @@ fn sparse_arrays_track_holes_length_and_range_errors() {
 }
 
 #[test]
+fn segmented_dense_arrays_keep_large_numeric_indices_fast_and_sparse() {
+    let mut context = NativeContext::default();
+    let array = context.create_sparse_array(100_000).unwrap();
+    let JsValue::Object(id) = array.clone() else {
+        panic!("expected array");
+    };
+
+    context
+        .set_element(
+            array.clone(),
+            JsValue::Number(80_000.0),
+            JsValue::Boolean(true),
+        )
+        .unwrap();
+
+    assert_eq!(
+        context
+            .get_element(array.clone(), JsValue::Number(80_000.0))
+            .unwrap(),
+        JsValue::Boolean(true)
+    );
+    assert!(context.has_property(id, "80000").unwrap());
+    assert!(!context.has_property(id, "79999").unwrap());
+    assert!(
+        context
+            .heap()
+            .object(id)
+            .unwrap()
+            .own_property_keys()
+            .contains(&"80000".to_string())
+    );
+
+    assert!(context.delete_property(id, "80000", false).unwrap());
+    assert!(!context.has_property(id, "80000").unwrap());
+
+    context
+        .set_element(
+            array.clone(),
+            JsValue::Number(90_000.0),
+            JsValue::Number(7.0),
+        )
+        .unwrap();
+    context
+        .set_property(array.clone(), "length", JsValue::Number(10.0))
+        .unwrap();
+    assert_eq!(
+        context
+            .get_element(array, JsValue::Number(90_000.0))
+            .unwrap(),
+        JsValue::Undefined
+    );
+}
+
+#[test]
 fn array_length_shrink_recovers_when_non_configurable_element_blocks_delete() {
     let mut context = NativeContext::default();
     let array = context

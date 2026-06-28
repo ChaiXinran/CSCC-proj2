@@ -35,7 +35,10 @@ fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
     if flags.contains('s') && (flags.contains('u') || flags.contains('v')) {
         return pattern.to_string();
     }
-    if !pattern.contains('.') {
+    let needs_dot = pattern.contains('.');
+    // \0 in JS regex = null char; Rust regex treats \0 as a backreference (error).
+    let needs_null = pattern.contains("\\0");
+    if !needs_dot && !needs_null {
         return pattern.to_string();
     }
     let unicode_mode = flags.contains('u') || flags.contains('v');
@@ -46,11 +49,19 @@ fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
     } else {
         r"[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]"
     };
-    let mut output = String::with_capacity(pattern.len());
+    let mut output = String::with_capacity(pattern.len() + 16);
     let mut chars = pattern.chars().peekable();
     let mut in_class = false;
     while let Some(ch) = chars.next() {
         if ch == '\\' {
+            if let Some(&next) = chars.peek() {
+                if next == '0' {
+                    // JS \0 = null char; translate to Rust \x00 to avoid backreference parse error.
+                    chars.next();
+                    output.push_str(r"\x00");
+                    continue;
+                }
+            }
             output.push(ch);
             if let Some(next) = chars.next() {
                 output.push(next);

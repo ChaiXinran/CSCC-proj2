@@ -1,9 +1,11 @@
 //! Persistent state shared by native execution and integration.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
+
+use regex::Regex;
 
 use super::{
     ArrayBufferId, ArrayBufferRecord, BoundFunction, BuiltinFunction, BuiltinId, CollectionStats,
@@ -70,6 +72,7 @@ const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
 pub const MAX_ARRAY_LENGTH: usize = 1_000_000;
 pub const MAX_ARRAY_BUFFER_BYTE_LENGTH: usize = 1 << 26;
 const MAX_UTF16_ALLOCATION_UNITS: usize = 1 << 23;
+const REGEXP_CACHE_LIMIT: usize = 64;
 /// Cooperative per-evaluation execution limits shared by VM and builtins.
 #[derive(Debug, Clone)]
 pub struct ExecutionBudget {
@@ -165,6 +168,8 @@ pub struct NativeContext {
     array_buffers: Vec<ArrayBufferRecord>,
     typed_array_views: Vec<TypedArrayView>,
     data_views: Vec<DataViewRecord>,
+    regexp_cache: HashMap<(String, String), Regex>,
+    regexp_cache_order: VecDeque<(String, String)>,
     realms: Vec<RealmRecord>,
     current_realm: Option<RealmId>,
     realm_hosts: HashMap<ObjectId, RealmId>,
@@ -245,6 +250,8 @@ impl NativeContext {
             array_buffers: Vec::new(),
             typed_array_views: Vec::new(),
             data_views: Vec::new(),
+            regexp_cache: HashMap::new(),
+            regexp_cache_order: VecDeque::new(),
             realms: Vec::new(),
             current_realm: None,
             realm_hosts: HashMap::new(),
@@ -274,6 +281,33 @@ impl NativeContext {
 
     pub fn heap_mut(&mut self) -> &mut Heap {
         &mut self.heap
+    }
+
+    pub fn cached_regexp<F>(
+        &mut self,
+        pattern: &str,
+        flags: &str,
+        compile: F,
+    ) -> Result<Regex, String>
+    where
+        F: FnOnce(&str, &str) -> Result<Regex, String>,
+    {
+        let key = (pattern.to_owned(), flags.to_owned());
+        if let Some(regex) = self.regexp_cache.get(&key) {
+            return Ok(regex.clone());
+        }
+
+        let regex = compile(pattern, flags)?;
+        if self.regexp_cache.len() >= REGEXP_CACHE_LIMIT {
+            while let Some(old_key) = self.regexp_cache_order.pop_front() {
+                if self.regexp_cache.remove(&old_key).is_some() {
+                    break;
+                }
+            }
+        }
+        self.regexp_cache.insert(key.clone(), regex.clone());
+        self.regexp_cache_order.push_back(key);
+        Ok(regex)
     }
 
     pub fn configure_heap_limits(

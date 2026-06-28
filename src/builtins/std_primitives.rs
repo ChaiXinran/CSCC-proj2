@@ -1598,6 +1598,16 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(String, Stri
     }
 }
 
+fn compile_cached_regexp(
+    context: &mut NativeContext,
+    pattern: &str,
+    flags: &str,
+) -> Result<regex::Regex, VmError> {
+    context
+        .cached_regexp(pattern, flags, regexp::compile_regex)
+        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))
+}
+
 fn regexp_last_index_is_writable(context: &NativeContext, value: &JsValue) -> bool {
     let JsValue::Object(id) = value else {
         return true;
@@ -1789,8 +1799,7 @@ fn string_split(
         Some(_) => Some(to_uint32(arg_number(vm, context, arguments, 1)?) as usize),
     };
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
-        let re = regexp::compile_regex(&pattern, &flags)
-            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        let re = compile_cached_regexp(context, &pattern, &flags)?;
         // regexp::split includes capture groups as per ES spec.
         let parts = regexp::split(&re, &value, limit)
             .into_iter()
@@ -1825,8 +1834,7 @@ fn string_search(
     }
     let value = this_string(vm, context, this)?;
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
-        let re = regexp::compile_regex(&pattern, &flags)
-            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        let re = compile_cached_regexp(context, &pattern, &flags)?;
         return Ok(JsValue::Number(
             regexp::search(&re, &value).map_or(-1.0, |i| i as f64),
         ));
@@ -1867,8 +1875,7 @@ fn string_replace(
     let replace_is_fn = is_callable_value(&replace_arg);
 
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
-        let re = regexp::compile_regex(&pattern, &flags)
-            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        let re = compile_cached_regexp(context, &pattern, &flags)?;
         let global = regexp::is_global(&flags);
         if replace_is_fn {
             return apply_replace_fn(vm, context, &value, &re, global, replace_arg);
@@ -2056,8 +2063,7 @@ fn string_replace_all(
                 "String.prototype.replaceAll must be called with a global RegExp",
             ));
         }
-        let re = regexp::compile_regex(&pattern, &flags)
-            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        let re = compile_cached_regexp(context, &pattern, &flags)?;
         if replace_is_fn {
             return apply_replace_fn(vm, context, &value, &re, true, replace_arg);
         }
@@ -2155,8 +2161,7 @@ fn string_match(
     }
     let value = this_string(vm, context, this)?;
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
-        let re = regexp::compile_regex(&pattern, &flags)
-            .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+        let re = compile_cached_regexp(context, &pattern, &flags)?;
         if regexp::is_global(&flags) {
             if !regexp_last_index_is_writable(context, &first_arg) {
                 return Err(VmError::type_error("RegExp lastIndex is not writable"));
@@ -2278,8 +2283,7 @@ fn invoke_regexp_match_all_fallback(
     if !is_builtin_regexp_symbol_match_all(context, &method) {
         return vm.call_value_from_builtin(method, rx, vec![JsValue::String(string)], context);
     }
-    let re = regexp::compile_regex(&pattern, &engine_flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &engine_flags)?;
 
     let mut entries = Vec::new();
     for caps in re.captures_iter(&string) {
@@ -3071,8 +3075,7 @@ fn regexp_test(
             ));
         }
     };
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     Ok(JsValue::Boolean(re.is_match(&text)))
 }
 
@@ -3095,8 +3098,7 @@ fn regexp_exec(
             ));
         }
     };
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     let Some(caps) = regexp::exec_once(&re, &text) else {
         return Ok(JsValue::Null);
     };
@@ -3164,8 +3166,7 @@ fn regexp_symbol_replace(
     let string = vm.to_string_coerce(arg(arguments, 0), context)?;
     let replace_arg = arg(arguments, 1);
     let global = flags.contains('g');
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     if is_callable_value(&replace_arg) {
         return apply_replace_fn(vm, context, &string, &re, global, replace_arg);
     }
@@ -3187,8 +3188,7 @@ fn regexp_symbol_match(
 ) -> Result<JsValue, VmError> {
     let (pattern, flags) = require_regexp_this(context, &this)?;
     let string = vm.to_string_coerce(arg(arguments, 0), context)?;
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     if flags.contains('g') {
         if !regexp_last_index_is_writable(context, &this) {
             return Err(VmError::type_error("RegExp lastIndex is not writable"));
@@ -3242,8 +3242,7 @@ fn regexp_symbol_match_all(
         ));
     }
     let string = vm.to_string_coerce(arg(arguments, 0), context)?;
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     let mut entries = Vec::new();
     for caps in re.captures_iter(&string) {
         let m = caps.get(0).unwrap();
@@ -3285,8 +3284,7 @@ fn regexp_symbol_split(
         None | Some(JsValue::Undefined) => None,
         Some(_) => Some(to_uint32(arg_number(vm, context, arguments, 1)?) as usize),
     };
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     let parts = regexp::split(&re, &string, limit)
         .into_iter()
         .map(|v| v.map_or(JsValue::Undefined, JsValue::String))
@@ -3302,8 +3300,7 @@ fn regexp_symbol_search(
 ) -> Result<JsValue, VmError> {
     let (pattern, flags) = require_regexp_this(context, &this)?;
     let string = vm.to_string_coerce(arg(arguments, 0), context)?;
-    let re = regexp::compile_regex(&pattern, &flags)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))?;
+    let re = compile_cached_regexp(context, &pattern, &flags)?;
     Ok(JsValue::Number(
         regexp::search(&re, &string).map_or(-1.0, |i| i as f64),
     ))

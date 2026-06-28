@@ -4598,14 +4598,14 @@ impl Vm {
         idx: usize,
         context: &NativeContext,
     ) -> Option<Result<JsValue, VmError>> {
-        enum FastKind { ArrayValue(Option<JsValue>), TypedArray(TypedArrayViewId) }
+        enum FastKind {
+            ArrayValue(Option<JsValue>),
+            TypedArray(TypedArrayViewId),
+        }
         let fast_kind = {
             let obj = context.heap().object(obj_id)?;
             match &obj.kind {
-                ObjectKind::Array { elements, .. } => {
-                    let val = elements.get(idx).and_then(|s| s.as_ref()).and_then(|d| d.value_cloned());
-                    FastKind::ArrayValue(val)
-                }
+                ObjectKind::Array { .. } => FastKind::ArrayValue(obj.array_element_value(idx)),
                 ObjectKind::TypedArray { view, .. } => FastKind::TypedArray(*view),
                 _ => return None,
             }
@@ -4634,7 +4634,10 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Option<Result<(), VmError>> {
         // Extract what we need in a short borrow so we can call mutable methods after.
-        enum FastKind { Array, TypedArray(TypedArrayViewId) }
+        enum FastKind {
+            Array,
+            TypedArray(TypedArrayViewId),
+        }
         let fast_kind = {
             let obj = context.heap().object(obj_id)?;
             match &obj.kind {
@@ -4654,8 +4657,8 @@ impl Vm {
                 }))
             }
             FastKind::Array => {
-                // Only fast-path dense-range indices; let slow path handle idx >= MAX_DENSE.
-                if idx >= 65536 {
+                // Keep very large indices on the full property path for range checks.
+                if idx >= 1_000_000 {
                     return None;
                 }
                 let desc = crate::runtime::PropertyDescriptor::data_with(value, true, true, true);
