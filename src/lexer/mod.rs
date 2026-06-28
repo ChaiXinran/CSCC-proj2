@@ -1039,6 +1039,30 @@ fn is_regex_quantifier_at(chars: &[char], index: usize) -> bool {
         || parse_braced_quantifier(chars, index).is_some()
 }
 
+fn is_unicode_sets_reserved_double_punctuator(ch: char) -> bool {
+    matches!(
+        ch,
+        '!' | '#'
+            | '$'
+            | '%'
+            | '&'
+            | '*'
+            | '+'
+            | ','
+            | '.'
+            | ':'
+            | ';'
+            | '<'
+            | '='
+            | '>'
+            | '?'
+            | '@'
+            | '^'
+            | '`'
+            | '~'
+    )
+}
+
 fn find_regex_group_end(chars: &[char], start: usize) -> Option<usize> {
     let mut i = start + 1;
     let mut depth = 1usize;
@@ -1073,7 +1097,258 @@ fn find_regex_group_end(chars: &[char], start: usize) -> Option<usize> {
     None
 }
 
-fn validate_regex_property_escape(chars: &[char], index: &mut usize) -> Result<(), &'static str> {
+fn is_regex_binary_property(spec: &str) -> bool {
+    matches!(
+        spec,
+        "ASCII"
+            | "ASCII_Hex_Digit"
+            | "AHex"
+            | "Alphabetic"
+            | "Alpha"
+            | "Any"
+            | "Assigned"
+            | "Bidi_Control"
+            | "Bidi_C"
+            | "Bidi_Mirrored"
+            | "Bidi_M"
+            | "Case_Ignorable"
+            | "CI"
+            | "Cased"
+            | "Changes_When_Casefolded"
+            | "CWCF"
+            | "Changes_When_Casemapped"
+            | "CWCM"
+            | "Changes_When_Lowercased"
+            | "CWL"
+            | "Changes_When_NFKC_Casefolded"
+            | "CWKCF"
+            | "Changes_When_Titlecased"
+            | "CWT"
+            | "Changes_When_Uppercased"
+            | "CWU"
+            | "Dash"
+            | "Default_Ignorable_Code_Point"
+            | "DI"
+            | "Deprecated"
+            | "Dep"
+            | "Diacritic"
+            | "Dia"
+            | "Emoji"
+            | "Emoji_Component"
+            | "EComp"
+            | "Emoji_Modifier"
+            | "EMod"
+            | "Emoji_Modifier_Base"
+            | "EBase"
+            | "Emoji_Presentation"
+            | "EPres"
+            | "Extended_Pictographic"
+            | "ExtPict"
+            | "Extender"
+            | "Ext"
+            | "Grapheme_Base"
+            | "Gr_Base"
+            | "Grapheme_Extend"
+            | "Gr_Ext"
+            | "Hex_Digit"
+            | "Hex"
+            | "ID_Continue"
+            | "IDC"
+            | "ID_Start"
+            | "IDS"
+            | "Ideographic"
+            | "Ideo"
+            | "IDS_Binary_Operator"
+            | "IDSB"
+            | "IDS_Trinary_Operator"
+            | "IDST"
+            | "Join_Control"
+            | "Join_C"
+            | "Logical_Order_Exception"
+            | "LOE"
+            | "Lowercase"
+            | "Lower"
+            | "Math"
+            | "Noncharacter_Code_Point"
+            | "NChar"
+            | "Pattern_Syntax"
+            | "Pat_Syn"
+            | "Pattern_White_Space"
+            | "Pat_WS"
+            | "Quotation_Mark"
+            | "QMark"
+            | "Radical"
+            | "Regional_Indicator"
+            | "RI"
+            | "Sentence_Terminal"
+            | "STerm"
+            | "Soft_Dotted"
+            | "SD"
+            | "Terminal_Punctuation"
+            | "Term"
+            | "Unified_Ideograph"
+            | "UIdeo"
+            | "Uppercase"
+            | "Upper"
+            | "Variation_Selector"
+            | "VS"
+            | "White_Space"
+            | "space"
+            | "WSpace"
+            | "XID_Continue"
+            | "XIDC"
+            | "XID_Start"
+            | "XIDS"
+    )
+}
+
+fn is_regex_general_category(spec: &str) -> bool {
+    matches!(
+        spec,
+        "C" | "Other"
+            | "Cc"
+            | "Control"
+            | "cntrl"
+            | "Cf"
+            | "Format"
+            | "Cn"
+            | "Unassigned"
+            | "Co"
+            | "Private_Use"
+            | "Cs"
+            | "Surrogate"
+            | "L"
+            | "Letter"
+            | "LC"
+            | "Cased_Letter"
+            | "Ll"
+            | "Lowercase_Letter"
+            | "Lm"
+            | "Modifier_Letter"
+            | "Lo"
+            | "Other_Letter"
+            | "Lt"
+            | "Titlecase_Letter"
+            | "Lu"
+            | "Uppercase_Letter"
+            | "M"
+            | "Mark"
+            | "Combining_Mark"
+            | "Mc"
+            | "Spacing_Mark"
+            | "Me"
+            | "Enclosing_Mark"
+            | "Mn"
+            | "Nonspacing_Mark"
+            | "N"
+            | "Number"
+            | "Nd"
+            | "Decimal_Number"
+            | "digit"
+            | "Nl"
+            | "Letter_Number"
+            | "No"
+            | "Other_Number"
+            | "P"
+            | "Punctuation"
+            | "punct"
+            | "Pc"
+            | "Connector_Punctuation"
+            | "Pd"
+            | "Dash_Punctuation"
+            | "Pe"
+            | "Close_Punctuation"
+            | "Pf"
+            | "Final_Punctuation"
+            | "Pi"
+            | "Initial_Punctuation"
+            | "Po"
+            | "Other_Punctuation"
+            | "Ps"
+            | "Open_Punctuation"
+            | "S"
+            | "Symbol"
+            | "Sc"
+            | "Currency_Symbol"
+            | "Sk"
+            | "Modifier_Symbol"
+            | "Sm"
+            | "Math_Symbol"
+            | "So"
+            | "Other_Symbol"
+            | "Z"
+            | "Separator"
+            | "Zl"
+            | "Line_Separator"
+            | "Zp"
+            | "Paragraph_Separator"
+            | "Zs"
+            | "Space_Separator"
+    )
+}
+
+fn is_regex_string_property(spec: &str) -> bool {
+    matches!(
+        spec,
+        "Basic_Emoji"
+            | "Emoji_Keycap_Sequence"
+            | "RGI_Emoji_Modifier_Sequence"
+            | "RGI_Emoji_Flag_Sequence"
+            | "RGI_Emoji_Tag_Sequence"
+            | "RGI_Emoji_ZWJ_Sequence"
+            | "RGI_Emoji"
+    )
+}
+
+fn is_regex_script_value(spec: &str) -> bool {
+    let pattern = format!(r"\p{{Script={spec}}}");
+    if regex::Regex::new(&pattern).is_ok() {
+        return true;
+    }
+
+    // Unicode 17 scripts not yet present in the regex crate's Unicode tables.
+    matches!(
+        spec,
+        "Beria_Erfe"
+            | "Berf"
+            | "Sidetic"
+            | "Sidt"
+            | "Tai_Yo"
+            | "Tayo"
+            | "Tolong_Siki"
+            | "Tols"
+            | "Unknown"
+            | "Zzzz"
+    )
+}
+
+fn is_valid_regex_property(
+    spec: &str,
+    negated: bool,
+    unicode_sets: bool,
+    negated_class: bool,
+) -> bool {
+    if let Some((name, value)) = spec.split_once('=') {
+        return !value.is_empty()
+            && match name {
+                "General_Category" | "gc" => is_regex_general_category(value),
+                "Script" | "sc" | "Script_Extensions" | "scx" => is_regex_script_value(value),
+                _ => false,
+            };
+    }
+
+    is_regex_binary_property(spec)
+        || is_regex_general_category(spec)
+        || (unicode_sets && !negated && !negated_class && is_regex_string_property(spec))
+}
+
+fn validate_regex_property_escape(
+    chars: &[char],
+    index: &mut usize,
+    negated: bool,
+    unicode_sets: bool,
+    negated_class: bool,
+) -> Result<(), &'static str> {
     if chars.get(*index) != Some(&'{') {
         return Err("Unicode property escape must use braces");
     }
@@ -1094,7 +1369,10 @@ fn validate_regex_property_escape(chars: &[char], index: &mut usize) -> Result<(
     }
 
     let spec: String = chars[start..*index].iter().collect();
-    if spec.starts_with("In") || spec.starts_with('^') || spec.matches('=').count() > 1 {
+    if spec.starts_with('^')
+        || spec.matches('=').count() > 1
+        || !is_valid_regex_property(&spec, negated, unicode_sets, negated_class)
+    {
         return Err("invalid Unicode property escape");
     }
 
@@ -1107,12 +1385,20 @@ fn validate_unicode_regex_escape(
     index: &mut usize,
     escape: char,
     in_class: bool,
+    unicode_sets: bool,
+    negated_class: bool,
 ) -> Result<RegexClassAtomKind, &'static str> {
     match escape {
         'f' | 'n' | 'r' | 't' | 'v' | 'b' | 'B' => Ok(RegexClassAtomKind::Single),
         'd' | 'D' | 's' | 'S' | 'w' | 'W' => Ok(RegexClassAtomKind::Multi),
         'p' | 'P' => {
-            validate_regex_property_escape(chars, index)?;
+            validate_regex_property_escape(
+                chars,
+                index,
+                escape == 'P',
+                unicode_sets,
+                negated_class,
+            )?;
             Ok(RegexClassAtomKind::Multi)
         }
         '0' => {
@@ -1184,6 +1470,8 @@ fn regex_class_atom_at(
     chars: &[char],
     start: usize,
     unicode_mode: bool,
+    unicode_sets: bool,
+    negated_class: bool,
 ) -> Result<Option<(RegexClassAtomKind, usize)>, &'static str> {
     let Some(&ch) = chars.get(start) else {
         return Ok(None);
@@ -1197,7 +1485,14 @@ fn regex_class_atom_at(
         };
         let mut next = start + 2;
         let kind = if unicode_mode {
-            validate_unicode_regex_escape(chars, &mut next, escape, true)?
+            validate_unicode_regex_escape(
+                chars,
+                &mut next,
+                escape,
+                true,
+                unicode_sets,
+                negated_class,
+            )?
         } else if matches!(escape, 'd' | 'D' | 's' | 'S' | 'w' | 'W') {
             RegexClassAtomKind::Multi
         } else {
@@ -1211,6 +1506,7 @@ fn regex_class_atom_at(
 
 fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), LexError> {
     let unicode_mode = flags.contains('u') || flags.contains('v');
+    let unicode_sets = flags.contains('v');
     use std::collections::HashSet;
 
     let make_err = |msg: &str| LexError {
@@ -1222,6 +1518,7 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
     let len = chars.len();
     let mut i = 0;
     let mut in_class = false;
+    let mut negated_class = false;
     let mut class_previous_atom: Option<RegexClassAtomKind> = None;
     let mut can_quantify = false;
 
@@ -1249,8 +1546,15 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                     };
                     i += 2;
                     let atom = if unicode_mode {
-                        validate_unicode_regex_escape(&chars, &mut i, escape, true)
-                            .map_err(make_err)?
+                        validate_unicode_regex_escape(
+                            &chars,
+                            &mut i,
+                            escape,
+                            true,
+                            unicode_sets,
+                            negated_class,
+                        )
+                        .map_err(make_err)?
                     } else if matches!(escape, 'd' | 'D' | 's' | 'S' | 'w' | 'W') {
                         RegexClassAtomKind::Multi
                     } else {
@@ -1261,15 +1565,38 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                 }
                 ']' => {
                     in_class = false;
+                    negated_class = false;
                     class_previous_atom = None;
                     can_quantify = true;
                     i += 1;
                     continue;
                 }
+                ch if unicode_sets && matches!(ch, '(' | ')' | '{' | '}' | '/' | '-' | '|') => {
+                    return Err(make_err(
+                        "Unicode sets character class syntax character must be escaped",
+                    ));
+                }
+                '[' if unicode_sets && chars.get(i + 1) == Some(&']') => {
+                    return Err(make_err("invalid nested Unicode sets character class"));
+                }
+                ch if unicode_sets
+                    && chars.get(i + 1) == Some(&ch)
+                    && is_unicode_sets_reserved_double_punctuator(ch) =>
+                {
+                    return Err(make_err(
+                        "Unicode sets reserved double punctuator must be escaped",
+                    ));
+                }
                 '-' if unicode_mode && i + 1 < len && chars[i + 1] != ']' => {
                     if let Some(previous) = class_previous_atom {
-                        let Some((next_atom, next_i)) =
-                            regex_class_atom_at(&chars, i + 1, unicode_mode).map_err(make_err)?
+                        let Some((next_atom, next_i)) = regex_class_atom_at(
+                            &chars,
+                            i + 1,
+                            unicode_mode,
+                            unicode_sets,
+                            negated_class,
+                        )
+                        .map_err(make_err)?
                         else {
                             class_previous_atom = Some(RegexClassAtomKind::Single);
                             i += 1;
@@ -1339,14 +1666,22 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                             bare_k_escape = true;
                         }
                     } else if unicode_mode {
-                        validate_unicode_regex_escape(&chars, &mut i, esc, false)
-                            .map_err(make_err)?;
+                        validate_unicode_regex_escape(
+                            &chars,
+                            &mut i,
+                            esc,
+                            false,
+                            unicode_sets,
+                            false,
+                        )
+                        .map_err(make_err)?;
                     }
                     can_quantify = true;
                 }
             }
             '[' => {
                 in_class = true;
+                negated_class = chars.get(i + 1) == Some(&'^');
                 class_previous_atom = None;
                 can_quantify = false;
                 i += 1;

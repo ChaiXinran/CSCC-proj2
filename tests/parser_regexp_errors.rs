@@ -83,6 +83,42 @@ fn accepts_unicode_escape_and_property_escape_syntax() {
     parse_ok(r"/\u{10ffff}/u;");
     parse_ok(r"/\p{ASCII}/u;");
     parse_ok(r"/\P{General_Category=Letter}/u;");
+    parse_ok(r"/\p{Script_Extensions=Latin}/u;");
+    parse_ok(r"/\p{Script_Extensions=Zzzz}/u;");
+    parse_ok(r"/\p{Basic_Emoji}/v;");
+    parse_ok(r"/\p{Initial_Punctuation}/u;");
+}
+
+#[test]
+fn rejects_invalid_unicode_property_names_and_values() {
+    for source in [
+        r"/\p{ASCII=Yes}/u;",
+        r"/\p{General_Category}/u;",
+        r"/\p{gc=uppercaseletter}/u;",
+        r"/\p{Line_Break=Alphabetic}/u;",
+        r"/\p{Other_Alphabetic}/u;",
+        r"/\P{Basic_Emoji}/v;",
+        r"/[^\p{Basic_Emoji}]/v;",
+    ] {
+        parse_fails(source);
+    }
+}
+
+#[test]
+fn rejects_unicode_sets_reserved_class_punctuators() {
+    for source in [
+        r"/[(]/v;",
+        r"/[}]/v;",
+        r"/[-]/v;",
+        r"/[|]/v;",
+        r"/[&&]/v;",
+        r"/[??]/v;",
+        r"/[_^^]/v;",
+        r"/[[]/v;",
+    ] {
+        parse_fails(source);
+    }
+    parse_ok(r"/[\(\)\{\}\/\-\|]/v;");
 }
 
 #[test]

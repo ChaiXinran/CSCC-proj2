@@ -7,8 +7,8 @@
 use super::regexp;
 use crate::{
     runtime::{
-        JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind, PropertyDescriptor,
-        PropertyKind, to_property_key,
+        IteratorMode, JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind,
+        PropertyDescriptor, PropertyKind, to_property_key,
     },
     vm::{Vm, VmError},
 };
@@ -72,6 +72,18 @@ fn is_callable(value: &JsValue) -> bool {
     matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
 }
 
+fn get_property(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    receiver: JsValue,
+    key: &str,
+) -> Result<JsValue, VmError> {
+    match vm.get_property_value_catching_from_builtin(receiver, key, context)? {
+        Ok(value) => Ok(value),
+        Err(thrown) => Err(vm.throw_value_from_builtin(thrown)),
+    }
+}
+
 fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError> {
     let prototype = context
         .regexp_prototype()
@@ -101,6 +113,7 @@ fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError
     context.set_global("RegExp", constructor.clone());
 
     define_method(context, constructor_object, "escape", 1, regexp_escape)?;
+    install_legacy_regexp_accessors(context, constructor_object)?;
     for (name, length, call) in [
         ("exec", 1, regexp_exec as NativeCall),
         ("test", 1, regexp_test as NativeCall),
@@ -179,6 +192,95 @@ fn install_regexp_refinements(context: &mut NativeContext) -> Result<(), VmError
     Ok(())
 }
 
+fn install_legacy_regexp_accessors(
+    context: &mut NativeContext,
+    constructor: ObjectId,
+) -> Result<(), VmError> {
+    for name in ["input", "$_"] {
+        define_accessor(
+            context,
+            constructor,
+            name,
+            "get input",
+            regexp_legacy_empty_get,
+            Some("set input"),
+            Some(regexp_legacy_input_set),
+        )?;
+    }
+    for name in [
+        "lastMatch",
+        "$&",
+        "lastParen",
+        "$+",
+        "leftContext",
+        "$`",
+        "rightContext",
+        "$'",
+        "$1",
+        "$2",
+        "$3",
+        "$4",
+        "$5",
+        "$6",
+        "$7",
+        "$8",
+        "$9",
+    ] {
+        define_accessor(
+            context,
+            constructor,
+            name,
+            "get RegExp legacy static",
+            regexp_legacy_empty_get,
+            None,
+            None,
+        )?;
+    }
+    Ok(())
+}
+
+fn require_legacy_regexp_constructor(
+    context: &NativeContext,
+    this_value: &JsValue,
+) -> Result<(), VmError> {
+    let constructor = context
+        .get_global("RegExp")
+        .ok_or_else(|| VmError::runtime("RegExp constructor missing"))?;
+    if this_value.same_value(&constructor) {
+        Ok(())
+    } else {
+        Err(VmError::type_error(
+            "RegExp legacy accessor called on incompatible receiver",
+        ))
+    }
+}
+
+fn regexp_legacy_empty_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    require_legacy_regexp_constructor(context, &this_value)?;
+    // ponytail: legacy match state remains empty until it moves into per-realm
+    // NativeContext storage; the accessor shape and receiver semantics are exact.
+    Ok(JsValue::String(String::new()))
+}
+
+fn regexp_legacy_input_set(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    require_legacy_regexp_constructor(context, &this_value)?;
+    let _ = vm.to_string_coerce(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    Ok(JsValue::Undefined)
+}
+
 fn regexp_species_get(
     _vm: &mut Vm,
     _context: &mut NativeContext,
@@ -214,15 +316,18 @@ fn make_regexp(
 ) -> Result<JsValue, VmError> {
     let pattern_arg = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let flags_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    let pattern_is_regexp = regexp_data(context, &pattern_arg).is_some();
-    let (pattern, default_flags) =
-        if let Some((_, pattern, flags)) = regexp_data(context, &pattern_arg) {
-            (pattern, flags)
-        } else if matches!(pattern_arg, JsValue::Undefined) {
-            (String::new(), String::new())
-        } else {
-            (vm.to_string_coerce(pattern_arg, context)?, String::new())
-        };
+    let pattern_is_regexp = is_regexp(vm, context, &pattern_arg)?;
+    let (pattern, default_flags) = if pattern_is_regexp {
+        let source = get_property(vm, context, pattern_arg.clone(), "source")?;
+        let source = vm.to_string_coerce(source, context)?;
+        let flags = get_property(vm, context, pattern_arg.clone(), "flags")?;
+        let flags = vm.to_string_coerce(flags, context)?;
+        (source, flags)
+    } else if matches!(pattern_arg, JsValue::Undefined) {
+        (String::new(), String::new())
+    } else {
+        (vm.to_string_coerce(pattern_arg, context)?, String::new())
+    };
     let flags = if matches!(flags_arg, JsValue::Undefined) {
         default_flags
     } else {
@@ -244,6 +349,22 @@ fn make_regexp(
         context.set_prototype_of(object, Some(prototype))?;
     }
     Ok(value)
+}
+
+fn is_regexp(vm: &mut Vm, context: &mut NativeContext, value: &JsValue) -> Result<bool, VmError> {
+    if context.value_object(value).is_none() {
+        return Ok(false);
+    }
+    let matcher = vm.get_symbol_property_value_with_receiver_from_builtin(
+        value.clone(),
+        value.clone(),
+        context.well_known_symbols().match_,
+        context,
+    )?;
+    if !matches!(matcher, JsValue::Undefined) {
+        return Ok(matcher.to_boolean());
+    }
+    Ok(regexp_data(context, value).is_some())
 }
 
 fn validate_regexp_flags(flags: &str) -> Result<(), VmError> {
@@ -401,10 +522,7 @@ fn regexp_flags_get(
         ("unicodeSets", 'v'),
         ("sticky", 'y'),
     ] {
-        if vm
-            .get_property_value(this_value.clone(), name, context)?
-            .to_boolean()
-        {
+        if get_property(vm, context, this_value.clone(), name)?.to_boolean() {
             flags.push(flag);
         }
     }
@@ -489,7 +607,7 @@ fn regexp_exec_value(
 ) -> Result<JsValue, VmError> {
     let (_, pattern, flags) = require_regexp(context, &this_value)?;
     let global_or_sticky = flags.contains('g') || flags.contains('y');
-    let last_index = vm.get_property_value(this_value.clone(), "lastIndex", context)?;
+    let last_index = get_property(vm, context, this_value.clone(), "lastIndex")?;
     let start_index = if global_or_sticky {
         to_length(vm.to_number(last_index, context)?)
     } else {
@@ -765,7 +883,7 @@ fn regexp_symbol_match(
             break;
         };
         let result_value = JsValue::Object(object);
-        let match_value = vm.get_property_value(result_value.clone(), "0", context)?;
+        let match_value = get_property(vm, context, result_value.clone(), "0")?;
         let match_string = vm.to_string_coerce(match_value, context)?;
         values.push(JsValue::String(match_string.clone()));
         if match_string.is_empty() {
@@ -790,7 +908,7 @@ fn regexp_exec_abstract(
     regexp: JsValue,
     string: String,
 ) -> Result<JsValue, VmError> {
-    let exec = vm.get_property_value(regexp.clone(), "exec", context)?;
+    let exec = get_property(vm, context, regexp.clone(), "exec")?;
     if is_callable(&exec) {
         let result = vm.call_value_from_builtin(
             exec,
@@ -817,7 +935,7 @@ fn regexp_last_index(
     context: &mut NativeContext,
     regexp: JsValue,
 ) -> Result<usize, VmError> {
-    let value = vm.get_property_value(regexp, "lastIndex", context)?;
+    let value = get_property(vm, context, regexp, "lastIndex")?;
     Ok(to_length(vm.to_number(value, context)?))
 }
 
@@ -840,46 +958,55 @@ fn regexp_symbol_match_all(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_, _, flags) = require_regexp(context, &this_value)?;
-    if !flags.contains('g') && !flags.contains('y') {
-        return Err(VmError::type_error(
-            "String.prototype.matchAll called with a non-global RegExp",
-        ));
-    }
+    context.require_object(&this_value, "RegExp.prototype[@@matchAll] receiver")?;
     let string = vm.to_string_coerce(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    let saved_last_index = vm
-        .get_property_value(this_value.clone(), "lastIndex", context)
-        .ok()
-        .and_then(|value| value.to_number())
-        .map(to_length)
-        .unwrap_or(0);
-    set_last_index(vm, context, this_value.clone(), 0)?;
+    let constructor = regexp_species_constructor(vm, context, this_value.clone())?;
+    let flags = get_property(vm, context, this_value.clone(), "flags")?;
+    let flags = vm.to_string_coerce(flags, context)?;
+    let global = flags.contains('g');
+    let unicode = flags.contains('u') || flags.contains('v');
+    let matcher = vm.construct_value_from_builtin(
+        constructor,
+        vec![this_value.clone(), JsValue::String(flags)],
+        context,
+    )?;
+    let last_index = get_property(vm, context, this_value, "lastIndex")?;
+    let last_index = to_length(vm.to_number(last_index, context)?);
+    set_last_index(vm, context, matcher.clone(), last_index)?;
     let mut matches = Vec::new();
     loop {
-        let result = regexp_exec_value(vm, context, this_value.clone(), string.clone())?;
+        let result = regexp_exec_abstract(vm, context, matcher.clone(), string.clone())?;
         if matches!(result, JsValue::Null) {
             break;
         }
         if let JsValue::Object(object) = &result {
             let result_value = JsValue::Object(*object);
-            let match_value = vm.get_property_value(result_value, "0", context)?;
+            let match_value = get_property(vm, context, result_value, "0")?;
             let match_string = vm.to_string_coerce(match_value, context)?;
-            if match_string.is_empty() {
-                let last_index = regexp_last_index(vm, context, this_value.clone())?;
-                let next_index = advance_string_index(&string, last_index, flags.contains('u'));
-                set_last_index_number(vm, context, this_value.clone(), next_index as f64)?;
+            if global && match_string.is_empty() {
+                let last_index = regexp_last_index(vm, context, matcher.clone())?;
+                let next_index = advance_string_index(&string, last_index, unicode);
+                set_last_index_number(vm, context, matcher.clone(), next_index as f64)?;
             }
         }
         matches.push(result);
+        if !global {
+            break;
+        }
         if matches.len() > 1 << 20 {
             return Err(VmError::runtime_limit("RegExp matchAll result too large"));
         }
     }
-    set_last_index(vm, context, this_value, saved_last_index)?;
-    context.create_array(matches)
+    let length = matches.len();
+    let array = context.create_array(matches)?;
+    let iterator_prototype = context
+        .get_global("Iterator")
+        .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten())
+        .or_else(|| context.object_prototype());
+    context.create_array_iterator_object(array, length, IteratorMode::Value, iterator_prototype)
 }
 
 fn regexp_symbol_search(
@@ -892,17 +1019,17 @@ fn regexp_symbol_search(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    let previous_last_index = vm.get_property_value(this_value.clone(), "lastIndex", context)?;
+    let previous_last_index = get_property(vm, context, this_value.clone(), "lastIndex")?;
     if !previous_last_index.same_value(&JsValue::Number(0.0)) {
         set_last_index_number(vm, context, this_value.clone(), 0.0)?;
     }
     let result = regexp_exec_abstract(vm, context, this_value.clone(), string)?;
-    let current_last_index = vm.get_property_value(this_value.clone(), "lastIndex", context)?;
+    let current_last_index = get_property(vm, context, this_value.clone(), "lastIndex")?;
     if !current_last_index.same_value(&previous_last_index) {
         set_last_index_value(vm, context, this_value.clone(), previous_last_index.clone())?;
     }
     if let JsValue::Object(object) = result {
-        vm.get_property_value(JsValue::Object(object), "index", context)
+        get_property(vm, context, JsValue::Object(object), "index")
     } else {
         Ok(JsValue::Number(-1.0))
     }
@@ -933,7 +1060,7 @@ fn regexp_symbol_replace(
     } else {
         Some(vm.to_string_coerce(replace_value.clone(), context)?)
     };
-    let flags_value = vm.get_property_value(this_value.clone(), "flags", context)?;
+    let flags_value = get_property(vm, context, this_value.clone(), "flags")?;
     let flags = vm.to_string_coerce(flags_value, context)?;
     let global = flags.contains('g');
     let full_unicode = flags.contains('u');
@@ -948,22 +1075,23 @@ fn regexp_symbol_replace(
             break;
         };
         let result_value = JsValue::Object(object);
-        let matched_value = vm.get_property_value(result_value.clone(), "0", context)?;
+        let matched_value = get_property(vm, context, result_value.clone(), "0")?;
         let matched = vm.to_string_coerce(matched_value, context)?;
-        let index_value = vm.get_property_value(result_value.clone(), "index", context)?;
+        let index_value = get_property(vm, context, result_value.clone(), "index")?;
         let position =
             to_length(vm.to_number(index_value, context)?).min(string.encode_utf16().count());
-        let length_value = vm.get_property_value(result_value.clone(), "length", context)?;
+        let length_value = get_property(vm, context, result_value.clone(), "length")?;
         let length = to_length(vm.to_number(length_value, context)?);
         let mut captures = Vec::new();
         for index in 1..length {
-            captures.push(vm.get_property_value(
+            captures.push(get_property(
+                vm,
+                context,
                 result_value.clone(),
                 &index.to_string(),
-                context,
             )?);
         }
-        let groups = vm.get_property_value(result_value.clone(), "groups", context)?;
+        let groups = get_property(vm, context, result_value.clone(), "groups")?;
         results.push(ReplaceMatch {
             matched: matched.clone(),
             position,
@@ -1041,7 +1169,7 @@ fn regexp_replace_flags(
     this_value: JsValue,
 ) -> Result<String, VmError> {
     if regexp_data(context, &this_value).is_some() {
-        let flags_value = vm.get_property_value(this_value, "flags", context)?;
+        let flags_value = get_property(vm, context, this_value, "flags")?;
         return vm.to_string_coerce(flags_value, context);
     }
     if let Some(object) = context.value_object(&this_value)
@@ -1051,7 +1179,7 @@ fn regexp_replace_flags(
     {
         return Ok(String::new());
     }
-    let flags_value = vm.get_property_value(this_value, "flags", context)?;
+    let flags_value = get_property(vm, context, this_value, "flags")?;
     vm.to_string_coerce(flags_value, context)
 }
 
@@ -1104,7 +1232,7 @@ fn get_substitution(
                     let name = &template[name_start..name_end];
                     let groups_object = vm.to_object(groups.clone(), context)?;
                     let capture =
-                        vm.get_property_value(context.object_value(groups_object), name, context)?;
+                        get_property(vm, context, context.object_value(groups_object), name)?;
                     if !matches!(capture, JsValue::Undefined) {
                         let capture = vm.to_string_coerce(capture, context)?;
                         push_str_replacement(&mut result, &capture)?;
@@ -1181,7 +1309,7 @@ fn regexp_symbol_split(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    let flags_value = vm.get_property_value(this_value.clone(), "flags", context)?;
+    let flags_value = get_property(vm, context, this_value.clone(), "flags")?;
     let flags = vm.to_string_coerce(flags_value, context)?;
     let new_flags = if flags.contains('y') {
         flags.clone()
@@ -1229,7 +1357,7 @@ fn regexp_symbol_split(
                 "RegExp split result must be an object or null",
             ));
         };
-        let last_index = vm.get_property_value(splitter.clone(), "lastIndex", context)?;
+        let last_index = get_property(vm, context, splitter.clone(), "lastIndex")?;
         let mut e = to_length(vm.to_number(last_index, context)?);
         e = e.min(size);
         if e == p {
@@ -1242,11 +1370,11 @@ fn regexp_symbol_split(
         }
         p = e;
         let match_value = JsValue::Object(match_object);
-        let length_value = vm.get_property_value(match_value.clone(), "length", context)?;
+        let length_value = get_property(vm, context, match_value.clone(), "length")?;
         let number_of_captures = to_length(vm.to_number(length_value, context)?);
         for capture_index in 1..number_of_captures {
             let capture =
-                vm.get_property_value(match_value.clone(), &capture_index.to_string(), context)?;
+                get_property(vm, context, match_value.clone(), &capture_index.to_string())?;
             output.push(capture);
             if output.len() == limit {
                 return context.create_array(output);
@@ -1266,7 +1394,7 @@ fn regexp_species_constructor(
     let default_constructor = context
         .get_global("RegExp")
         .ok_or_else(|| VmError::runtime("RegExp constructor missing"))?;
-    let constructor = vm.get_property_value(rx, "constructor", context)?;
+    let constructor = get_property(vm, context, rx, "constructor")?;
     if matches!(constructor, JsValue::Undefined) {
         return Ok(default_constructor);
     }

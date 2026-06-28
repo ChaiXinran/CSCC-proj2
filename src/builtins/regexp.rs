@@ -114,7 +114,7 @@ pub fn exec_global(regex: &Regex, text: &str) -> Vec<String> {
 ///   `$'`  → the portion after the match
 ///   `$n`  → the n-th capture group (1-indexed; `$0` is ignored)
 ///   `$$`  → a literal `$`
-fn expand_replacement(
+pub(crate) fn expand_replacement(
     template: &str,
     full_match: &str,
     captures: &[Option<&str>],

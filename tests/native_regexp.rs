@@ -130,6 +130,106 @@ fn string_regexp_symbol_dispatch_uses_refined_regexp_methods() {
 }
 
 #[test]
+fn regexp_symbol_methods_preserve_getter_exceptions() {
+    assert_eq!(
+        native_eval(
+            "var matchError = {}; \
+             var r = /./; \
+             Object.defineProperty(r, 'exec', { get: function () { throw matchError; } }); \
+             var matchCaught = false; \
+             try { r[Symbol.match]('x'); } catch (error) { matchCaught = error === matchError; } \
+             var lengthError = {}; \
+             var replacement = /./; \
+             replacement.exec = function () { \
+               var result = {}; \
+               Object.defineProperty(result, 'length', { get: function () { throw lengthError; } }); \
+               return result; \
+             }; \
+             var replaceCaught = false; \
+             try { replacement[Symbol.replace]('x', 'y'); } \
+             catch (error) { replaceCaught = error === lengthError; } \
+             matchCaught + ':' + replaceCaught;"
+        ),
+        "true:true"
+    );
+}
+
+#[test]
+fn regexp_legacy_static_accessors_have_annex_b_shape() {
+    assert_eq!(
+        native_eval(
+            "var input = Object.getOwnPropertyDescriptor(RegExp, 'input'); \
+             var capture = Object.getOwnPropertyDescriptor(RegExp, '$1'); \
+             var receiverChecked = false; \
+             try { capture.get.call(function Subclass() {}); } \
+             catch (error) { receiverChecked = error instanceof TypeError; } \
+             typeof input.get + ':' + typeof input.set + ':' + \
+             input.enumerable + ':' + input.configurable + ':' + \
+             (capture.set === undefined) + ':' + receiverChecked;"
+        ),
+        "function:function:false:true:true:true"
+    );
+}
+
+#[test]
+fn string_symbol_dispatch_preserves_object_receivers_and_ignores_primitives() {
+    assert_eq!(
+        native_eval(
+            "var primitiveGetterCalled = false; \
+             Object.defineProperty(Number.prototype, Symbol.match, { \
+               get: function () { primitiveGetterCalled = true; } \
+             }); \
+             var primitiveMatch = 'a1b'.match(1)[0]; \
+             var receiver = new String('wrapped'); \
+             var search = { flags: 'g' }; \
+             search[Symbol.replace] = function (value, replacement) { \
+               return (value === receiver) + ':' + (replacement === search); \
+             }; \
+             var dispatched = String.prototype.replaceAll.call(receiver, search, search); \
+             primitiveGetterCalled + ':' + primitiveMatch + ':' + dispatched;"
+        ),
+        "false:1:true:true"
+    );
+}
+
+#[test]
+fn string_replacement_expands_substitution_patterns() {
+    assert_eq!(
+        native_eval(
+            r#"'abc'.replaceAll('b', "[$&][$`][$'][$$][$1]") + ':' +
+               'aba'.replaceAll('a', '$`');"#
+        ),
+        "a[b][a][c][$][$1]c:bab"
+    );
+}
+
+#[test]
+fn string_match_and_search_fallback_create_regexps() {
+    assert_eq!(
+        native_eval(
+            "var match = 'undefined'.match(undefined); \
+             match[0] + ':' + match.index + ':' + ''.search() + ':' + 'abc'.search('.');"
+        ),
+        ":0:0:0"
+    );
+}
+
+#[test]
+fn regexp_match_all_uses_a_constructed_matcher_iterator() {
+    assert_eq!(
+        native_eval(
+            "var r = /a/; \
+             Object.defineProperty(r, 'flags', { value: 'g' }); \
+             r.lastIndex = 1; \
+             var iterator = r[Symbol.matchAll]('baab'); \
+             var first = iterator.next(); \
+             first.value[0] + ':' + first.value.index + ':' + first.done + ':' + r.lastIndex;"
+        ),
+        "a:1:false:1"
+    );
+}
+
+#[test]
 fn annex_b_globals_and_legacy_object_accessors_are_available() {
     assert_eq!(
         native_eval(
