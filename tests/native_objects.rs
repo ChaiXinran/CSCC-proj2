@@ -40,6 +40,59 @@ fn executes_instanceof_for_user_constructors() {
 }
 
 #[test]
+fn class_field_named_get_is_not_parsed_as_getter() {
+    assert_eq!(
+        eval(
+            "class P { \
+             get = () => '123'; \
+             static() { return 42; } \
+             } \
+             var p = new P(); \
+             p.get() + ':' + p.static();"
+        ),
+        "123:42"
+    );
+}
+
+#[test]
+fn object_is_uses_same_value_semantics() {
+    assert_eq!(
+        eval("Object.is(NaN, NaN) + ':' + Object.is(0, -0) + ':' + Object.is(undefined, undefined);"),
+        "true:false:true"
+    );
+}
+
+#[test]
+fn delete_property_coerces_primitives_but_rejects_nullish() {
+    assert_eq!(eval("delete 'abc'[100];"), "true");
+    assert_eq!(eval("delete 'abc'[0];"), "false");
+    assert_eq!(
+        eval("var ok = false; try { delete null.a; } catch (e) { ok = e instanceof TypeError; } ok;"),
+        "true"
+    );
+}
+
+#[test]
+fn delete_super_property_throws_reference_error() {
+    assert_eq!(
+        eval("var ok = false; var a = { f() { delete super.a; } }; try { a.f(); } catch (e) { ok = e instanceof ReferenceError; } ok;"),
+        "true"
+    );
+}
+
+#[test]
+fn accessor_function_names_include_get_or_set_prefix() {
+    assert_eq!(
+        eval("class C { get y() { return 1; } } Object.getOwnPropertyDescriptor(C.prototype, 'y').get.name;"),
+        "get y"
+    );
+    assert_eq!(
+        eval("var o = { get x() { return 1; } }; Object.getOwnPropertyDescriptor(o, 'x').get.name;"),
+        "get x"
+    );
+}
+
+#[test]
 fn executes_sparse_array_holes() {
     assert_eq!(
         eval(

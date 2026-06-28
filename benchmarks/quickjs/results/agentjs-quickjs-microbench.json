@@ -1,0 +1,17 @@
+{
+  "label": "agentjs-quickjs-microbench",
+  "engine": [
+    "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\release\\agentjs.exe",
+    "jetstream"
+  ],
+  "source": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\quickjs\\tests\\microbench.js",
+  "benches": [
+    "all"
+  ],
+  "status": "timeout",
+  "returncode": null,
+  "elapsed_ms": 300023.2,
+  "rows": [],
+  "stdout": "",
+  "stderr": ""
+}

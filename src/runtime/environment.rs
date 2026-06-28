@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::{JsValue, Trace, Tracer};
+use super::{JsValue, ObjectId, Trace, Tracer};
 use crate::vm::VmError;
 
 /// Stable handle into an environment arena.
@@ -21,6 +21,7 @@ pub struct Binding {
 #[derive(Debug, Clone, Default)]
 pub struct Environment {
     pub outer: Option<EnvironmentId>,
+    pub with_object: Option<ObjectId>,
     bindings: HashMap<String, Binding>,
 }
 
@@ -136,12 +137,23 @@ impl Environment {
         binding.value = value;
         Ok(())
     }
+
+    pub fn with_object(object: ObjectId, outer: Option<EnvironmentId>) -> Self {
+        Self {
+            outer,
+            with_object: Some(object),
+            bindings: HashMap::new(),
+        }
+    }
 }
 
 impl Trace for Environment {
     fn trace(&self, tracer: &mut Tracer<'_>) {
         if let Some(outer) = self.outer {
             tracer.mark_environment(outer);
+        }
+        if let Some(object) = self.with_object {
+            tracer.mark_object(object);
         }
         for binding in self.bindings.values() {
             binding.value.trace(tracer);

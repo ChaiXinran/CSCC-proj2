@@ -195,6 +195,10 @@ impl Heap {
         self.functions.get(id.0 as usize)?.as_ref()
     }
 
+    pub fn function_mut(&mut self, id: FunctionId) -> Option<&mut JsFunction> {
+        self.functions.get_mut(id.0 as usize)?.as_mut()
+    }
+
     #[must_use]
     pub fn contains_function(&self, id: FunctionId) -> bool {
         self.function(id).is_some()

@@ -9,6 +9,7 @@ pub struct CallFrame {
     pub return_ip: usize,
     pub environment: EnvironmentId,
     pub this_value: JsValue,
+    pub new_target: JsValue,
     pub stack_base: usize,
 }
 
@@ -19,6 +20,7 @@ impl CallFrame {
         return_ip: usize,
         environment: EnvironmentId,
         this_value: JsValue,
+        new_target: JsValue,
         stack_base: usize,
     ) -> Self {
         Self {
@@ -26,6 +28,7 @@ impl CallFrame {
             return_ip,
             environment,
             this_value,
+            new_target,
             stack_base,
         }
     }

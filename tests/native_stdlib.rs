@@ -23,6 +23,13 @@ fn string_character_access_methods() {
 }
 
 #[test]
+fn primitive_string_index_access_uses_array_index_keys() {
+    assert_eq!(native_eval("'abc'[1] + ':' + 'abc'['1']"), "b:b");
+    assert_eq!(native_eval("'abc'['01']"), "undefined");
+    assert_eq!(native_eval("'abc'['4294967295']"), "undefined");
+}
+
+#[test]
 fn string_search_methods() {
     assert_eq!(native_eval("'banana'.indexOf('a')"), "1");
     assert_eq!(native_eval("'banana'.lastIndexOf('a')"), "5");

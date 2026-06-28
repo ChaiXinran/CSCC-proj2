@@ -200,11 +200,19 @@ pub(crate) fn utf16_units(value: &str) -> Vec<u16> {
 }
 
 pub(crate) fn utf16_length(value: &str) -> usize {
-    value.encode_utf16().count()
+    if value.is_ascii() {
+        value.len()
+    } else {
+        value.encode_utf16().count()
+    }
 }
 
 pub(crate) fn utf16_code_unit_at(value: &str, index: usize) -> Option<u16> {
-    value.encode_utf16().nth(index)
+    if value.is_ascii() {
+        value.as_bytes().get(index).copied().map(u16::from)
+    } else {
+        value.encode_utf16().nth(index)
+    }
 }
 
 pub(crate) fn utf16_slice(value: &str, start: usize, end: usize) -> String {

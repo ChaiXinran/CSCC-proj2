@@ -1450,6 +1450,51 @@ impl Parser {
                 });
             }
 
+            // Annex B legacy form: `for (var k = init in obj)`.
+            // Keep the initializer as a preceding var declaration so side
+            // effects and the visible var binding are preserved.
+            if matches!(&self.peek().kind, TokenKind::Operator(op) if op == "=") {
+                self.advance(); // `=`
+                let saved_no_in = std::mem::replace(&mut self.no_in, true);
+                let initializer = self.parse_assignment();
+                self.no_in = saved_no_in;
+                let initializer = initializer?;
+                if self.check_keyword(Keyword::In) {
+                    if kind != VariableKind::Var || self.is_strict {
+                        return Err(self.error(
+                            "for-in declarations with initializers require sloppy `var`".into(),
+                        ));
+                    }
+                    self.advance(); // `in`
+                    let right = self.parse_expression()?;
+                    self.expect_punctuator(')')?;
+                    let body = self.parse_loop_body()?;
+                    let init_stmt = Statement::VariableDeclaration {
+                        kind,
+                        declarations: vec![VariableDeclarator {
+                            name: name.clone(),
+                            pattern: None,
+                            initializer: Some(initializer),
+                        }],
+                    };
+                    let loop_stmt = Statement::ForIn {
+                        left: ForBinding::Declaration {
+                            kind,
+                            pattern: crate::ast::BindingPattern::Identifier(name),
+                        },
+                        right,
+                        body,
+                    };
+                    return Ok(Statement::Block(vec![init_stmt, loop_stmt]));
+                }
+                let init = self.parse_for_declaration_tail_after_initializer(
+                    kind,
+                    name,
+                    Some(initializer),
+                )?;
+                return self.parse_for_classic_rest(Some(Box::new(init)));
+            }
+
             let init = self.parse_for_declaration_tail(kind, name)?;
             return self.parse_for_classic_rest(Some(Box::new(init)));
         }
@@ -1543,21 +1588,33 @@ impl Parser {
         kind: VariableKind,
         first_name: String,
     ) -> Result<Statement, ParseError> {
+        self.parse_for_declaration_tail_after_initializer(kind, first_name, None)
+    }
+
+    fn parse_for_declaration_tail_after_initializer(
+        &mut self,
+        kind: VariableKind,
+        first_name: String,
+        first_initializer: Option<Expression>,
+    ) -> Result<Statement, ParseError> {
         let mut declarations = Vec::new();
         let mut name = first_name;
+        let mut initializer = first_initializer;
         loop {
-            let initializer = if self.eat_operator("=") {
+            let current_initializer = if initializer.is_some() {
+                initializer.take()
+            } else if self.eat_operator("=") {
                 Some(self.parse_assignment()?)
             } else {
                 None
             };
-            if kind == VariableKind::Const && initializer.is_none() {
+            if kind == VariableKind::Const && current_initializer.is_none() {
                 return Err(self.error("`const` declarations require an initializer".into()));
             }
             declarations.push(VariableDeclarator {
                 name,
                 pattern: None,
-                initializer,
+                initializer: current_initializer,
             });
             if !self.eat_punctuator(',') {
                 break;
@@ -2182,6 +2239,14 @@ fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
             .expressions
             .iter()
             .any(expr_contains_forbidden_meta),
+        Expression::TaggedTemplate { tag, template } => {
+            expr_contains_forbidden_meta(tag)
+                || template
+                    .expressions
+                    .iter()
+                    .any(expr_contains_forbidden_meta)
+        }
+        Expression::Parenthesized(inner) => expr_contains_forbidden_meta(inner),
         Expression::Spread(expr) | Expression::Await(expr) => expr_contains_forbidden_meta(expr),
         Expression::Yield { argument, .. } => argument
             .as_deref()
@@ -2297,6 +2362,10 @@ fn expr_contains_yield(expr: &Expression) -> bool {
         Expression::TemplateLiteral(template) => {
             template.expressions.iter().any(expr_contains_yield)
         }
+        Expression::TaggedTemplate { tag, template } => {
+            expr_contains_yield(tag) || template.expressions.iter().any(expr_contains_yield)
+        }
+        Expression::Parenthesized(inner) => expr_contains_yield(inner),
         Expression::DynamicImport { specifier, options } => {
             expr_contains_yield(specifier) || options.as_deref().is_some_and(expr_contains_yield)
         }

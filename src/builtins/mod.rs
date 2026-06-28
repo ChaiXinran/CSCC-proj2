@@ -32,7 +32,7 @@ pub(crate) mod regexp;
 /// String / Number / Boolean / Math / Error / JSON adapter layer.
 mod std_primitives;
 #[allow(dead_code)]
-mod string;
+pub(crate) mod string;
 
 use crate::{
     runtime::{

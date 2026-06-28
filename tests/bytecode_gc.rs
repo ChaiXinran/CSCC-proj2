@@ -137,6 +137,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
             is_strict: false,
             is_async: false,
             is_generator: false,
+            is_arrow: false,
             environment_policy: EnvironmentCapturePolicy::None,
         }],
         handlers: Vec::new(),

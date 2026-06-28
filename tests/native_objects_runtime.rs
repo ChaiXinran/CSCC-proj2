@@ -347,6 +347,7 @@ fn vm_constructs_user_functions_and_runtime_instanceof_uses_prototype_chain() {
         is_strict: false,
         is_async: false,
         is_generator: false,
+        is_arrow: false,
         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
     };
     let function = chunk.add_function(template).unwrap();

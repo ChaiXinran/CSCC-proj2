@@ -1,0 +1,50 @@
+{
+  "label": "agentjs-quickjs-node-after-pure-fixes",
+  "engine": [
+    "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\release\\agentjs.exe",
+    "jetstream"
+  ],
+  "suite": "node",
+  "results": [
+    {
+      "case": "quickjs\\tests\\test_closure.js",
+      "status": "runtime-limit",
+      "returncode": 1,
+      "elapsed_ms": 417.2,
+      "stdout": "",
+      "stderr": "agentjs: RuntimeLimit: execution error: call stack limit exceeded\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_language.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 13.2,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected `)` but found identifier `a` at bytes 14738..14739\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_builtin.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 13.6,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: Unicode sets character class syntax character must be escaped at bytes 24797..24803\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_loop.js",
+      "status": "runtime-error",
+      "returncode": 1,
+      "elapsed_ms": 12.5,
+      "stdout": "",
+      "stderr": "agentjs: Unsupported: compile error: bytecode compiler does not support for-in target must be a variable or a simple identifier yet\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_bigint.js",
+      "status": "runtime-error",
+      "returncode": 1,
+      "elapsed_ms": 11.7,
+      "stdout": "",
+      "stderr": "agentjs: Unsupported: compile error: bytecode compiler does not support BigInt literal `515377520732011331036461129765621272702107522001n` is outside the native i128 range yet\n"
+    }
+  ]
+}

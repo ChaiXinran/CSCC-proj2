@@ -425,6 +425,14 @@ pub enum Expression {
     Function(FunctionLiteral),
     /// Untagged template literal: `` `hello ${name}` ``.
     TemplateLiteral(TemplateLiteral),
+    /// Tagged template literal: `` tag`hello ${name}` ``.
+    TaggedTemplate {
+        tag: Box<Expression>,
+        template: TemplateLiteral,
+    },
+    /// Parenthesized expression. Kept so early errors such as the `**` unary
+    /// operand restriction can distinguish `-x ** y` from `(-x) ** y`.
+    Parenthesized(Box<Expression>),
     /// Spread expression used inside call arg lists: `...expr`.
     Spread(Box<Expression>),
     /// Class expression: `class [Name] { ... }`.

@@ -52,6 +52,7 @@ struct CompileContext {
     breakables: Vec<BreakContext>,
     lexical_scopes: Vec<HashSet<String>>,
     environment_depth: u32,
+    with_depth: u32,
     /// Number of enclosing function bodies; 0 = top-level script.
     function_depth: usize,
 }
@@ -90,6 +91,10 @@ impl CompileContext {
             .iter()
             .rev()
             .any(|scope| scope.contains(name))
+    }
+
+    fn needs_dynamic_name_lookup(&self, name: &str) -> bool {
+        self.inside_function() || self.with_depth > 0 || self.is_lexical(name)
     }
 }
 
@@ -303,12 +308,15 @@ impl Compiler {
                 Ok(())
             }
             Statement::With { object, body } => {
-                // Evaluate the `with` object for side-effects, then discard it.
-                // Full ObjectEnvironmentRecord semantics are not implemented;
-                // variable lookups fall through to the enclosing scope.
                 self.compile_expression(object, chunk, context)?;
-                chunk.emit(Instruction::Pop);
-                self.compile_statement(body, chunk, context, false)
+                chunk.emit(Instruction::EnterWithEnvironment);
+                context.environment_depth += 1;
+                context.with_depth += 1;
+                let result = self.compile_statement(body, chunk, context, false);
+                context.with_depth -= 1;
+                chunk.emit(Instruction::PopEnvironment);
+                context.environment_depth -= 1;
+                result
             }
         }
     }
@@ -1024,14 +1032,45 @@ impl Compiler {
             None => None,
         };
 
+        let needs_iteration_env = !declared.is_empty();
+        if needs_iteration_env {
+            for (name, _) in &declared {
+                let index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::LoadName(index));
+            }
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+            let mut iteration_scope = HashSet::new();
+            for (name, kind) in &declared {
+                let index = self.add_name(name, chunk)?;
+                chunk.emit(match kind {
+                    VariableKind::Const => Instruction::CreateImmutableBinding(index),
+                    _ => Instruction::CreateMutableBinding(index),
+                });
+                iteration_scope.insert(name.clone());
+            }
+            for (name, _) in declared.iter().rev() {
+                let index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::InitializeBinding(index));
+            }
+            context.lexical_scopes.push(iteration_scope);
+        }
+
+        let continue_environment_depth = context.environment_depth;
+        let break_environment_depth = if needs_iteration_env {
+            context.environment_depth.saturating_sub(1)
+        } else {
+            context.environment_depth
+        };
+
         context.loops.push(LoopContext {
             continue_target: None,
             continue_jumps: Vec::new(),
-            environment_depth: context.environment_depth,
+            environment_depth: continue_environment_depth,
         });
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
-            environment_depth: context.environment_depth,
+            environment_depth: break_environment_depth,
             label: None,
         });
 
@@ -1053,6 +1092,20 @@ impl Compiler {
             chunk
                 .patch_jump(jump, update_target)
                 .map_err(CompileError::from_chunk)?;
+        }
+        if needs_iteration_env {
+            for (name, _) in &declared {
+                let index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::LoadName(index));
+            }
+            context.lexical_scopes.pop();
+            chunk.emit(Instruction::PopEnvironment);
+            context.environment_depth -= 1;
+            for (name, _) in declared.iter().rev() {
+                let index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::StoreName(index));
+                chunk.emit(Instruction::Pop);
+            }
         }
         if let Some(update_expression) = update {
             self.compile_expression(update_expression, chunk, context)?;
@@ -1171,11 +1224,10 @@ impl Compiler {
                     self.emit_store_identifier(name, chunk, context)?;
                     chunk.emit(Instruction::Pop);
                 }
-                _ => {
-                    return Err(CompileError::unsupported(
-                        "for-in target must be a variable or a simple identifier",
-                    ));
+                Expression::Member { .. } => {
+                    self.assign_dstr_element_to_target(target, chunk, context)?;
                 }
+                _ => return Err(CompileError::unsupported("for-in assignment target")),
             },
         }
 
@@ -1498,7 +1550,7 @@ impl Compiler {
         context: &CompileContext,
     ) -> Result<(), CompileError> {
         let index = self.add_name(name, chunk)?;
-        if context.inside_function() || context.is_lexical(name) {
+        if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::StoreName(index));
         } else {
             chunk.emit(Instruction::StoreGlobal(index));
@@ -1545,6 +1597,7 @@ impl Compiler {
             is_strict: fn_chunk.is_strict,
             is_async,
             is_generator,
+            is_arrow: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -1631,6 +1684,7 @@ impl Compiler {
             breakables: Vec::new(),
             lexical_scopes: Vec::new(),
             environment_depth: 0,
+            with_depth: 0,
             function_depth: outer_context.function_depth + 1,
         };
         let mut lexical_scope =
@@ -1876,6 +1930,10 @@ impl Compiler {
                 self.compile_function_expression(literal, chunk, context)
             }
             Expression::TemplateLiteral(tl) => self.compile_template_literal(tl, chunk, context),
+            Expression::TaggedTemplate { tag, template } => {
+                self.compile_tagged_template(tag, template, chunk, context)
+            }
+            Expression::Parenthesized(inner) => self.compile_expression(inner, chunk, context),
             Expression::Spread(_) => Err(CompileError {
                 is_syntax: false,
                 message: "spread expression is only valid inside call arguments or array literals"
@@ -2087,7 +2145,7 @@ impl Compiler {
             return Ok(());
         }
         let name_index = self.add_name(name, chunk)?;
-        if context.inside_function() || context.is_lexical(name) {
+        if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::LoadName(name_index));
         } else {
             chunk.emit(Instruction::LoadGlobal(name_index));
@@ -3108,6 +3166,97 @@ impl Compiler {
             .iter()
             .any(|a| matches!(a, CallArgument::Spread(_)));
 
+        if let Expression::Member {
+            object,
+            property,
+            computed: false,
+        } = callee
+            && matches!(object.as_ref(), Expression::Super)
+        {
+            let method_name = match property.as_ref() {
+                Expression::Identifier(name) => name.clone(),
+                Expression::PrivateName(name) => format!("\x00#{name}"),
+                _ => {
+                    return Err(CompileError::unsupported(format!(
+                        "non-identifier super method property {property:?}"
+                    )));
+                }
+            };
+            let method_index = self.add_name(&method_name, chunk)?;
+            chunk.emit(Instruction::GetSuperMethod(method_index));
+
+            if has_spread {
+                let (n_regular, spread_expr) =
+                    self.split_trailing_spread(arguments, "super method call")?;
+                let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                    is_syntax: false,
+                    message: "too many call arguments".into(),
+                })?;
+                for arg in &arguments[..n_regular] {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                self.compile_expression(spread_expr, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(n));
+            } else {
+                let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    is_syntax: false,
+                    message: "call argument count exceeds the u16 bytecode range".into(),
+                })?;
+                for arg in arguments {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                chunk.emit(Instruction::CallWithThis(argument_count));
+            }
+            return Ok(());
+        }
+
+        if let Expression::Member {
+            object,
+            property,
+            computed: true,
+        } = callee
+            && matches!(object.as_ref(), Expression::Super)
+        {
+            self.compile_expression(property, chunk, context)?;
+            chunk.emit(Instruction::GetSuperElementMethod);
+
+            if has_spread {
+                let (n_regular, spread_expr) =
+                    self.split_trailing_spread(arguments, "computed super method call")?;
+                let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                    is_syntax: false,
+                    message: "too many call arguments".into(),
+                })?;
+                for arg in &arguments[..n_regular] {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                self.compile_expression(spread_expr, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(n));
+            } else {
+                let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    is_syntax: false,
+                    message: "call argument count exceeds the u16 bytecode range".into(),
+                })?;
+                for arg in arguments {
+                    let CallArgument::Expression(e) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(e, chunk, context)?;
+                }
+                chunk.emit(Instruction::CallWithThis(argument_count));
+            }
+            return Ok(());
+        }
+
         // Static member calls preserve their receiver as `this`.
         if let Expression::Member {
             object,
@@ -3413,7 +3562,7 @@ impl Compiler {
         }
         if properties
             .iter()
-            .all(|property| matches!(property, ObjectProperty::Data { .. }))
+            .all(|property| matches!(property, ObjectProperty::Data { value, .. } if !matches!(value, Expression::Function(_))))
         {
             let count = u16::try_from(properties.len()).map_err(|_| CompileError {
                 is_syntax: false,
@@ -3452,10 +3601,17 @@ impl Compiler {
                     if let PropertyName::Computed(expr) = key {
                         chunk.emit(Instruction::Duplicate);
                         self.compile_expression(expr, chunk, context)?;
-                        self.compile_accessor_function(&[], body, chunk, context)?;
+                        self.compile_accessor_function(None, &[], body, chunk, context)?;
                         chunk.emit(Instruction::DefineComputedGetter);
                     } else {
-                        self.compile_accessor_function(&[], body, chunk, context)?;
+                        let accessor_name = accessor_function_name("get", &property_key(key));
+                        self.compile_accessor_function(
+                            Some(accessor_name),
+                            &[],
+                            body,
+                            chunk,
+                            context,
+                        )?;
                         let key = self.add_name(&property_key(key), chunk)?;
                         chunk.emit(Instruction::DefineGetter(key));
                     }
@@ -3469,6 +3625,7 @@ impl Compiler {
                         chunk.emit(Instruction::Duplicate);
                         self.compile_expression(expr, chunk, context)?;
                         self.compile_accessor_function(
+                            None,
                             std::slice::from_ref(parameter),
                             body,
                             chunk,
@@ -3476,7 +3633,9 @@ impl Compiler {
                         )?;
                         chunk.emit(Instruction::DefineComputedSetter);
                     } else {
+                        let accessor_name = accessor_function_name("set", &property_key(key));
                         self.compile_accessor_function(
+                            Some(accessor_name),
                             std::slice::from_ref(parameter),
                             body,
                             chunk,
@@ -3511,6 +3670,10 @@ impl Compiler {
                 property,
                 computed: false,
             } => {
+                if matches!(object.as_ref(), Expression::Super) {
+                    chunk.emit(Instruction::ThrowReferenceError);
+                    return Ok(());
+                }
                 let Expression::Identifier(property) = property.as_ref() else {
                     return Err(CompileError::unsupported(
                         "non-identifier static property in delete",
@@ -3526,6 +3689,10 @@ impl Compiler {
                 property,
                 computed: true,
             } => {
+                if matches!(object.as_ref(), Expression::Super) {
+                    chunk.emit(Instruction::ThrowReferenceError);
+                    return Ok(());
+                }
                 self.compile_expression(object, chunk, context)?;
                 self.compile_expression(property, chunk, context)?;
                 chunk.emit(Instruction::DeleteElement);
@@ -3558,6 +3725,7 @@ impl Compiler {
 
     fn compile_accessor_function(
         &mut self,
+        name: Option<String>,
         params: &[crate::ast::FunctionParam],
         body: &FunctionBody,
         chunk: &mut Chunk,
@@ -3565,7 +3733,7 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let compiled = self.compile_function_body(params, body, context)?;
         let template = FunctionTemplate {
-            name: None,
+            name,
             params: compiled.params,
             rest_param: compiled.rest_param,
             length_override: Some(compiled.length),
@@ -3573,6 +3741,7 @@ impl Compiler {
             is_strict: compiled.is_strict,
             is_async: false,
             is_generator: false,
+            is_arrow: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let index = chunk
@@ -3609,6 +3778,39 @@ impl Compiler {
             chunk.emit(Instruction::Add); // prev_string + quasi → string
         }
         Ok(())
+    }
+
+    fn compile_tagged_template(
+        &mut self,
+        tag: &Expression,
+        template: &crate::ast::TemplateLiteral,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        let raw_array = Expression::Array(
+            template
+                .quasis
+                .iter()
+                .cloned()
+                .map(|text| {
+                    crate::ast::ArrayElement::Expression(Expression::Literal(Literal::String(text)))
+                })
+                .collect(),
+        );
+        let template_object = Expression::Object(vec![ObjectProperty::Data {
+            key: PropertyName::Identifier("raw".into()),
+            value: raw_array,
+        }]);
+        let mut arguments = Vec::with_capacity(template.expressions.len() + 1);
+        arguments.push(crate::ast::CallArgument::Expression(template_object));
+        arguments.extend(
+            template
+                .expressions
+                .iter()
+                .cloned()
+                .map(crate::ast::CallArgument::Expression),
+        );
+        self.compile_call(tag, &arguments, chunk, context)
     }
 
     // -----------------------------------------------------------------------
@@ -3831,6 +4033,7 @@ impl Compiler {
             is_strict: true, // class bodies are always strict
             is_async: false,
             is_generator: false,
+            is_arrow: false,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let ctor_idx = chunk
@@ -3838,6 +4041,21 @@ impl Compiler {
             .map_err(CompileError::from_chunk)?;
         chunk.emit(Instruction::CreateFunction(ctor_idx)); // [ctor]
         chunk.emit(Instruction::Duplicate); // [ctor, ctor_copy]
+
+        let super_binding = if let Some(super_expr) = super_class {
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+            let super_name = "\u{0}class_super";
+            let super_idx = self.add_name(super_name, chunk)?;
+            chunk.emit(Instruction::CreateMutableBinding(super_idx));
+            self.compile_expression(super_expr, chunk, context)?; // [ctor, ctor_copy, super]
+            chunk.emit(Instruction::Duplicate); // [ctor, ctor_copy, super, super]
+            chunk.emit(Instruction::InitializeBinding(super_idx)); // [ctor, ctor_copy, super]
+            chunk.emit(Instruction::SetObjectPrototype); // [ctor, ctor_copy]
+            Some(super_idx)
+        } else {
+            None
+        };
 
         // Static methods — defined on the constructor itself.
         for element in elements {
@@ -3849,7 +4067,14 @@ impl Compiler {
                 is_setter,
             } = element
             {
-                let fn_name = prop_name.to_key_string();
+                let base_name = prop_name.to_key_string();
+                let fn_name = if *is_getter {
+                    accessor_function_name("get", &base_name)
+                } else if *is_setter {
+                    accessor_function_name("set", &base_name)
+                } else {
+                    base_name
+                };
                 let storage_key = Self::class_member_storage_key(prop_name);
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
@@ -3862,6 +4087,7 @@ impl Compiler {
                     is_strict: true, // class methods are always strict
                     is_async: function.is_async,
                     is_generator: function.is_generator,
+                    is_arrow: false,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
                 let fn_idx = chunk
@@ -3901,8 +4127,8 @@ impl Compiler {
         chunk.emit(Instruction::ObjectCreateEmpty); // [ctor, ctor_copy, ctor_for_constructor, proto]
 
         // Set up prototype inheritance if there is a super class.
-        if let Some(super_expr) = super_class {
-            self.compile_expression(super_expr, chunk, context)?; // [.., proto, super]
+        if let Some(super_idx) = super_binding {
+            chunk.emit(Instruction::LoadName(super_idx)); // [.., proto, super]
             let proto_key = self.add_name("prototype", chunk)?;
             chunk.emit(Instruction::GetProperty(proto_key)); // [.., proto, super.prototype]
             chunk.emit(Instruction::SetObjectPrototype); // [.., proto]
@@ -3918,7 +4144,14 @@ impl Compiler {
                 is_setter,
             } = element
             {
-                let fn_name = prop_name.to_key_string();
+                let base_name = prop_name.to_key_string();
+                let fn_name = if *is_getter {
+                    accessor_function_name("get", &base_name)
+                } else if *is_setter {
+                    accessor_function_name("set", &base_name)
+                } else {
+                    base_name
+                };
                 let storage_key = Self::class_member_storage_key(prop_name);
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
@@ -3931,6 +4164,7 @@ impl Compiler {
                     is_strict: true, // class methods are always strict
                     is_async: function.is_async,
                     is_generator: function.is_generator,
+                    is_arrow: false,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
                 let fn_idx = chunk
@@ -3974,6 +4208,11 @@ impl Compiler {
         // DefineClassPrototype peeks ctor_copy (below proto), pops proto as value.
         chunk.emit(Instruction::DefineClassPrototype); // [ctor, ctor_copy]
         chunk.emit(Instruction::Pop); // [ctor]
+
+        if super_binding.is_some() {
+            chunk.emit(Instruction::PopEnvironment);
+            context.environment_depth -= 1;
+        }
 
         // Pop the computed-field-key scope if we opened one.
         if computed_field_env {
@@ -4022,6 +4261,7 @@ impl Compiler {
                         is_strict: true,
                         is_generator: false,
                         is_async: false,
+                        is_arrow: false,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
                     let block_idx = chunk
@@ -4401,6 +4641,7 @@ impl Compiler {
             is_strict: fn_chunk.is_strict,
             is_async: literal.is_async,
             is_generator: literal.is_generator,
+            is_arrow: literal.is_arrow,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -4667,6 +4908,10 @@ struct CompiledFunction {
 
 fn property_key(key: &PropertyName) -> String {
     key.to_key_string()
+}
+
+fn accessor_function_name(prefix: &str, key: &str) -> String {
+    format!("{prefix} {key}")
 }
 
 fn compound_assignment_instruction(operator: AssignmentOperator) -> Option<Instruction> {

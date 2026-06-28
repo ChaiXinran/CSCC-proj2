@@ -1,0 +1,98 @@
+{
+  "label": "agentjs-quickjs-tests",
+  "engine": [
+    "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\release\\agentjs.exe",
+    "jetstream"
+  ],
+  "suite": "all",
+  "results": [
+    {
+      "case": "quickjs\\tests\\test_bigint.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 18.2,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: unary expression cannot be used directly as left operand of `**`; wrap in parentheses at bytes 3828..3830\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_bjson.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 10.8,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected `(` but found `*` at bytes 7..8\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_builtin.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 10.5,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: unary expression cannot be used directly as left operand of `**`; wrap in parentheses at bytes 10347..10349\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_closure.js",
+      "status": "runtime-error",
+      "returncode": 1,
+      "elapsed_ms": 11.4,
+      "stdout": "",
+      "stderr": "agentjs: Error: execution error: uncaught Error\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_cyclic_import.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 9.9,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected `(` but found `{` at bytes 223..224\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_language.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 10.4,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected property name, got `=` at bytes 7497..7498\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_loop.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 9.6,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected `;` but found `)` at bytes 2974..2975\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_rw_handler.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 9.9,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected `(` but found `*` at bytes 7..8\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_std.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 9.7,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: unexpected `\u0000` at bytes 0..1\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_worker.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 9.8,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected `(` but found `*` at bytes 33..34\n"
+    },
+    {
+      "case": "quickjs\\tests\\test_worker_module.js",
+      "status": "syntax-error",
+      "returncode": 1,
+      "elapsed_ms": 9.6,
+      "stdout": "",
+      "stderr": "agentjs: SyntaxError: parse error: expected `(` but found `*` at bytes 45..46\n"
+    }
+  ]
+}

@@ -52,6 +52,10 @@ fn runtime_can_allocate_function_values_with_captured_environment() {
         environment: Some(captured),
         is_async: false,
         is_generator: false,
+        is_arrow: false,
+        lexical_this: None,
+        lexical_new_target: None,
+        home_object: None,
     };
 
     let id = context.allocate_function(function).unwrap();
@@ -76,6 +80,7 @@ fn runtime_call_frames_track_this_and_call_depth_limit() {
         0,
         context.current_environment(),
         this_value.clone(),
+        JsValue::Undefined,
         0,
     );
 
@@ -87,6 +92,7 @@ fn runtime_call_frames_track_this_and_call_depth_limit() {
             None,
             0,
             context.current_environment(),
+            JsValue::Undefined,
             JsValue::Undefined,
             0,
         ))
@@ -147,6 +153,42 @@ fn runtime_objects_and_arrays_support_basic_property_operations() {
         context.get_element(array, JsValue::Number(0.0)).unwrap(),
         JsValue::Number(9.0)
     );
+}
+
+#[test]
+fn with_statement_resolves_nested_object_environments() {
+    let source = r#"
+        var o1 = { x: "o1", y: "o1" };
+        var x = "local";
+        eval('var z="var_obj";');
+        var ok = z === "var_obj";
+        with (o1) {
+            ok = ok && x === "o1";
+            ok = ok && eval("x") === "o1";
+            var f = function () {
+                o2 = { x: "o2" };
+                with (o2) {
+                    ok = ok && x === "o2";
+                    ok = ok && y === "o1";
+                    ok = ok && z === "var_obj";
+                    ok = ok && eval("x") === "o2";
+                    ok = ok && eval("y") === "o1";
+                    ok = ok && eval("z") === "var_obj";
+                    ok = ok && eval('eval("x")') === "o2";
+                }
+            };
+            f();
+        }
+        ok;
+    "#;
+    let result = agentjs::engine::Engine::with_backend(
+        agentjs::backend::BackendKind::Native,
+        agentjs::engine::RuntimeConfig::default(),
+    )
+    .execute(source, agentjs::engine::ExecutionOptions::default())
+    .unwrap_or_else(|error| panic!("native eval failed: {error}"))
+    .value;
+    assert_eq!(result, "true");
 }
 
 #[test]

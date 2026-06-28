@@ -65,6 +65,7 @@ pub fn install_object(context: &mut NativeContext) {
             object_from_entries as crate::runtime::NativeCall,
         ),
         ("assign", 2, object_assign as crate::runtime::NativeCall),
+        ("is", 2, object_is as crate::runtime::NativeCall),
         ("freeze", 1, object_freeze as crate::runtime::NativeCall),
         ("seal", 1, object_seal as crate::runtime::NativeCall),
         (
@@ -175,6 +176,17 @@ fn object_from_argument(
         }
         value => vm.to_object(value, context).map(JsValue::Object),
     }
+}
+
+fn object_is(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let left = arguments.first().unwrap_or(&JsValue::Undefined);
+    let right = arguments.get(1).unwrap_or(&JsValue::Undefined);
+    Ok(JsValue::Boolean(left.same_value(right)))
 }
 
 fn object_create(
