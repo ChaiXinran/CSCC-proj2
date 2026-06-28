@@ -108,6 +108,8 @@ pub enum Instruction {
     Construct(u16),
 
     Throw,
+    /// Throws a catchable ReferenceError without consuming the operand stack.
+    ThrowReferenceError,
     Return,
     ReturnUndefined,
 
@@ -172,6 +174,13 @@ pub enum Instruction {
     /// Pops `object`, pushes `method_value` then `object` back.
     /// Stack: [object] → [method_value, object]
     GetMethod(u16),
+    /// Reads `super.name` using the current function's home object, then
+    /// pushes the method and current `this` for `CallWithThis`.
+    GetSuperMethod(u16),
+    /// Reads `super[key]` using the current function's home object, then
+    /// pushes the method and current `this` for `CallWithThis`.
+    /// Stack: [key] -> [method_value, this_value]
+    GetSuperElementMethod,
 
     /// Reads a computed property and rearranges the stack so the callee and
     /// `this` are in position for `CallWithThis`.
@@ -230,6 +239,9 @@ pub enum Instruction {
 
     // V5 structured completion and lexical environment instructions.
     CreateLexicalEnvironment,
+    /// Pops an object value and creates a `with` object environment around it.
+    /// Stack: [object] -> []
+    EnterWithEnvironment,
     PopEnvironment,
     CreateMutableBinding(u16),
     CreateImmutableBinding(u16),
@@ -373,6 +385,7 @@ impl Instruction {
             | Self::Throw
             | Self::Return
             | Self::DeclareLocal(_)
+            | Self::EnterWithEnvironment
             | Self::InitializeBinding(_) => StackEffect::new(1, 0),
 
             // pop 1, push 1 (net 0)
@@ -426,6 +439,7 @@ impl Instruction {
             // no stack effect
             Self::Jump(_)
             | Self::ReturnUndefined
+            | Self::ThrowReferenceError
             | Self::DeclareFunction { .. }
             | Self::CreateLexicalEnvironment
             | Self::PopEnvironment
@@ -443,6 +457,8 @@ impl Instruction {
 
             // GetMethod: pops object, pushes (method, object) — net +1
             Self::GetMethod(_) => StackEffect::new(1, 2),
+            Self::GetSuperMethod(_) => StackEffect::new(0, 2),
+            Self::GetSuperElementMethod => StackEffect::new(1, 2),
 
             // GetElementMethod: [object, key] -> [method, object]
             Self::GetElementMethod => StackEffect::with_required(2, 2, 2),
@@ -517,7 +533,10 @@ impl Instruction {
 
     #[must_use]
     pub const fn is_terminator(self) -> bool {
-        matches!(self, Self::Return | Self::ReturnUndefined | Self::Throw)
+        matches!(
+            self,
+            Self::Return | Self::ReturnUndefined | Self::Throw | Self::ThrowReferenceError
+        )
     }
 
     #[must_use]

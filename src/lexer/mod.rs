@@ -442,7 +442,12 @@ impl<'source> Lexer<'source> {
             return Err(self.invalid_numeric_separator(start));
         }
         let mut is_integer_literal = true;
-        if self.cursor.peek() == Some('.') {
+        let legacy_integer_before_dot = integer_raw.len() > 1
+            && integer_raw.starts_with('0')
+            && !integer_raw.starts_with("0_")
+            && self.cursor.peek() == Some('.')
+            && self.cursor.second().is_some_and(is_identifier_start);
+        if self.cursor.peek() == Some('.') && !legacy_integer_before_dot {
             is_integer_literal = false;
             text.push('.');
             self.cursor.bump();

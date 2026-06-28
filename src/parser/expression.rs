@@ -516,6 +516,15 @@ impl Parser {
                     base: Box::new(expression),
                     steps,
                 };
+            } else if matches!(
+                self.peek().kind,
+                TokenKind::TemplateLiteral(_) | TokenKind::TemplateHead(_)
+            ) {
+                let template = self.parse_template_literal_from_current()?;
+                expression = Expression::TaggedTemplate {
+                    tag: Box::new(expression),
+                    template,
+                };
             } else {
                 break;
             }
@@ -728,7 +737,7 @@ impl Parser {
                 let inner = self.allowing_in(|parser| parser.parse_expression())?;
                 self.leave_depth();
                 self.expect_punctuator(')')?;
-                Ok(inner)
+                Ok(Expression::Parenthesized(Box::new(inner)))
             }
             TokenKind::Punctuator('[') => self.parse_array_literal(),
             TokenKind::Punctuator('{') => self.parse_object_literal(),
@@ -1413,6 +1422,20 @@ impl Parser {
 
     /// Parses a template literal that starts with a `TemplateHead` token.
     fn parse_template_literal(&mut self) -> Result<Expression, ParseError> {
+        Ok(Expression::TemplateLiteral(
+            self.parse_template_literal_from_current()?,
+        ))
+    }
+
+    fn parse_template_literal_from_current(&mut self) -> Result<TemplateLiteral, ParseError> {
+        if let TokenKind::TemplateLiteral(value) = self.peek().kind.clone() {
+            self.advance();
+            return Ok(TemplateLiteral {
+                quasis: vec![value],
+                expressions: vec![],
+            });
+        }
+
         let mut quasis = Vec::new();
         let mut expressions = Vec::new();
 
@@ -1448,10 +1471,10 @@ impl Parser {
             }
         }
 
-        Ok(Expression::TemplateLiteral(TemplateLiteral {
+        Ok(TemplateLiteral {
             quasis,
             expressions,
-        }))
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -1594,7 +1617,8 @@ impl Parser {
                 let next = self.tokens.get(self.cursor + 1);
                 next.is_some_and(|t| {
                     !t.line_terminator_before
-                        && !matches!(t.kind, TokenKind::Punctuator('(' | ';' | '}' | '='))
+                        && !matches!(t.kind, TokenKind::Punctuator('(' | ';' | '}'))
+                        && !matches!(&t.kind, TokenKind::Operator(op) if op == "=")
                 })
             };
             if is_accessor {
@@ -2115,6 +2139,14 @@ impl Parser {
                 }
                 Ok(())
             }
+            Expression::TaggedTemplate { tag, template } => {
+                self.check_super_call_expr(tag)?;
+                for e in &template.expressions {
+                    self.check_super_call_expr(e)?;
+                }
+                Ok(())
+            }
+            Expression::Parenthesized(inner) => self.check_super_call_expr(inner),
             Expression::Spread(e)
             | Expression::Await(e)
             | Expression::Yield {
@@ -2249,6 +2281,13 @@ impl Parser {
                     self.walk_field_init(e, false)?;
                 }
             }
+            Expression::TaggedTemplate { tag, template } => {
+                self.walk_field_init(tag, false)?;
+                for e in &template.expressions {
+                    self.walk_field_init(e, false)?;
+                }
+            }
+            Expression::Parenthesized(inner) => self.walk_field_init(inner, false)?,
             Expression::Sequence(exprs) => {
                 for e in exprs {
                     self.walk_field_init(e, false)?;
@@ -2628,6 +2667,14 @@ impl Parser {
                 }
                 Ok(())
             }
+            Expression::TaggedTemplate { tag, template } => {
+                self.walk_static_block_expr(tag)?;
+                for expr in &template.expressions {
+                    self.walk_static_block_expr(expr)?;
+                }
+                Ok(())
+            }
+            Expression::Parenthesized(inner) => self.walk_static_block_expr(inner),
             Expression::Sequence(expressions) => {
                 for expr in expressions {
                     self.walk_static_block_expr(expr)?;

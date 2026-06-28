@@ -11,6 +11,32 @@ use agentjs::{
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+#[test]
+fn parenthesized_unary_expression_can_be_exponentiation_base() {
+    assert_eq!(native_eval("(-2) ** 3;"), "-8");
+    assert_eq!(
+        native_eval("typeof ((-2n) ** 3n) + ':' + (((-2n) ** 3n) === -8n);"),
+        "bigint:true"
+    );
+}
+
+#[test]
+fn string_raw_tagged_template_receives_raw_segments() {
+    assert_eq!(native_eval("var b = 'X'; String.raw `abc${b}d`;"), "abcXd");
+}
+
+#[test]
+fn number_literals_allow_expected_member_access_forms() {
+    assert_eq!(
+        native_eval("0.1.a === undefined && 0x1.a === undefined && 0b1.a === undefined && 01.a === undefined && 0o1.a === undefined;"),
+        "true"
+    );
+    assert_eq!(
+        native_eval("var ok = false; try { eval('0.a'); } catch (e) { ok = e instanceof SyntaxError; } ok;"),
+        "true"
+    );
+}
+
 fn ctx() -> NativeContext {
     let mut c = NativeContext::default();
     install_foundation(&mut c);

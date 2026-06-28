@@ -99,6 +99,7 @@ impl RootSet {
 pub struct CallFrameRoots {
     pub function: Option<FunctionId>,
     pub this_value: JsValue,
+    pub new_target: JsValue,
     pub environment: EnvironmentId,
     pub stack_base: usize,
 }
@@ -108,6 +109,7 @@ impl From<&CallFrame> for CallFrameRoots {
         Self {
             function: frame.function,
             this_value: frame.this_value.clone(),
+            new_target: frame.new_target.clone(),
             environment: frame.environment,
             stack_base: frame.stack_base,
         }
@@ -120,6 +122,7 @@ impl Trace for CallFrameRoots {
             tracer.mark_function(function);
         }
         self.this_value.trace(tracer);
+        self.new_target.trace(tracer);
         tracer.mark_environment(self.environment);
     }
 }

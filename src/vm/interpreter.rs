@@ -970,6 +970,12 @@ impl Vm {
                     abrupt = Some(Completion::Throw(value));
                     discard_saved_finally = true;
                 }
+                Instruction::ThrowReferenceError => {
+                    abrupt = Some(Completion::Throw(vm_error_to_value(VmError::reference(
+                        "invalid delete of super property",
+                    ))));
+                    discard_saved_finally = true;
+                }
                 Instruction::Return => {
                     abrupt = Some(Completion::Return(self.pop_value()?));
                     discard_saved_finally = true;
@@ -1048,7 +1054,7 @@ impl Vm {
                     // Returns `undefined` in regular calls. Constructor calls
                     // would set new.target to the constructor, but our VM does
                     // not yet track this — return undefined as a safe default.
-                    self.stack.push(JsValue::Undefined);
+                    self.stack.push(context.current_new_target());
                 }
                 Instruction::ArrayCreate(count) => {
                     let elements = self.pop_arguments(count)?;
@@ -1483,6 +1489,43 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::GetSuperMethod(index) => {
+                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    match self.get_super_property_value(name, context)? {
+                        OperationResult::Value(method) => {
+                            self.stack.push(method);
+                            self.stack.push(context.current_or_global_this());
+                        }
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::GetSuperElementMethod => {
+                    let key = self.pop_value()?;
+                    let result = if let JsValue::Symbol(sym_id) = key {
+                        self.get_super_symbol_property_value(sym_id, context)?
+                    } else {
+                        match self.coerce_to_property_key(key, context)? {
+                            OperationResult::Throw(value) => OperationResult::Throw(value),
+                            OperationResult::Value(JsValue::String(key)) => {
+                                self.get_super_property_value(&key, context)?
+                            }
+                            _ => unreachable!(),
+                        }
+                    };
+                    match result {
+                        OperationResult::Value(method) => {
+                            self.stack.push(method);
+                            self.stack.push(context.current_or_global_this());
+                        }
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
                 Instruction::GetElementMethod => {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
@@ -1601,6 +1644,7 @@ impl Vm {
                         .to_string();
                     let value = self.pop_value()?;
                     let object = context.require_object(self.peek_value()?, "define property")?;
+                    context.set_function_home_object(&value, object)?;
                     context.define_own_property(object, name, PropertyDescriptor::data(value))?;
                 }
                 Instruction::DefineClassPrototype => {
@@ -1619,6 +1663,7 @@ impl Vm {
                         .to_string();
                     let getter = self.pop_value()?;
                     let object = context.require_object(self.peek_value()?, "define getter")?;
+                    context.set_function_home_object(&getter, object)?;
                     let setter = existing_accessor_setter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1632,6 +1677,7 @@ impl Vm {
                         .to_string();
                     let setter = self.pop_value()?;
                     let object = context.require_object(self.peek_value()?, "define setter")?;
+                    context.set_function_home_object(&setter, object)?;
                     let getter = existing_accessor_getter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1676,6 +1722,7 @@ impl Vm {
                     let value = self.pop_value()?;
                     let object =
                         context.require_object(self.peek_value()?, "define class method")?;
+                    context.set_function_home_object(&value, object)?;
                     context.define_own_property(
                         object,
                         name,
@@ -1689,6 +1736,7 @@ impl Vm {
                     let getter = self.pop_value()?;
                     let object =
                         context.require_object(self.peek_value()?, "define class getter")?;
+                    context.set_function_home_object(&getter, object)?;
                     let setter = existing_accessor_setter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1703,6 +1751,7 @@ impl Vm {
                     let setter = self.pop_value()?;
                     let object =
                         context.require_object(self.peek_value()?, "define class setter")?;
+                    context.set_function_home_object(&setter, object)?;
                     let getter = existing_accessor_getter(context, object, &name);
                     context.define_own_property(
                         object,
@@ -1733,6 +1782,7 @@ impl Vm {
                                 abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
                                 discard_saved_finally = true;
                             } else {
+                                context.set_function_home_object(&value, object)?;
                                 context.define_own_property(
                                     object,
                                     name,
@@ -1766,6 +1816,7 @@ impl Vm {
                                 abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
                                 discard_saved_finally = true;
                             } else {
+                                context.set_function_home_object(&getter, object)?;
                                 let setter = existing_accessor_setter(context, object, &name);
                                 context.define_own_property(
                                     object,
@@ -1800,6 +1851,7 @@ impl Vm {
                                 abrupt = Some(Completion::Throw(self.throw_value_from_error(err)));
                                 discard_saved_finally = true;
                             } else {
+                                context.set_function_home_object(&setter, object)?;
                                 let getter = existing_accessor_getter(context, object, &name);
                                 context.define_own_property(
                                     object,
@@ -1824,6 +1876,7 @@ impl Vm {
                                 self.peek_value()?,
                                 "define data property (computed)",
                             )?;
+                            context.set_function_home_object(&value, object)?;
                             context.define_own_property(
                                 object,
                                 name,
@@ -1904,14 +1957,18 @@ impl Vm {
                 Instruction::SetObjectPrototype => {
                     let prototype = self.pop_value()?;
                     let object = context.require_object(self.peek_value()?, "set prototype")?;
-                    match prototype {
+                    match prototype.clone() {
                         JsValue::Null => {
                             context.set_prototype_of(object, None)?;
                         }
                         JsValue::Object(prototype) => {
                             context.set_prototype_of(object, Some(prototype))?;
                         }
-                        _ => {}
+                        _ => {
+                            if let Some(prototype) = context.value_object(&prototype) {
+                                context.set_prototype_of(object, Some(prototype))?;
+                            }
+                        }
                     }
                 }
                 Instruction::DefineElement(index) => {
@@ -1924,56 +1981,83 @@ impl Vm {
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let value = self.pop_value()?;
-                    let object = context.require_object(&value, "delete property")?;
-                    let strict = context.is_strict_code();
-                    let result = if context.proxy_record(object).is_some() {
-                        proxy::internal_delete(self, context, value, &PropertyKey::String(name))
-                    } else {
-                        context.delete_property(object, &name, strict)
-                    };
-                    match result {
-                        Ok(false) if strict => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(
-                                VmError::type_error("cannot delete property"),
-                            )));
-                            discard_saved_finally = true;
-                        }
-                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
-                        Err(error) => match self.error_to_operation_result(error)? {
-                            OperationResult::Throw(value) => {
-                                abrupt = Some(Completion::Throw(value));
-                                discard_saved_finally = true;
+                    match context.property_lookup_object(&value) {
+                        Ok(object) => {
+                            let strict = context.is_strict_code();
+                            let result = if context.proxy_record(object).is_some() {
+                                proxy::internal_delete(
+                                    self,
+                                    context,
+                                    value,
+                                    &PropertyKey::String(name),
+                                )
+                            } else {
+                                context.delete_property(object, &name, strict)
+                            };
+                            match result {
+                                Ok(false) if strict => {
+                                    abrupt = Some(Completion::Throw(vm_error_to_value(
+                                        VmError::type_error("cannot delete property"),
+                                    )));
+                                    discard_saved_finally = true;
+                                }
+                                Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
+                                Err(error) => match self.error_to_operation_result(error)? {
+                                    OperationResult::Throw(value) => {
+                                        abrupt = Some(Completion::Throw(value));
+                                        discard_saved_finally = true;
+                                    }
+                                    OperationResult::Value(_) => unreachable!(),
+                                },
                             }
-                            OperationResult::Value(_) => unreachable!(),
-                        },
+                        }
+                        Err(error) => {
+                            match self.error_to_operation_result(error)? {
+                                OperationResult::Throw(value) => {
+                                    abrupt = Some(Completion::Throw(value));
+                                    discard_saved_finally = true;
+                                }
+                                OperationResult::Value(_) => unreachable!(),
+                            }
+                        }
                     }
                 }
                 Instruction::DeleteElement => {
                     let key = self.pop_value()?;
                     let value = self.pop_value()?;
-                    let object = context.require_object(&value, "delete property")?;
-                    let strict = context.is_strict_code();
-                    let result = if context.proxy_record(object).is_some() {
-                        let property_key = if let JsValue::Symbol(symbol) = key {
-                            PropertyKey::Symbol(symbol)
-                        } else {
-                            PropertyKey::String(to_property_key(&key)?)
-                        };
-                        proxy::internal_delete(self, context, value, &property_key)
-                    } else if let JsValue::Symbol(symbol) = key {
-                        context.delete_symbol_property(object, symbol, strict)
-                    } else {
-                        let key = to_property_key(&key)?;
-                        context.delete_property(object, &key, strict)
-                    };
-                    match result {
-                        Ok(false) if strict => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(
-                                VmError::type_error("cannot delete property"),
-                            )));
-                            discard_saved_finally = true;
+                    match context.property_lookup_object(&value) {
+                        Ok(object) => {
+                            let strict = context.is_strict_code();
+                            let result = if context.proxy_record(object).is_some() {
+                                let property_key = if let JsValue::Symbol(symbol) = key {
+                                    PropertyKey::Symbol(symbol)
+                                } else {
+                                    PropertyKey::String(to_property_key(&key)?)
+                                };
+                                proxy::internal_delete(self, context, value, &property_key)
+                            } else if let JsValue::Symbol(symbol) = key {
+                                context.delete_symbol_property(object, symbol, strict)
+                            } else {
+                                let key = to_property_key(&key)?;
+                                context.delete_property(object, &key, strict)
+                            };
+                            match result {
+                                Ok(false) if strict => {
+                                    abrupt = Some(Completion::Throw(vm_error_to_value(
+                                        VmError::type_error("cannot delete property"),
+                                    )));
+                                    discard_saved_finally = true;
+                                }
+                                Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
+                                Err(error) => match self.error_to_operation_result(error)? {
+                                    OperationResult::Throw(value) => {
+                                        abrupt = Some(Completion::Throw(value));
+                                        discard_saved_finally = true;
+                                    }
+                                    OperationResult::Value(_) => unreachable!(),
+                                },
+                            }
                         }
-                        Ok(deleted) => self.stack.push(JsValue::Boolean(deleted)),
                         Err(error) => match self.error_to_operation_result(error)? {
                             OperationResult::Throw(value) => {
                                 abrupt = Some(Completion::Throw(value));
@@ -2074,6 +2158,10 @@ impl Vm {
                 }
                 Instruction::CreateLexicalEnvironment => {
                     context.push_environment(Some(context.current_environment()))?;
+                }
+                Instruction::EnterWithEnvironment => {
+                    let value = self.pop_value()?;
+                    context.push_with_environment(value)?;
                 }
                 Instruction::PopEnvironment => {
                     context.pop_environment()?;
@@ -2248,6 +2336,17 @@ impl Vm {
         };
         let is_async = template.is_async;
         let is_generator = template.is_generator;
+        let is_arrow = template.is_arrow;
+        let lexical_this = is_arrow.then(|| context.current_or_global_this());
+        let lexical_new_target = is_arrow.then(|| context.current_new_target());
+        let home_object = if is_arrow {
+            context
+                .current_function()
+                .and_then(|function| context.function(function))
+                .and_then(|function| function.home_object)
+        } else {
+            None
+        };
         let id = context.allocate_function(JsFunction {
             name: template.name,
             params: template.params,
@@ -2257,6 +2356,10 @@ impl Vm {
             environment,
             is_async,
             is_generator,
+            is_arrow,
+            lexical_this,
+            lexical_new_target,
+            home_object,
         })?;
         if is_generator
             && !is_async
@@ -2506,6 +2609,7 @@ impl Vm {
             record.next_ip,
             frame_environment,
             record.this_value.clone(),
+            JsValue::Undefined,
             stack_base,
         );
         context.push_call_frame(frame)?;
@@ -2636,7 +2740,8 @@ impl Vm {
             )?;
         }
 
-        let has_explicit_arguments = function.params.iter().any(|p| p == "arguments")
+        let has_explicit_arguments = function.is_arrow
+            || function.params.iter().any(|p| p == "arguments")
             || function.rest_param.as_deref() == Some("arguments");
         if has_explicit_arguments {
             return Ok(());
@@ -2842,7 +2947,13 @@ impl Vm {
                     None => None,
                     Some(_) => None,
                 };
-                let operation = self.call_user_function(function, this_value, arguments, context);
+                let operation = self.call_user_function(
+                    function,
+                    this_value,
+                    arguments,
+                    JsValue::Undefined,
+                    context,
+                );
                 match (
                     operation,
                     activation.map(|activation| context.leave_realm(activation)),
@@ -4118,6 +4229,12 @@ impl Vm {
         configurable: bool,
         context: &mut NativeContext,
     ) -> Result<(), VmError> {
+        if let Some(value) = &getter {
+            context.set_function_home_object(value, object)?;
+        }
+        if let Some(value) = &setter {
+            context.set_function_home_object(value, object)?;
+        }
         match self.to_property_key_from_builtin(key, context)? {
             JsValue::Symbol(symbol) => {
                 let current = context.get_own_symbol_property_descriptor(object, symbol);
@@ -4921,6 +5038,74 @@ impl Vm {
         }
     }
 
+    fn get_super_property_value(
+        &mut self,
+        key: &str,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let Some(function) = context.current_function() else {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::reference("super property access outside function"),
+            )));
+        };
+        let Some(home_object) = context.function(function).and_then(|f| f.home_object) else {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::reference("super property access without home object"),
+            )));
+        };
+        let Some(super_base) = context.get_prototype_of(home_object) else {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("super base is null"),
+            )));
+        };
+        let receiver = context.current_or_global_this();
+        let property_key = PropertyKey::String(key.to_string());
+        match proxy::internal_get(
+            self,
+            context,
+            JsValue::Object(super_base),
+            &property_key,
+            receiver,
+        ) {
+            Ok(value) => Ok(OperationResult::Value(value)),
+            Err(error) => self.error_to_operation_result(error),
+        }
+    }
+
+    fn get_super_symbol_property_value(
+        &mut self,
+        symbol: crate::runtime::SymbolId,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let Some(function) = context.current_function() else {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::reference("super property access outside function"),
+            )));
+        };
+        let Some(home_object) = context.function(function).and_then(|f| f.home_object) else {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::reference("super property access without home object"),
+            )));
+        };
+        let Some(super_base) = context.get_prototype_of(home_object) else {
+            return Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("super base is null"),
+            )));
+        };
+        let receiver = context.current_or_global_this();
+        let property_key = PropertyKey::Symbol(symbol);
+        match proxy::internal_get(
+            self,
+            context,
+            JsValue::Object(super_base),
+            &property_key,
+            receiver,
+        ) {
+            Ok(value) => Ok(OperationResult::Value(value)),
+            Err(error) => self.error_to_operation_result(error),
+        }
+    }
+
     fn type_of_value(&self, value: &JsValue, context: &NativeContext) -> &'static str {
         if context.is_callable_value(value) {
             "function"
@@ -5073,13 +5258,19 @@ impl Vm {
         function_id: FunctionId,
         this_value: JsValue,
         arguments: Vec<JsValue>,
+        new_target: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
         let function = context
             .function(function_id)
             .cloned()
             .ok_or_else(|| VmError::runtime("missing function value"))?;
-        let this_value = if context.is_strict_function(function_id) {
+        let this_value = if function.is_arrow {
+            function
+                .lexical_this
+                .clone()
+                .unwrap_or_else(|| context.global_this_value())
+        } else if context.is_strict_function(function_id) {
             this_value
         } else {
             match this_value {
@@ -5104,6 +5295,14 @@ impl Vm {
                 },
             }
         };
+        let new_target = if function.is_arrow {
+            function
+                .lexical_new_target
+                .clone()
+                .unwrap_or(JsValue::Undefined)
+        } else {
+            new_target
+        };
         if function.is_generator {
             let stack_base = self.stack.len();
             let caller_environment_depth = context.environment_depth();
@@ -5125,6 +5324,7 @@ impl Vm {
                 0,
                 environment,
                 this_value.clone(),
+                JsValue::Undefined,
                 stack_base,
             );
             if let Err(error) = context.push_call_frame(frame) {
@@ -5236,7 +5436,8 @@ impl Vm {
         // Build the `arguments` exotic object only when the function does not
         // already declare an explicit `arguments` parameter (ES5 §10.6: if the
         // function has a formal parameter named "arguments" that binding wins).
-        let has_explicit_arguments = function.params.iter().any(|p| p == "arguments")
+        let has_explicit_arguments = function.is_arrow
+            || function.params.iter().any(|p| p == "arguments")
             || function.rest_param.as_deref() == Some("arguments");
 
         if !has_explicit_arguments {
@@ -5284,7 +5485,14 @@ impl Vm {
             }
         }
 
-        let frame = CallFrame::new(Some(function_id), 0, environment, this_value, stack_base);
+        let frame = CallFrame::new(
+            Some(function_id),
+            0,
+            environment,
+            this_value,
+            new_target,
+            stack_base,
+        );
         if let Err(error) = context.push_call_frame(frame) {
             let _ = context.restore_environment_depth(caller_environment_depth);
             return Err(error);
@@ -5402,14 +5610,16 @@ impl Vm {
                     Some(_) => None,
                 };
                 let operation = (|| {
-                    if context
-                        .function(function_id)
-                        .is_some_and(|function| function.is_generator || function.is_async)
-                    {
+                    if context.function(function_id).is_some_and(|function| {
+                        function.is_generator || function.is_async || function.is_arrow
+                    }) {
+                        let name = context
+                            .function(function_id)
+                            .and_then(|function| function.name.as_deref())
+                            .filter(|name| !name.is_empty())
+                            .unwrap_or("function");
                         return Ok(OperationResult::Throw(vm_error_to_value(
-                            VmError::type_error(
-                                "generator and async functions are not constructors",
-                            ),
+                            VmError::type_error(format!("{name} is not a constructor")),
                         )));
                     }
                     let prototype =
@@ -5419,9 +5629,10 @@ impl Vm {
                         function_id,
                         instance.clone(),
                         arguments,
+                        new_target.clone(),
                         context,
                     )? {
-                        OperationResult::Value(result) if matches!(result, JsValue::Object(_)) => {
+                        OperationResult::Value(result) if is_object_like(&result) => {
                             Ok(OperationResult::Value(result))
                         }
                         OperationResult::Value(_) => Ok(OperationResult::Value(instance)),

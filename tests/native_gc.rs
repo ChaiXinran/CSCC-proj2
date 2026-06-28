@@ -64,6 +64,10 @@ fn gc_preserves_closure_environment_and_captured_values() {
         environment: Some(outer),
         is_async: false,
         is_generator: false,
+        is_arrow: false,
+        lexical_this: None,
+        lexical_new_target: None,
+        home_object: None,
     };
     let function_id = context.allocate_function(function).unwrap();
     context.declare_global("closure", JsValue::Function(function_id));

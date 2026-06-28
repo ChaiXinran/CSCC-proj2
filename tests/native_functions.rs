@@ -83,8 +83,85 @@ fn direct_eval_resolves_function_locals() {
 fn function_name_does_not_overwrite_parameters_or_arguments() {
     assert_eq!(eval("function f(x, f) { return x * f; } f(3, 4);"), "12");
     assert_eq!(
-        eval("function arguments() { return typeof arguments + ':' + arguments.length; } arguments(1, 2);"),
+        eval(
+            "function arguments() { return typeof arguments + ':' + arguments.length; } arguments(1, 2);"
+        ),
         "object:2"
+    );
+}
+
+#[test]
+fn arrow_functions_capture_lexical_arguments_this_and_new_target() {
+    assert_eq!(
+        eval("function f() { return (() => arguments)().length; } f(1, 2);"),
+        "2"
+    );
+    assert_eq!(
+        eval("\"use strict\"; function f() { return (() => this)(); } f.call('this_val');"),
+        "this_val"
+    );
+    assert_eq!(
+        eval("function F() { return (() => new.target)(); } new F() === F;"),
+        "true"
+    );
+}
+
+#[test]
+fn constructors_return_explicit_object_like_values() {
+    assert_eq!(
+        eval(
+            "function replacement() {} function F() { return replacement; } new F() === replacement;"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn constructing_generator_reports_function_name() {
+    assert_eq!(
+        eval(
+            "function *G() {} var msg = ''; try { new G(); } catch (e) { msg = e.message; } msg;"
+        ),
+        "G is not a constructor"
+    );
+}
+
+#[test]
+fn arrow_inside_object_method_keeps_lexical_super() {
+    assert_eq!(
+        eval(
+            "var base = { f() { return this; } }; \
+             var derived = { f() { return (() => eval('super.f()'))(); } }; \
+             derived.__proto__ = base; \
+             derived.f() === derived;"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn computed_super_method_call_uses_home_object_prototype() {
+    assert_eq!(
+        eval(
+            "class C { static F() { return -1; } } \
+             class D extends C { static H() { return super['F'](); } } \
+             (Object.getPrototypeOf(D) === C) + ':' + D.F() + ':' + D.H();"
+        ),
+        "true:-1:-1"
+    );
+}
+
+#[test]
+fn eval_created_closures_capture_for_let_iteration_bindings() {
+    assert_eq!(
+        eval(
+            "var tab = []; \
+             for (let i = 0; i < 3; i++) { \
+               eval('tab.push(function() { return i; })'); \
+             } \
+             tab[0]() + ':' + tab[1]() + ':' + tab[2]();"
+        ),
+        "0:1:2"
     );
 }
 

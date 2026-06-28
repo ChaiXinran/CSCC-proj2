@@ -25,6 +25,10 @@ pub struct JsFunction {
     pub environment: Option<EnvironmentId>,
     pub is_async: bool,
     pub is_generator: bool,
+    pub is_arrow: bool,
+    pub lexical_this: Option<JsValue>,
+    pub lexical_new_target: Option<JsValue>,
+    pub home_object: Option<ObjectId>,
 }
 
 /// Stable handle into the builtin function registry.
@@ -85,6 +89,15 @@ impl Trace for JsFunction {
     fn trace(&self, tracer: &mut Tracer<'_>) {
         if let Some(environment) = self.environment {
             tracer.mark_environment(environment);
+        }
+        if let Some(value) = &self.lexical_this {
+            value.trace(tracer);
+        }
+        if let Some(value) = &self.lexical_new_target {
+            value.trace(tracer);
+        }
+        if let Some(object) = self.home_object {
+            tracer.mark_object(object);
         }
     }
 }

@@ -85,6 +85,14 @@ fn classic_for_with_let_binding() {
 }
 
 #[test]
+fn legacy_var_for_in_initializer_runs_before_enumeration() {
+    assert_eq!(
+        native_eval("var tab = []; for (var k = 2 in {x:1, y:2}) { tab.push(k); } tab.join(',');"),
+        "x,y"
+    );
+}
+
+#[test]
 fn for_break_exits_loop() {
     assert_eq!(
         native_eval(
@@ -151,6 +159,22 @@ fn for_in_without_declaration_uses_existing_binding() {
     assert_eq!(
         native_eval("var o = { x: 1 }; var k; for (k in o) {} k;"),
         "x"
+    );
+}
+
+#[test]
+fn for_in_can_write_member_targets() {
+    assert_eq!(
+        native_eval(
+            "var a = { x: 0 }; var r = []; for (a.x in {x:1, y:2}) { r.push(a.x); } r.join(',');"
+        ),
+        "x,y"
+    );
+    assert_eq!(
+        native_eval(
+            "var a = [0]; var r = []; for (a[0] in {x:1, y:2}) { r.push(a[0]); } r.join(',');"
+        ),
+        "x,y"
     );
 }
 

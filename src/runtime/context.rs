@@ -1378,6 +1378,18 @@ impl NativeContext {
         Ok(id)
     }
 
+    pub fn push_with_environment(&mut self, value: JsValue) -> Result<EnvironmentId, VmError> {
+        let object = self.property_lookup_object(&value)?;
+        let environment = Environment::with_object(object, Some(self.current_environment));
+        let id = self
+            .heap
+            .allocate_environment(environment)
+            .ok_or_else(|| VmError::runtime_limit("environment arena exhausted"))?;
+        self.environment_stack.push(self.current_environment);
+        self.current_environment = id;
+        Ok(id)
+    }
+
     pub fn push_existing_environment(&mut self, id: EnvironmentId) -> Result<(), VmError> {
         if self.heap.environment(id).is_none() {
             return Err(VmError::runtime("missing lexical environment"));
@@ -1553,6 +1565,11 @@ impl NativeContext {
                 .heap
                 .environment(id)
                 .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
+            if let Some(object) = environment.with_object
+                && let Some(value) = self.with_environment_property_value(object, name)?
+            {
+                return Ok(Some((id, value)));
+            }
             if let Some(binding) = environment.binding(name) {
                 if !binding.initialized {
                     return Err(VmError::reference(format!(
@@ -1564,6 +1581,23 @@ impl NativeContext {
             current = environment.outer;
         }
         Ok(None)
+    }
+
+    fn with_environment_property_value(
+        &self,
+        object: ObjectId,
+        name: &str,
+    ) -> Result<Option<JsValue>, VmError> {
+        let Some((_, descriptor)) = self.find_property_descriptor(object, name)? else {
+            return Ok(None);
+        };
+        match descriptor.kind {
+            PropertyKind::Data { value, .. } => Ok(Some(value)),
+            PropertyKind::Accessor { get: None, .. } => Ok(Some(JsValue::Undefined)),
+            PropertyKind::Accessor { get: Some(_), .. } => Err(VmError::type_error(
+                "accessor getter invocation requires the VM call path",
+            )),
+        }
     }
 
     pub fn resolve_binding_environment(
@@ -1587,16 +1621,30 @@ impl NativeContext {
     pub fn set_binding(&mut self, name: &str, value: JsValue) -> Result<(), VmError> {
         let mut current = Some(self.current_environment);
         while let Some(id) = current {
-            let outer = {
+            let (outer, with_object, has_binding) = {
+                let environment = self
+                    .heap
+                    .environment(id)
+                    .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
+                (
+                    environment.outer,
+                    environment.with_object,
+                    environment.has_binding(name),
+                )
+            };
+            if let Some(object) = with_object
+                && self.has_property(object, name)?
+            {
+                self.set_object_property(object, name, value, self.strict)?;
+                return Ok(());
+            }
+            if has_binding {
                 let environment = self
                     .heap
                     .environment_mut(id)
                     .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
-                if environment.has_binding(name) {
-                    return environment.set_mutable_binding(name, value);
-                }
-                environment.outer
-            };
+                return environment.set_mutable_binding(name, value);
+            }
             current = outer;
         }
         // Non-strict: unresolvable reference creates a global binding (PutValue spec step).
@@ -1676,6 +1724,27 @@ impl NativeContext {
         self.heap.function(id)
     }
 
+    pub fn set_function_home_object(
+        &mut self,
+        value: &JsValue,
+        object: ObjectId,
+    ) -> Result<(), VmError> {
+        let JsValue::Function(function) = value else {
+            return Ok(());
+        };
+        let function = self
+            .heap
+            .function_mut(*function)
+            .ok_or_else(|| VmError::runtime("missing function value"))?;
+        function.home_object = Some(object);
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn current_function(&self) -> Option<FunctionId> {
+        self.call_frames.last().and_then(|frame| frame.function)
+    }
+
     #[must_use]
     pub fn function_prototype(&self, id: FunctionId) -> Option<ObjectId> {
         self.function_prototypes.get(&id).copied()
@@ -1701,6 +1770,13 @@ impl NativeContext {
         self.call_frames
             .last()
             .map_or(JsValue::Undefined, |frame| frame.this_value.clone())
+    }
+
+    #[must_use]
+    pub fn current_new_target(&self) -> JsValue {
+        self.call_frames
+            .last()
+            .map_or(JsValue::Undefined, |frame| frame.new_target.clone())
     }
 
     #[must_use]
@@ -1827,7 +1903,7 @@ impl NativeContext {
             .unwrap_or(JsValue::Undefined)
     }
 
-    fn property_lookup_object(&mut self, receiver: &JsValue) -> Result<ObjectId, VmError> {
+    pub(crate) fn property_lookup_object(&mut self, receiver: &JsValue) -> Result<ObjectId, VmError> {
         match receiver {
             JsValue::Boolean(value) => {
                 let prototype = self

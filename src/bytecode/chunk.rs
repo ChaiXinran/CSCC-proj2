@@ -233,6 +233,7 @@ pub struct FunctionTemplate {
     pub is_strict: bool,
     pub is_async: bool,
     pub is_generator: bool,
+    pub is_arrow: bool,
     pub environment_policy: EnvironmentCapturePolicy,
 }
 
@@ -364,6 +365,7 @@ impl Chunk {
                 | Instruction::StoreName(index)
                 | Instruction::SetProperty(index)
                 | Instruction::GetMethod(index)
+                | Instruction::GetSuperMethod(index)
                 | Instruction::DefineDataProperty(index)
                 | Instruction::DefineGetter(index)
                 | Instruction::DefineSetter(index)
@@ -393,6 +395,7 @@ impl Chunk {
                 | Instruction::StoreName(index)
                 | Instruction::SetProperty(index)
                 | Instruction::GetMethod(index)
+                | Instruction::GetSuperMethod(index)
                 | Instruction::DefineDataProperty(index)
                 | Instruction::DefineGetter(index)
                 | Instruction::DefineSetter(index)
@@ -524,7 +527,9 @@ impl Chunk {
 
             let instruction = self.instructions[offset];
             let next_depth = match instruction {
-                Instruction::CreateLexicalEnvironment => depth + 1,
+                Instruction::CreateLexicalEnvironment | Instruction::EnterWithEnvironment => {
+                    depth + 1
+                }
                 Instruction::PopEnvironment if depth == 0 => {
                     return Err(ChunkError::EnvironmentUnderflow { offset });
                 }
@@ -599,7 +604,7 @@ impl Chunk {
                 let expected = match instruction {
                     Instruction::Throw => 1,
                     Instruction::Return => 1,
-                    Instruction::ReturnUndefined => 0,
+                    Instruction::ReturnUndefined | Instruction::ThrowReferenceError => 0,
                     _ => unreachable!(),
                 };
                 if depth != expected {
