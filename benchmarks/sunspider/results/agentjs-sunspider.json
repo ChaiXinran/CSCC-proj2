@@ -12,16 +12,16 @@
     "agentjs": {
       "bitops-bitwise-and": {
         "status": "pass",
-        "median_ms": 647.3,
+        "median_ms": 657.5,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 665.4,
+            "time_ms": 730.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 629.3,
+            "time_ms": 584.7,
             "stderr": ""
           }
         ],
@@ -29,16 +29,16 @@
       },
       "bitops-nsieve-bits": {
         "status": "pass",
-        "median_ms": 855.7,
+        "median_ms": 702.6,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 848.0,
+            "time_ms": 689.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 863.4,
+            "time_ms": 715.8,
             "stderr": ""
           }
         ],
@@ -46,16 +46,16 @@
       },
       "math-partial-sums": {
         "status": "pass",
-        "median_ms": 356.4,
+        "median_ms": 302.4,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 357.1,
+            "time_ms": 296.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 355.7,
+            "time_ms": 308.4,
             "stderr": ""
           }
         ],
@@ -63,16 +63,16 @@
       },
       "access-fannkuch": {
         "status": "pass",
-        "median_ms": 1567.5,
+        "median_ms": 1387.0,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 1590.7,
+            "time_ms": 1451.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 1544.2,
+            "time_ms": 1322.8,
             "stderr": ""
           }
         ],
@@ -80,16 +80,16 @@
       },
       "access-nsieve": {
         "status": "pass",
-        "median_ms": 544.8,
+        "median_ms": 540.2,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 525.3,
+            "time_ms": 548.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 564.2,
+            "time_ms": 531.5,
             "stderr": ""
           }
         ],
@@ -97,16 +97,16 @@
       },
       "3d-morph": {
         "status": "pass",
-        "median_ms": 555.0,
+        "median_ms": 458.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 553.7,
+            "time_ms": 482.2,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 556.3,
+            "time_ms": 435.5,
             "stderr": ""
           }
         ],
@@ -114,16 +114,16 @@
       },
       "string-base64": {
         "status": "pass",
-        "median_ms": 1922.0,
+        "median_ms": 1799.5,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 1981.1,
+            "time_ms": 1743.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 1863.0,
+            "time_ms": 1856.1,
             "stderr": ""
           }
         ],
@@ -131,16 +131,16 @@
       },
       "string-validate-input": {
         "status": "pass",
-        "median_ms": 2691.8,
+        "median_ms": 2817.3,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 2418.2,
+            "time_ms": 2664.6,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 2965.3,
+            "time_ms": 2970.0,
             "stderr": ""
           }
         ],
@@ -148,16 +148,16 @@
       },
       "regexp-dna": {
         "status": "pass",
-        "median_ms": 7757.7,
+        "median_ms": 7081.8,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 7785.2,
+            "time_ms": 7458.2,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 7730.2,
+            "time_ms": 6705.3,
             "stderr": ""
           }
         ],
@@ -167,16 +167,16 @@
     "boa": {
       "bitops-bitwise-and": {
         "status": "pass",
-        "median_ms": 993.4,
+        "median_ms": 861.8,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 1024.9,
+            "time_ms": 900.1,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 961.8,
+            "time_ms": 823.4,
             "stderr": ""
           }
         ],
@@ -184,16 +184,16 @@
       },
       "bitops-nsieve-bits": {
         "status": "pass",
-        "median_ms": 425.3,
+        "median_ms": 423.5,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 433.0,
+            "time_ms": 435.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 417.6,
+            "time_ms": 411.6,
             "stderr": ""
           }
         ],
@@ -201,16 +201,16 @@
       },
       "math-partial-sums": {
         "status": "pass",
-        "median_ms": 373.2,
+        "median_ms": 345.0,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 357.0,
+            "time_ms": 338.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 389.4,
+            "time_ms": 351.1,
             "stderr": ""
           }
         ],
@@ -218,16 +218,16 @@
       },
       "access-fannkuch": {
         "status": "pass",
-        "median_ms": 666.0,
+        "median_ms": 673.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 629.2,
+            "time_ms": 642.1,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 702.7,
+            "time_ms": 705.7,
             "stderr": ""
           }
         ],
@@ -235,16 +235,16 @@
       },
       "access-nsieve": {
         "status": "pass",
-        "median_ms": 454.0,
+        "median_ms": 462.3,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 458.1,
+            "time_ms": 448.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 449.9,
+            "time_ms": 476.6,
             "stderr": ""
           }
         ],
@@ -252,16 +252,16 @@
       },
       "3d-morph": {
         "status": "pass",
-        "median_ms": 323.5,
+        "median_ms": 345.4,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 329.6,
+            "time_ms": 342.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 317.3,
+            "time_ms": 348.4,
             "stderr": ""
           }
         ],
@@ -269,16 +269,16 @@
       },
       "string-base64": {
         "status": "pass",
-        "median_ms": 242.6,
+        "median_ms": 259.1,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 252.7,
+            "time_ms": 239.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 232.5,
+            "time_ms": 278.8,
             "stderr": ""
           }
         ],
@@ -286,16 +286,16 @@
       },
       "string-validate-input": {
         "status": "pass",
-        "median_ms": 357.6,
+        "median_ms": 351.4,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 361.3,
+            "time_ms": 355.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 353.9,
+            "time_ms": 347.9,
             "stderr": ""
           }
         ],
@@ -303,16 +303,16 @@
       },
       "regexp-dna": {
         "status": "pass",
-        "median_ms": 293.6,
+        "median_ms": 287.1,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 303.0,
+            "time_ms": 277.7,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 284.2,
+            "time_ms": 296.5,
             "stderr": ""
           }
         ],
