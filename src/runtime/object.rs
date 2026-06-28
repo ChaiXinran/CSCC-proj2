@@ -476,27 +476,33 @@ impl JsObject {
     }
 
     pub fn define_array_element(&mut self, index: usize, descriptor: PropertyDescriptor) -> bool {
-        let ObjectKind::Array {
+        // Dense path: handle directly inside the Array variant.
+        if let ObjectKind::Array {
             elements,
             length,
             length_writable,
         } = &mut self.kind
-        else {
-            return false;
-        };
-        if index >= *length as usize && !*length_writable {
-            return false;
-        }
-        if index < MAX_DENSE_SIZE {
-            if index >= elements.len() {
-                elements.resize(index + 1, None);
+        {
+            if index >= *length as usize && !*length_writable {
+                return false;
             }
-            elements[index] = Some(descriptor);
+            if index < MAX_DENSE_SIZE {
+                if index >= elements.len() {
+                    elements.resize(index + 1, None);
+                }
+                elements[index] = Some(descriptor);
+                Self::update_length_for_index(length, index);
+                return true;
+            }
+            // Large index: update length now, then fall through to properties HashMap.
             Self::update_length_for_index(length, index);
-            return true;
+            // (borrow of self.kind ends here)
+        } else {
+            return false;
         }
-        // huge index: not supported in dense storage
-        false
+        // Store large-index properties in the unordered map like ordinary properties.
+        self.properties.define(index.to_string(), descriptor);
+        true
     }
 
     #[must_use]
