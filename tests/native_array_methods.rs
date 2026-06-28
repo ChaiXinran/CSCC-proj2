@@ -121,6 +121,56 @@ fn array_search_methods_are_generic_and_honor_holes() {
 }
 
 #[test]
+fn array_non_callback_methods_to_object_primitive_receivers() {
+    assert_eq!(
+        native_eval(
+            "Array.prototype.join.call(true) + ':' + \
+             Array.prototype.at.call(true, 0) + ':' + \
+             Array.prototype.flat.call(true).length + ':' + \
+             Array.prototype.push.call(true, 1) + ':' + \
+             Array.prototype.unshift.call(true, 1);"
+        ),
+        ":undefined:0:1:1"
+    );
+}
+
+#[test]
+fn array_mutators_use_vm_setter_path_for_index_writes() {
+    assert_eq!(
+        native_eval(
+            "var log = []; \
+             var a = [2, 1]; \
+             Object.defineProperty(a, '0', { \
+               get: function() { return 2; }, \
+               set: function(value) { log.push(value); }, \
+               configurable: true \
+             }); \
+             a.sort(); \
+             log.join(',') + ':' + a[1];"
+        ),
+        "1:2"
+    );
+}
+
+#[test]
+fn array_mutators_use_vm_setter_path_for_length_writes() {
+    assert_eq!(
+        native_eval(
+            "var log = []; \
+             var o = { 0: 'a' }; \
+             Object.defineProperty(o, 'length', { \
+               get: function() { return 1; }, \
+               set: function(value) { log.push(value); }, \
+               configurable: true \
+             }); \
+             Array.prototype.push.call(o, 'b'); \
+             log.join(',') + ':' + o[1];"
+        ),
+        "2:b"
+    );
+}
+
+#[test]
 fn array_slice_is_generic_and_preserves_holes() {
     assert_eq!(
         native_eval(

@@ -18,6 +18,22 @@ use crate::{
 
 const ITERATOR_MAX_ARRAY_LENGTH: usize = 1_000_000;
 
+fn define_arguments_iterator(
+    context: &mut NativeContext,
+    arguments_id: ObjectId,
+) -> Result<(), VmError> {
+    let Some(intrinsics) = context.intrinsics().cloned() else {
+        return Ok(());
+    };
+    let iterator = context.well_known_symbols().iterator;
+    if let Some(descriptor) =
+        context.get_own_symbol_property_descriptor(intrinsics.array_prototype, iterator)
+    {
+        context.define_symbol_own_property(arguments_id, iterator, descriptor)?;
+    }
+    Ok(())
+}
+
 /// Native VM failure category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VmErrorKind {
@@ -2460,6 +2476,7 @@ impl Vm {
                 true,
             ),
         )?;
+        define_arguments_iterator(context, arguments_id)?;
         context.declare_binding(
             environment,
             "arguments",
@@ -2697,7 +2714,10 @@ impl Vm {
                             };
                             return self.call_value(target, apply_this, forwarded, context);
                         }
-                        match (def.call)(self, context, this_value, &arguments) {
+                        context.push_current_builtin(id);
+                        let call_result = (def.call)(self, context, this_value, &arguments);
+                        context.pop_current_builtin();
+                        match call_result {
                             Ok(value) => Ok(OperationResult::Value(value)),
                             Err(error) => match self.pending_exception.take() {
                                 // A nested JavaScript callback threw; surface its value.
@@ -4832,6 +4852,10 @@ impl Vm {
                 "length".into(),
                 PropertyDescriptor::data_with(length_val, true, false, true),
             ) {
+                let _ = context.restore_environment_depth(caller_environment_depth);
+                return Err(e);
+            }
+            if let Err(e) = define_arguments_iterator(context, arguments_id) {
                 let _ = context.restore_environment_depth(caller_environment_depth);
                 return Err(e);
             }

@@ -107,3 +107,53 @@ fn temporal_constructor_calls_throw_explicit_type_errors() {
         "true"
     );
 }
+
+#[test]
+fn temporal_prototype_getters_work_when_called_directly() {
+    assert_eq!(
+        native_eval(
+            "var date = Temporal.PlainDate.from('2020-05-02'); \
+             var year = Object.getOwnPropertyDescriptor(Temporal.PlainDate.prototype, 'year').get; \
+             var monthCode = Object.getOwnPropertyDescriptor(Temporal.PlainDate.prototype, 'monthCode').get; \
+             year.call(date) + ':' + monthCode.call(date);"
+        ),
+        "2020:M05"
+    );
+}
+
+#[test]
+fn temporal_now_and_instant_nanosecond_skeletons_are_installed() {
+    assert_eq!(
+        native_eval(
+            "var inst = Temporal.Instant.fromEpochNanoseconds(123456789n); \
+             var zdt = Temporal.Now.zonedDateTimeISO(); \
+             inst.epochNanoseconds + ':' + Object.prototype.toString.call(Temporal.Now) + ':' + \
+             (zdt instanceof Temporal.ZonedDateTime);"
+        ),
+        "123456789:[object Temporal.Now]:true"
+    );
+}
+
+#[test]
+fn temporal_year_month_and_month_day_calendar_name_always_include_reference_date() {
+    assert_eq!(
+        native_eval(
+            "var ym = new Temporal.PlainYearMonth(2020, 5, undefined, 2); \
+             var md = new Temporal.PlainMonthDay(5, 2, undefined, 2020); \
+             ym.toString({ calendarName: 'always' }) + ':' + \
+             md.toString({ calendarName: 'always' });"
+        ),
+        "2020-05-02[u-ca=iso8601]:2020-05-02[u-ca=iso8601]"
+    );
+}
+
+#[test]
+fn temporal_plain_time_and_date_time_static_compare_are_installed() {
+    assert_eq!(
+        native_eval(
+            "Temporal.PlainTime.compare('01:00', '02:00') + ':' + \
+             Temporal.PlainDateTime.compare('2020-01-02T00:00', '2020-01-01T23:59');"
+        ),
+        "-1:1"
+    );
+}
