@@ -280,10 +280,10 @@ Native 固定门 / 目录扫描 / 完整 Test262
 | 项目 | 记录 |
 | --- | --- |
 | 测试日期 | 2026-06-28 |
-| 操作系统 | Microsoft Windows NT 10.0.26200.0，AMD64 |
+| 操作系统 | Windows，Linux，Mac |
 | CPU 标识 | Intel64 Family 6 Model 183 Stepping 1，32 logical processors |
-| Rust | `rustc 1.91.0 (f8297e351 2025-10-28)` |
-| Cargo | `cargo 1.91.0 (ea2d97820 2025-10-10)` |
+| Rust | `rustc 1.96.0` |
+| Cargo | `cargo 1.96.0` |
 | AgentJS commit | `d0bbbb99abaeb0ff547092cd7dbadd3b2c7b8180` |
 | Test262 revision | `de8e621cdba4f40cff3cf244e6cfb8cb48746b4a` |
 | JetStream 2 revision | `60cdba17bef0dcdb3fca2263e3916c3c45bfb7c2` |
@@ -612,14 +612,13 @@ focused test / 目录扫描 / 完整扫描
 
 ## 13. 作品演示视频设计
 
+ 视频链接：AgentJs_Video.mp4
+ https://pan.baidu.com/s/1OBOQQAeS7TWlrbsN1Y5wIQ 
+ 提取码: 1h7k
+ 
 ---
 
-## 14. 进展汇报 PPT 结构
-
-
----
-
-## 15. 比赛收获与总结
+## 14. 比赛收获与总结
 
 AgentJS 从最小 Native 表达式执行链发展为包含现代前端、字节码 VM、对象模型、标准库、模块、异步任务、GC、资源预算和完整 Test262 runner 的 Rust JavaScript 引擎。最终 71.78% 的完整 Test262 结果表明项目已超过赛题要求，并且该数字来自可复现的 Native 全量运行，而非 Boa 兼容后端或精选用例。
 
