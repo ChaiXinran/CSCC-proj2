@@ -1583,7 +1583,8 @@ impl Compiler {
             environment_depth: 0,
             function_depth: outer_context.function_depth + 1,
         };
-        let mut lexical_scope = self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
+        let mut lexical_scope =
+            self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
         // Include formal parameter names and `arguments` in the function body's lexical scope
         // so that compile_block can classify Annex B fn decls whose name matches a param as
         // path-B (block-scoped) instead of path-A (hoisting into the outer var env).
@@ -1913,7 +1914,8 @@ impl Compiler {
 
         for step in steps {
             let is_optional = match step {
-                OptionalChainStep::Member { optional, .. } | OptionalChainStep::Call { optional, .. } => *optional,
+                OptionalChainStep::Member { optional, .. }
+                | OptionalChainStep::Call { optional, .. } => *optional,
             };
 
             if is_optional {
@@ -1934,7 +1936,9 @@ impl Compiler {
             }
 
             match step {
-                OptionalChainStep::Member { property, computed, .. } => {
+                OptionalChainStep::Member {
+                    property, computed, ..
+                } => {
                     if *computed {
                         self.compile_expression(property, chunk, context)?;
                         chunk.emit(Instruction::GetElement);
@@ -1945,7 +1949,7 @@ impl Compiler {
                             other => {
                                 return Err(CompileError::unsupported(format!(
                                     "non-identifier optional member property {other:?}"
-                                )))
+                                )));
                             }
                         };
                         let idx = self.add_name(&name, chunk)?;
@@ -1966,7 +1970,9 @@ impl Compiler {
                         message: "too many optional call arguments".into(),
                     })?;
                     for arg in arguments {
-                        let CallArgument::Expression(e) = arg else { unreachable!() };
+                        let CallArgument::Expression(e) = arg else {
+                            unreachable!()
+                        };
                         self.compile_expression(e, chunk, context)?;
                     }
                     chunk.emit(Instruction::Call(n));

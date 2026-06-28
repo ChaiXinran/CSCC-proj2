@@ -116,6 +116,23 @@ pub fn install_array(context: &mut NativeContext) {
             array_copy_within as crate::runtime::NativeCall,
         ),
         ("at", 1, array_at as crate::runtime::NativeCall),
+        (
+            "toLocaleString",
+            0,
+            array_to_locale_string as crate::runtime::NativeCall,
+        ),
+        (
+            "toReversed",
+            0,
+            array_to_reversed as crate::runtime::NativeCall,
+        ),
+        ("toSorted", 1, array_to_sorted as crate::runtime::NativeCall),
+        (
+            "toSpliced",
+            2,
+            array_to_spliced as crate::runtime::NativeCall,
+        ),
+        ("with", 2, array_with as crate::runtime::NativeCall),
     ] {
         let value = context
             .register_builtin(name, length, call, None)
@@ -128,6 +145,19 @@ pub fn install_array(context: &mut NativeContext) {
             )
             .expect("define Array prototype method");
     }
+
+    // @@iterator = Array.prototype.values
+    let values_fn = context
+        .register_builtin("[Symbol.iterator]", 0, array_values, None)
+        .expect("install Array @@iterator");
+    let iterator_symbol = context.well_known_symbols().iterator;
+    context
+        .define_symbol_own_property(
+            intrinsics.array_prototype,
+            iterator_symbol,
+            PropertyDescriptor::data_with(values_fn, true, false, true),
+        )
+        .expect("define Array @@iterator");
 }
 
 fn array_species_get(
@@ -1706,4 +1736,158 @@ fn array_at(
         i
     };
     get_elem(vm, context, this_value, index)
+}
+
+// ── Change-array-by-copy methods (ES2023) ─────────────────────────────────────
+
+fn array_to_locale_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = vm.to_object(this_value.clone(), context)?;
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+    let mut parts = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
+    for i in 0..length.min(MAX_DENSE_ALLOC) {
+        let elem = get_elem(vm, context, this_value.clone(), i)?;
+        let part = if matches!(elem, JsValue::Undefined | JsValue::Null) {
+            String::new()
+        } else {
+            let to_locale = vm.get_property_value(elem.clone(), "toLocaleString", context)?;
+            if is_callable(&to_locale) {
+                let result = vm.call_value_from_builtin(to_locale, elem, vec![], context)?;
+                vm.to_string_coerce(result, context)?
+            } else {
+                vm.to_string_coerce(elem, context)?
+            }
+        };
+        parts.push(part);
+    }
+    Ok(JsValue::String(parts.join(",")))
+}
+
+fn array_to_reversed(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = vm.to_object(this_value.clone(), context)?;
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+    let capped = length.min(MAX_DENSE_ALLOC);
+    // Spec reads from index len-1 down to 0 (descending)
+    let mut elems = Vec::with_capacity(capped);
+    for i in (0..capped).rev() {
+        elems.push(get_elem(vm, context, this_value.clone(), i)?);
+    }
+    context.create_array(elems)
+}
+
+fn array_to_sorted(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let compare_fn_arg = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !matches!(compare_fn_arg, JsValue::Undefined) && !is_callable(&compare_fn_arg) {
+        return Err(VmError::type_error(
+            "Array.prototype.toSorted comparefn must be callable",
+        ));
+    }
+    let compare_fn = if matches!(compare_fn_arg, JsValue::Undefined) {
+        None
+    } else {
+        Some(compare_fn_arg)
+    };
+
+    let object = vm.to_object(this_value.clone(), context)?;
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+    let capped = length.min(MAX_DENSE_ALLOC);
+    let mut elems: Vec<JsValue> = (0..capped)
+        .map(|i| get_elem(vm, context, this_value.clone(), i))
+        .collect::<Result<_, _>>()?;
+
+    for i in 1..elems.len() {
+        let mut j = i;
+        while j > 0 {
+            let should_swap = compare_two(vm, context, &elems[j - 1], &elems[j], &compare_fn)?;
+            if !should_swap {
+                break;
+            }
+            elems.swap(j - 1, j);
+            j -= 1;
+        }
+    }
+    context.create_array(elems)
+}
+
+fn array_to_spliced(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = vm.to_object(this_value.clone(), context)?;
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+    let capped = length.min(MAX_DENSE_ALLOC);
+
+    let start_raw = argument_number(vm, context, arguments, 0, 0.0)?;
+    let start = normalize_index(start_raw, capped);
+
+    let default_delete = (capped - start) as f64;
+    let delete_count = if arguments.len() < 2 {
+        capped - start
+    } else {
+        argument_number(vm, context, arguments, 1, default_delete)?
+            .max(0.0)
+            .min((capped - start) as f64) as usize
+    };
+    let insert_items: Vec<JsValue> = arguments.get(2..).unwrap_or(&[]).to_vec();
+
+    let mut result = Vec::with_capacity(capped + insert_items.len());
+    for i in 0..start {
+        result.push(get_elem(vm, context, this_value.clone(), i)?);
+    }
+    for item in insert_items {
+        result.push(item);
+    }
+    for i in (start + delete_count)..capped {
+        result.push(get_elem(vm, context, this_value.clone(), i)?);
+    }
+    context.create_array(result)
+}
+
+fn array_with(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = vm.to_object(this_value.clone(), context)?;
+    let length = array_like_length_from_value(vm, context, this_value.clone(), object)?;
+
+    let index_raw = argument_number(vm, context, arguments, 0, 0.0)?;
+    let rel = if index_raw < 0.0 {
+        (length as f64 + index_raw) as isize
+    } else {
+        index_raw as isize
+    };
+    if rel < 0 || rel as usize >= length {
+        return Err(VmError::range("Array.prototype.with: index out of range"));
+    }
+    let replace_index = rel as usize;
+    let new_value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+
+    let capped = length.min(MAX_DENSE_ALLOC);
+    let mut elems = Vec::with_capacity(capped);
+    for i in 0..capped {
+        if i == replace_index {
+            elems.push(new_value.clone());
+        } else {
+            elems.push(get_elem(vm, context, this_value.clone(), i)?);
+        }
+    }
+    context.create_array(elems)
 }

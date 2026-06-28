@@ -1697,9 +1697,7 @@ impl Parser {
     fn parse_with(&mut self) -> Result<Statement, ParseError> {
         self.advance(); // `with`
         if self.is_strict {
-            return Err(self.error(
-                "`with` statements are not allowed in strict mode".into(),
-            ));
+            return Err(self.error("`with` statements are not allowed in strict mode".into()));
         }
         self.expect_punctuator('(')?;
         let object = self.allowing_in(|p| p.parse_assignment())?;
@@ -1838,7 +1836,9 @@ impl Parser {
                         kind: crate::ast::VariableKind::Let | crate::ast::VariableKind::Const,
                         declarations,
                     } => {
-                        for d in declarations { non_fn_names.insert(d.name.as_str()); }
+                        for d in declarations {
+                            non_fn_names.insert(d.name.as_str());
+                        }
                     }
                     Statement::ClassDeclaration(cls) => {
                         non_fn_names.insert(cls.name.as_str());
