@@ -3,34 +3,37 @@
     "label_a": "agentjs",
     "label_b": "boa",
     "engine_a": ".\\target\\release\\agentjs.exe",
-    "engine_b": "boa",
+    "engine_b": ".\\boa\\target\\release\\boa.exe",
     "repeat": 3,
     "timeout": 120,
     "cases": [
       "descriptor-side-table-array",
       "large-index-dense-array",
-      "rule-filter-dense-window"
+      "rule-filter-dense-window",
+      "string-ascii-index-scan",
+      "string-cleanup-replace-window",
+      "string-log-token-slice"
     ]
   },
   "results": {
     "agentjs": {
       "descriptor-side-table-array": {
         "status": "pass",
-        "median_ms": 770.0,
+        "median_ms": 339.3,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 927.4,
+            "time_ms": 339.3,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 736.4,
+            "time_ms": 341.7,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 770.0,
+            "time_ms": 332.8,
             "stderr": ""
           }
         ],
@@ -38,21 +41,21 @@
       },
       "large-index-dense-array": {
         "status": "pass",
-        "median_ms": 1147.3,
+        "median_ms": 521.6,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 1124.4,
+            "time_ms": 513.1,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 1147.9,
+            "time_ms": 521.6,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 1147.3,
+            "time_ms": 552.5,
             "stderr": ""
           }
         ],
@@ -60,21 +63,87 @@
       },
       "rule-filter-dense-window": {
         "status": "pass",
-        "median_ms": 808.1,
+        "median_ms": 365.2,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 864.3,
+            "time_ms": 365.2,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 808.1,
+            "time_ms": 359.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 786.0,
+            "time_ms": 368.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-ascii-index-scan": {
+        "status": "pass",
+        "median_ms": 1512.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 1512.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1132.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1942.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-cleanup-replace-window": {
+        "status": "pass",
+        "median_ms": 277.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 263.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 277.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 284.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-log-token-slice": {
+        "status": "pass",
+        "median_ms": 1629.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 1601.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1629.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1712.3,
             "stderr": ""
           }
         ],
@@ -84,21 +153,21 @@
     "boa": {
       "descriptor-side-table-array": {
         "status": "pass",
-        "median_ms": 1282.1,
+        "median_ms": 447.4,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 1343.9,
+            "time_ms": 508.1,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 1216.9,
+            "time_ms": 447.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 1282.1,
+            "time_ms": 442.0,
             "stderr": ""
           }
         ],
@@ -106,21 +175,21 @@
       },
       "large-index-dense-array": {
         "status": "pass",
-        "median_ms": 2740.9,
+        "median_ms": 585.9,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 2740.9,
+            "time_ms": 583.4,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 2926.6,
+            "time_ms": 585.9,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 2516.8,
+            "time_ms": 634.0,
             "stderr": ""
           }
         ],
@@ -128,21 +197,87 @@
       },
       "rule-filter-dense-window": {
         "status": "pass",
-        "median_ms": 982.0,
+        "median_ms": 259.0,
         "runs": [
           {
             "status": "pass",
-            "time_ms": 1013.2,
+            "time_ms": 265.2,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 982.0,
+            "time_ms": 259.0,
             "stderr": ""
           },
           {
             "status": "pass",
-            "time_ms": 938.6,
+            "time_ms": 257.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-ascii-index-scan": {
+        "status": "pass",
+        "median_ms": 82.7,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 86.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 82.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 81.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-cleanup-replace-window": {
+        "status": "pass",
+        "median_ms": 963.4,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 956.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 969.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 963.4,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-log-token-slice": {
+        "status": "pass",
+        "median_ms": 432.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 429.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 432.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 433.2,
             "stderr": ""
           }
         ],

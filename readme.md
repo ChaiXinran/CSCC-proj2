@@ -88,13 +88,13 @@ AgentJS Native Runtime 已正确运行 SunSpider 1.0.2 的全部 26 个用例，
 
 ### Native Benchmark
 
-项目设计了面向智能体场景的 AgentBench，覆盖描述符旁路表、大索引稠密数组和短数据过滤等负载。以下为 release 模式下 3 次运行的中位数：
+项目设计了面向智能体场景的 AgentBench，覆盖描述符旁路表、大索引稠密数组、短数据过滤，以及 ASCII 字符串扫描、文本清洗、日志字段提取等 String 负载。它强调短时、高频、数据处理型 JS 执行，而不是浏览器长生命周期应用。以下为 release 模式下 3 次运行的中位数：
 
 | Case | AgentJS | Boa | 结果 |
-| --- | ---: | ---: | ---: |
-| `descriptor-side-table-array` | 770 ms | 1,282 ms | **1.67× faster** |
-| `large-index-dense-array` | 1,147 ms | 2,741 ms | **2.39× faster** |
-| `rule-filter-dense-window` | 808 ms | 982 ms | **1.22× faster** |
+| --- | ---: | ---: | ---:
+| `descriptor-side-table-array` | 339 ms | 447 ms | **1.32× faster** |
+| `large-index-dense-array` | 522 ms | 586 ms | **1.12× faster** |
+| `string-cleanup-replace-window` | 277 ms | 963 ms | **3.48× faster** |
 
 完整数据见 [AgentBench 报告](benchmarks/agent/results/agentjs.md)。
 
@@ -103,11 +103,11 @@ AgentJS Native Runtime 已正确运行 SunSpider 1.0.2 的全部 26 个用例，
 | 特色与优化 | 实现与效果 |
 | --- | --- |
 | **轻量化 Native 构建** | Windows release 下 Native-only 为 **7.10 MiB**；编译可选 Boa 后端后为 17.06 MiB |
-| **分段稠密数组存储** | 64K inline 区后按 4K 槽位惰性分段；大索引数组 AgentBench 比 Boa 快 **2.39×** |
-| **属性描述符旁路表** | 普通元素只存值，仅为非默认 descriptor 保存覆盖项；对应 AgentBench 比 Boa 快 **1.67×** |
+| **分段稠密数组存储** | 64K inline 区后按 4K 槽位惰性分段；大索引数组 AgentBench 比 Boa 快 **1.12×** |
+| **属性描述符旁路表** | 普通元素只存值，仅为非默认 descriptor 保存覆盖项；对应 AgentBench 比 Boa 快 **1.32×** |
 | **Free List 堆对象复用** | GC 回收后复用 object、function 和 environment 槽位，减少短任务中的重复分配 |
-| **String Primitive ASCII Fast Path** | `string-base64` 的 7 次运行中位数由 **769.9 ms 降至 273.0 ms**，提升 **2.82×** |
-| **面向智能体的 benchmark** | 使用短数据处理、局部稠密数组和属性访问负载模拟高频脚本执行 |
+| **String Primitive ASCII Fast Path** | `string-base64` 的 7 次运行中位数由 **769.9 ms 降至 273.0 ms**，提升 **2.82×**；AgentBench 中 `string-cleanup-replace-window` 比 Boa 快 **3.48×** |
+| **面向智能体的 benchmark** | 使用短数据处理、局部稠密数组、属性访问和 String 文本处理负载模拟高频脚本执行 |
 
 ## 命令行
 
