@@ -1,0 +1,39 @@
+{
+  "meta": {
+    "label_a": "agentjs-before-eval-ray",
+    "label_b": null,
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": null,
+    "repeat": 1,
+    "timeout": 60,
+    "tests_dir": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs-before-eval-ray": {
+      "date-format-tofte": {
+        "status": "runtime-error",
+        "median_ms": null,
+        "runs": [
+          {
+            "status": "runtime-error",
+            "time_ms": 18.7,
+            "stderr": "agentjs: ReferenceError: execution error: Y is not defined at instruction 0"
+          }
+        ],
+        "error": "agentjs: ReferenceError: execution error: Y is not defined at instruction 0"
+      },
+      "3d-raytrace": {
+        "status": "wrong-result",
+        "median_ms": null,
+        "runs": [
+          {
+            "status": "wrong-result",
+            "time_ms": 10728.3,
+            "stderr": "agentjs: Error: execution error: uncaught Error: bad result: expected length 20970 but got 24183"
+          }
+        ],
+        "error": "agentjs: Error: execution error: uncaught Error: bad result: expected length 20970 but got 24183"
+      }
+    }
+  }
+}

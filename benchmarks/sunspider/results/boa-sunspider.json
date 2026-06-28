@@ -1,0 +1,587 @@
+{
+  "meta": {
+    "label_a": "boa",
+    "label_b": null,
+    "engine_a": ".\\boa\\target\\release\\boa.exe",
+    "engine_b": null,
+    "repeat": 3,
+    "timeout": 60,
+    "tests_dir": "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "boa": {
+      "3d-cube": {
+        "status": "pass",
+        "median_ms": 64.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 773.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 62.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "3d-morph": {
+        "status": "pass",
+        "median_ms": 70.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 73.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "3d-raytrace": {
+        "status": "pass",
+        "median_ms": 70.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 70.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 98.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 68.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-binary-trees": {
+        "status": "pass",
+        "median_ms": 63.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 63.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 59.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-fannkuch": {
+        "status": "pass",
+        "median_ms": 138.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 138.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 137.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 138.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-nbody": {
+        "status": "pass",
+        "median_ms": 57.6,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 59.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 57.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 57.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-nsieve": {
+        "status": "pass",
+        "median_ms": 107.4,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 108.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 107.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 107.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-3bit-bits-in-byte": {
+        "status": "pass",
+        "median_ms": 40.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 41.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 40.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 39.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-bits-in-byte": {
+        "status": "pass",
+        "median_ms": 53.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 84.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 53.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 52.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-bitwise-and": {
+        "status": "pass",
+        "median_ms": 286.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 280.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 286.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 289.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-nsieve-bits": {
+        "status": "pass",
+        "median_ms": 81.6,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 115.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 75.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 81.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "controlflow-recursive": {
+        "status": "pass",
+        "median_ms": 43.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 45.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 43.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-aes": {
+        "status": "pass",
+        "median_ms": 80.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 80.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 79.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 80.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-md5": {
+        "status": "pass",
+        "median_ms": 40.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 40.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 39.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 40.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-sha1": {
+        "status": "pass",
+        "median_ms": 39.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 39.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 37.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "date-format-tofte": {
+        "status": "pass",
+        "median_ms": 90.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 87.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 120.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 90.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "date-format-xparb": {
+        "status": "pass",
+        "median_ms": 54.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 54.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 53.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 61.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-cordic": {
+        "status": "pass",
+        "median_ms": 79.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 79.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 80.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 75.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-partial-sums": {
+        "status": "pass",
+        "median_ms": 108.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 108.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 131.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-spectral-norm": {
+        "status": "pass",
+        "median_ms": 41.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 42.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "regexp-dna": {
+        "status": "pass",
+        "median_ms": 106.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 106.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 104.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 109.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-base64": {
+        "status": "pass",
+        "median_ms": 57.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 60.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 57.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 57.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-fasta": {
+        "status": "pass",
+        "median_ms": 168.4,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 168.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 142.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 170.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-tagcloud": {
+        "status": "pass",
+        "median_ms": 148.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 146.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 148.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 180.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-unpack-code": {
+        "status": "pass",
+        "median_ms": 294.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 305.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 286.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 294.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-validate-input": {
+        "status": "pass",
+        "median_ms": 128.6,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 128.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 123.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 129.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}

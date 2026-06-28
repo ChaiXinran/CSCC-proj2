@@ -851,9 +851,7 @@ impl Compiler {
                     .iter()
                     .rposition(|b| b.label.is_none())
                     .ok_or_else(|| {
-                        CompileError::unsupported(
-                            "break statement outside of a loop or switch",
-                        )
+                        CompileError::unsupported("break statement outside of a loop or switch")
                     })?
             }
             Some(name) => {
@@ -863,9 +861,7 @@ impl Compiler {
                     .iter()
                     .rposition(|b| b.label.as_deref() == Some(name))
                     .ok_or_else(|| {
-                        CompileError::unsupported(
-                            "break statement outside of a loop or switch",
-                        )
+                        CompileError::unsupported("break statement outside of a loop or switch")
                     })?
             }
         };
@@ -896,7 +892,9 @@ impl Compiler {
         compile_result?;
         let end_offset = chunk.current_offset();
         for jump in labeled_ctx.break_jumps {
-            chunk.patch_jump(jump, end_offset).map_err(CompileError::from_chunk)?;
+            chunk
+                .patch_jump(jump, end_offset)
+                .map_err(CompileError::from_chunk)?;
         }
         Ok(())
     }
@@ -2418,15 +2416,14 @@ impl Compiler {
                     chunk.emit(Instruction::Pop); // pop value
                 }
                 ArrayElement::Expression(target_expr) => {
-                    let assignment_target = if let Expression::Assignment { target, .. } =
-                        target_expr
-                    {
-                        target.as_ref()
-                    } else {
-                        target_expr
-                    };
-                    let precomputed_member = self
-                        .precompute_computed_member_target(assignment_target, chunk, context)?;
+                    let assignment_target =
+                        if let Expression::Assignment { target, .. } = target_expr {
+                            target.as_ref()
+                        } else {
+                            target_expr
+                        };
+                    let precomputed_member =
+                        self.precompute_computed_member_target(assignment_target, chunk, context)?;
                     chunk.emit(Instruction::LoadName(iter_idx));
                     chunk.emit(Instruction::IteratorNext); // → [value, done]
 
@@ -2508,8 +2505,8 @@ impl Compiler {
                         .map_err(CompileError::from_chunk)?;
                 }
                 ArrayElement::Spread(rest_target) => {
-                    let precomputed_member = self
-                        .precompute_computed_member_target(rest_target, chunk, context)?;
+                    let precomputed_member =
+                        self.precompute_computed_member_target(rest_target, chunk, context)?;
                     // Collect remaining iterator values into an array.
                     chunk.emit(Instruction::ArrayCreate(0)); // [] on stack
                     let loop_start = chunk.current_offset();
@@ -2883,12 +2880,16 @@ impl Compiler {
                     let sc_target = chunk.current_offset();
                     // [obj, key, old_val] → keep only old_val
                     chunk.emit(Instruction::Swap); // [obj, old_val, key]
-                    chunk.emit(Instruction::Pop);  // [obj, old_val]
+                    chunk.emit(Instruction::Pop); // [obj, old_val]
                     chunk.emit(Instruction::Swap); // [old_val, obj]
-                    chunk.emit(Instruction::Pop);  // [old_val]
+                    chunk.emit(Instruction::Pop); // [old_val]
                     let end_target = chunk.current_offset();
-                    chunk.patch_jump(jump_instr, sc_target).map_err(CompileError::from_chunk)?;
-                    chunk.patch_jump(jump_end, end_target).map_err(CompileError::from_chunk)?;
+                    chunk
+                        .patch_jump(jump_instr, sc_target)
+                        .map_err(CompileError::from_chunk)?;
+                    chunk
+                        .patch_jump(jump_end, end_target)
+                        .map_err(CompileError::from_chunk)?;
                     return Ok(());
                 }
                 let prop_name = match property.as_ref() {
@@ -4125,7 +4126,9 @@ impl Compiler {
                 if needs_rest_env {
                     chunk.emit(Instruction::CreateLexicalEnvironment);
                     context.environment_depth += 1;
-                    context.lexical_scopes.push(std::collections::HashSet::new());
+                    context
+                        .lexical_scopes
+                        .push(std::collections::HashSet::new());
                 }
                 chunk.emit(Instruction::RequireObjectCoercible);
                 let mut rest_excluded = Vec::new();
@@ -4141,8 +4144,7 @@ impl Compiler {
                         crate::ast::ObjectBindingKey::Computed(key_expr) => {
                             self.compile_expression(key_expr, chunk, context)?;
                             if needs_rest_env {
-                                let temp_name =
-                                    format!("\u{0}dstr_obj_key{}", rest_excluded.len());
+                                let temp_name = format!("\u{0}dstr_obj_key{}", rest_excluded.len());
                                 let temp_idx = self.add_name(&temp_name, chunk)?;
                                 chunk.emit(Instruction::CreateMutableBinding(temp_idx));
                                 if let Some(scope) = context.lexical_scopes.last_mut() {
@@ -4259,7 +4261,9 @@ impl Compiler {
                 if needs_rest_env {
                     chunk.emit(Instruction::CreateLexicalEnvironment);
                     context.environment_depth += 1;
-                    context.lexical_scopes.push(std::collections::HashSet::new());
+                    context
+                        .lexical_scopes
+                        .push(std::collections::HashSet::new());
                 }
                 chunk.emit(Instruction::RequireObjectCoercible);
                 let mut rest_excluded = Vec::new();
@@ -4276,8 +4280,7 @@ impl Compiler {
                             // [rhs, rhs]
                             self.compile_expression(key_expr, chunk, context)?; // [rhs, rhs, computed_key]
                             if needs_rest_env {
-                                let temp_name =
-                                    format!("\u{0}dstr_obj_key{}", rest_excluded.len());
+                                let temp_name = format!("\u{0}dstr_obj_key{}", rest_excluded.len());
                                 let temp_idx = self.add_name(&temp_name, chunk)?;
                                 chunk.emit(Instruction::CreateMutableBinding(temp_idx));
                                 if let Some(scope) = context.lexical_scopes.last_mut() {

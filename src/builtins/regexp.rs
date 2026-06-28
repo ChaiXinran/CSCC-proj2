@@ -32,39 +32,36 @@ pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
-    if flags.contains('s') && (flags.contains('u') || flags.contains('v')) {
-        return pattern.to_string();
-    }
     let needs_dot = pattern.contains('.');
     // \0 in JS regex = null char; Rust regex treats \0 as a backreference (error).
     let needs_null = pattern.contains("\\0");
-    if !needs_dot && !needs_null {
+    let unicode_mode = flags.contains('u') || flags.contains('v');
+    if !needs_null && (!needs_dot || (flags.contains('s') && unicode_mode)) {
         return pattern.to_string();
     }
-    let unicode_mode = flags.contains('u') || flags.contains('v');
-    let dot_replacement = if flags.contains('s') {
-        r"[^\u{10000}-\u{10FFFF}]"
+    let dot_replacement = if flags.contains('s') && unicode_mode {
+        None
+    } else if flags.contains('s') {
+        Some(r"[^\u{10000}-\u{10FFFF}]")
     } else if unicode_mode {
-        r"[^\n\r\u{2028}\u{2029}]"
+        Some(r"[^\n\r\u{2028}\u{2029}]")
     } else {
-        r"[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]"
+        Some(r"[^\n\r\u{2028}\u{2029}\u{10000}-\u{10FFFF}]")
     };
     let mut output = String::with_capacity(pattern.len() + 16);
     let mut chars = pattern.chars().peekable();
     let mut in_class = false;
     while let Some(ch) = chars.next() {
         if ch == '\\' {
-            if let Some(&next) = chars.peek() {
-                if next == '0' {
-                    // JS \0 = null char; translate to Rust \x00 to avoid backreference parse error.
-                    chars.next();
-                    output.push_str(r"\x00");
-                    continue;
-                }
-            }
-            output.push(ch);
             if let Some(next) = chars.next() {
-                output.push(next);
+                if next == '0' && !chars.peek().is_some_and(char::is_ascii_digit) {
+                    output.push_str(r"\x00");
+                } else {
+                    output.push(ch);
+                    output.push(next);
+                }
+            } else {
+                output.push(ch);
             }
             continue;
         }
@@ -79,7 +76,11 @@ fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
             continue;
         }
         if ch == '.' && !in_class {
-            output.push_str(dot_replacement);
+            if let Some(replacement) = dot_replacement {
+                output.push_str(replacement);
+            } else {
+                output.push(ch);
+            }
         } else {
             output.push(ch);
         }
@@ -324,4 +325,18 @@ pub fn split(regex: &Regex, text: &str, limit: Option<usize>) -> Vec<Option<Stri
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn js_nul_escape_compiles_for_rust_regex() {
+        let regex = compile_regex(r"[\0\t]", "").expect("JS NUL escape should compile");
+
+        assert!(regex.is_match("\0"));
+        assert!(regex.is_match("\t"));
+        assert!(!regex.is_match("x"));
+    }
 }

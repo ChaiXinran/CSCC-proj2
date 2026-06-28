@@ -2828,9 +2828,7 @@ fn binary_operator(operator: &str) -> BinaryOperator {
 }
 
 /// Validates that an array/object destructuring assignment target obeys ES spec early errors.
-pub(super) fn validate_destructuring_assignment_target(
-    expr: &Expression,
-) -> Result<(), String> {
+pub(super) fn validate_destructuring_assignment_target(expr: &Expression) -> Result<(), String> {
     match expr {
         Expression::Array(elements) => {
             let len = elements.len();

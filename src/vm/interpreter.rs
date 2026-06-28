@@ -348,7 +348,8 @@ impl Vm {
         let mut instruction_pointer = start_ip;
         let baseline = RunBaseline {
             stack_depth: self.stack.len(),
-            environment_depth: baseline_environment_depth.unwrap_or_else(|| context.environment_depth()),
+            environment_depth: baseline_environment_depth
+                .unwrap_or_else(|| context.environment_depth()),
         };
         if let Some(completion) = initial
             && !self.enter_handler(
@@ -1072,13 +1073,18 @@ impl Vm {
                         if n.fract() != 0.0 || n < 0.0 || n >= 4_294_967_295.0 {
                             break 'fast;
                         }
-                        let JsValue::Object(obj_id) = object else { break 'fast };
+                        let JsValue::Object(obj_id) = object else {
+                            break 'fast;
+                        };
                         let idx = n as usize;
                         let Some(result) = Self::fast_get_element(obj_id, idx, context) else {
                             break 'fast;
                         };
                         match result {
-                            Ok(value) => { self.stack.push(value); continue 'dispatch; }
+                            Ok(value) => {
+                                self.stack.push(value);
+                                continue 'dispatch;
+                            }
                             Err(e) => return Err(e),
                         }
                     }
@@ -1526,13 +1532,20 @@ impl Vm {
                         if n.fract() != 0.0 || n < 0.0 || n >= 4_294_967_295.0 {
                             break 'fast;
                         }
-                        let JsValue::Object(obj_id) = object else { break 'fast };
+                        let JsValue::Object(obj_id) = object else {
+                            break 'fast;
+                        };
                         let idx = n as usize;
-                        let Some(result) = Self::fast_set_element(obj_id, idx, value.clone(), context) else {
+                        let Some(result) =
+                            Self::fast_set_element(obj_id, idx, value.clone(), context)
+                        else {
                             break 'fast;
                         };
                         match result {
-                            Ok(()) => { self.stack.push(value); continue 'dispatch; }
+                            Ok(()) => {
+                                self.stack.push(value);
+                                continue 'dispatch;
+                            }
                             Err(e) => return Err(e),
                         }
                     }
@@ -2610,7 +2623,11 @@ impl Vm {
             context.declare_binding(environment, rest_name.clone(), rest_array, true)?;
         }
 
-        if let Some(name) = &function.name {
+        if let Some(name) = function
+            .name
+            .as_ref()
+            .filter(|_| Self::should_bind_function_name_in_activation(function))
+        {
             context.declare_binding(
                 environment,
                 name.clone(),
@@ -2620,8 +2637,7 @@ impl Vm {
         }
 
         let has_explicit_arguments = function.params.iter().any(|p| p == "arguments")
-            || function.rest_param.as_deref() == Some("arguments")
-            || function.name.as_deref() == Some("arguments");
+            || function.rest_param.as_deref() == Some("arguments");
         if has_explicit_arguments {
             return Ok(());
         }
@@ -4647,15 +4663,17 @@ impl Vm {
             }
         };
         match fast_kind {
-            FastKind::TypedArray(view_id) => {
-                Some(context.typed_array_store_element(view_id, idx, value).or_else(|e| {
-                    if matches!(e.kind, VmErrorKind::Range) {
-                        Ok(())
-                    } else {
-                        Err(e)
-                    }
-                }))
-            }
+            FastKind::TypedArray(view_id) => Some(
+                context
+                    .typed_array_store_element(view_id, idx, value)
+                    .or_else(|e| {
+                        if matches!(e.kind, VmErrorKind::Range) {
+                            Ok(())
+                        } else {
+                            Err(e)
+                        }
+                    }),
+            ),
             FastKind::Array => {
                 // Keep very large indices on the full property path for range checks.
                 if idx >= 1_000_000 {
@@ -5100,7 +5118,13 @@ impl Vm {
                 return Err(error);
             }
 
-            let frame = CallFrame::new(Some(function_id), 0, environment, this_value.clone(), stack_base);
+            let frame = CallFrame::new(
+                Some(function_id),
+                0,
+                environment,
+                this_value.clone(),
+                stack_base,
+            );
             if let Err(error) = context.push_call_frame(frame) {
                 let _ = context.restore_environment_depth(caller_environment_depth);
                 return Err(error);
@@ -5192,7 +5216,10 @@ impl Vm {
             }
         }
 
-        if let Some(name) = &function.name
+        if let Some(name) = function
+            .name
+            .as_ref()
+            .filter(|_| Self::should_bind_function_name_in_activation(&function))
             && let Err(error) = context.declare_binding(
                 environment,
                 name.clone(),
@@ -5208,8 +5235,7 @@ impl Vm {
         // already declare an explicit `arguments` parameter (ES5 §10.6: if the
         // function has a formal parameter named "arguments" that binding wins).
         let has_explicit_arguments = function.params.iter().any(|p| p == "arguments")
-            || function.rest_param.as_deref() == Some("arguments")
-            || function.name.as_deref() == Some("arguments");
+            || function.rest_param.as_deref() == Some("arguments");
 
         if !has_explicit_arguments {
             let proto = context.object_prototype();
@@ -5298,6 +5324,15 @@ impl Vm {
         } else {
             operation
         }
+    }
+
+    fn should_bind_function_name_in_activation(function: &JsFunction) -> bool {
+        let Some(name) = &function.name else {
+            return false;
+        };
+        name != "arguments"
+            && !function.params.iter().any(|parameter| parameter == name)
+            && function.rest_param.as_deref() != Some(name.as_str())
     }
 
     fn wrap_async_function_result(

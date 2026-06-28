@@ -1,7 +1,7 @@
 //! `Function` constructor and prototype methods.
 
 use crate::{
-    bytecode::Compiler,
+    bytecode::{Chunk, Compiler, Instruction},
     lexer::Lexer,
     parser::Parser,
     runtime::{JsFunction, JsValue, NativeContext, PropertyDescriptor, PropertyKind},
@@ -132,10 +132,25 @@ pub fn eval_call(
     let program = Parser::with_source(tokens, &source)
         .parse_program()
         .map_err(dynamic_function_syntax_error)?;
-    let chunk = Compiler::new()
+    let mut chunk = Compiler::new()
         .compile_program(&program)
         .map_err(dynamic_function_syntax_error)?;
+    if context.current_environment() != context.global_environment() {
+        rewrite_eval_global_accesses(&mut chunk);
+    }
     vm.eval_execute(&chunk, context)
+}
+
+fn rewrite_eval_global_accesses(chunk: &mut Chunk) {
+    for instruction in &mut chunk.instructions {
+        *instruction = match *instruction {
+            Instruction::DeclareGlobal(index) => Instruction::DeclareLocal(index),
+            Instruction::LoadGlobal(index) => Instruction::LoadName(index),
+            Instruction::StoreGlobal(index) => Instruction::StoreName(index),
+            Instruction::TypeOfGlobal(index) => Instruction::TypeOfName(index),
+            other => other,
+        };
+    }
 }
 
 pub fn function_call(
