@@ -7,8 +7,13 @@ use super::{Environment, EnvironmentId, FunctionId, JsFunction, JsObject, Object
 #[derive(Debug)]
 pub struct Heap {
     objects: Vec<Option<JsObject>>,
+    /// Vacant indices in `objects`. Keeping this explicit avoids scanning the
+    /// arena on every allocation, including the common no-vacancy case.
+    free_objects: Vec<u32>,
     environments: Vec<Option<Environment>>,
+    free_environments: Vec<u32>,
     functions: Vec<Option<JsFunction>>,
+    free_functions: Vec<u32>,
     /// Hard cap on total live allocations.
     limit: usize,
     /// Conservative cap on heap-owned and guarded allocation bytes.
@@ -23,8 +28,11 @@ impl Default for Heap {
     fn default() -> Self {
         Self {
             objects: Vec::new(),
+            free_objects: Vec::new(),
             environments: Vec::new(),
+            free_environments: Vec::new(),
             functions: Vec::new(),
+            free_functions: Vec::new(),
             limit: usize::MAX,
             byte_limit: usize::MAX,
             estimated_bytes: 0,
@@ -96,15 +104,15 @@ impl Heap {
         if !self.can_allocate(estimated_bytes) {
             return None;
         }
-        if let Some((index, slot)) = self
-            .objects
-            .iter_mut()
-            .enumerate()
-            .find(|(_, slot)| slot.is_none())
-        {
+        if let Some(index) = self.free_objects.pop() {
+            let slot = self
+                .objects
+                .get_mut(index as usize)
+                .expect("free object index must belong to the object arena");
+            debug_assert!(slot.is_none(), "free object slot must be vacant");
             *slot = Some(object);
             self.note_allocation(estimated_bytes);
-            return Some(ObjectId(u32::try_from(index).ok()?));
+            return Some(ObjectId(index));
         }
         let id = ObjectId(u32::try_from(self.objects.len()).ok()?);
         self.objects.push(Some(object));
@@ -131,15 +139,15 @@ impl Heap {
         if !self.can_allocate(estimated_bytes) {
             return None;
         }
-        if let Some((index, slot)) = self
-            .environments
-            .iter_mut()
-            .enumerate()
-            .find(|(_, slot)| slot.is_none())
-        {
+        if let Some(index) = self.free_environments.pop() {
+            let slot = self
+                .environments
+                .get_mut(index as usize)
+                .expect("free environment index must belong to the environment arena");
+            debug_assert!(slot.is_none(), "free environment slot must be vacant");
             *slot = Some(environment);
             self.note_allocation(estimated_bytes);
-            return Some(EnvironmentId(u32::try_from(index).ok()?));
+            return Some(EnvironmentId(index));
         }
         let id = EnvironmentId(u32::try_from(self.environments.len()).ok()?);
         self.environments.push(Some(environment));
@@ -166,15 +174,15 @@ impl Heap {
         if !self.can_allocate(estimated_bytes) {
             return None;
         }
-        if let Some((index, slot)) = self
-            .functions
-            .iter_mut()
-            .enumerate()
-            .find(|(_, slot)| slot.is_none())
-        {
+        if let Some(index) = self.free_functions.pop() {
+            let slot = self
+                .functions
+                .get_mut(index as usize)
+                .expect("free function index must belong to the function arena");
+            debug_assert!(slot.is_none(), "free function slot must be vacant");
             *slot = Some(function);
             self.note_allocation(estimated_bytes);
-            return Some(FunctionId(u32::try_from(index).ok()?));
+            return Some(FunctionId(index));
         }
         let id = FunctionId(u32::try_from(self.functions.len()).ok()?);
         self.functions.push(Some(function));
@@ -215,16 +223,19 @@ impl Heap {
         for (index, slot) in self.objects.iter_mut().enumerate() {
             if slot.is_some() && !marks.objects.contains(&ObjectId(index as u32)) {
                 *slot = None;
+                self.free_objects.push(index as u32);
             }
         }
         for (index, slot) in self.environments.iter_mut().enumerate() {
             if slot.is_some() && !marks.environments.contains(&EnvironmentId(index as u32)) {
                 *slot = None;
+                self.free_environments.push(index as u32);
             }
         }
         for (index, slot) in self.functions.iter_mut().enumerate() {
             if slot.is_some() && !marks.functions.contains(&FunctionId(index as u32)) {
                 *slot = None;
+                self.free_functions.push(index as u32);
             }
         }
         self.collection_count = self.collection_count.saturating_add(1);
@@ -244,15 +255,18 @@ impl Heap {
     }
 
     fn live_objects(&self) -> usize {
-        self.objects.iter().flatten().count()
+        debug_assert!(self.free_objects.len() <= self.objects.len());
+        self.objects.len() - self.free_objects.len()
     }
 
     fn live_environments(&self) -> usize {
-        self.environments.iter().flatten().count()
+        debug_assert!(self.free_environments.len() <= self.environments.len());
+        self.environments.len() - self.free_environments.len()
     }
 
     fn live_functions(&self) -> usize {
-        self.functions.iter().flatten().count()
+        debug_assert!(self.free_functions.len() <= self.functions.len());
+        self.functions.len() - self.free_functions.len()
     }
 
     fn recalculate_estimated_bytes(&self) -> usize {
@@ -278,7 +292,25 @@ impl Heap {
 
 #[cfg(test)]
 mod tests {
-    use crate::runtime::{Heap, JsObject, JsValue, PropertyDescriptor};
+    use crate::{
+        bytecode::Chunk,
+        runtime::{Environment, Heap, JsFunction, JsObject, JsValue, PropertyDescriptor},
+    };
+
+    use super::HeapMarks;
+
+    fn empty_function() -> JsFunction {
+        JsFunction {
+            name: None,
+            params: Vec::new(),
+            rest_param: None,
+            length_override: None,
+            chunk: Chunk::default(),
+            environment: None,
+            is_async: false,
+            is_generator: false,
+        }
+    }
 
     #[test]
     fn allocates_and_reads_objects() {
@@ -295,5 +327,71 @@ mod tests {
                 .value_cloned(),
             Some(JsValue::Number(42.0))
         );
+    }
+
+    #[test]
+    fn sweep_recycles_all_arena_slot_kinds() {
+        let mut heap = Heap::default();
+        let object = heap.allocate_object(JsObject::ordinary()).unwrap();
+        let environment = heap.allocate_environment(Environment::default()).unwrap();
+        let function = heap.allocate_function(empty_function()).unwrap();
+
+        let collected = heap.sweep(&HeapMarks::default());
+        assert_eq!(collected.objects_after, 0);
+        assert_eq!(collected.environments_after, 0);
+        assert_eq!(collected.functions_after, 0);
+
+        assert_eq!(heap.allocate_object(JsObject::ordinary()).unwrap(), object);
+        assert_eq!(
+            heap.allocate_environment(Environment::default()).unwrap(),
+            environment
+        );
+        assert_eq!(heap.allocate_function(empty_function()).unwrap(), function);
+        assert_eq!(heap.total_live_count(), 3);
+    }
+
+    #[test]
+    fn repeated_sweeps_do_not_duplicate_free_slots() {
+        let mut heap = Heap::default();
+        let object = heap.allocate_object(JsObject::ordinary()).unwrap();
+
+        heap.sweep(&HeapMarks::default());
+        heap.sweep(&HeapMarks::default());
+
+        assert_eq!(heap.free_objects, vec![object.0]);
+        assert_eq!(heap.allocate_object(JsObject::ordinary()).unwrap(), object);
+        assert!(heap.free_objects.is_empty());
+        assert_eq!(heap.object_count(), 1);
+    }
+
+    #[test]
+    fn live_slots_are_not_added_to_free_lists() {
+        let mut heap = Heap::default();
+        let object = heap.allocate_object(JsObject::ordinary()).unwrap();
+        let environment = heap.allocate_environment(Environment::default()).unwrap();
+        let function = heap.allocate_function(empty_function()).unwrap();
+        let mut marks = HeapMarks::default();
+        marks.objects.insert(object);
+        marks.environments.insert(environment);
+        marks.functions.insert(function);
+
+        heap.sweep(&marks);
+
+        assert!(heap.free_objects.is_empty());
+        assert!(heap.free_environments.is_empty());
+        assert!(heap.free_functions.is_empty());
+        assert_eq!(heap.total_live_count(), 3);
+    }
+
+    #[test]
+    fn live_allocation_limit_allows_reusing_a_collected_slot() {
+        let mut heap = Heap::with_limit(1);
+        let first = heap.allocate_object(JsObject::ordinary()).unwrap();
+        assert!(heap.allocate_object(JsObject::ordinary()).is_none());
+
+        heap.sweep(&HeapMarks::default());
+
+        assert_eq!(heap.allocate_object(JsObject::ordinary()).unwrap(), first);
+        assert!(heap.allocate_object(JsObject::ordinary()).is_none());
     }
 }
