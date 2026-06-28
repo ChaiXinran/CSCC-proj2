@@ -208,6 +208,44 @@ fn segmented_dense_arrays_keep_large_numeric_indices_fast_and_sparse() {
 }
 
 #[test]
+fn numeric_element_definition_preserves_array_extensibility_rules() {
+    let mut context = NativeContext::default();
+    let array = context.create_sparse_array(0).unwrap();
+    let JsValue::Object(id) = array.clone() else {
+        panic!("expected array");
+    };
+
+    assert!(
+        context
+            .define_own_element(id, 80_000, PropertyDescriptor::data(JsValue::Boolean(true)),)
+            .unwrap()
+    );
+    assert_eq!(
+        context
+            .get_element(array.clone(), JsValue::Number(80_000.0))
+            .unwrap(),
+        JsValue::Boolean(true)
+    );
+
+    context.prevent_extensions(id).unwrap();
+    assert!(
+        context
+            .define_own_element(
+                id,
+                80_000,
+                PropertyDescriptor::data(JsValue::Boolean(false)),
+            )
+            .unwrap()
+    );
+    assert!(
+        !context
+            .define_own_element(id, 80_001, PropertyDescriptor::data(JsValue::Number(1.0)))
+            .unwrap()
+    );
+    assert!(!context.has_property(id, "80001").unwrap());
+}
+
+#[test]
 fn array_length_shrink_recovers_when_non_configurable_element_blocks_delete() {
     let mut context = NativeContext::default();
     let array = context

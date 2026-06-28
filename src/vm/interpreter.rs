@@ -4680,7 +4680,7 @@ impl Vm {
                     return None;
                 }
                 let desc = crate::runtime::PropertyDescriptor::data_with(value, true, true, true);
-                match context.define_own_property(obj_id, idx.to_string(), desc) {
+                match context.define_own_element(obj_id, idx, desc) {
                     Ok(true) => Some(Ok(())),
                     Ok(false) => None, // e.g. non-writable length; fall through
                     Err(e) => Some(Err(e)),

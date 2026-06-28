@@ -1976,6 +1976,41 @@ impl NativeContext {
         Ok(true)
     }
 
+    pub fn define_own_element(
+        &mut self,
+        object: ObjectId,
+        index: usize,
+        descriptor: PropertyDescriptor,
+    ) -> Result<bool, VmError> {
+        if let Some((view, length)) = self.typed_array_indexed_view(object) {
+            if index >= length {
+                return Ok(false);
+            }
+            let PropertyKind::Data { value, .. } = descriptor.kind else {
+                return Ok(false);
+            };
+            self.typed_array_store_element(view, index, value)?;
+            return Ok(true);
+        }
+
+        if index >= MAX_ARRAY_LENGTH {
+            return Err(VmError::range("invalid array length"));
+        }
+
+        let object_ref = self
+            .heap
+            .object(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        if !matches!(object_ref.kind, ObjectKind::Array { .. }) {
+            return self.define_own_property(object, index.to_string(), descriptor);
+        }
+        if !object_ref.extensible && object_ref.array_element_descriptor(index).is_none() {
+            return Ok(false);
+        }
+
+        self.define_array_index_property(object, index, descriptor)
+    }
+
     pub fn validate_and_apply_property_descriptor(
         &mut self,
         object: ObjectId,
