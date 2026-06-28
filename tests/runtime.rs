@@ -1,6 +1,20 @@
 use agentjs::{BackendKind, Engine, ExecutionOptions, Runtime, RuntimeConfig};
 
 #[test]
+fn default_backend_is_native() {
+    assert_eq!(BackendKind::default(), BackendKind::Native);
+}
+
+#[cfg(feature = "boa-backend")]
+#[test]
+fn boa_backend_remains_explicitly_selectable() {
+    let report = Engine::with_backend(BackendKind::Boa, RuntimeConfig::default())
+        .execute("6 * 7", ExecutionOptions::default())
+        .unwrap();
+    assert_eq!(report.value, "42");
+}
+
+#[test]
 fn evaluates_javascript() {
     let report = Engine::default()
         .execute("6 * 7", ExecutionOptions::default())

@@ -1,8 +1,8 @@
 //! JavaScript execution backend boundary.
 //!
-//! The Boa backend preserves the current conformance baseline. The native
-//! backend is the replacement target for AgentJS's self-developed parser,
-//! bytecode compiler, virtual machine, and runtime.
+//! The native backend is AgentJS's default self-developed parser, bytecode
+//! compiler, virtual machine, and runtime. Boa remains an explicitly selected
+//! compatibility and differential-testing backend.
 
 #[cfg(feature = "boa-backend")]
 mod boa;
@@ -26,12 +26,8 @@ pub enum BackendKind {
     Native,
 }
 
-#[allow(clippy::derivable_impls)] // default variant is cfg-conditional
 impl Default for BackendKind {
     fn default() -> Self {
-        #[cfg(feature = "boa-backend")]
-        return BackendKind::Boa;
-        #[cfg(not(feature = "boa-backend"))]
         BackendKind::Native
     }
 }

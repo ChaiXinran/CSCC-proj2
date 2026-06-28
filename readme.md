@@ -1,9 +1,9 @@
 # AgentJS
 
 AgentJS is a lightweight JavaScript engine written in Rust for short-lived,
-high-frequency AI agent workloads. The repository currently provides a stable
-Boa-backed compatibility runtime while a self-developed lexer, parser,
-bytecode compiler, VM, runtime, and built-in library are developed in parallel.
+high-frequency AI agent workloads. Its self-developed lexer, parser, bytecode
+compiler, VM, runtime, and built-in library form the default native backend;
+Boa remains available as an explicitly selected compatibility reference.
 
 Boa is the executable baseline and behavior oracle, not the final engine.
 QuickJS is a compact architecture and performance reference. Neither upstream
@@ -38,9 +38,17 @@ cargo run -- repl
 cargo build --release
 ```
 
-These general CLI commands still default to `BackendKind::Boa`. The Native
-backend now executes the V1 expression subset and can be selected explicitly;
-unsupported syntax returns a categorized error instead of falling back to Boa.
+These commands use `BackendKind::Native` by default. Unsupported native syntax
+returns a categorized error and never falls back to Boa. To use Boa, enable its
+optional build feature and select it explicitly at runtime:
+
+```sh
+cargo run --features boa-backend -- eval --backend boa "1 + 2"
+```
+
+Enabling `boa-backend` alone does not change the default: commands without
+`--backend boa` continue to use native. The standard `cargo build` is already a
+native-only build.
 
 Rust callers can select a backend explicitly:
 
@@ -54,6 +62,10 @@ fn run_script() -> Result<(), agentjs::EvalFailure> {
     Ok(())
 }
 ```
+
+`BackendKind::Boa` is available only when the crate is built with the
+`boa-backend` feature. `Engine::new`, `Engine::default`, and `Runtime::new`
+always select native.
 
 ## Architecture
 
@@ -145,36 +157,36 @@ fn run_native_pipeline() -> Result<(), agentjs::NativeError> {
 
 The Native pipeline currently implements the scoped V1-V3 milestones:
 
-- [Native V1 expressions](docs/native-v1-scope.md)
-- [Native V2 control flow](docs/native-v2-scope.md) and its
-  [shared interface](docs/native-v2-interface.md)
-- [Native V3 functions and compound values](docs/native-v3-scope.md) and its
-  [shared interface](docs/native-v3-interface.md)
+- [Native V1 expressions](docs/version/native-v1-scope.md)
+- [Native V2 control flow](docs/version/native-v2-scope.md) and its
+  [shared interface](docs/version/native-v2-interface.md)
+- [Native V3 functions and compound values](docs/version/native-v3-scope.md) and its
+  [shared interface](docs/version/native-v3-interface.md)
 
 The active collaborative milestone is the expanded
-[Native V4 object semantics](docs/native-v4-scope.md), with contracts frozen in
-the [Native V4 shared interface](docs/native-v4-interface.md). The object model,
+[Native V4 object semantics](docs/version/native-v4-scope.md), with contracts frozen in
+the [Native V4 shared interface](docs/version/native-v4-interface.md). The object model,
 accessors, constructors, sparse-array core, and the minimal `Object`, `Array`,
 and `Function` builtin/intrinsic layer are connected. Remaining V4 work focuses
 on broadening standard builtins and reducing the diagnostic Test262 failure set.
 File ownership, C0–C3 execution subgroups, branch suggestions, and merge order
-are defined in the [Native V4 team plan](docs/native-v4-team-plan.md).
+are defined in the [Native V4 team plan](docs/version/native-v4-team-plan.md).
 
 Native V5 now has an initial Native VM/runtime integration for structured
 completion, `try/catch/finally`, `switch`, and lexical `let`/`const`
 semantics. See the
-[Native V5 scope](docs/native-v5-scope.md),
-[shared interface](docs/native-v5-interface.md), and
-[team plan](docs/native-v5-team-plan.md). The pinned `--native-v5` Test262
+[Native V5 scope](docs/version/native-v5-scope.md),
+[shared interface](docs/version/native-v5-interface.md), and
+[team plan](docs/version/native-v5-team-plan.md). The pinned `--native-v5` Test262
 gate is intentionally small and zero-skip; broader V5 directories remain a
 diagnostic scan.
 
 Native V6 provides the core builtin and coercion milestone. It standardizes
 primitive wrappers and object-aware conversions, and connects String, Number,
 Boolean, Math, Error, and core JSON through independently owned modules. See
-the [Native V6 scope](docs/native-v6-scope.md),
-[shared interface](docs/native-v6-interface.md), and
-[team plan](docs/native-v6-team-plan.md). Its pinned Test262 gate passes 7/7;
+the [Native V6 scope](docs/version/native-v6-scope.md),
+[shared interface](docs/version/native-v6-interface.md), and
+[team plan](docs/version/native-v6-team-plan.md). Its pinned Test262 gate passes 7/7;
 the six-directory diagnostic scan passes 1,489/2,199 after the Track A and B
 merge. Map/Set, RegExp, Date,
 Promise, advanced JSON callbacks, and new language syntax remain deferred.
@@ -183,14 +195,14 @@ Native V7 is the stability and performance-evidence milestone. It does not add
 new JavaScript syntax; instead it freezes contracts for resource budgets,
 large-allocation guards, non-moving mark-and-sweep GC, native script caching,
 crash-safe Test262 dashboards, and benchmark reporting. See the
-[Native V7 scope](docs/native-v7-scope.md),
-[shared interface](docs/native-v7-interface.md), and
-[team plan](docs/native-v7-team-plan.md).
+[Native V7 scope](docs/version/native-v7-scope.md),
+[shared interface](docs/version/native-v7-interface.md), and
+[team plan](docs/version/native-v7-team-plan.md).
 
 Native V8 development has started as a three-track parallel feature batch:
-[Native V8 scope](docs/native-v8-scope.md),
-[shared interface](docs/native-v8-interface.md), and
-[team plan](docs/native-v8-team-plan.md). V8 focuses on frontend unlockers,
+[Native V8 scope](docs/version/native-v8-scope.md),
+[shared interface](docs/version/native-v8-interface.md), and
+[team plan](docs/version/native-v8-team-plan.md). V8 focuses on frontend unlockers,
 module runner infrastructure, and first-batch builtin skeletons.
 
 V8-B first-stage module runner infrastructure is now available: module-flagged
@@ -202,11 +214,11 @@ registry deduplication are implemented, and focused module-code coverage is
 
 Native V9 development has started. V9 covers async/generator/for-of lowering,
 Promise/job queue/iterator runtime, and Map/Set/Iterator builtins. Planning and
-ownership live in [Native V9 scope](docs/native-v9-scope.md),
-[shared interface](docs/native-v9-interface.md), and
-[team plan](docs/native-v9-team-plan.md). Worker progress is tracked in
-`reports/v9-partA-report.md`, `reports/v9-partB-report.md`, and
-`reports/v9-partC-report.md`.
+ownership live in [Native V9 scope](docs/version/native-v9-scope.md),
+[shared interface](docs/version/native-v9-interface.md), and
+[team plan](docs/version/native-v9-team-plan.md). Worker progress is tracked in
+`reports/.version-report/v9-partA-report.md`, `reports/.version-report/v9-partB-report.md`, and
+`reports/.version-report/v9-partC-report.md`.
 
 V9-B first runtime substrate is now available: minimal Promise records,
 single-settle Promise state helpers, deterministic FIFO native job queue,
@@ -218,30 +230,30 @@ still owned by the V9-C builtin track.
 The standard V9 lightweight scan is:
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/native-v9-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/.native-test262-tmp/native-v9-scan-summary.json
 ```
 
 It runs the locked 5,000-case manifest in
-`reports/native-v9-scan-failures.txt`. Initial result: 0/5,000 passed, 5,000
+`reports/.test262/test262-scan-failure/native-v9-scan-failures.txt`. Initial result: 0/5,000 passed, 5,000
 failed, and 0 skipped.
 
 Native V10 setup is also available while V9-A continues. V10 covers
 BigInt/numeric/unicode syntax tail work, TypedArray/ArrayBuffer/DataView runtime
 substrate, and Date/Intl/Temporal builtin semantics. Planning and ownership
-live in [Native V10 scope](docs/native-v10-scope.md),
-[shared interface](docs/native-v10-interface.md), and
-[team plan](docs/native-v10-team-plan.md). Worker progress is tracked in
-`reports/v10-partA-report.md`, `reports/v10-partB-report.md`, and
-`reports/v10-partC-report.md`.
+live in [Native V10 scope](docs/version/native-v10-scope.md),
+[shared interface](docs/version/native-v10-interface.md), and
+[team plan](docs/version/native-v10-team-plan.md). Worker progress is tracked in
+`reports/.version-report/v10-partA-report.md`, `reports/.version-report/v10-partB-report.md`, and
+`reports/.version-report/v10-partC-report.md`.
 
 The standard V10 lightweight scan is:
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v10-scan --jobs 4 --json reports/native-v10-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-v10-scan --jobs 4 --json reports/.native-test262-tmp/native-v10-scan-summary.json
 ```
 
 It runs the locked 5,000-case manifest in
-`reports/native-v10-scan-failures.txt`. Initial result: 645/5,000 passed,
+`reports/.test262/test262-scan-failure/native-v10-scan-failures.txt`. Initial result: 645/5,000 passed,
 4,355 failed, and 0 skipped.
 
 V10-B first runtime substrate is now available: shared `ArrayBuffer` byte
@@ -255,22 +267,22 @@ by the V10-C builtin track.
 Native V11 setup is also available while V10-A may continue. V11 covers RegExp
 parser/static errors, object-model/descriptor precision, and RegExp/Annex B/
 descriptor builtin sweeps. Planning and ownership live in
-[Native V11 scope](docs/native-v11-scope.md),
-[shared interface](docs/native-v11-interface.md), and
-[team plan](docs/native-v11-team-plan.md). Worker progress is tracked in
-`reports/v11-partA-report.md`, `reports/v11-partB-report.md`, and
-`reports/v11-partC-report.md`.
+[Native V11 scope](docs/version/native-v11-scope.md),
+[shared interface](docs/version/native-v11-interface.md), and
+[team plan](docs/version/native-v11-team-plan.md). Worker progress is tracked in
+`reports/.version-report/v11-partA-report.md`, `reports/.version-report/v11-partB-report.md`, and
+`reports/.version-report/v11-partC-report.md`.
 
 The standard V11 lightweight scan is:
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/native-v11-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-v11-scan --jobs 4 --json reports/.native-test262-tmp/native-v11-scan-summary.json
 ```
 
 It runs the locked 5,000-case manifest in
-`reports/native-v11-scan-failures.txt`. The selector is installed, but the first
+`reports/.test262/test262-scan-failure/native-v11-scan-failures.txt`. The selector is installed, but the first
 local scan attempt exceeded the 300s tool timeout and did not produce
-`reports/native-v11-scan-summary.json`; rerun with a longer timeout or refresh
+`reports/.native-test262-tmp/native-v11-scan-summary.json`; rerun with a longer timeout or refresh
 long-running samples before recording a baseline.
 
 V11-B first object-key ordering precision fix is now available: the runtime now
@@ -279,27 +291,27 @@ Object/Reflect own-key helpers preserve spec-aligned ordering at that boundary.
 Focused runtime coverage is `cargo test --no-default-features --test
 native_v11_runtime` (3/3 passed).
 
-Planning note: `thoughts/plan.md` is retained as the pre-V8 planning record.
-The active post-V8 roadmap is `thoughts/newplan.md`.
+Planning note: `thoughts/plan_1_version.md` is retained as the pre-V8 planning record.
+The active post-V8 roadmap is `thoughts/plan_1_version.md`.
 
 V8 worker progress is tracked in per-part report files. AI agents and human
 contributors should update the relevant report in the same change as their
 implementation, without waiting for a separate reminder:
 
-- `reports/v8-partA-report.md` for frontend unlockers.
-- `reports/v8-partB-report.md` for module runner infrastructure.
-- `reports/v8-partC-report.md` for builtin skeletons and Test262 host work.
+- `reports/.version-report/v8-partA-report.md` for frontend unlockers.
+- `reports/.version-report/v8-partB-report.md` for module runner infrastructure.
+- `reports/.version-report/v8-partC-report.md` for builtin skeletons and Test262 host work.
 
 The standard V8 lightweight scan is:
 
 ```sh
-cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/.native-test262-tmp/native-v8-scan-summary.json
 ```
 
 It runs the locked 5,000-case manifest in
-`reports/native-v8-scan-failures.txt`, selected from cases that did not pass in
+`reports/.test262/test262-scan-failure/native-v8-scan-failures.txt`, selected from cases that did not pass in
 the 2026-06-24 full direct run. The initial summary is
-`reports/native-v8-scan-summary.json`: initially 0/5,000 passed, 4,504 failed,
+`reports/.native-test262-tmp/native-v8-scan-summary.json`: initially 0/5,000 passed, 4,504 failed,
 and 496 skipped; after the first V8-B module runner pass it is 205/5,000
 passed, 4,795 failed, and 0 skipped.
 
@@ -391,9 +403,9 @@ cargo run -- test262 --native-v5-scan --jobs 4 --progress
 cargo run -- test262 --native-v6 --jobs 1 --verbose
 cargo run -- test262 --native-v6-scan --jobs 4 --progress
 cargo run --release --no-default-features -- test262 --native-v7 --jobs 1 --verbose
-cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/native-v7-frontend-summary.json
-cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/native-v8-scan-summary.json
-cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/native-v9-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-v7-scan --jobs 4 --json reports/.native-test262-tmp/native-v7-frontend-summary.json
+cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 --json reports/.native-test262-tmp/native-v8-scan-summary.json
+cargo run --release --no-default-features -- test262 --native-v9-scan --jobs 4 --json reports/.native-test262-tmp/native-v9-scan-summary.json
 cargo test --test native_test262
 ```
 
@@ -402,11 +414,11 @@ V4/V5 diagnostic directories through the
 self-developed lexer, parser, compiler, VM, runtime, and minimal host-provided
 Test262 harness. Every file is checked in default and strict mode; Boa is not
 used. Current Native V4 results are recorded in the
-[Native V4 Test262 report](reports/native-v4-test262-report.md). Native V5
+[Native V4 Test262 report](reports/.test262/test262-analysis/native-v4-test262-report.md). Native V5
 results are recorded in the
-[Native V5 Test262 report](reports/native-v5-test262-report.md). Native V7
+[Native V5 Test262 report](reports/.test262/test262-analysis/native-v5-test262-report.md). Native V7
 diagnostic results and failure classification are recorded in the
-[Native V7 Test262 report](reports/native-v7-test262-report.md).
+[Native V7 Test262 report](reports/.test262/test262-analysis/native-v7-test262-report.md).
 
 `--native-v4` is the curated zero-failure, zero-skip gate for the pinned V4
 object-model files. `--native-v4-scan` is the broader diagnostic scan for
@@ -431,12 +443,12 @@ Symbol, and Reflect builtin directories. It is intentionally diagnostic:
 skipped and failed tests are reported separately and never count as passes.
 
 `--native-v8-scan` is the standard V8 lightweight integration scan. It runs
-5,000 concrete Test262 files from `reports/native-v8-scan-failures.txt`, sampled
+5,000 concrete Test262 files from `reports/.test262/test262-scan-failure/native-v8-scan-failures.txt`, sampled
 from cases that did not pass in the locked 2026-06-24 full direct run. Use it
 after focused V8-A/B/C tests and record deltas in the relevant V8 part report.
 
 `--native-v9-scan` is the standard V9 lightweight integration scan. It runs
-5,000 V9 hotspot failures from `reports/native-v9-scan-failures.txt`, covering
+5,000 V9 hotspot failures from `reports/.test262/test262-scan-failure/native-v9-scan-failures.txt`, covering
 async/generator/for-of, Promise/job queue, iterator runtime, and Map/Set areas.
 Use it after focused V9-A/B/C tests and record deltas in the relevant V9 part
 report.
@@ -485,10 +497,10 @@ The current full Test262 stress report is a native-backend direct run over all
 of `test/`, including `test/staging`: 14,035 of 53,379 tests passed, 38,507
 failed, and 837 were skipped. It is useful for feature planning, not directly
 comparable with older non-staging sharded reports. See
-[reports/test262-report.md](reports/test262-report.md) and
-[reports/test262-analysis.md](reports/test262-analysis.md).
+[reports/.test262/test262-analysis/test262-report.md](reports/.test262/test262-analysis/test262-report.md) and
+[reports/.test262/test262-analysis/test262-analysis.md](reports/.test262/test262-analysis/test262-analysis.md).
 
-`reports/test262-analysis.md` is locked as the 2026-06-24 baseline analysis.
+`reports/.test262/test262-analysis/test262-analysis.md` is locked as the 2026-06-24 baseline analysis.
 Do not rewrite it for later runs; create a new dated or versioned analysis file
 for future full-suite analysis so the project keeps a clean audit trail.
 
@@ -498,12 +510,51 @@ for future full-suite analysis so the project keeps a clean audit trail.
 cargo run --release -- bench 1000
 ```
 
-This compares cold isolates, warm uncached runtimes, and warm cached runtimes.
-JetStream methodology and results are documented in
-[docs/benchmark.md](docs/benchmark.md) and
-[reports/jetstream2-report.md](reports/jetstream2-report.md). Existing benchmark
-numbers are also Boa-backed baselines; native results must be reported
-separately.
+This uses native and compares cold isolates, warm uncached runtimes, and warm
+cached runtimes. Run the Boa comparison explicitly with:
+
+```sh
+cargo run --release --features boa-backend -- bench --backend boa 1000
+```
+
+Native and Boa results must be reported separately.
+
+### JetStream 2 CLI
+
+The pinned JetStream 2 source tree is at `benchmarks/JetStream2`. Build the
+native-only release binary, then generate and run one or more CLI-compatible
+workloads from the repository root:
+
+```powershell
+cargo build --release
+.\scripts\run-jetstream2.ps1 -Tests richards,splay -Iterations 5
+```
+
+Omit `-Iterations` to use each official test plan's iteration count (usually
+120). A one-iteration run is useful only as a functionality probe; use at least
+five iterations for a score. The native script uses
+`target/release/agentjs.exe` and `scripts/prepare-jetstream2.mjs`.
+
+Run the same generated workloads with Node/V8 as a control:
+
+```powershell
+.\scripts\run-jetstream2-node.ps1 -Tests richards,splay -Iterations 5
+```
+
+Generated runners are written to `benchmarks/generated/`. Native plan metadata
+and output are written to `reports/jetstream2/<test>-plan.json` and
+`reports/jetstream2/<test>.txt`; Node/V8 output uses
+`reports/jetstream2-node/`. A generated native runner can also be invoked
+directly:
+
+```powershell
+.\target\release\agentjs.exe jetstream .\benchmarks\generated\richards.js
+```
+
+This adapter excludes WebAssembly and Web Worker tests and does not represent a
+complete browser JetStream 2 score. See [docs/benchmark.md](docs/benchmark.md)
+for methodology and [reports/jetstream2-report.md](reports/jetstream2-report.md)
+for the latest native compatibility and performance results.
 
 ## Contribution Checklist
 

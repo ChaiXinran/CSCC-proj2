@@ -93,7 +93,7 @@ struct CliSummary {
 #[ignore = "full Test262 dashboard is long-running; run explicitly when needed"]
 fn native_test262_dashboard_top_level() {
     let config = Config::new(
-        "reports/native-full-test262-summary.json",
+        "reports/.native-test262-tmp/native-full-test262-summary.json",
         "per-top-level-directory",
     );
     let suites = direct_child_suites(&config.test262_root.join("test"), Path::new("test"));
@@ -110,7 +110,7 @@ fn native_test262_dashboard_top_level() {
 #[ignore = "hotspot Test262 dashboard is long-running; run explicitly when needed"]
 fn native_test262_dashboard_children() {
     let config = Config::new(
-        "reports/native-hotspot-test262-summary.json",
+        "reports/.native-test262-tmp/native-hotspot-test262-summary.json",
         "per-child-directory",
     );
     let suite = env::var("AGENTJS_TEST262_SUITE").unwrap_or_else(|_| "test/built-ins".into());

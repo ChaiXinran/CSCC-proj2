@@ -5,10 +5,10 @@ const runner = process.argv[2];
 if (!runner)
     throw new Error("usage: node scripts/node-jetstream2-shell.mjs <runner.js>");
 
-globalThis.print = (...args) => console.log(...args);
+const hostLog = console.log.bind(console);
+globalThis.print = (...args) => hostLog(...args);
 globalThis.__agentjsLoadString = (source) =>
     vm.runInThisContext(source, { filename: "<jetstream-payload>" });
 
 const source = fs.readFileSync(runner, "utf8");
 vm.runInThisContext(source, { filename: runner });
-

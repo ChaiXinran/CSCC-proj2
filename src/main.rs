@@ -85,7 +85,7 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
         stack_limit: 1024 * 1024,
         backtrace_limit: 20,
         script_cache_capacity: 0,
-        install_test262_host: false,
+        install_test262_host: true,
         heap_object_limit: usize::MAX,
         heap_byte_limit: usize::MAX,
         wall_clock_limit: None,
@@ -95,7 +95,15 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
     let report = runtime
         .eval(&source, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
+    let benchmark_failure = report
+        .output
+        .iter()
+        .find(|line| line.starts_with("JetStream2 failed:"))
+        .cloned();
     print_report(report);
+    if let Some(failure) = benchmark_failure {
+        return Err(failure);
+    }
     Ok(())
 }
 
@@ -226,15 +234,26 @@ fn command_test262(args: &[String]) -> Result<(), String> {
 }
 
 fn command_bench(args: &[String]) -> Result<(), String> {
-    // Parse optional --native flag and iteration count.
-    let mut native = false;
+    let mut backend = BackendKind::default();
     let mut iter_arg: Option<&str> = None;
-    for arg in args {
-        if arg == "--native" {
-            native = true;
-        } else {
-            iter_arg = Some(arg.as_str());
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--backend" => {
+                index += 1;
+                backend = parse_backend(required_value(args, index, "--backend")?)?;
+            }
+            value if value.starts_with("--") => {
+                return Err(format!(
+                    "unknown option `{value}`; usage: agentjs bench [--backend boa|native] [iterations]"
+                ));
+            }
+            value if iter_arg.is_none() => iter_arg = Some(value),
+            _ => {
+                return Err("usage: agentjs bench [--backend boa|native] [iterations]".into());
+            }
         }
+        index += 1;
     }
     let iterations = match iter_arg {
         Some(value) => parse_usize(value)?,
@@ -245,18 +264,19 @@ fn command_bench(args: &[String]) -> Result<(), String> {
     }
     let source = "(function(){ let x = 0; for (let i = 0; i < 1000; i++) x += i; return x; })()";
 
-    if native {
-        bench_native(source, iterations)
-    } else {
-        bench_boa(source, iterations)
+    match backend {
+        #[cfg(feature = "boa-backend")]
+        BackendKind::Boa => bench_boa(source, iterations),
+        BackendKind::Native => bench_native(source, iterations),
     }
 }
 
+#[cfg(feature = "boa-backend")]
 fn bench_boa(source: &str, iterations: usize) -> Result<(), String> {
     println!("backend=boa iterations={iterations}");
 
     let cold_started = Instant::now();
-    let engine = Engine::default();
+    let engine = Engine::with_backend(BackendKind::Boa, RuntimeConfig::default());
     for _ in 0..iterations {
         engine
             .execute(source, ExecutionOptions::default())
@@ -264,10 +284,13 @@ fn bench_boa(source: &str, iterations: usize) -> Result<(), String> {
     }
     let cold = cold_started.elapsed();
 
-    let mut uncached_runtime = Runtime::new(RuntimeConfig {
-        script_cache_capacity: 0,
-        ..RuntimeConfig::default()
-    })
+    let mut uncached_runtime = Runtime::with_backend(
+        BackendKind::Boa,
+        RuntimeConfig {
+            script_cache_capacity: 0,
+            ..RuntimeConfig::default()
+        },
+    )
     .map_err(|error| error.to_string())?;
     let uncached_started = Instant::now();
     for _ in 0..iterations {
@@ -277,8 +300,8 @@ fn bench_boa(source: &str, iterations: usize) -> Result<(), String> {
     }
     let uncached = uncached_started.elapsed();
 
-    let mut cached_runtime =
-        Runtime::new(RuntimeConfig::default()).map_err(|error| error.to_string())?;
+    let mut cached_runtime = Runtime::with_backend(BackendKind::Boa, RuntimeConfig::default())
+        .map_err(|error| error.to_string())?;
     let cached_started = Instant::now();
     for _ in 0..iterations {
         cached_runtime
@@ -442,6 +465,8 @@ fn parse_backend(value: &str) -> Result<BackendKind, String> {
     match value {
         #[cfg(feature = "boa-backend")]
         "boa" => Ok(BackendKind::Boa),
+        #[cfg(not(feature = "boa-backend"))]
+        "boa" => Err("backend `boa` is not compiled; rebuild with `--features boa-backend`".into()),
         "native" => Ok(BackendKind::Native),
         _ => Err(format!(
             "unknown backend `{value}`; expected `boa` or `native`"
@@ -477,6 +502,10 @@ USAGE:
                   [--backend boa|native] [--limit N] [--jobs N]
                   [--native-v1|--native-v2|--native-v3|--native-v4|--native-v4-scan|--native-v5|--native-v5-scan|--native-v6|--native-v6-scan|--native-v7|--native-v7-scan|--native-v8-scan|--native-v9-scan|--native-v10-scan|--native-v11-scan]
                   [--progress] [--json result.json] [-v]
-  agentjs bench [iterations]"
+  agentjs bench [--backend boa|native] [iterations]
+
+BACKENDS:
+  native  Default backend
+  boa     Requires a build with --features boa-backend and explicit --backend boa"
     );
 }

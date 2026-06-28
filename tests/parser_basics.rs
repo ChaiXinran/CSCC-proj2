@@ -40,7 +40,7 @@ fn parses_target_test262_expression_files() {
     }
 }
 
-/// The self-contained end-to-end expressions from `docs/native-v1-scope.md`.
+/// The self-contained end-to-end expressions from `docs/version/native-v1-scope.md`.
 /// Here we only assert they parse; their values are exercised downstream.
 #[test]
 fn parses_v1_end_to_end_expressions() {
@@ -79,7 +79,7 @@ fn reference_to_unknown_name_parses_and_defers_to_runtime() {
     assert_eq!(program.body.len(), 1);
 }
 
-/// The self-contained V2 control-flow scripts from `docs/native-v2-scope.md`.
+/// The self-contained V2 control-flow scripts from `docs/version/native-v2-scope.md`.
 /// The front end only needs to accept them; their values are exercised once the
 /// compiler and VM gain V2 support.
 #[test]

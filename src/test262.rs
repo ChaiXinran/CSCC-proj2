@@ -44,7 +44,7 @@ pub const NATIVE_V2_TESTS: [&str; 15] = [
 
 /// Official Test262 files used as the Native V3 function acceptance gate.
 ///
-/// These are the V3 candidates from `docs/native-v3-scope.md` that exist in
+/// These are the V3 candidates from `docs/version/native-v3-scope.md` that exist in
 /// the pinned Test262 revision and only depend on the implemented V3 subset.
 pub const NATIVE_V3_TESTS: [&str; 26] = [
     "test/language/statements/function/S10.1.1_A1_T1.js",
@@ -179,10 +179,12 @@ pub const NATIVE_V7_SCAN_SUITES: [&str; 9] = [
 /// Fixed Native V8 lightweight diagnostic scan.
 ///
 /// This manifest contains 5,000 non-passing cases sampled from the locked
-/// 2026-06-24 full direct run recorded in `reports/test262-analysis.md`. It is
+/// 2026-06-24 full direct run recorded in
+/// `reports/.test262/test262-analysis/test262-analysis.md`. It is
 /// intentionally file-based instead of directory-based so every collaborator
 /// runs the same lightweight V8 regression workload.
-pub const NATIVE_V8_SCAN_TESTS: &str = include_str!("../reports/native-v8-scan-failures.txt");
+pub const NATIVE_V8_SCAN_TESTS: &str =
+    include_str!("../reports/.test262/test262-scan-failure/native-v8-scan-failures.txt");
 pub const NATIVE_V8_SCAN_TEST_COUNT: usize = 5_000;
 
 /// Fixed Native V9 lightweight diagnostic scan.
@@ -190,7 +192,8 @@ pub const NATIVE_V8_SCAN_TEST_COUNT: usize = 5_000;
 /// This manifest contains 5,000 non-passing V9-area cases sampled from the
 /// locked full direct Test262 output. It focuses on async/generator/for-of,
 /// Promise/job queue, iterator runtime, and Map/Set/Iterator builtin work.
-pub const NATIVE_V9_SCAN_TESTS: &str = include_str!("../reports/native-v9-scan-failures.txt");
+pub const NATIVE_V9_SCAN_TESTS: &str =
+    include_str!("../reports/.test262/test262-scan-failure/native-v9-scan-failures.txt");
 pub const NATIVE_V9_SCAN_TEST_COUNT: usize = 5_000;
 
 /// Fixed Native V10 lightweight diagnostic scan.
@@ -199,7 +202,8 @@ pub const NATIVE_V9_SCAN_TEST_COUNT: usize = 5_000;
 /// locked full direct Test262 output. It focuses on numeric/BigInt/unicode
 /// syntax tail work, TypedArray/ArrayBuffer/DataView runtime substrate, and
 /// Temporal/Intl/Date builtin semantics.
-pub const NATIVE_V10_SCAN_TESTS: &str = include_str!("../reports/native-v10-scan-failures.txt");
+pub const NATIVE_V10_SCAN_TESTS: &str =
+    include_str!("../reports/.test262/test262-scan-failure/native-v10-scan-failures.txt");
 pub const NATIVE_V10_SCAN_TEST_COUNT: usize = 5_000;
 
 /// Fixed Native V11 lightweight diagnostic scan.
@@ -208,7 +212,8 @@ pub const NATIVE_V10_SCAN_TEST_COUNT: usize = 5_000;
 /// locked full direct Test262 output. It focuses on RegExp parser/runtime gaps,
 /// Annex B behavior, object-model precision, and descriptor/property-order
 /// sweeps across implemented builtin families.
-pub const NATIVE_V11_SCAN_TESTS: &str = include_str!("../reports/native-v11-scan-failures.txt");
+pub const NATIVE_V11_SCAN_TESTS: &str =
+    include_str!("../reports/.test262/test262-scan-failure/native-v11-scan-failures.txt");
 pub const NATIVE_V11_SCAN_TEST_COUNT: usize = 5_000;
 
 #[derive(Debug, Clone)]

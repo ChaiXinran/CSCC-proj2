@@ -4,33 +4,9 @@
 
 # Generated benchmark runners and raw measurements
 /benchmarks/generated/
-/reports/*
-!/reports/test262-summary.json
-!/reports/test262-report.md
-!/reports/test262-analysis.md
-!/reports/v8-partA-report.md
-!/reports/v8-partB-report.md
-!/reports/v8-partC-report.md
-!/reports/fix4-part*.md
-!/reports/fixup8-p*-report.md
-!/reports/native-v8-scan-failures.txt
-!/reports/native-v8-scan-summary.json
-!/reports/v*-partA-report.md
-!/reports/v*-partB-report.md
-!/reports/v*-partC-report.md
-!/reports/native-v*-scan-failures.txt
-!/reports/native-v*-scan-summary.json
-!/reports/native-v4-test262-report.md
-!/reports/native-v5-test262-report.md
-!/reports/native-v6-test262-report.md
-!/reports/native-v6-test262-analysis.md
-!/reports/native-v6-summary.json
-!/reports/native-v7-gate-summary.json
-!/reports/native-v7-frontend-summary.json
-!/reports/native-v7-test262-report.md
-!/reports/jetstream2-summary.json
-!/reports/jetstream2-report.md
-
+/reports/unimportant
+/reports/jetstream2
+/reports/.native-test262-tmp
 # Local editor and agent state
 /.vscode/
 /.idea/

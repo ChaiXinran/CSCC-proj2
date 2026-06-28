@@ -30,17 +30,18 @@ the ECMAScript backend so the two can evolve independently.
    variants in parallel, catches per-case engine panics, and reports
    pass/fail/skip counts.
 
-The default `conformance` Cargo feature enables larger Intl, Temporal, and
-experimental components. Disabling default features produces the smaller
-agent-oriented binary while retaining the same host isolation API.
+The standard build contains only the native backend. Enabling the optional
+`boa-backend` feature compiles the Boa compatibility backend, but does not
+select it automatically.
 
 ## Backend Boundary
 
-`Runtime::new` and `Engine::new` currently select `BackendKind::Boa` to preserve
-compatibility. `Runtime::with_backend` and `Engine::with_backend` make backend
-selection explicit. Boa supplies parsing, bytecode execution, garbage
-collection, and standard built-ins only inside `backend/boa.rs`. QuickJS is
-used as a design and performance reference, not linked into the binary.
+`Runtime::new` and `Engine::new` select `BackendKind::Native`.
+`Runtime::with_backend` and `Engine::with_backend` allow explicit selection;
+Boa is used only when a caller chooses `BackendKind::Boa` or passes
+`--backend boa`. Boa supplies parsing, bytecode execution, garbage collection,
+and standard built-ins only inside `backend/boa.rs`. QuickJS is used as a design
+and performance reference, not linked into the binary.
 
 The replacement path is incremental:
 
@@ -53,7 +54,7 @@ The replacement path is incremental:
 6. `contracts.rs::NativePipeline` assembles replaceable stages for isolated
    development and tests.
 7. `backend/native.rs` owns persistent native state and calls that pipeline.
-8. Change the default backend only after targeted Test262 suites pass.
+8. Keep Boa available as an explicit differential-testing backend.
 
 ## Collaboration Boundary
 

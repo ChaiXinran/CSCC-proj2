@@ -12,7 +12,8 @@
 - Parallel Test262 discovery and execution.
 - Test262 harness includes, strict variants, negative tests, async completion,
   `$262` host support, filtering, result limits, and JSON summaries.
-- Cold-isolate and warm-runtime microbenchmark command (`bench`, `bench --native`).
+- Cold-isolate and warm-runtime microbenchmark command (`bench`, or explicit
+  `bench --backend boa` when built with the optional Boa feature).
 - JetStream 2.0 CLI adapter and a pinned six-workload performance report.
 - Backend-neutral `Engine`/`Runtime` facade with isolated Boa and native
   backend modules.
@@ -56,7 +57,7 @@
 - A sharded Test262 run on revision `de8e621c` executed 47,516 non-staging
   tests and passed 45,310. Treating every unexecuted non-staging test as a
   failure gives a conservative full-suite lower bound of 87.31%. See
-  `reports/test262-report.md`.
+  `reports/.test262/test262-analysis/test262-report.md`.
 - V7 bytecode groundwork exposes recursive `ChunkCacheMetadata`, rejects
   invalid chunks before interpretation, and covers high stack depth, handler
   restore invariants, nested-function validation, and source-to-cache-metadata
@@ -74,21 +75,21 @@
 - `--native-v7-scan` selects a lightweight parser_basics/cache-safety Test262 sample
   of selected language and builtin directories. The recommended local command
   is `cargo run --release --no-default-features -- test262 --native-v7-scan
-  --jobs 4 --json reports/native-v7-parser_basics-summary.json`.
+  --jobs 4 --json reports/.native-test262-tmp/native-v7-parser_basics-summary.json`.
   Current V7 scan results and failure classification are recorded in
-  `reports/native-v7-test262-report.md`.
+  `reports/.test262/test262-analysis/native-v7-test262-report.md`.
 - A direct full `test/` scan, including `test/staging`, now completes and writes
-  `reports/native-full-test262-summary.json`. The 2026-06-24 run passed 14,035
+  `reports/.native-test262-tmp/native-full-test262-summary.json`. The 2026-06-24 run passed 14,035
   of 53,379 tests, failed 38,507, skipped 837, and reported 26.29%
   conformance for that exact stress command. Failure classification is recorded
-  in `reports/test262-analysis.md`; the short summary is in
-  `reports/test262-report.md`.
+  in `reports/.test262/test262-analysis/test262-analysis.md`; the short summary is in
+  `reports/.test262/test262-analysis/test262-report.md`.
 - The dominant remaining gaps are parser/modern syntax, template literal
   substitutions, missing builtin/global families, module execution, and RegExp
   feature coverage.
 - Native V8 workflow setup has started. The V8 scope, shared interface, and team
-  plan are recorded in `docs/native-binary_data-scope.md`,
-  `docs/native-binary_data-interface.md`, and `docs/native-binary_data-team-plan.md`.
+  plan are recorded in `docs/version/native-v8-scope.md`,
+  `docs/version/native-v8-interface.md`, and `docs/version/native-v8-team-plan.md`.
 - V8-B module runner infrastructure has a first-stage implementation:
   `SourceKind::Module`, native module eval, strict module execution, module
   top-level `this === undefined`, module registry/status records, relative
@@ -96,14 +97,14 @@
   labels. Focused command:
   `cargo run --release --no-default-features -- test262 --backend native --root
   test262 --suite test/language/module-code --jobs 4 --progress --json
-  reports/native-binary_data-b-module-summary.json`.
-- V8 worker progress is tracked in `reports/binary_data-partA-report.md`,
-  `reports/binary_data-partB-report.md`, and `reports/binary_data-partC-report.md`. Workers and
+  reports/.native-test262-tmp/native-v8-b-module-summary.json`.
+- V8 worker progress is tracked in `reports/.version-report/v8-partA-report.md`,
+  `reports/.version-report/v8-partB-report.md`, and `reports/.version-report/v8-partC-report.md`. Workers and
   AI agents should update the relevant report whenever they change that track.
 - The standard V8 lightweight integration command is
-  `cargo run --release --no-default-features -- test262 --native-binary_data-scan --jobs 4
-  --json reports/native-binary_data-scan-summary.json`. It runs the locked 5,000-case
-  manifest in `reports/native-binary_data-scan-failures.txt`. The initial summary was
+  `cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4
+  --json reports/.native-test262-tmp/native-v8-scan-summary.json`. It runs the locked 5,000-case
+  manifest in `reports/.test262/test262-scan-failure/native-v8-scan-failures.txt`. The initial summary was
   0/5,000 passed, 4,504 failed, and 496 skipped; after V8-B first-stage module
   runner work it is 205/5,000 passed, 4,795 failed, and 0 skipped.
 - The version workflow now requires every future version to create per-track
@@ -111,10 +112,10 @@
   before implementation starts. See `docs/version-development-workflow.md`.
 - Native V9 setup has started. Scope, interface, team plan, per-track reports,
   and the locked V9 lightweight scan are recorded in
-  `docs/native-collections-scope.md`, `docs/native-collections-interface.md`,
-  `docs/native-collections-team-plan.md`, `reports/collections-partA-report.md`,
-  `reports/collections-partB-report.md`, `reports/collections-partC-report.md`, and
-  `reports/native-collections-scan-failures.txt`. Initial V9 scan:
+  `docs/version/native-v9-scope.md`, `docs/version/native-v9-interface.md`,
+  `docs/version/native-v9-team-plan.md`, `reports/.version-report/v9-partA-report.md`,
+  `reports/.version-report/v9-partB-report.md`, `reports/.version-report/v9-partC-report.md`, and
+  `reports/.test262/test262-scan-failure/native-v9-scan-failures.txt`. Initial V9 scan:
   0/5,000 passed, 5,000 failed, 0 skipped.
 - V9-B first runtime substrate pass is implemented: minimal Promise records,
   FIFO native job queue, native `run_jobs()` draining, and array/string iterator
@@ -123,10 +124,10 @@
   work.
 - Native V10 setup is complete. Scope, interface, team plan, per-track reports,
   and the locked V10 lightweight scan are recorded in
-  `docs/native-date_intl-scope.md`, `docs/native-date_intl-interface.md`,
-  `docs/native-date_intl-team-plan.md`, `reports/date_intl-partA-report.md`,
-  `reports/date_intl-partB-report.md`, `reports/date_intl-partC-report.md`, and
-  `reports/native-date_intl-scan-failures.txt`. Initial V10 scan:
+  `docs/version/native-v10-scope.md`, `docs/version/native-v10-interface.md`,
+  `docs/version/native-v10-team-plan.md`, `reports/.version-report/v10-partA-report.md`,
+  `reports/.version-report/v10-partB-report.md`, `reports/.version-report/v10-partC-report.md`, and
+  `reports/.test262/test262-scan-failure/native-v10-scan-failures.txt`. Initial V10 scan:
   645/5,000 passed, 4,355 failed, 0 skipped.
 - V10-B first runtime substrate pass is implemented: shared ArrayBuffer byte
   storage, typed-array view records, DataView records, detach/range checks, and
@@ -135,10 +136,10 @@
   is still future V10-C/integration work.
 - Native V11 setup is complete. Scope, interface, team plan, per-track reports,
   and the locked V11 lightweight scan are recorded in
-  `docs/native-annex_b-scope.md`, `docs/native-annex_b-interface.md`,
-  `docs/native-annex_b-team-plan.md`, `reports/annex_b-partA-report.md`,
-  `reports/annex_b-partB-report.md`, `reports/annex_b-partC-report.md`, and
-  `reports/native-annex_b-scan-failures.txt`. The selector is installed and
+  `docs/version/native-v11-scope.md`, `docs/version/native-v11-interface.md`,
+  `docs/version/native-v11-team-plan.md`, `reports/.version-report/v11-partA-report.md`,
+  `reports/.version-report/v11-partB-report.md`, `reports/.version-report/v11-partC-report.md`, and
+  `reports/.test262/test262-scan-failure/native-v11-scan-failures.txt`. The selector is installed and
   `tests/native_test262.rs` passes 15/15. The first local V11 scan attempt
   exceeded the 300s tool timeout and did not produce a JSON summary.
 - V11-B first object-key ordering precision fix is implemented:
@@ -156,15 +157,15 @@ Before claiming contest readiness:
    pinned Test262 run; the current verified lower bound already exceeds 60%.
 3. JetStream 2 and project microbenchmarks are compared with native results.
    JetStream 2 report in `reports/jetstream2-report.md`; native microbenchmark
-   via `cargo run --release --no-default-features -- bench --native`.
+   via `cargo run --release -- bench`.
 4. Binary size, cold-start latency, and warm throughput are reported with
    native release build numbers.
 5. The script cache is measured against an uncached baseline. Cache hit/miss
-   counts are reported by `bench --native`.
+   counts are reported by the native-default `bench` command.
 
 V7 engineering milestone is complete. The full direct Test262 command now
 produces a truthful JSON report. The next work is feature development guided by
-`reports/test262-analysis.md`: parser_basics unlockers, module runner, builtin/global
+`reports/.test262/test262-analysis/test262-analysis.md`: parser_basics unlockers, module runner, builtin/global
 families, and semantic precision.
 
 CI is defined in `.github/workflows/ci.yml`. It includes default-feature

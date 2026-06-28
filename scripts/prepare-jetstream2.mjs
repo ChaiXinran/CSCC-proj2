@@ -17,22 +17,97 @@ if (!testName) {
 
 const driverSource = fs.readFileSync(path.join(root, "JetStreamDriver.js"), "utf8");
 const adaptedDriverSource = driverSource
-    .replace("class Benchmark {", "class JetStreamBenchmarkBase {")
+    .replace("this.currentResolve = null;", "var currentResolve = null;")
+    .replace("this.currentReject = null;", "var currentReject = null;")
+    .replace("this.JetStream = new Driver();", "var JetStream = new Driver();")
+    .replace(
+        "class Benchmark {",
+        `function initializeJetStreamBenchmark(target, plan) {
+    target.plan = plan;
+    target.iterations = testIterationCount || plan.iterations || defaultIterationCount;
+    target.isAsync = !!plan.isAsync;
+    target.scripts = plan.files.map((file) => readFile(file));
+    target._resourcesPromise = Promise.resolve();
+}
+
+class JetStreamBenchmarkBase {`,
+    )
     .replace(
         "class DefaultBenchmark extends Benchmark {",
-        "class DefaultBenchmark extends JetStreamBenchmarkBase {",
+        "class DefaultBenchmark {",
+    )
+    .replace(
+        "class AsyncBenchmark extends DefaultBenchmark {",
+        `class AsyncBenchmark {
+    constructor(plan) {
+        initializeJetStreamBenchmark(this, plan);
+        this.worstCaseCount = plan.worstCaseCount || defaultWorstCaseCount;
+        this.firstIteration = null;
+        this.worst4 = null;
+        this.average = null;
+    }`,
     )
     .replace(
         "class WSLBenchmark extends Benchmark {",
-        "class WSLBenchmark extends JetStreamBenchmarkBase {",
+        "class WSLBenchmark {",
     )
     .replace(
         "class WasmBenchmark extends Benchmark {",
-        "class WasmBenchmark extends JetStreamBenchmarkBase {",
+        "class WasmBenchmark {",
+    )
+    .replace(
+        /this\._resourcesPromise = null;\r?\n\s*this\.fetchResources\(\);/,
+        "this._resourcesPromise = Promise.resolve();\n        this.scripts = this.plan.files.map((file) => readFile(file));",
+    )
+    // ponytail: JetStream wrappers only forward one plan; avoid native's current super() gap.
+    .replaceAll(
+        /constructor\(\.\.\.args\) \{\r?\n\s*super\(\.\.\.args\);/g,
+        "constructor(plan) {\n        initializeJetStreamBenchmark(this, plan);",
+    )
+    .replaceAll(
+        "super.updateUIAfterRun();",
+        "JetStreamBenchmarkBase.prototype.updateUIAfterRun.call(this);",
+    )
+    .replace(
+        "const ARESGroup =",
+        `Object.setPrototypeOf(DefaultBenchmark.prototype, JetStreamBenchmarkBase.prototype);
+Object.setPrototypeOf(AsyncBenchmark.prototype, DefaultBenchmark.prototype);
+Object.setPrototypeOf(AsyncBenchmark, DefaultBenchmark);
+Object.setPrototypeOf(WSLBenchmark.prototype, JetStreamBenchmarkBase.prototype);
+Object.setPrototypeOf(WasmBenchmark.prototype, JetStreamBenchmarkBase.prototype);
+
+const ARESGroup =`,
     )
     .replace(
         "addScript(`const isInBrowser = ${isInBrowser}; let performance = {now: Date.now.bind(Date)};`);",
-        "addScript(`globalThis.performance = {now: Date.now.bind(Date)};`);",
+        "addScript(`var performance = globalThis.performance = {now: Date.now.bind(Date)};`);",
+    )
+    .replace(
+        /let scripts = string;\r?\n\s*let globalObject = runString\(""\);[\s\S]*?for \(let script of scripts\)\r?\n\s*globalObject\.loadString\(script\);\r?\n\s*return globalObject;/,
+        `let top = { currentResolve, currentReject };
+            new Function("top", string.join("\\n"))(top);
+            return globalThis;`,
+    )
+    .replace(
+        "addScript(this.runnerCode);",
+        'addScript("(() => {\\n" + this.runnerCode + "\\n})();");',
+    )
+    .replace(
+        /let start = Date\.now\(\);\r?\n\s*__benchmark\.runIteration\(\);\r?\n\s*let end = Date\.now\(\);\r?\n\r?\n\s*results\.push\(Math\.max\(1, end - start\)\);/,
+        `let __jetstreamIterationStart = Date.now();
+                __benchmark.runIteration();
+                let __jetstreamIterationEnd = Date.now();
+
+                results.push(Math.max(1, __jetstreamIterationEnd - __jetstreamIterationStart));`,
+    )
+    .replace(
+        /let start = Date\.now\(\);\r?\n\s*for \(let benchmark of this\.benchmarks\)/,
+        `let __jetstreamSuiteStart = Date.now();
+        for (let benchmark of this.benchmarks)`,
+    )
+    .replace(
+        "let totalTime = Date.now() - start;",
+        "let totalTime = Date.now() - __jetstreamSuiteStart;",
     );
 const discovery = {
     console,
@@ -77,35 +152,19 @@ for (const relative of plan.files) {
 
 const compatibility = `
 const isInBrowser = false;
-globalThis.document = {
+var console = { log: (...args) => print(...args) };
+var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
-globalThis.testList = ${JSON.stringify(testName)};
-globalThis.testIterationCount = ${iterationCount || "undefined"};
-globalThis.RAMification = false;
-globalThis.__jetstreamResources = ${JSON.stringify(resources)};
-globalThis.readFile = function (name) {
+var testList = ${JSON.stringify(testName)};
+var testIterationCount = ${iterationCount || "undefined"};
+var RAMification = false;
+var __jetstreamResources = ${JSON.stringify(resources)};
+var readFile = function (name) {
     const normalized = String(name).replaceAll("\\\\", "/");
     if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
         throw new Error("JetStream resource not embedded: " + normalized);
     return __jetstreamResources[normalized];
-};
-globalThis.runString = function (source) {
-    if (source)
-        __agentjsLoadString(source);
-    const shellRealm = {
-        print,
-        loadString(text) { return __agentjsLoadString(text); }
-    };
-    Object.defineProperty(shellRealm, "console", {
-        get() { return globalThis.console; },
-        set(_) {}
-    });
-    Object.defineProperty(shellRealm, "top", {
-        get() { return globalThis.top; },
-        set(value) { globalThis.top = value; }
-    });
-    return shellRealm;
 };
 `;
 

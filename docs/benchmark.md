@@ -10,10 +10,12 @@ cargo build --release
 target/release/agentjs bench 1000
 ```
 
-Also record a minimal build:
+The standard build is native-only. Build and select Boa explicitly when
+collecting compatibility-backend comparison data:
 
 ```sh
-cargo build --release --no-default-features
+cargo build --release --features boa-backend
+target/release/agentjs bench --backend boa 1000
 ```
 
 The command reports:

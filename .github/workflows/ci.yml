@@ -42,11 +42,11 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Check all default-feature targets
+      - name: Check all native-default targets
         run: cargo check --locked --all-targets
 
-      - name: Check native no-default-features targets
-        run: cargo check --locked --no-default-features --all-targets
+      - name: Check optional Boa backend targets
+        run: cargo check --locked --all-targets --features boa-backend
 
       - name: Run Clippy
         run: cargo clippy --locked --all-targets -- -D warnings

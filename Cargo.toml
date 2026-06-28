@@ -7,7 +7,9 @@ description = "A lightweight JavaScript execution runtime for AI agents"
 license = "MIT"
 
 [features]
-default = ["boa-backend"]
+# Native is always compiled and is the runtime default. Boa is available only
+# when this optional feature is enabled and callers explicitly select it.
+default = []
 boa-backend = ["dep:boa_engine", "dep:boa_runtime"]
 conformance = [
     "boa-backend",
