@@ -626,24 +626,30 @@ impl Vm {
                 Instruction::Exponentiation => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_exponentiation(left.clone(), right.clone()) {
-                                Ok(Some(value)) => self.stack.push(value),
-                                Ok(None) => {
-                                    let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(left.powf(right)));
-                                }
-                                Err(error) => {
-                                    abrupt =
-                                        Some(Completion::Throw(self.throw_value_from_error(error)));
-                                    discard_saved_finally = true;
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(left.powf(*right)));
+                    } else {
+                        match self.to_numeric_operands(left, right, context) {
+                            Ok((left, right)) => {
+                                match bigint_exponentiation(left.clone(), right.clone()) {
+                                    Ok(Some(value)) => self.stack.push(value),
+                                    Ok(None) => {
+                                        let (left, right) = numeric_number_pair(left, right)?;
+                                        self.stack.push(JsValue::Number(left.powf(right)));
+                                    }
+                                    Err(error) => {
+                                        abrupt = Some(Completion::Throw(
+                                            self.throw_value_from_error(error),
+                                        ));
+                                        discard_saved_finally = true;
+                                    }
                                 }
                             }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
+                            Err(error) => {
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
@@ -1074,11 +1080,9 @@ impl Vm {
                     }
                 }
                 Instruction::StoreName(index) => {
-                    let name = self
-                        .constant_string(chunk, index, current_instruction)?
-                        .to_string();
+                    let name = self.constant_string(chunk, index, current_instruction)?;
                     let value = self.pop_value()?;
-                    match context.set_binding(&name, value.clone()) {
+                    match context.set_binding(name, value.clone()) {
                         Ok(()) => self.stack.push(value),
                         Err(error) => {
                             abrupt = Some(Completion::Throw(vm_error_to_value(error)));

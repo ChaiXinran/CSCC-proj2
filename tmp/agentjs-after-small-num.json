@@ -1,0 +1,141 @@
+{
+  "meta": {
+    "label_a": "agentjs-after-small-num",
+    "label_b": null,
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": null,
+    "repeat": 7,
+    "timeout": 60,
+    "tests_dir": "D:\\00_OS\\CSCC\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs-after-small-num": {
+      "math-partial-sums": {
+        "status": "pass",
+        "median_ms": 110.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 109.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 111.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 110.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 110.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 109.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 114.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-cordic": {
+        "status": "pass",
+        "median_ms": 595.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 577.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 591.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 603.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 584.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 601.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 595.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 602.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-spectral-norm": {
+        "status": "pass",
+        "median_ms": 425.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 428.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 428.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 416.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 429.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 425.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 418.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 423.4,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}
