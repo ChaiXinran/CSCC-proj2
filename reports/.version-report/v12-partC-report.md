@@ -496,3 +496,87 @@ error[E0063]: missing fields 'home_object', 'is_arrow', 'lexical_new_target' and
 The all-targets failure is in a test-target `JsFunction` initializer and was
 not introduced by this string fast-path patch; `cargo check --lib`, focused
 tests, and release build all passed after the change.
+
+## Final README Data Consolidation
+
+Date: 2026-06-28
+
+### Documentation Change
+
+- Filled and polished the root `README.md` while retaining the original five
+  outline sections: introduction, architecture, tests, features, and CLI.
+- Documented Native as the default backend and Boa as an explicit optional
+  reference, matching `Cargo.toml`, `src/backend/mod.rs`, and `src/engine.rs`.
+- Filled the Test262 section from the tracked final level-1/2/3 CSV files and
+  kept skipped cases separate from passes.
+- Filled the existing SunSpider and Native benchmark subsections from their
+  tracked result reports, and added only the commands needed to reproduce
+  those existing outline items.
+- Removed the internal submission-material checklist and did not add API,
+  contribution, repository-tour, or standalone limitation sections.
+
+### Data Sources
+
+```text
+reports/test262-final-level1-pass-stats.csv
+reports/test262-final-level2-pass-stats.csv
+reports/test262-final-level3-pass-stats.csv
+benchmarks/agent/results/agentjs.md
+benchmarks/sunspider/results/agentjs-sunspider.md
+benchmarks/sunspider/results/boa-sunspider.md
+reports/.version-report/v12-partC-report.md
+```
+
+The Test262 directory totals sum to 53,379 total, 39,470 passed, 13,907
+failed, and 2 skipped (73.94%; skipped cases are not passes). The documented
+Windows release sizes are 7,441,408 bytes (7.10 MiB) for Native-only and
+17,885,184 bytes (17.06 MiB) with the optional Boa backend compiled in.
+
+### Validation
+
+- Inspected all linked local paths and CLI spellings against the current tree.
+- Recomputed aggregate Test262 totals from the tracked level-1 CSV.
+- No engine behavior changed and no Test262 scan was rerun for this
+  documentation-only update.
+
+## Final Submission Report Consolidation
+
+Date: 2026-06-28
+
+- Replaced the placeholder-oriented root `report.md` with a completed
+  16-section submission report based on the current code structure and
+  experiment artifacts.
+- Selected `test262-final/final-all.json` as the authoritative final result:
+  53,379 total, 38,315 passed, 15,062 failed, 2 skipped, 71.7792%, 253.021 s.
+- Kept the same-run top-level split JSON results separate and documented the
+  observed one-case difference between their sum and the whole-suite run.
+- Added SunSpider, AgentBench, string fast-path, binary-size, JetStream
+  diagnostic, toolchain, commit, submodule, and quality-gate evidence.
+- Recorded current gate failures truthfully: `cargo test --all-targets` stops
+  after 205/222 lib tests with 17 parser expectation failures; Clippy reports
+  38 `-D warnings` diagnostics; `native_test262` passes 15/15.
+- No engine implementation was changed for this report update.
+
+## Final Test262 Authority Correction
+
+Date: 2026-06-28
+
+- Updated the root README from the earlier directory-CSV snapshot
+  (39,470/53,379, 73.94%) to the later authoritative whole-suite artifact
+  `test262-final/final-all.json` (38,315/53,379, 71.78%).
+- Replaced the older CSV-derived directory table with the same-run
+  `final-language`, `final-built-ins`, `final-annexB`, `final-harness`,
+  `final-intl402`, and `final-staging` JSON results.
+- Updated the README reproduction command to use four jobs and write the
+  documented `test262-final/final-all.json` path.
+- No source or runtime behavior changed.
+
+## Final Report Numbering Cleanup
+
+Date: 2026-06-29
+
+- Renumbered the remaining `report.md` headings after user-directed content
+  deletion so chapter 7 now runs continuously from 7.1 through 7.7 and the
+  top-level chapters run continuously from 1 through 15.
+- Corrected inline-code spacing in the Boa feature-selection explanation.
+- No report data or engine behavior changed.

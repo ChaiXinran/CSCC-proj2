@@ -1,0 +1,158 @@
+{
+  "generated_at": "2026-06-28 23:22:11",
+  "split_total": 53379,
+  "split_passed": 38314,
+  "split_failed": 15063,
+  "split_skipped": 2,
+  "split_conformance_percent": 71.7773,
+  "split_elapsed_ms": 261589,
+  "records": [
+    {
+      "kind": "split",
+      "suite": "test/annexB",
+      "generated_at": "2026-06-28 23:22:11",
+      "command": "target\\release\\agentjs.exe test262 --backend native --root test262 --suite test/annexB --jobs 4 --json reports\\test262-final\\final-annexB.json",
+      "json_path": "reports\\test262-final\\final-annexB.json",
+      "md_path": "reports\\test262-final\\final-annexB.md",
+      "log_path": "reports\\test262-final\\final-annexB.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_ms": 2210,
+      "summary": {
+        "total": 1086,
+        "passed": 848,
+        "failed": 238,
+        "skipped": 0,
+        "conformance_percent": 78.0847,
+        "elapsed_ms": 2199
+      },
+      "status": "完成"
+    },
+    {
+      "kind": "split",
+      "suite": "test/built-ins",
+      "generated_at": "2026-06-28 23:22:11",
+      "command": "target\\release\\agentjs.exe test262 --backend native --root test262 --suite test/built-ins --jobs 4 --json reports\\test262-final\\final-built-ins.json",
+      "json_path": "reports\\test262-final\\final-built-ins.json",
+      "md_path": "reports\\test262-final\\final-built-ins.md",
+      "log_path": "reports\\test262-final\\final-built-ins.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_ms": 166990,
+      "summary": {
+        "total": 23643,
+        "passed": 16996,
+        "failed": 6645,
+        "skipped": 2,
+        "conformance_percent": 71.886,
+        "elapsed_ms": 166975
+      },
+      "status": "完成"
+    },
+    {
+      "kind": "split",
+      "suite": "test/harness",
+      "generated_at": "2026-06-28 23:22:11",
+      "command": "target\\release\\agentjs.exe test262 --backend native --root test262 --suite test/harness --jobs 4 --json reports\\test262-final\\final-harness.json",
+      "json_path": "reports\\test262-final\\final-harness.json",
+      "md_path": "reports\\test262-final\\final-harness.md",
+      "log_path": "reports\\test262-final\\final-harness.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_ms": 202,
+      "summary": {
+        "total": 116,
+        "passed": 86,
+        "failed": 30,
+        "skipped": 0,
+        "conformance_percent": 74.1379,
+        "elapsed_ms": 190
+      },
+      "status": "完成"
+    },
+    {
+      "kind": "split",
+      "suite": "test/intl402",
+      "generated_at": "2026-06-28 23:22:11",
+      "command": "target\\release\\agentjs.exe test262 --backend native --root test262 --suite test/intl402 --jobs 4 --json reports\\test262-final\\final-intl402.json",
+      "json_path": "reports\\test262-final\\final-intl402.json",
+      "md_path": "reports\\test262-final\\final-intl402.md",
+      "log_path": "reports\\test262-final\\final-intl402.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_ms": 7549,
+      "summary": {
+        "total": 3341,
+        "passed": 474,
+        "failed": 2867,
+        "skipped": 0,
+        "conformance_percent": 14.1874,
+        "elapsed_ms": 7482
+      },
+      "status": "完成"
+    },
+    {
+      "kind": "split",
+      "suite": "test/language",
+      "generated_at": "2026-06-28 23:22:11",
+      "command": "target\\release\\agentjs.exe test262 --backend native --root test262 --suite test/language --jobs 4 --json reports\\test262-final\\final-language.json",
+      "json_path": "reports\\test262-final\\final-language.json",
+      "md_path": "reports\\test262-final\\final-language.md",
+      "log_path": "reports\\test262-final\\final-language.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_ms": 35398,
+      "summary": {
+        "total": 23711,
+        "passed": 19156,
+        "failed": 4555,
+        "skipped": 0,
+        "conformance_percent": 80.7895,
+        "elapsed_ms": 35359
+      },
+      "status": "完成"
+    },
+    {
+      "kind": "split",
+      "suite": "test/staging",
+      "generated_at": "2026-06-28 23:22:11",
+      "command": "target\\release\\agentjs.exe test262 --backend native --root test262 --suite test/staging --jobs 4 --json reports\\test262-final\\final-staging.json",
+      "json_path": "reports\\test262-final\\final-staging.json",
+      "md_path": "reports\\test262-final\\final-staging.md",
+      "log_path": "reports\\test262-final\\final-staging.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_ms": 49400,
+      "summary": {
+        "total": 1482,
+        "passed": 754,
+        "failed": 728,
+        "skipped": 0,
+        "conformance_percent": 50.8772,
+        "elapsed_ms": 49384
+      },
+      "status": "完成"
+    },
+    {
+      "kind": "full",
+      "suite": "test",
+      "generated_at": "2026-06-28 23:22:11",
+      "command": "target\\release\\agentjs.exe test262 --backend native --root test262 --suite test --jobs 4 --json reports\\test262-final\\final-all.json",
+      "json_path": "reports\\test262-final\\final-all.json",
+      "md_path": "reports\\test262-final\\final-all.md",
+      "log_path": "reports\\test262-final\\final-all.log",
+      "exit_code": 0,
+      "timed_out": false,
+      "wall_time_ms": 253043,
+      "summary": {
+        "total": 53379,
+        "passed": 38315,
+        "failed": 15062,
+        "skipped": 2,
+        "conformance_percent": 71.7792,
+        "elapsed_ms": 253021
+      },
+      "status": "完成"
+    }
+  ]
+}

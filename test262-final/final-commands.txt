@@ -1,0 +1,7 @@
+target\release\agentjs.exe test262 --backend native --root test262 --suite test/annexB --jobs 4 --json reports\test262-final\final-annexB.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test/built-ins --jobs 4 --json reports\test262-final\final-built-ins.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test/harness --jobs 4 --json reports\test262-final\final-harness.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test/intl402 --jobs 4 --json reports\test262-final\final-intl402.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test/language --jobs 4 --json reports\test262-final\final-language.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test/staging --jobs 4 --json reports\test262-final\final-staging.json
+target\release\agentjs.exe test262 --backend native --root test262 --suite test --jobs 4 --json reports\test262-final\final-all.json
