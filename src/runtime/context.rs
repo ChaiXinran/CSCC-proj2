@@ -17,6 +17,7 @@ use super::{
     ProxyRecord, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
     TypedArrayViewId, WellKnownSymbols, iterator::IteratorKind, object::array_index,
 };
+use crate::builtins::string;
 use crate::vm::{CallFrame, Vm, VmError};
 
 /// Stable identifier for a secondary ECMAScript realm hosted by one native
@@ -2139,17 +2140,17 @@ impl NativeContext {
         if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &object_value.kind {
             if key == "length" {
                 return Some(PropertyDescriptor::data_with(
-                    JsValue::Number(value.encode_utf16().count() as f64),
+                    JsValue::Number(string::utf16_length(value) as f64),
                     false,
                     false,
                     false,
                 ));
             }
             if let Some(index) = array_index(key)
-                && let Some(unit) = value.encode_utf16().nth(index)
+                && let Some(unit) = string::utf16_code_unit_at(value, index)
             {
                 return Some(PropertyDescriptor::data_with(
-                    JsValue::String(String::from_utf16_lossy(&[unit])),
+                    JsValue::String(string::decode_utf16(&[unit])),
                     false,
                     true,
                     false,

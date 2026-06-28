@@ -1,0 +1,57 @@
+{
+  "meta": {
+    "label_a": "agentjs-after-store-loop",
+    "label_b": null,
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": null,
+    "repeat": 7,
+    "timeout": 60,
+    "tests_dir": "D:\\00_OS\\CSCC\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs-after-store-loop": {
+      "access-fannkuch": {
+        "status": "pass",
+        "median_ms": 553.7,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 566.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 553.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 553.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 536.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 556.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 546.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 551.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}

@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::{
-    builtins::proxy,
+    builtins::{proxy, string},
     bytecode::{
         Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
     },
@@ -11,7 +11,7 @@ use crate::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
         Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
         PreferredType, PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor,
-        PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, to_property_key,
+        PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, array_index, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -626,24 +626,30 @@ impl Vm {
                 Instruction::Exponentiation => {
                     let right = self.pop_value()?;
                     let left = self.pop_value()?;
-                    match self.to_numeric_operands(left, right, context) {
-                        Ok((left, right)) => {
-                            match bigint_exponentiation(left.clone(), right.clone()) {
-                                Ok(Some(value)) => self.stack.push(value),
-                                Ok(None) => {
-                                    let (left, right) = numeric_number_pair(left, right)?;
-                                    self.stack.push(JsValue::Number(left.powf(right)));
-                                }
-                                Err(error) => {
-                                    abrupt =
-                                        Some(Completion::Throw(self.throw_value_from_error(error)));
-                                    discard_saved_finally = true;
+                    if let (JsValue::Number(left), JsValue::Number(right)) = (&left, &right) {
+                        self.stack.push(JsValue::Number(left.powf(*right)));
+                    } else {
+                        match self.to_numeric_operands(left, right, context) {
+                            Ok((left, right)) => {
+                                match bigint_exponentiation(left.clone(), right.clone()) {
+                                    Ok(Some(value)) => self.stack.push(value),
+                                    Ok(None) => {
+                                        let (left, right) = numeric_number_pair(left, right)?;
+                                        self.stack.push(JsValue::Number(left.powf(right)));
+                                    }
+                                    Err(error) => {
+                                        abrupt = Some(Completion::Throw(
+                                            self.throw_value_from_error(error),
+                                        ));
+                                        discard_saved_finally = true;
+                                    }
                                 }
                             }
-                        }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
-                            discard_saved_finally = true;
+                            Err(error) => {
+                                abrupt =
+                                    Some(Completion::Throw(self.throw_value_from_error(error)));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }
@@ -1074,11 +1080,9 @@ impl Vm {
                     }
                 }
                 Instruction::StoreName(index) => {
-                    let name = self
-                        .constant_string(chunk, index, current_instruction)?
-                        .to_string();
+                    let name = self.constant_string(chunk, index, current_instruction)?;
                     let value = self.pop_value()?;
-                    match context.set_binding(&name, value.clone()) {
+                    match context.set_binding(name, value.clone()) {
                         Ok(()) => self.stack.push(value),
                         Err(error) => {
                             abrupt = Some(Completion::Throw(vm_error_to_value(error)));
@@ -5014,17 +5018,14 @@ impl Vm {
         if let JsValue::String(value) = &receiver {
             if key == "length" {
                 return Ok(OperationResult::Value(JsValue::Number(
-                    value.encode_utf16().count() as f64,
+                    string::utf16_length(value) as f64,
                 )));
             }
-            if let Ok(index) = key.parse::<usize>() {
+            if let Some(index) = array_index(key) {
                 return Ok(OperationResult::Value(
-                    value
-                        .encode_utf16()
-                        .nth(index)
-                        .map_or(JsValue::Undefined, |unit| {
-                            JsValue::String(String::from_utf16_lossy(&[unit]))
-                        }),
+                    string::utf16_code_unit_at(value, index).map_or(JsValue::Undefined, |unit| {
+                        JsValue::String(string::decode_utf16(&[unit]))
+                    }),
                 ));
             }
         }

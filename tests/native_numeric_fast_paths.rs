@@ -22,6 +22,14 @@ fn number_arithmetic_fast_paths_preserve_ieee_results() {
 }
 
 #[test]
+fn exponentiation_number_fast_path_preserves_ieee_results() {
+    assert_eq!(native_eval("2 ** 10"), "1024");
+    assert_eq!(native_eval("(-2) ** 3"), "-8");
+    assert_eq!(native_eval("NaN ** 2"), "NaN");
+    assert_eq!(native_eval("1 / ((-0) ** 3)"), "-Infinity");
+}
+
+#[test]
 fn bitwise_fast_paths_apply_ecmascript_int32_modulo() {
     assert_eq!(native_eval("1e30 | 0"), "0");
     assert_eq!(native_eval("1e30 >>> 0"), "0");
@@ -62,6 +70,14 @@ fn non_number_operands_still_use_generic_coercion_paths() {
         ),
         "true:1"
     );
+    assert_eq!(
+        native_eval(
+            "var calls = 0; \
+             var value = { valueOf: function () { calls++; return 2; } }; \
+             (value ** 5) + ':' + calls;"
+        ),
+        "32:1"
+    );
 }
 
 #[test]
@@ -69,6 +85,7 @@ fn bigint_operations_bypass_number_fast_paths() {
     assert_eq!(native_eval("(1n + 2n).toString()"), "3");
     assert_eq!(native_eval("(6n & 3n).toString()"), "2");
     assert_eq!(native_eval("(1n << 5n).toString()"), "32");
+    assert_eq!(native_eval("(2n ** 5n).toString()"), "32");
     assert_eq!(
         native_eval(
             "var result = 'no'; try { 1n + 1; } catch (error) { result = 'caught'; } result;"

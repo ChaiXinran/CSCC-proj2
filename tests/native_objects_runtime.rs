@@ -246,6 +246,41 @@ fn numeric_element_definition_preserves_array_extensibility_rules() {
 }
 
 #[test]
+fn segmented_descriptor_overrides_preserve_length_invariants() {
+    let mut context = NativeContext::default();
+    let array = context.create_sparse_array(0).unwrap();
+    let JsValue::Object(id) = array.clone() else {
+        panic!("expected array");
+    };
+
+    assert!(
+        context
+            .define_own_property(
+                id,
+                "90000".into(),
+                PropertyDescriptor::data_with(JsValue::Number(1.0), true, true, false),
+            )
+            .unwrap()
+    );
+    assert!(
+        !context
+            .validate_and_apply_property_descriptor(
+                id,
+                "length".into(),
+                PropertyDescriptorUpdate {
+                    value: Some(JsValue::Number(10.0)),
+                    ..PropertyDescriptorUpdate::default()
+                },
+            )
+            .unwrap()
+    );
+    assert_eq!(
+        context.get_property(array, "length").unwrap(),
+        JsValue::Number(90_001.0)
+    );
+}
+
+#[test]
 fn array_length_shrink_recovers_when_non_configurable_element_blocks_delete() {
     let mut context = NativeContext::default();
     let array = context

@@ -411,3 +411,88 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
   semantics still account for most remaining Array failures.
 - The arguments object is now iterable, but it is still an ordinary object
   skeleton rather than a complete mapped/unmapped arguments exotic object.
+
+## Fix9 P2 String Primitive ASCII Fast Path
+
+Date: 2026-06-28
+
+### Changes
+
+- Added ASCII fast paths to the shared UTF-16 string helper layer:
+  `utf16_length` now returns `str::len()` for ASCII strings, and
+  `utf16_code_unit_at` reads directly from bytes for ASCII strings.
+- Reused the shared string helpers from primitive string property lookup so
+  `length` and numeric-index reads avoid repeated ad-hoc `encode_utf16()`
+  traversal.
+- Tightened primitive string numeric-index dispatch to use ECMAScript
+  array-index key parsing instead of broad `usize` parsing. This keeps
+  `'abc'[1]` and `'abc'['1']` fast while correctly leaving keys such as
+  `'01'` and `4294967295` on the ordinary property path.
+- Did not add a `HashMap<String, StringMeta>` cache; the patch keeps the
+  optimization local and avoids hashing/cloning whole string contents on each
+  access.
+
+Files touched:
+
+```text
+src/builtins/mod.rs
+src/builtins/string.rs
+src/runtime/mod.rs
+src/runtime/context.rs
+src/vm/interpreter.rs
+tests/native_stdlib.rs
+reports/.version-report/v12-partC-report.md
+```
+
+### Performance Results
+
+Release binary was rebuilt before both before/after measurements. Each case was
+run 7 times with PowerShell `Measure-Command`; table reports medians.
+
+| Case | Before median | After median | Delta |
+| --- | ---: | ---: | ---: |
+| `string-base64` | 769.9 ms | 273.0 ms | 2.82x faster |
+| `string-tagcloud` | 7484.0 ms | 7463.3 ms | ~0.3% faster / effectively flat |
+
+Raw timings:
+
+```text
+before string-base64: median=769.9ms min=756.9ms max=1439.7ms all=[1439.7, 769.9, 762.6, 756.9, 774.4, 761.5, 767.7]
+before string-tagcloud: median=7484.0ms min=7347.9ms max=7585.7ms all=[7347.9, 7449.1, 7484, 7411.4, 7585.7, 7537.8, 7424.5]
+after string-base64: median=273.0ms min=262.7ms max=1114.6ms all=[1114.6, 274.2, 269.9, 273, 265.6, 267, 262.7]
+after string-tagcloud: median=7463.3ms min=7349.9ms max=7548.8ms all=[7548.8, 7409.6, 7405.8, 7463.3, 7525.2, 7349.9, 7369.9]
+```
+
+The first `string-base64` run in both before and after sets was a cold outlier,
+so the median is the comparison point. The after median remained substantially
+faster, so the patch was kept.
+
+### Validation
+
+Passed:
+
+```powershell
+cargo test --test native_string
+cargo test --test native_stdlib primitive_string_index_access_uses_array_index_keys
+cargo test --test native_stdlib string_character_access_methods
+cargo build --release
+cargo check --lib
+```
+
+Notes:
+
+- `cargo fmt --all` was run during development, but it also reformatted
+  unrelated pre-existing files; those unrelated formatting hunks were reverted
+  to keep this patch scoped to the string fast path.
+
+Known pre-existing blocker observed during validation:
+
+```text
+cargo check --all-targets
+error[E0063]: missing fields 'home_object', 'is_arrow', 'lexical_new_target' and 1 other field in initializer of 'JsFunction'
+  --> src/runtime/heap.rs:307:9
+```
+
+The all-targets failure is in a test-target `JsFunction` initializer and was
+not introduced by this string fast-path patch; `cargo check --lib`, focused
+tests, and release build all passed after the change.
