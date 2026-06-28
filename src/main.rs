@@ -77,12 +77,24 @@ fn command_run(args: &[String]) -> Result<(), String> {
 fn command_jetstream(args: &[String]) -> Result<(), String> {
     let path = args
         .first()
-        .ok_or_else(|| "usage: agentjs jetstream <generated-runner.js>".to_string())?;
-    let source = fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
+        .ok_or_else(|| "usage: agentjs jetstream <generated-runner.js>".to_string())?
+        .clone();
+    let source = fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
+    // Spawn on a dedicated thread with a large stack so deep-recursion benchmarks
+    // (e.g. crypto) don't hit the OS thread stack limit.
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(move || jetstream_run(&source))
+        .map_err(|error| error.to_string())?
+        .join()
+        .map_err(|_| "JetStream thread panicked".to_string())?
+}
+
+fn jetstream_run(source: &str) -> Result<(), String> {
     let mut runtime = Runtime::new(RuntimeConfig {
         loop_limit: u64::MAX,
-        recursion_limit: 1_024,
-        stack_limit: 1024 * 1024,
+        recursion_limit: 8_192,
+        stack_limit: 8 * 1024 * 1024,
         backtrace_limit: 20,
         script_cache_capacity: 0,
         install_test262_host: true,
@@ -93,7 +105,7 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
     })
     .map_err(|error| error.to_string())?;
     let report = runtime
-        .eval(&source, ExecutionOptions::default())
+        .eval(source, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
     let benchmark_failure = report
         .output

@@ -240,6 +240,20 @@ pub struct FunctionTemplate {
 // Chunk
 // ---------------------------------------------------------------------------
 
+/// Structural equality for constants. Uses bit-level comparison for f64 so
+/// that two `NaN` literals share the same pool slot.
+fn constant_eq(a: &Constant, b: &Constant) -> bool {
+    match (a, b) {
+        (Constant::Undefined, Constant::Undefined) => true,
+        (Constant::Null, Constant::Null) => true,
+        (Constant::Boolean(x), Constant::Boolean(y)) => x == y,
+        (Constant::Number(x), Constant::Number(y)) => x.to_bits() == y.to_bits(),
+        (Constant::BigInt(x), Constant::BigInt(y)) => x == y,
+        (Constant::String(x), Constant::String(y)) => x == y,
+        _ => false,
+    }
+}
+
 /// Bytecode for one script or function.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Chunk {
@@ -274,8 +288,15 @@ pub struct ChunkCacheMetadata {
 }
 
 impl Chunk {
-    /// Adds a constant and returns its lossless `u16` index.
+    /// Adds a constant and returns its `u16` index, deduplicating equal entries.
     pub fn add_constant(&mut self, constant: Constant) -> Result<u16, ChunkError> {
+        // Deduplicate: reuse an existing equal constant to avoid pool overflow for
+        // scripts with many repeated literals (e.g. large embedded data arrays).
+        for (i, existing) in self.constants.iter().enumerate() {
+            if constant_eq(existing, &constant) {
+                return Ok(i as u16);
+            }
+        }
         let index =
             u16::try_from(self.constants.len()).map_err(|_| ChunkError::ConstantPoolOverflow)?;
         self.constants.push(constant);

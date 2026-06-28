@@ -11,7 +11,7 @@ use crate::{
         FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord, Job, JsFunction,
         JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind, PreferredType,
         PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor, PropertyKey,
-        PropertyKind, SymbolId, to_property_key,
+        PropertyKind, SymbolId, TypedArrayViewId, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -309,7 +309,7 @@ impl Vm {
         {
             return Ok(completion);
         }
-        while instruction_pointer < chunk.instructions.len() {
+        'dispatch: while instruction_pointer < chunk.instructions.len() {
             context.check_deadline()?;
             if context.should_collect_garbage() {
                 context.collect_garbage_for_vm(self)?;
@@ -1008,6 +1008,22 @@ impl Vm {
                 Instruction::GetElement => {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
+                    // Fast path: non-negative integer key on Array / TypedArray.
+                    'fast: {
+                        let JsValue::Number(n) = key else { break 'fast };
+                        if n.fract() != 0.0 || n < 0.0 || n >= 4_294_967_295.0 {
+                            break 'fast;
+                        }
+                        let JsValue::Object(obj_id) = object else { break 'fast };
+                        let idx = n as usize;
+                        let Some(result) = Self::fast_get_element(obj_id, idx, context) else {
+                            break 'fast;
+                        };
+                        match result {
+                            Ok(value) => { self.stack.push(value); continue 'dispatch; }
+                            Err(e) => return Err(e),
+                        }
+                    }
                     if let JsValue::Symbol(sym_id) = &key {
                         match self.get_symbol_property_value_completion(object, *sym_id, context)? {
                             OperationResult::Value(value) => self.stack.push(value),
@@ -1433,6 +1449,22 @@ impl Vm {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
+                    // Fast path: non-negative integer key on Array / TypedArray.
+                    'fast: {
+                        let JsValue::Number(n) = key else { break 'fast };
+                        if n.fract() != 0.0 || n < 0.0 || n >= 4_294_967_295.0 {
+                            break 'fast;
+                        }
+                        let JsValue::Object(obj_id) = object else { break 'fast };
+                        let idx = n as usize;
+                        let Some(result) = Self::fast_set_element(obj_id, idx, value.clone(), context) else {
+                            break 'fast;
+                        };
+                        match result {
+                            Ok(()) => { self.stack.push(value); continue 'dispatch; }
+                            Err(e) => return Err(e),
+                        }
+                    }
                     if let JsValue::Symbol(sym_id) = &key {
                         match self.set_symbol_property_value(object, *sym_id, value, context)? {
                             OperationResult::Value(result) => self.stack.push(result),
@@ -4328,6 +4360,75 @@ impl Vm {
         match self.get_property_value_completion(receiver, key, context)? {
             OperationResult::Value(value) => Ok(Ok(value)),
             OperationResult::Throw(value) => Ok(Err(value)),
+        }
+    }
+
+    /// Fast path: numeric key on Array/TypedArray without string conversion.
+    /// Returns `Some(value)` if the fast path succeeded, `None` to fall through.
+    fn fast_get_element(
+        obj_id: ObjectId,
+        idx: usize,
+        context: &NativeContext,
+    ) -> Option<Result<JsValue, VmError>> {
+        enum FastKind { ArrayValue(Option<JsValue>), TypedArray(TypedArrayViewId) }
+        let fast_kind = {
+            let obj = context.heap().object(obj_id)?;
+            match &obj.kind {
+                ObjectKind::Array { elements, .. } => {
+                    let val = elements.get(idx).and_then(|s| s.as_ref()).and_then(|d| d.value_cloned());
+                    FastKind::ArrayValue(val)
+                }
+                ObjectKind::TypedArray { view, .. } => FastKind::TypedArray(*view),
+                _ => return None,
+            }
+        };
+        match fast_kind {
+            FastKind::ArrayValue(Some(v)) => Some(Ok(v)),
+            FastKind::ArrayValue(None) => None, // hole or out-of-bounds: fall through to prototype chain
+            FastKind::TypedArray(view_id) => {
+                Some(context.typed_array_load_element(view_id, idx).or_else(|e| {
+                    if matches!(e.kind, VmErrorKind::Range) {
+                        Ok(JsValue::Undefined)
+                    } else {
+                        Err(e)
+                    }
+                }))
+            }
+        }
+    }
+
+    /// Fast path: numeric key write on Array/TypedArray without string conversion.
+    /// Returns `Some(Ok(()))` on success, `Some(Err(...))` on fatal error, `None` to fall through.
+    fn fast_set_element(
+        obj_id: ObjectId,
+        idx: usize,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Option<Result<(), VmError>> {
+        // Extract what we need in a short borrow so we can call mutable methods after.
+        enum FastKind { Array, TypedArray(TypedArrayViewId) }
+        let fast_kind = {
+            let obj = context.heap().object(obj_id)?;
+            match &obj.kind {
+                ObjectKind::Array { .. } => FastKind::Array,
+                ObjectKind::TypedArray { view, .. } => FastKind::TypedArray(*view),
+                _ => return None,
+            }
+        };
+        match fast_kind {
+            FastKind::TypedArray(view_id) => {
+                Some(context.typed_array_store_element(view_id, idx, value).or_else(|e| {
+                    if matches!(e.kind, VmErrorKind::Range) {
+                        Ok(())
+                    } else {
+                        Err(e)
+                    }
+                }))
+            }
+            FastKind::Array => {
+                let desc = crate::runtime::PropertyDescriptor::data_with(value, true, true, true);
+                Some(context.define_own_property(obj_id, idx.to_string(), desc).map(|_| ()))
+            }
         }
     }
 

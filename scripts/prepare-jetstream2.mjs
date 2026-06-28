@@ -70,7 +70,8 @@ class JetStreamBenchmarkBase {`,
     )
     .replace(
         "const ARESGroup =",
-        `Object.setPrototypeOf(DefaultBenchmark.prototype, JetStreamBenchmarkBase.prototype);
+        `const Benchmark = JetStreamBenchmarkBase;
+        Object.setPrototypeOf(DefaultBenchmark.prototype, JetStreamBenchmarkBase.prototype);
 Object.setPrototypeOf(AsyncBenchmark.prototype, DefaultBenchmark.prototype);
 Object.setPrototypeOf(AsyncBenchmark, DefaultBenchmark);
 Object.setPrototypeOf(WSLBenchmark.prototype, JetStreamBenchmarkBase.prototype);
@@ -129,6 +130,14 @@ const discovery = {
     Symbol,
     Map,
     Blob,
+    JetStreamParams: {
+        prefetchResources: false,
+        forceGC: false,
+        dumpJSONResults: false,
+        testIterationCountMap: {},
+        testWorstCaseCountMap: {},
+        testList: testName,
+    },
 };
 discovery.globalThis = discovery;
 vm.createContext(discovery);
@@ -139,13 +148,16 @@ if (benchmarks.length !== 1) {
     throw new Error(`expected one benchmark, discovered ${benchmarks.length}`);
 }
 
-const plan = benchmarks[0].plan;
+const benchmark = benchmarks[0];
+// Support both old API (benchmark.plan) and new API (benchmark directly).
+const plan = benchmark.plan ?? benchmark;
+const benchmarkFiles = plan.files ?? benchmark._files ?? benchmark.files ?? [];
 if (plan.wasmPath || plan.benchmarkClass?.name === "WasmBenchmark") {
     throw new Error(`${testName} requires WebAssembly and cannot run in AgentJS yet`);
 }
 
 const resources = {};
-for (const relative of plan.files) {
+for (const relative of benchmarkFiles) {
     const normalized = relative.replaceAll("\\", "/");
     resources[normalized] = fs.readFileSync(path.resolve(root, relative), "utf8");
 }
@@ -159,6 +171,14 @@ var document = globalThis.document = {
 var testList = ${JSON.stringify(testName)};
 var testIterationCount = ${iterationCount || "undefined"};
 var RAMification = false;
+var JetStreamParams = {
+    prefetchResources: false,
+    forceGC: false,
+    dumpJSONResults: false,
+    testIterationCountMap: {},
+    testWorstCaseCountMap: {},
+    testList: ${JSON.stringify(testName)},
+};
 var __jetstreamResources = ${JSON.stringify(resources)};
 var readFile = function (name) {
     const normalized = String(name).replaceAll("\\\\", "/");
@@ -188,7 +208,7 @@ console.log(
             test: testName,
             officialIterations: plan.iterations ?? 120,
             requestedIterations: iterationCount || plan.iterations || 120,
-            files: plan.files,
+            files: benchmarkFiles,
             output,
         },
         null,

@@ -70,6 +70,8 @@ struct LoopContext {
 struct BreakContext {
     break_jumps: Vec<usize>,
     environment_depth: u32,
+    /// The label on this breakable statement, if any. `None` for unlabeled loops/switches.
+    label: Option<String>,
 }
 
 impl CompileContext {
@@ -230,7 +232,7 @@ impl Compiler {
             Statement::ForIn { left, right, body } => {
                 self.compile_for_in(left, right, body, chunk, context)
             }
-            Statement::Break(_) => self.compile_break(chunk, context),
+            Statement::Break(label) => self.compile_break(label.as_deref(), chunk, context),
             Statement::Continue(_) => self.compile_continue(chunk, context),
             Statement::Throw(expression) => {
                 self.compile_expression(expression, chunk, context)?;
@@ -284,7 +286,9 @@ impl Compiler {
                 is_await,
             } => self.compile_for_of(left, right, body, *is_await, chunk, context),
             Statement::DoWhile { test, body } => self.compile_do_while(test, body, chunk, context),
-            Statement::Labelled { body, .. } => self.compile_statement(body, chunk, context, false),
+            Statement::Labelled { label, body } => {
+                self.compile_labelled(label, body, chunk, context)
+            }
             Statement::ModuleDeclaration(ModuleDeclaration::Import(_)) => Ok(()),
             Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
                 if let Some(statement) = decl.declaration.as_deref() {
@@ -620,6 +624,7 @@ impl Compiler {
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
             environment_depth: context.environment_depth,
+            label: None,
         });
         let mut body_starts = Vec::with_capacity(cases.len());
         for case in cases {
@@ -732,6 +737,7 @@ impl Compiler {
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
             environment_depth: context.environment_depth,
+            label: None,
         });
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
             context.loops.pop();
@@ -780,6 +786,7 @@ impl Compiler {
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
             environment_depth: context.environment_depth,
+            label: None,
         });
 
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
@@ -825,29 +832,67 @@ impl Compiler {
 
     fn compile_break(
         &mut self,
+        label: Option<&str>,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        if context.breakables.is_empty() {
-            return Err(CompileError::unsupported(
-                "break statement outside of a loop or switch",
-            ));
-        }
-        let target_environment_depth = context
-            .breakables
-            .last()
-            .expect("checked that a breakable context exists")
-            .environment_depth;
+        let target_idx = match label {
+            None => {
+                // Unlabeled break: target the innermost breakable (any label or none).
+                // Per spec, unlabeled break only targets loops/switches (label: None),
+                // not arbitrary labeled statements.
+                context
+                    .breakables
+                    .iter()
+                    .rposition(|b| b.label.is_none())
+                    .ok_or_else(|| {
+                        CompileError::unsupported(
+                            "break statement outside of a loop or switch",
+                        )
+                    })?
+            }
+            Some(name) => {
+                // Labeled break: find the breakable context with this label.
+                context
+                    .breakables
+                    .iter()
+                    .rposition(|b| b.label.as_deref() == Some(name))
+                    .ok_or_else(|| {
+                        CompileError::unsupported(
+                            "break statement outside of a loop or switch",
+                        )
+                    })?
+            }
+        };
+        let target_environment_depth = context.breakables[target_idx].environment_depth;
         for _ in target_environment_depth..context.environment_depth {
             chunk.emit(Instruction::PopEnvironment);
         }
         let jump = chunk.emit(Instruction::Jump(usize::MAX));
-        context
-            .breakables
-            .last_mut()
-            .expect("checked that a breakable context exists")
-            .break_jumps
-            .push(jump);
+        context.breakables[target_idx].break_jumps.push(jump);
+        Ok(())
+    }
+
+    fn compile_labelled(
+        &mut self,
+        label: &str,
+        body: &Statement,
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
+        // Push a breakable context for the label so `break <label>` can target it.
+        context.breakables.push(BreakContext {
+            break_jumps: Vec::new(),
+            environment_depth: context.environment_depth,
+            label: Some(label.to_owned()),
+        });
+        let compile_result = self.compile_statement(body, chunk, context, false);
+        let labeled_ctx = context.breakables.pop().expect("labeled break context");
+        compile_result?;
+        let end_offset = chunk.current_offset();
+        for jump in labeled_ctx.break_jumps {
+            chunk.patch_jump(jump, end_offset).map_err(CompileError::from_chunk)?;
+        }
         Ok(())
     }
 
@@ -984,6 +1029,7 @@ impl Compiler {
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
             environment_depth: context.environment_depth,
+            label: None,
         });
 
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
@@ -1138,6 +1184,7 @@ impl Compiler {
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
             environment_depth: context.environment_depth,
+            label: None,
         });
 
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
@@ -2658,9 +2705,42 @@ impl Compiler {
                 computed,
             } => {
                 if *computed {
-                    return Err(CompileError::unsupported(
-                        "computed member as logical assignment target",
-                    ));
+                    // Computed logical assign: `a[b] ??= rhs`
+                    // Stack protocol:
+                    //   eval obj → [obj]
+                    //   eval key → [obj, key]
+                    //   DuplicatePair → [obj, key, obj, key]
+                    //   GetElement → [obj, key, old_val]
+                    //   JumpIfXxx(sc) — observes old_val
+                    //   Pop → [obj, key]              (drop old_val on non-SC path)
+                    //   eval rhs → [obj, key, rhs]
+                    //   SetElement → [rhs]
+                    //   Jump(end)
+                    //  sc: Swap;Pop;Swap;Pop → [old_val]  (drop obj,key)
+                    //  end:
+                    self.compile_expression(object, chunk, context)?;
+                    self.compile_expression(property, chunk, context)?;
+                    chunk.emit(Instruction::DuplicatePair);
+                    chunk.emit(Instruction::GetElement);
+                    let jump_instr = match jump_variant {
+                        0 => chunk.emit(Instruction::JumpIfFalse(usize::MAX)),
+                        1 => chunk.emit(Instruction::JumpIfTrue(usize::MAX)),
+                        _ => chunk.emit(Instruction::JumpIfNotNullish(usize::MAX)),
+                    };
+                    chunk.emit(Instruction::Pop); // drop old_val
+                    self.compile_expression(value, chunk, context)?;
+                    chunk.emit(Instruction::SetElement);
+                    let jump_end = chunk.emit(Instruction::Jump(usize::MAX));
+                    let sc_target = chunk.current_offset();
+                    // [obj, key, old_val] → keep only old_val
+                    chunk.emit(Instruction::Swap); // [obj, old_val, key]
+                    chunk.emit(Instruction::Pop);  // [obj, old_val]
+                    chunk.emit(Instruction::Swap); // [old_val, obj]
+                    chunk.emit(Instruction::Pop);  // [old_val]
+                    let end_target = chunk.current_offset();
+                    chunk.patch_jump(jump_instr, sc_target).map_err(CompileError::from_chunk)?;
+                    chunk.patch_jump(jump_end, end_target).map_err(CompileError::from_chunk)?;
+                    return Ok(());
                 }
                 let prop_name = match property.as_ref() {
                     Expression::Identifier(n) => n.clone(),
@@ -2671,19 +2751,10 @@ impl Compiler {
                         ));
                     }
                 };
-                // emit: compile(obj), Duplicate, GetProperty/GetElement → [obj, old_val]
+                // emit: compile(obj), Duplicate, GetProperty → [obj, old_val]
                 self.compile_expression(object, chunk, context)?;
                 chunk.emit(Instruction::Duplicate);
-                if false {
-                    self.compile_expression(property, chunk, context)?;
-                    chunk.emit(Instruction::DuplicatePair); // [obj, obj, key, obj, key] — wrong. Let me fix.
-                    // Actually for computed: [obj, prop_expr]; need DuplicatePair → [obj, key, obj, key];
-                    // GetElement → [obj, key, old_val]. But we need to drop [obj, key] on SC path.
-                    // This is complex; fall back to Unsupported for now.
-                    return Err(CompileError::unsupported(
-                        "computed member as logical assignment target",
-                    ));
-                } else {
+                {
                     let prop_index = self.add_name(&prop_name, chunk)?;
                     chunk.emit(Instruction::GetProperty(prop_index));
                     // Stack: [obj, old_val]
@@ -4232,6 +4303,7 @@ impl Compiler {
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
             environment_depth: context.environment_depth,
+            label: None,
         });
 
         if let Err(e) = self.compile_statement(body, chunk, context, false) {
