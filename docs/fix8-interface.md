@@ -897,6 +897,7 @@ Append every shared-interface change here.
 | 2026-06-28 | P1    | Builtin installer / descriptor contract            | `src/runtime/property.rs`, `src/builtins/*`                                                            | P2/P3    | Object/Array/Function gates          |
 | 2026-06-28 | P2    | RegExp + String dispatch contract                  | `src/builtins/regexp.rs`, `src/builtins/string.rs`                                                     | P1/P3    | RegExp/String gates                  |
 | 2026-06-28 | P3    | Iterator / Promise / module / environment contract | `src/runtime/iterator.rs`, `src/runtime/job.rs`, `src/runtime/module.rs`, `src/runtime/environment.rs` | P1/P2    | Iterator/Promise/module/AnnexB gates |
+| 2026-06-28 | P2    | Implement RegExp static validation, runtime exception flow, matchAll, legacy accessors, and String dispatch | `src/lexer/mod.rs`, `src/builtins/annex_b.rs`, `src/builtins/regexp.rs`, `src/builtins/std_primitives.rs` | pending | RegExp/AnnexB/String focused gates |
 
 ---
 
