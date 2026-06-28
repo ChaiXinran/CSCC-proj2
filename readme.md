@@ -181,6 +181,7 @@ python benchmarks/agent/run_agentbench.py `
 | 进展汇报幻灯片 | 队员分工、开发计划、阶段成果、测试结果、创新点、AI 使用声明               | `AgentJs_pre.pptx`                      |
 | 作品演示视频  | 环境介绍、构建运行、JS 脚本执行、Test262 / benchmark 演示、结果说明 | `AgentJs_Video.mp4`                     |
 | 迭代提交记录  | Git commit 历史、开发报告、版本报告                       | Git 历史、`reports/`, `docs/`, `thoughts/` |
-> 视频链接：AgentJs_Video.mp4
- https://pan.baidu.com/s/1OBOQQAeS7TWlrbsN1Y5wIQ 
- 提取码: 1h7k
+
+> 通过网盘分享的文件：AgentJs_Video.mp4
+> 链接: https://pan.baidu.com/s/1YJMnZqfnsCXNBxiaA6cw1A?pwd=pyfu 
+> 提取码: pyfu

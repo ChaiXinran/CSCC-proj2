@@ -612,9 +612,9 @@ focused test / 目录扫描 / 完整扫描
 
 ## 13. 作品演示视频设计
 
- 视频链接：AgentJs_Video.mp4
- https://pan.baidu.com/s/1OBOQQAeS7TWlrbsN1Y5wIQ 
- 提取码: 1h7k
+通过网盘分享的文件：AgentJs_Video.mp4
+链接: https://pan.baidu.com/s/1YJMnZqfnsCXNBxiaA6cw1A?pwd=pyfu 
+提取码: pyfu
  
 ---
 
