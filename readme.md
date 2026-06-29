@@ -178,7 +178,7 @@ python benchmarks/agent/run_agentbench.py `
 | ------- | --------------------------------------------- | --------------------------------------- |
 | 源代码     | Rust JS 引擎实现、CLI、Native 后端、测试入口               | `src/`, `Cargo.toml`, `tests/`          |
 | 设计方案文档  | 本文档，包含设计思路、实现说明、测试分析、问题解决、非本队来源说明、AI 工具使用说明   | `report.md`                             |
-| 进展汇报幻灯片 | 队员分工、开发计划、阶段成果、测试结果、创新点、AI 使用声明               | `AgentJs_pre.pptx`                      |
+| 进展汇报幻灯片 | 队员分工、开发计划、阶段成果、测试结果、创新点、AI 使用声明               | `PPT.pptx`                      |
 | 作品演示视频  | 环境介绍、构建运行、JS 脚本执行、Test262 / benchmark 演示、结果说明 | `AgentJs_Video.mp4`                     |
 | 迭代提交记录  | Git commit 历史、开发报告、版本报告                       | Git 历史、`reports/`, `docs/`, `thoughts/` |
 
