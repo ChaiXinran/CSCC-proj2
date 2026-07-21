@@ -639,3 +639,13 @@ The focused suites completed at 28/28 (`native_symbol`), 16/16
 (`native_test262`). The repository's pinned `boa` and `test262` submodules
 were initialized before running the Cargo gates; no Cargo/backend files were
 changed.
+
+### Test Suite Consolidation
+
+Date: 2026-07-21
+
+The standard-library and language-semantic `native_*.rs` regression suites
+were retired after audit because Test262 is now the authoritative coverage for
+those ECMAScript boundaries. The retained native tests cover only AgentJS
+specific mechanisms (script cache, garbage collection, runtime limits, and
+the `$262` realm host), plus the Test262 gate and reporting runner.
