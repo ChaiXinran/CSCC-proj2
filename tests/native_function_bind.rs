@@ -113,6 +113,34 @@ fn function_apply_on_non_callable_this_is_catchable_type_error() {
 }
 
 #[test]
+fn function_apply_checks_callable_before_observing_argument_list() {
+    assert_eq!(
+        native_eval(
+            "var touched = false; \
+             var list = Object.defineProperty({}, 'length', { get: function () { touched = true; return 0; } }); \
+             var caught = false; \
+             try { Function.prototype.apply.call(1, null, list); } \
+             catch (e) { caught = e.constructor === TypeError; } \
+             caught + ':' + touched;"
+        ),
+        "true:false"
+    );
+}
+
+#[test]
+fn function_call_and_apply_forward_through_bound_functions() {
+    assert_eq!(
+        native_eval(
+            "function f(a, b, c) { return this.x + ':' + a + ':' + b + ':' + c; } \
+             var bound = f.bind({ x: 'bound' }, 'a'); \
+             bound.call({ x: 'ignored' }, 'b', 'c') + '|' + \
+             bound.apply({ x: 'ignored' }, { 0: 'b', 1: 'c', length: 2 });"
+        ),
+        "bound:a:b:c|bound:a:b:c"
+    );
+}
+
+#[test]
 fn function_apply_errors_remain_engine_errors_when_uncaught() {
     assert!(native_eval_err("Function.prototype.apply.call(1, null, []);").contains("TypeError"));
 }

@@ -323,3 +323,107 @@ Repository-wide `cargo clippy --all-targets -- -D warnings` remains blocked by
 existing warnings across AST, backend, builtins, compiler, parser, runtime
 object, and VM code. The new fast-path helper and integration test introduced
 no additional clippy diagnostic.
+
+## Arbitrary-Precision BigInt and Call/Apply Repair (2026-07-21)
+
+### Scope and representation
+
+This continuation implements the frozen V12-B contracts without adding a
+dependency through A-owned `Cargo.toml`. `src/runtime/bigint.rs` now owns a
+private sign-and-limb arbitrary-precision representation and the shared
+parsing, formatting, arithmetic, bitwise, shift, comparison, and width helpers.
+`JsValue::BigInt`, `PrimitiveValue::BigInt`, and `Constant::BigInt` store
+`BigIntValue`; raw `i128` is no longer the execution or constant-pool boundary.
+
+The shared module covers literal and StringToBigInt parsing, arbitrary-precision
+arithmetic, infinite-width signed bitwise operations, arithmetic shifts, exact
+BigInt/Number comparison, radix formatting, increment/decrement, and
+`BigInt.asIntN` / `BigInt.asUintN`. VM operators and BigInt builtins call these
+helpers instead of open-coding native integer operations. Heap, constant, and
+wrapper estimated-byte accounting includes allocated BigInt limbs.
+
+The VM, BigInt constructor/prototype/static methods, Number conversion,
+DataView, BigInt typed arrays, JSON classification, primitive wrappers, and
+Temporal storage adapters consume the shared representation. The only A-owned
+compiler edit is the required interface adapter replacing its local `i128`
+literal parser with `runtime::bigint::parse_bigint_literal`; no lexer/parser
+semantics or other A task was changed.
+
+### Function call/apply forwarding
+
+- `Function.prototype.call` and `apply` validate callable receivers.
+- `apply` validates before observing the argument-list object, reads array-like
+  indices in order, and retains original abrupt getter completions.
+- Cross-realm TypeErrors use the builtin's active realm.
+- Bound calls prepend bound arguments and use bound `this`; bound construction
+  keeps the target/newTarget path and ignores bound `this`.
+- `bind` accepts all runtime-callable values, including callable proxies.
+
+### Files changed
+
+```text
+src/runtime/{bigint,value,object,mod,function,context}.rs
+src/bytecode/{chunk,compiler}.rs
+src/vm/interpreter.rs
+src/builtins/{std_primitives,binary_data,date_intl,function}.rs
+docs/interface-spec.md
+tests/{native_bigint,native_binary_data,native_function_bind,parser_bigint}.rs
+reports/.version-report/v12-partB-report.md
+reports/.native-test262-tmp/native-v12-b-bigint-builtins-summary.json
+reports/.native-test262-tmp/native-v12-b-bigint-literals-summary.json
+```
+
+`src/builtins/json.rs` needed no textual change: its rejection and wrapper
+classification use representation-independent BigInt pattern matches.
+
+### Focused validation
+
+Passed:
+
+```text
+cargo test --no-default-features runtime::bigint::tests                 # 3/3
+cargo test --no-default-features --test parser_bigint                   # 7/7
+cargo test --no-default-features --test native_bigint                   # 6/6
+cargo test --no-default-features --test native_primitives               # 33/33
+cargo test --no-default-features --test native_typed_arrays             # 37/37
+cargo test --no-default-features --test native_binary_data              # 8/8
+cargo test --no-default-features --test native_function_bind            # 27/27
+cargo test --no-default-features --test native_test262                  # 15/15
+cargo fmt --all -- --check
+cargo check --all-targets
+git diff --check
+```
+
+Focused release Test262 results:
+
+```text
+test/built-ins/BigInt                         76/77 (98.70%)
+test/language/literals/bigint                 59/59 (100.00%)
+test/built-ins/Function/prototype/call        49/49 (100.00%)
+test/built-ins/Function/prototype/apply       47/48 (97.92%)
+```
+
+The BigInt scan improved from the first post-migration run's 75/77 to 76/77
+after correcting BigInt.prototype to be an ordinary object without a
+`[[BigIntData]]` slot. Apply improved from 43/48 to 47/48 after preserving
+abrupt completions and active-realm errors.
+
+### Residuals and integration blockers
+
+- The remaining BigInt case, `wrapper-object-ordinary-toprimitive.js`, depends
+  on A-owned template literal lowering. Template substitution is currently
+  lowered to ordinary string `+`, which supplies the default ToPrimitive hint
+  instead of the required string hint. B did not add a VM special case.
+- The remaining apply case, `resizable-buffer.js`, fails because a function
+  declaration inside `for (let ... of ...)` is not visible at its call site
+  (`func is not defined`). This is an A-owned binding/lowering issue.
+- `cargo test --all-targets` is blocked by existing parser unit failures. The
+  first failure,
+  `parser::expression::tests::function_expression_with_this_access`, reproduces
+  alone and no parser file was changed by B.
+- Repository-wide `cargo clippy --no-default-features --all-targets -- -D warnings`
+  remains blocked by existing warnings across frontend, builtins, runtime
+  object layout, and VM code. The one warning initially reported in the new
+  BigInt module was fixed before handoff.
+
+No full Test262 scan or full-suite pass-rate delta is claimed.

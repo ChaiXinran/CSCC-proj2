@@ -10,8 +10,8 @@
 
 use super::{boolean, error, json, math, number, proxy, regexp, string};
 use crate::runtime::{
-    IteratorMode, JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind,
-    PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind,
+    BigIntValue, IteratorMode, JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind,
+    PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, bigint,
 };
 use crate::vm::{Vm, VmError, VmErrorKind};
 
@@ -712,7 +712,7 @@ fn number_call(
         return Ok(JsValue::Number(number::number_call(None)));
     }
     let value = match arg(arguments, 0) {
-        JsValue::BigInt(value) => value as f64,
+        JsValue::BigInt(value) => bigint::to_f64_lossy(&value),
         value => vm.to_number(value, context)?,
     };
     Ok(JsValue::Number(number::number_call(Some(value))))
@@ -728,7 +728,7 @@ fn number_construct(
         0.0
     } else {
         match arg(arguments, 0) {
-            JsValue::BigInt(value) => value as f64,
+            JsValue::BigInt(value) => bigint::to_f64_lossy(&value),
             value => vm.to_number(value, context)?,
         }
     };
@@ -895,7 +895,8 @@ fn install_bigint(context: &mut NativeContext) -> Result<(), VmError> {
         .ok_or_else(|| VmError::runtime("object prototype missing"))?;
     let mut prototype_object = JsObject::ordinary();
     prototype_object.prototype = Some(object_prototype);
-    prototype_object.kind = ObjectKind::PrimitiveWrapper(PrimitiveValue::BigInt(0));
+    // Unlike Number/Boolean/String prototypes, BigInt.prototype is an ordinary
+    // object and has no [[BigIntData]] internal slot.
     let prototype = context
         .heap_mut()
         .allocate_object(prototype_object)
@@ -993,7 +994,10 @@ fn bigint_to_string(
     if !(2..=36).contains(&radix) {
         return Err(VmError::range("radix must be between 2 and 36"));
     }
-    Ok(JsValue::String(bigint_to_radix_string(value, radix as u32)))
+    Ok(JsValue::String(bigint::to_radix_string(
+        &value,
+        radix as u32,
+    )))
 }
 
 fn bigint_to_locale_string(
@@ -1014,7 +1018,7 @@ fn bigint_as_int_n(
 ) -> Result<JsValue, VmError> {
     let bits = to_index_for_bigint_bits(vm, context, arg(arguments, 0))?;
     let value = to_bigint(vm, context, arg(arguments, 1))?;
-    Ok(JsValue::BigInt(bigint_as_int_n_value(bits, value)))
+    Ok(JsValue::BigInt(bigint::as_int_n(bits, &value)))
 }
 
 fn bigint_as_uint_n(
@@ -1025,28 +1029,32 @@ fn bigint_as_uint_n(
 ) -> Result<JsValue, VmError> {
     let bits = to_index_for_bigint_bits(vm, context, arg(arguments, 0))?;
     let value = to_bigint(vm, context, arg(arguments, 1))?;
-    Ok(JsValue::BigInt(bigint_as_uint_n_value(bits, value)))
+    Ok(JsValue::BigInt(bigint::as_uint_n(bits, &value)))
 }
 
-fn this_bigint(context: &NativeContext, this: &JsValue) -> Result<i128, VmError> {
+fn this_bigint(context: &NativeContext, this: &JsValue) -> Result<BigIntValue, VmError> {
     if let JsValue::BigInt(value) = this {
-        return Ok(*value);
+        return Ok(value.clone());
     }
     if let Some(object) = context.value_object(this)
         && let Some(PrimitiveValue::BigInt(value)) = context.primitive_value(object)
     {
-        return Ok(*value);
+        return Ok(value.clone());
     }
     Err(VmError::type_error(
         "BigInt.prototype method called on a non-BigInt",
     ))
 }
 
-fn to_bigint(vm: &mut Vm, context: &mut NativeContext, value: JsValue) -> Result<i128, VmError> {
+fn to_bigint(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<BigIntValue, VmError> {
     match value {
         JsValue::BigInt(value) => Ok(value),
-        JsValue::Boolean(value) => Ok(i128::from(value)),
-        JsValue::String(value) => parse_bigint_string(&value)
+        JsValue::Boolean(value) => Ok(bigint::from_i64(i64::from(value))),
+        JsValue::String(value) => bigint::parse_bigint_string(&value)
             .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
             let primitive =
@@ -1061,9 +1069,12 @@ fn to_bigint_constructor(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: JsValue,
-) -> Result<i128, VmError> {
+) -> Result<BigIntValue, VmError> {
     match value {
-        JsValue::Number(value) if value.is_finite() && value.fract() == 0.0 => Ok(value as i128),
+        JsValue::Number(value) if value.is_finite() && value.fract() == 0.0 => {
+            bigint::from_f64_integer(value)
+                .ok_or_else(|| VmError::range("Cannot convert number to BigInt"))
+        }
         JsValue::Number(_) => Err(VmError::range(
             "Cannot convert non-integer number to BigInt",
         )),
@@ -1080,7 +1091,7 @@ fn to_index_for_bigint_bits(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: JsValue,
-) -> Result<u32, VmError> {
+) -> Result<u64, VmError> {
     let value = vm.to_number(value, context)?;
     if value.is_nan() {
         return Ok(0);
@@ -1092,102 +1103,7 @@ fn to_index_for_bigint_bits(
     if value < 0.0 {
         return Err(VmError::range("BigInt bits index out of range"));
     }
-    Ok(value.min(f64::from(u32::MAX)) as u32)
-}
-
-fn parse_bigint_string(input: &str) -> Option<i128> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Some(0);
-    }
-    let (negative, unsigned) = if let Some(rest) = trimmed.strip_prefix('-') {
-        (true, rest)
-    } else if let Some(rest) = trimmed.strip_prefix('+') {
-        (false, rest)
-    } else {
-        (false, trimmed)
-    };
-    if (negative || trimmed.starts_with('+'))
-        && (unsigned.starts_with("0x")
-            || unsigned.starts_with("0X")
-            || unsigned.starts_with("0b")
-            || unsigned.starts_with("0B")
-            || unsigned.starts_with("0o")
-            || unsigned.starts_with("0O"))
-    {
-        return None;
-    }
-    let (digits, radix) = unsigned
-        .strip_prefix("0x")
-        .or_else(|| unsigned.strip_prefix("0X"))
-        .map(|digits| (digits, 16))
-        .or_else(|| {
-            unsigned
-                .strip_prefix("0b")
-                .or_else(|| unsigned.strip_prefix("0B"))
-                .map(|digits| (digits, 2))
-        })
-        .or_else(|| {
-            unsigned
-                .strip_prefix("0o")
-                .or_else(|| unsigned.strip_prefix("0O"))
-                .map(|digits| (digits, 8))
-        })
-        .unwrap_or((unsigned, 10));
-    if digits.is_empty() {
-        return None;
-    }
-    let value = i128::from_str_radix(digits, radix).ok()?;
-    Some(if negative { -value } else { value })
-}
-
-fn bigint_to_radix_string(value: i128, radix: u32) -> String {
-    if value == 0 {
-        return "0".into();
-    }
-    let negative = value < 0;
-    let mut value = value.unsigned_abs();
-    let mut digits = Vec::new();
-    while value > 0 {
-        let digit = (value % u128::from(radix)) as u8;
-        digits.push(if digit < 10 {
-            char::from(b'0' + digit)
-        } else {
-            char::from(b'a' + digit - 10)
-        });
-        value /= u128::from(radix);
-    }
-    if negative {
-        digits.push('-');
-    }
-    digits.iter().rev().collect()
-}
-
-fn bigint_as_uint_n_value(bits: u32, value: i128) -> i128 {
-    if bits == 0 {
-        return 0;
-    }
-    if bits >= 127 {
-        return value;
-    }
-    let modulo = 1_i128 << bits;
-    value.rem_euclid(modulo)
-}
-
-fn bigint_as_int_n_value(bits: u32, value: i128) -> i128 {
-    if bits == 0 {
-        return 0;
-    }
-    if bits >= 127 {
-        return value;
-    }
-    let unsigned = bigint_as_uint_n_value(bits, value);
-    let sign = 1_i128 << (bits - 1);
-    if unsigned >= sign {
-        unsigned - (1_i128 << bits)
-    } else {
-        unsigned
-    }
+    Ok(value as u64)
 }
 
 fn install_boolean(context: &mut NativeContext) -> Result<(), VmError> {

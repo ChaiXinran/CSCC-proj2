@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use super::{BuiltinId, FunctionId, ObjectId, SymbolId, Trace, Tracer};
+use super::{BigIntValue, BuiltinId, FunctionId, ObjectId, SymbolId, Trace, Tracer, bigint};
 
 /// Minimal native error categories used by V2 `throw`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +55,7 @@ pub enum JsValue {
     Null,
     Boolean(bool),
     Number(f64),
-    BigInt(i128),
+    BigInt(BigIntValue),
     String(String),
     /// An ECMAScript Symbol primitive. Symbols cannot be implicitly coerced to
     /// strings or numbers; doing so raises a TypeError.
@@ -74,7 +74,7 @@ impl JsValue {
             Self::Undefined | Self::Null => false,
             Self::Boolean(value) => *value,
             Self::Number(value) => *value != 0.0 && !value.is_nan(),
-            Self::BigInt(value) => *value != 0,
+            Self::BigInt(value) => !bigint::is_zero(value),
             Self::String(value) => !value.is_empty(),
             // Symbols, objects, functions, and errors are always truthy.
             Self::Symbol(_)
@@ -203,6 +203,7 @@ impl JsValue {
     pub(crate) fn estimated_bytes(&self) -> usize {
         match self {
             Self::String(value) => value.len(),
+            Self::BigInt(value) => value.estimated_bytes(),
             Self::Error(error) => error.message.len().saturating_add(32),
             _ => std::mem::size_of::<Self>(),
         }

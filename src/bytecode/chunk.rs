@@ -3,6 +3,7 @@
 use std::{collections::VecDeque, fmt};
 
 use super::Instruction;
+use crate::runtime::BigIntValue;
 
 /// Structured exception-handler category.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +30,7 @@ pub enum Constant {
     Null,
     Boolean(bool),
     Number(f64),
-    BigInt(i128),
+    BigInt(BigIntValue),
     String(String),
 }
 

@@ -44,10 +44,12 @@ fn bigint_literals_compile_as_bigint_constants() {
         .compile_program(&program)
         .expect("BigInt runtime semantics are installed");
 
-    assert!(matches!(
+    assert_eq!(
         chunk.constants.first(),
-        Some(agentjs::bytecode::Constant::BigInt(1))
-    ));
+        Some(&agentjs::bytecode::Constant::BigInt(
+            agentjs::runtime::bigint::from_i64(1),
+        ))
+    );
 }
 
 #[test]

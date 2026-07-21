@@ -7,9 +7,9 @@
 use super::{function, install_foundation, install_test262_harness, string};
 use crate::{
     runtime::{
-        ArrayBufferId, DataViewId, IteratorMode, JsObject, JsValue, NativeCall, NativeContext,
-        ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
-        TypedArrayElementKind, TypedArrayViewId,
+        ArrayBufferId, BigIntValue, DataViewId, IteratorMode, JsObject, JsValue, NativeCall,
+        NativeContext, ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
+        TypedArrayElementKind, TypedArrayViewId, bigint,
     },
     vm::{Vm, VmError},
 };
@@ -1112,11 +1112,11 @@ fn to_bigint_for_data_view(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: JsValue,
-) -> Result<i128, VmError> {
+) -> Result<BigIntValue, VmError> {
     match value {
         JsValue::BigInt(value) => Ok(value),
-        JsValue::Boolean(value) => Ok(i128::from(value)),
-        JsValue::String(value) => parse_bigint_string(&value)
+        JsValue::Boolean(value) => Ok(bigint::from_i64(i64::from(value))),
+        JsValue::String(value) => bigint::parse_bigint_string(&value)
             .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
             let primitive = vm.to_primitive(value, PreferredType::Number, context)?;
@@ -1124,52 +1124,6 @@ fn to_bigint_for_data_view(
         }
         _ => Err(VmError::type_error("Cannot convert value to BigInt")),
     }
-}
-
-fn parse_bigint_string(input: &str) -> Option<i128> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Some(0);
-    }
-    let (negative, unsigned) = if let Some(rest) = trimmed.strip_prefix('-') {
-        (true, rest)
-    } else if let Some(rest) = trimmed.strip_prefix('+') {
-        (false, rest)
-    } else {
-        (false, trimmed)
-    };
-    if (negative || trimmed.starts_with('+'))
-        && (unsigned.starts_with("0x")
-            || unsigned.starts_with("0X")
-            || unsigned.starts_with("0b")
-            || unsigned.starts_with("0B")
-            || unsigned.starts_with("0o")
-            || unsigned.starts_with("0O"))
-    {
-        return None;
-    }
-    let (digits, radix) = unsigned
-        .strip_prefix("0x")
-        .or_else(|| unsigned.strip_prefix("0X"))
-        .map(|digits| (digits, 16))
-        .or_else(|| {
-            unsigned
-                .strip_prefix("0b")
-                .or_else(|| unsigned.strip_prefix("0B"))
-                .map(|digits| (digits, 2))
-        })
-        .or_else(|| {
-            unsigned
-                .strip_prefix("0o")
-                .or_else(|| unsigned.strip_prefix("0O"))
-                .map(|digits| (digits, 8))
-        })
-        .unwrap_or((unsigned, 10));
-    if digits.is_empty() {
-        return None;
-    }
-    let value = i128::from_str_radix(digits, radix).ok()?;
-    Some(if negative { -value } else { value })
 }
 
 macro_rules! data_view_getter {
@@ -1562,7 +1516,7 @@ fn typed_array_constructor_values(
             ));
         }
         let zero = if kind.is_bigint() {
-            JsValue::BigInt(0)
+            JsValue::BigInt(bigint::from_i64(0))
         } else {
             JsValue::Number(0.0)
         };
@@ -2638,7 +2592,7 @@ fn typed_array_sort_values(
 
 fn typed_array_default_compare(left: &JsValue, right: &JsValue) -> std::cmp::Ordering {
     match (left, right) {
-        (JsValue::BigInt(left), JsValue::BigInt(right)) => left.cmp(right),
+        (JsValue::BigInt(left), JsValue::BigInt(right)) => bigint::cmp(left, right),
         _ => compare_typed_array_numbers(
             left.to_number().unwrap_or(f64::NAN),
             right.to_number().unwrap_or(f64::NAN),

@@ -1,5 +1,6 @@
 //! Native runtime data model.
 
+pub mod bigint;
 mod buffer;
 mod coercion;
 mod context;
@@ -16,6 +17,7 @@ mod property_map;
 mod symbol;
 mod value;
 
+pub use bigint::BigIntValue;
 pub use buffer::{
     ArrayBufferId, ArrayBufferRecord, DataViewId, DataViewRecord, TypedArrayElementKind,
     TypedArrayView, TypedArrayViewId,

@@ -2,8 +2,8 @@
 
 use super::iterator::IteratorKind;
 use super::{
-    ArrayBufferId, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsValue, PromiseId,
-    PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
+    ArrayBufferId, BigIntValue, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsValue,
+    PromiseId, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
 };
 
 /// Stable handle into the runtime heap.
@@ -32,7 +32,7 @@ impl PropertyKey {
 pub enum PrimitiveValue {
     Boolean(bool),
     Number(f64),
-    BigInt(i128),
+    BigInt(BigIntValue),
     String(String),
     Symbol(SymbolId),
 }
@@ -1123,6 +1123,7 @@ impl JsObject {
                 })
             }
             ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) => value.len(),
+            ObjectKind::PrimitiveWrapper(PrimitiveValue::BigInt(value)) => value.estimated_bytes(),
             ObjectKind::PrimitiveWrapper(_) => std::mem::size_of::<PrimitiveValue>(),
             ObjectKind::RegExp { pattern, flags } => pattern.len().saturating_add(flags.len()),
             ObjectKind::ArrayBuffer { .. } | ObjectKind::DataView { .. } => {

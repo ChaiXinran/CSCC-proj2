@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{
     runtime::{
         JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, ObjectId, PreferredType,
-        PropertyDescriptor, PropertyKind,
+        PropertyDescriptor, PropertyKind, bigint,
     },
     vm::{Vm, VmError},
 };
@@ -25,6 +25,16 @@ const MS_PER_MINUTE: f64 = 60_000.0;
 const MS_PER_HOUR: f64 = 3_600_000.0;
 const MS_PER_DAY: f64 = 86_400_000.0;
 const MAX_TIME_VALUE: f64 = 8_640_000_000_000_000.0;
+
+fn bigint_to_i128_saturating(value: &crate::runtime::BigIntValue) -> i128 {
+    bigint::to_i128_if_exact(value).unwrap_or_else(|| {
+        if bigint::sign(value).is_lt() {
+            i128::MIN
+        } else {
+            i128::MAX
+        }
+    })
+}
 
 pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_date(context)?;
@@ -3474,14 +3484,17 @@ fn create_instant_from_epoch_ns(
         "Instant",
         [
             ("epochMilliseconds", JsValue::Number(epoch_ms)),
-            ("epochNanoseconds", JsValue::BigInt(epoch_ns)),
+            (
+                "epochNanoseconds",
+                JsValue::BigInt(bigint::from_i128(epoch_ns)),
+            ),
         ],
     )
 }
 
 fn instant_epoch_ns(context: &NativeContext, object: ObjectId) -> i128 {
     match own_data_value(context, object, "epochNanoseconds") {
-        Some(JsValue::BigInt(value)) => value,
+        Some(JsValue::BigInt(value)) => bigint_to_i128_saturating(&value),
         Some(JsValue::Number(value)) => value as i128,
         _ => (temporal_number_slot(context, object, "epochMilliseconds") as i128)
             .saturating_mul(1_000_000),
@@ -3495,7 +3508,8 @@ fn temporal_instant_epoch_nanoseconds_get(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "Instant")?;
-    Ok(own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)))
+    Ok(own_data_value(context, object, "epochNanoseconds")
+        .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))))
 }
 
 fn temporal_instant_construct(
@@ -3508,7 +3522,7 @@ fn temporal_instant_construct(
         .constructor_prototype(&new_target)?
         .ok_or_else(|| VmError::runtime("Temporal.Instant prototype missing"))?;
     let epoch_ns = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
-        JsValue::BigInt(value) => value,
+        JsValue::BigInt(value) => bigint_to_i128_saturating(&value),
         value => vm.to_number(value, context)? as i128,
     };
     create_instant_from_epoch_ns(context, prototype, epoch_ns)
@@ -3569,7 +3583,7 @@ fn temporal_instant_from_epoch_nanoseconds(
 ) -> Result<JsValue, VmError> {
     let prototype = temporal_instant_constructor_prototype(context)?;
     let epoch_ns = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
-        JsValue::BigInt(value) => value,
+        JsValue::BigInt(value) => bigint_to_i128_saturating(&value),
         value => vm.to_number(value, context)? as i128,
     };
     create_instant_from_epoch_ns(context, prototype, epoch_ns)
@@ -3777,7 +3791,7 @@ fn temporal_instant_to_zoned_date_time_iso(
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt(epoch_ns),
+        JsValue::BigInt(bigint::from_i128(epoch_ns)),
         epoch_ns as f64,
         time_zone_id,
         "iso8601".into(),
@@ -4479,7 +4493,7 @@ fn temporal_plain_date_to_zoned_date_time(
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt(epoch_nanoseconds as i128),
+        JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
         epoch_nanoseconds,
         time_zone_id,
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
@@ -5737,7 +5751,7 @@ fn temporal_plain_date_time_to_zoned_date_time(
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt(epoch_nanoseconds as i128),
+        JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
         epoch_nanoseconds,
         time_zone_id,
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
@@ -6786,7 +6800,7 @@ fn install_temporal_zoned_date_time(
 
 fn epoch_nanoseconds_to_f64(value: &JsValue) -> Result<f64, VmError> {
     match value {
-        JsValue::BigInt(value) => Ok(*value as f64),
+        JsValue::BigInt(value) => Ok(bigint::to_f64_lossy(value)),
         JsValue::Number(value) => Ok(*value),
         JsValue::Undefined => Err(VmError::type_error(
             "Temporal.ZonedDateTime requires epochNanoseconds",
@@ -6951,7 +6965,7 @@ fn temporal_zoned_date_time_from(
                 .ok_or_else(|| VmError::range("invalid Temporal.ZonedDateTime"))?;
             (
                 epoch_nanoseconds,
-                JsValue::BigInt(epoch_nanoseconds as i128),
+                JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
                 time_zone_id,
                 "iso8601".into(),
             )
@@ -6962,7 +6976,7 @@ fn temporal_zoned_date_time_from(
                 (
                     temporal_number_slot(context, object, "epochNanosecondsNumber"),
                     own_data_value(context, object, "epochNanoseconds")
-                        .unwrap_or(JsValue::BigInt(0)),
+                        .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))),
                     own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
@@ -6996,7 +7010,7 @@ fn temporal_zoned_date_time_from(
                     * 1_000_000.0;
                 (
                     epoch_nanoseconds,
-                    JsValue::BigInt(epoch_nanoseconds as i128),
+                    JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
                     time_zone_id,
                     calendar_id,
                 )
@@ -7053,7 +7067,8 @@ fn temporal_zoned_date_time_epoch_nanoseconds(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
-    Ok(own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)))
+    Ok(own_data_value(context, object, "epochNanoseconds")
+        .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))))
 }
 
 fn temporal_zoned_date_time_to_instant(
@@ -7175,7 +7190,7 @@ fn create_zoned_date_time_from_parts(
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt(epoch_nanoseconds as i128),
+        JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
         epoch_nanoseconds,
         time_zone_id,
         calendar_id,
@@ -7254,7 +7269,8 @@ fn temporal_zoned_date_time_round(
     create_zoned_date_time(
         context,
         prototype,
-        own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)),
+        own_data_value(context, object, "epochNanoseconds")
+            .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))),
         temporal_number_slot(context, object, "epochNanosecondsNumber"),
         own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
@@ -7406,7 +7422,8 @@ fn temporal_zoned_date_time_with_calendar(
     create_zoned_date_time(
         context,
         prototype,
-        own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)),
+        own_data_value(context, object, "epochNanoseconds")
+            .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))),
         temporal_number_slot(context, object, "epochNanosecondsNumber"),
         own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
         calendar_id,
@@ -7456,7 +7473,8 @@ fn temporal_zoned_date_time_with_time_zone(
     create_zoned_date_time(
         context,
         prototype,
-        own_data_value(context, object, "epochNanoseconds").unwrap_or(JsValue::BigInt(0)),
+        own_data_value(context, object, "epochNanoseconds")
+            .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))),
         temporal_number_slot(context, object, "epochNanosecondsNumber"),
         time_zone_id,
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
@@ -7594,7 +7612,9 @@ fn temporal_now_zoned_date_time_iso(
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt((epoch_ms as i128).saturating_mul(1_000_000)),
+        JsValue::BigInt(bigint::from_i128(
+            (epoch_ms as i128).saturating_mul(1_000_000),
+        )),
         epoch_ms * 1_000_000.0,
         time_zone_id,
         "iso8601".into(),

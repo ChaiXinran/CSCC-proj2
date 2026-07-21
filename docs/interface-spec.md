@@ -337,3 +337,16 @@ cargo check --all-targets
 cargo test
 cargo clippy --all-targets -- -D warnings
 ```
+
+## Native V12 BigInt Contract Update
+
+Native V12 replaces the former raw `i128` BigInt payload at the shared runtime
+and bytecode boundaries with `runtime::bigint::BigIntValue`. The representation
+is private, cloneable, hashable, and lossless for arbitrary-precision values.
+`JsValue::BigInt`, `PrimitiveValue::BigInt`, and `Constant::BigInt` all carry
+the shared type. Parser/compiler consumers must use
+`runtime::bigint::parse_bigint_literal`; VM and builtin consumers must use the
+shared operation helpers rather than native checked-integer operations.
+
+The normative parsing, operation, error, comparison, and resource-limit rules
+are defined in [Native V12 Shared Interface](version/native-v12-interface.md).

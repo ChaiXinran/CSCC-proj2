@@ -4877,32 +4877,9 @@ impl Compiler {
     }
 }
 
-fn parse_bigint_literal(raw: &str) -> Result<i128, CompileError> {
-    let literal = raw
-        .strip_suffix('n')
-        .ok_or_else(|| CompileError::unsupported(format_args!("invalid BigInt literal `{raw}`")))?;
-    let (digits, radix) = literal
-        .strip_prefix("0x")
-        .or_else(|| literal.strip_prefix("0X"))
-        .map(|digits| (digits, 16))
-        .or_else(|| {
-            literal
-                .strip_prefix("0b")
-                .or_else(|| literal.strip_prefix("0B"))
-                .map(|digits| (digits, 2))
-        })
-        .or_else(|| {
-            literal
-                .strip_prefix("0o")
-                .or_else(|| literal.strip_prefix("0O"))
-                .map(|digits| (digits, 8))
-        })
-        .unwrap_or((literal, 10));
-    i128::from_str_radix(&digits.replace('_', ""), radix).map_err(|_| {
-        CompileError::unsupported(format_args!(
-            "BigInt literal `{raw}` is outside the native i128 range"
-        ))
-    })
+fn parse_bigint_literal(raw: &str) -> Result<crate::runtime::BigIntValue, CompileError> {
+    crate::runtime::bigint::parse_bigint_literal(raw)
+        .map_err(|_| CompileError::unsupported(format_args!("invalid BigInt literal `{raw}`")))
 }
 
 /// Intermediate result returned from `compile_function_body`.

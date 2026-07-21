@@ -378,7 +378,7 @@ fn function_prototype_bind(
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    if !matches!(this, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
+    if !context.is_callable_value(&this) {
         return Err(VmError::type_error(
             "Function.prototype.bind must be called on a function",
         ));

@@ -1,4 +1,4 @@
-use agentjs::runtime::{JsValue, NativeContext, TypedArrayElementKind};
+use agentjs::runtime::{JsValue, NativeContext, TypedArrayElementKind, bigint};
 
 #[test]
 fn array_buffer_records_byte_length_and_detach_state() {
@@ -159,23 +159,27 @@ fn bigint_typed_array_elements_use_bigint_values() {
         .expect("create BigUint64 view");
 
     context
-        .typed_array_store_element(signed, 0, JsValue::BigInt(-1))
+        .typed_array_store_element(signed, 0, JsValue::BigInt(bigint::from_i64(-1)))
         .expect("store signed value");
     context
-        .typed_array_store_element(unsigned, 1, JsValue::BigInt(0x0102_0304_0506_0708))
+        .typed_array_store_element(
+            unsigned,
+            1,
+            JsValue::BigInt(bigint::from_u64(0x0102_0304_0506_0708)),
+        )
         .expect("store unsigned value");
 
     assert_eq!(
         context.typed_array_load_element(signed, 0).unwrap(),
-        JsValue::BigInt(-1)
+        JsValue::BigInt(bigint::from_i64(-1))
     );
     assert_eq!(
         context.typed_array_load_element(unsigned, 0).unwrap(),
-        JsValue::BigInt(u64::MAX as i128)
+        JsValue::BigInt(bigint::from_u64(u64::MAX))
     );
     assert_eq!(
         context.typed_array_load_element(signed, 1).unwrap(),
-        JsValue::BigInt(0x0102_0304_0506_0708)
+        JsValue::BigInt(bigint::from_u64(0x0102_0304_0506_0708))
     );
 }
 
@@ -192,7 +196,7 @@ fn data_view_bigint_and_float16_share_buffer_storage() {
             data,
             0,
             TypedArrayElementKind::BigInt64,
-            JsValue::BigInt(-2),
+            JsValue::BigInt(bigint::from_i64(-2)),
             false,
         )
         .expect("store BigInt64");
@@ -210,7 +214,7 @@ fn data_view_bigint_and_float16_share_buffer_storage() {
         context
             .data_view_get(data, 0, TypedArrayElementKind::BigInt64, false)
             .unwrap(),
-        JsValue::BigInt(-2)
+        JsValue::BigInt(bigint::from_i64(-2))
     );
     assert_eq!(
         context

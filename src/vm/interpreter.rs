@@ -11,7 +11,8 @@ use crate::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
         Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
         PreferredType, PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor,
-        PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, array_index, to_property_key,
+        PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, array_index, bigint,
+        to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -495,16 +496,9 @@ impl Vm {
                     let value = self.pop_value()?;
                     match value {
                         JsValue::Number(value) => self.stack.push(JsValue::Number(-value)),
-                        JsValue::BigInt(value) => {
-                            if let Some(value) = value.checked_neg() {
-                                self.stack.push(JsValue::BigInt(value));
-                            } else {
-                                abrupt = Some(Completion::Throw(vm_error_to_value(
-                                    VmError::range("BigInt value is outside the native i128 range"),
-                                )));
-                                discard_saved_finally = true;
-                            }
-                        }
+                        JsValue::BigInt(value) => self
+                            .stack
+                            .push(JsValue::BigInt(bigint::sub(&bigint::from_i64(0), &value))),
                         value => match self.to_number(value, context) {
                             Ok(value) => self.stack.push(JsValue::Number(-value)),
                             Err(error) => {
@@ -543,7 +537,7 @@ impl Vm {
                         left,
                         right,
                         context,
-                        |left, right| left.checked_sub(right),
+                        |left, right| Ok(bigint::sub(left, right)),
                         |left, right| left - right,
                     ) {
                         abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
@@ -559,7 +553,7 @@ impl Vm {
                         left,
                         right,
                         context,
-                        |left, right| left.checked_mul(right),
+                        |left, right| Ok(bigint::mul(left, right)),
                         |left, right| left * right,
                     ) {
                         abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
@@ -664,7 +658,7 @@ impl Vm {
                         left,
                         right,
                         context,
-                        |left, right| Some(left & right),
+                        |left, right| Ok(bigint::bitand(left, right)),
                         |left, right| f64::from(number_to_int32(left) & number_to_int32(right)),
                     ) {
                         abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
@@ -682,7 +676,7 @@ impl Vm {
                         left,
                         right,
                         context,
-                        |left, right| Some(left | right),
+                        |left, right| Ok(bigint::bitor(left, right)),
                         |left, right| f64::from(number_to_int32(left) | number_to_int32(right)),
                     ) {
                         abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
@@ -700,7 +694,7 @@ impl Vm {
                         left,
                         right,
                         context,
-                        |left, right| Some(left ^ right),
+                        |left, right| Ok(bigint::bitxor(left, right)),
                         |left, right| f64::from(number_to_int32(left) ^ number_to_int32(right)),
                     ) {
                         abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
@@ -714,18 +708,7 @@ impl Vm {
                             .stack
                             .push(JsValue::Number(f64::from(!number_to_int32(value)))),
                         JsValue::BigInt(value) => {
-                            match value.checked_neg().and_then(|value| value.checked_sub(1)) {
-                                Some(value) => {
-                                    self.stack.push(JsValue::BigInt(value));
-                                }
-                                None => {
-                                    abrupt =
-                                        Some(Completion::Throw(vm_error_to_value(VmError::range(
-                                            "BigInt value is outside the native i128 range",
-                                        ))));
-                                    discard_saved_finally = true;
-                                }
-                            }
+                            self.stack.push(JsValue::BigInt(bigint::bitnot(&value)));
                         }
                         value => match self.to_int32(value, context) {
                             Ok(value) => {
@@ -3033,6 +3016,14 @@ impl Vm {
                         }
                         if context.is_function_prototype_call(id) {
                             let target = this_value;
+                            if !context.is_callable_value(&target) {
+                                return Ok(OperationResult::Throw(vm_error_to_value_with_realm(
+                                    VmError::type_error(
+                                        "Function.prototype.call receiver is not callable",
+                                    ),
+                                    context.global_object(),
+                                )));
+                            }
                             let call_this =
                                 arguments.first().cloned().unwrap_or(JsValue::Undefined);
                             let forwarded = arguments.into_iter().skip(1).collect();
@@ -3040,13 +3031,25 @@ impl Vm {
                         }
                         if context.is_function_prototype_apply(id) {
                             let target = this_value;
+                            // IsCallable is checked before reading `argArray`; getters on an
+                            // argument list must not run for a non-callable receiver.
+                            if !context.is_callable_value(&target) {
+                                return Ok(OperationResult::Throw(vm_error_to_value_with_realm(
+                                    VmError::type_error(
+                                        "Function.prototype.apply receiver is not callable",
+                                    ),
+                                    context.global_object(),
+                                )));
+                            }
                             let apply_this =
                                 arguments.first().cloned().unwrap_or(JsValue::Undefined);
                             let arg_array = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
                             let forwarded = match self.function_apply_arguments(arg_array, context)
                             {
                                 Ok(values) => values,
-                                Err(error) => match self.error_to_operation_result(error)? {
+                                Err(error) => match self
+                                    .error_to_operation_result_in_context(error, context)?
+                                {
                                     OperationResult::Throw(value) => {
                                         return Ok(OperationResult::Throw(value));
                                     }
@@ -3107,10 +3110,21 @@ impl Vm {
         }
         let object = context.require_object(&value, "Function.prototype.apply")?;
         let object_value = context.object_value(object);
-        let length_value = self.get_property_value(object_value.clone(), "length", context)?;
+        let length_value =
+            match self.get_property_value_completion(object_value.clone(), "length", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => {
+                    self.pending_exception = Some(value);
+                    return Err(VmError::runtime(
+                        "Function.prototype.apply length getter threw",
+                    ));
+                }
+            };
         let length_number = self.to_number(length_value, context)?;
-        let length = if !length_number.is_finite() || length_number <= 0.0 {
+        let length = if length_number.is_nan() || length_number <= 0.0 {
             0
+        } else if !length_number.is_finite() {
+            return Err(VmError::range("argument list is too large"));
         } else {
             length_number.floor() as usize
         };
@@ -3119,11 +3133,20 @@ impl Vm {
         }
         let mut values = Vec::with_capacity(length);
         for index in 0..length {
-            values.push(self.get_property_value(
+            let value = match self.get_property_value_completion(
                 object_value.clone(),
                 &index.to_string(),
                 context,
-            )?);
+            )? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => {
+                    self.pending_exception = Some(value);
+                    return Err(VmError::runtime(
+                        "Function.prototype.apply element getter threw",
+                    ));
+                }
+            };
+            values.push(value);
         }
         Ok(values)
     }
@@ -4341,16 +4364,16 @@ impl Vm {
                     .strict_equals(&JsValue::Number(*right)));
             }
             (JsValue::BigInt(left), JsValue::Number(right)) => {
-                return Ok(number_equals_bigint(*right, *left));
+                return Ok(bigint::number_equals_bigint(*right, left));
             }
             (JsValue::Number(left), JsValue::BigInt(right)) => {
-                return Ok(number_equals_bigint(*left, *right));
+                return Ok(bigint::number_equals_bigint(*left, right));
             }
             (JsValue::BigInt(left), JsValue::String(right)) => {
-                return Ok(parse_bigint_string(right).is_some_and(|right| *left == right));
+                return Ok(bigint::parse_bigint_string(right).is_some_and(|right| left == &right));
             }
             (JsValue::String(left), JsValue::BigInt(right)) => {
-                return Ok(parse_bigint_string(left).is_some_and(|left| left == *right));
+                return Ok(bigint::parse_bigint_string(left).is_some_and(|left| &left == right));
             }
             (JsValue::Boolean(_), _) => {
                 let left = JsValue::Number(self.to_number(left, context)?);
@@ -4555,7 +4578,10 @@ impl Vm {
         left: JsValue,
         right: JsValue,
         context: &mut NativeContext,
-        bigint_operation: impl FnOnce(i128, i128) -> Option<i128>,
+        bigint_operation: impl FnOnce(
+            &crate::runtime::BigIntValue,
+            &crate::runtime::BigIntValue,
+        ) -> Result<crate::runtime::BigIntValue, VmError>,
         number_operation: impl FnOnce(f64, f64) -> f64,
     ) -> Result<(), VmError> {
         let (left, right) = self.to_numeric_operands(left, right, context)?;
@@ -5990,7 +6016,7 @@ fn constant_to_value(constant: &Constant) -> JsValue {
         Constant::Null => JsValue::Null,
         Constant::Boolean(value) => JsValue::Boolean(*value),
         Constant::Number(value) => JsValue::Number(*value),
-        Constant::BigInt(value) => JsValue::BigInt(*value),
+        Constant::BigInt(value) => JsValue::BigInt(value.clone()),
         Constant::String(value) => JsValue::String(value.clone()),
     }
 }
@@ -6012,10 +6038,7 @@ fn add_values(
         return Ok(JsValue::String(result));
     }
     if let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) {
-        return left
-            .checked_add(*right)
-            .map(JsValue::BigInt)
-            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range"));
+        return Ok(JsValue::BigInt(bigint::add(left, right)));
     }
     if matches!(left, JsValue::BigInt(_)) || matches!(right, JsValue::BigInt(_)) {
         return Err(VmError::type_error(
@@ -6261,26 +6284,26 @@ fn compare_values(
         return Ok(predicate(left.cmp(right)));
     }
     if let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) {
-        return Ok(predicate(left.cmp(right)));
+        return Ok(predicate(bigint::cmp(left, right)));
     }
     if let (JsValue::BigInt(left), JsValue::Number(right)) = (&left, &right) {
-        return Ok(compare_bigint_number(*left, *right).is_some_and(predicate));
+        return Ok(bigint::compare_bigint_number(left, *right).is_some_and(predicate));
     }
     if let (JsValue::Number(left), JsValue::BigInt(right)) = (&left, &right) {
-        return Ok(compare_bigint_number(*right, *left)
+        return Ok(bigint::compare_bigint_number(right, *left)
             .is_some_and(|ordering| predicate(ordering.reverse())));
     }
     if let (JsValue::BigInt(left), JsValue::String(right)) = (&left, &right) {
-        let Some(right) = parse_bigint_string(right) else {
+        let Some(right) = bigint::parse_bigint_string(right) else {
             return Ok(false);
         };
-        return Ok(predicate(left.cmp(&right)));
+        return Ok(predicate(bigint::cmp(left, &right)));
     }
     if let (JsValue::String(left), JsValue::BigInt(right)) = (&left, &right) {
-        let Some(left) = parse_bigint_string(left) else {
+        let Some(left) = bigint::parse_bigint_string(left) else {
             return Ok(false);
         };
-        return Ok(predicate(left.cmp(right)));
+        return Ok(predicate(bigint::cmp(&left, right)));
     }
 
     let left = vm.to_number(left, context)?;
@@ -6295,12 +6318,15 @@ fn compare_values(
 fn bigint_binary(
     left: JsValue,
     right: JsValue,
-    operation: impl FnOnce(i128, i128) -> Option<i128>,
+    operation: impl FnOnce(
+        &crate::runtime::BigIntValue,
+        &crate::runtime::BigIntValue,
+    ) -> Result<crate::runtime::BigIntValue, VmError>,
 ) -> Result<Option<JsValue>, VmError> {
     match (left, right) {
-        (JsValue::BigInt(left), JsValue::BigInt(right)) => operation(left, right)
-            .map(|value| Some(JsValue::BigInt(value)))
-            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
+        (JsValue::BigInt(left), JsValue::BigInt(right)) => {
+            operation(&left, &right).map(|value| Some(JsValue::BigInt(value)))
+        }
         (JsValue::BigInt(_), _) | (_, JsValue::BigInt(_)) => Err(VmError::type_error(
             "Cannot mix BigInt and other types in arithmetic",
         )),
@@ -6329,34 +6355,15 @@ fn number_to_uint32(value: f64) -> u32 {
 }
 
 fn bigint_divide(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
-    match (&left, &right) {
-        (JsValue::BigInt(_), JsValue::BigInt(0)) => Err(VmError::range("BigInt division by zero")),
-        _ => bigint_binary(left, right, |left, right| left.checked_div(right)),
-    }
+    bigint_binary(left, right, bigint::div)
 }
 
 fn bigint_remainder(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
-    match (&left, &right) {
-        (JsValue::BigInt(_), JsValue::BigInt(0)) => Err(VmError::range("BigInt division by zero")),
-        _ => bigint_binary(left, right, |left, right| left.checked_rem(right)),
-    }
+    bigint_binary(left, right, bigint::rem)
 }
 
 fn bigint_exponentiation(left: JsValue, right: JsValue) -> Result<Option<JsValue>, VmError> {
-    match (left, right) {
-        (JsValue::BigInt(_), JsValue::BigInt(right)) if right < 0 => {
-            Err(VmError::range("BigInt exponent must be non-negative"))
-        }
-        (JsValue::BigInt(left), JsValue::BigInt(right)) => u32::try_from(right)
-            .ok()
-            .and_then(|right| left.checked_pow(right))
-            .map(|value| Some(JsValue::BigInt(value)))
-            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
-        (JsValue::BigInt(_), _) | (_, JsValue::BigInt(_)) => Err(VmError::type_error(
-            "Cannot mix BigInt and other types in arithmetic",
-        )),
-        _ => Ok(None),
-    }
+    bigint_binary(left, right, bigint::pow)
 }
 
 fn bigint_shift(
@@ -6372,15 +6379,11 @@ fn bigint_shift(
         }
         return Ok(None);
     };
-    let shift = u32::try_from(right.unsigned_abs())
-        .map_err(|_| VmError::range("BigInt shift count is outside the native range"))?;
-    let shift_left = if right_shift { *right < 0 } else { *right >= 0 };
-    let value = if shift_left {
-        left.checked_shl(shift)
+    let value = if right_shift {
+        bigint::shr(left, right)?
     } else {
-        left.checked_shr(shift)
-    }
-    .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range"))?;
+        bigint::shl(left, right)?
+    };
     Ok(Some(JsValue::BigInt(value)))
 }
 
@@ -6390,10 +6393,7 @@ fn increment_numeric(
     value: JsValue,
 ) -> Result<JsValue, VmError> {
     match value {
-        JsValue::BigInt(value) => value
-            .checked_add(1)
-            .map(JsValue::BigInt)
-            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
+        JsValue::BigInt(value) => Ok(JsValue::BigInt(bigint::add(&value, &bigint::from_i64(1)))),
         value => Ok(JsValue::Number(vm.to_number(value, context)? + 1.0)),
     }
 }
@@ -6404,57 +6404,9 @@ fn decrement_numeric(
     value: JsValue,
 ) -> Result<JsValue, VmError> {
     match value {
-        JsValue::BigInt(value) => value
-            .checked_sub(1)
-            .map(JsValue::BigInt)
-            .ok_or_else(|| VmError::range("BigInt value is outside the native i128 range")),
+        JsValue::BigInt(value) => Ok(JsValue::BigInt(bigint::sub(&value, &bigint::from_i64(1)))),
         value => Ok(JsValue::Number(vm.to_number(value, context)? - 1.0)),
     }
-}
-
-fn number_equals_bigint(number: f64, bigint: i128) -> bool {
-    number.is_finite() && number.fract() == 0.0 && number == bigint as f64
-}
-
-fn compare_bigint_number(bigint: i128, number: f64) -> Option<std::cmp::Ordering> {
-    if !number.is_finite() {
-        return if number.is_nan() {
-            None
-        } else if number.is_sign_positive() {
-            Some(std::cmp::Ordering::Less)
-        } else {
-            Some(std::cmp::Ordering::Greater)
-        };
-    }
-    (bigint as f64).partial_cmp(&number)
-}
-
-fn parse_bigint_string(input: &str) -> Option<i128> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() || trimmed.starts_with('+') || trimmed.starts_with('-') {
-        return None;
-    }
-    let (digits, radix) = trimmed
-        .strip_prefix("0x")
-        .or_else(|| trimmed.strip_prefix("0X"))
-        .map(|digits| (digits, 16))
-        .or_else(|| {
-            trimmed
-                .strip_prefix("0b")
-                .or_else(|| trimmed.strip_prefix("0B"))
-                .map(|digits| (digits, 2))
-        })
-        .or_else(|| {
-            trimmed
-                .strip_prefix("0o")
-                .or_else(|| trimmed.strip_prefix("0O"))
-                .map(|digits| (digits, 8))
-        })
-        .unwrap_or((trimmed, 10));
-    if digits.is_empty() {
-        return None;
-    }
-    i128::from_str_radix(digits, radix).ok()
 }
 
 fn throw_value(value: JsValue, context: &NativeContext) -> VmError {

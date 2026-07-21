@@ -143,6 +143,7 @@ fn estimate_chunk_bytes(chunk: &Chunk) -> usize {
                 .iter()
                 .map(|constant| match constant {
                     Constant::String(value) => value.len(),
+                    Constant::BigInt(value) => value.estimated_bytes(),
                     _ => std::mem::size_of::<Constant>(),
                 })
                 .sum::<usize>(),
