@@ -1386,6 +1386,18 @@ impl Compiler {
                     chunk.emit(step);
                     chunk.emit(Instruction::SetElement);
                 } else {
+                    // Preserve the evaluated reference and return the old
+                    // ToNumeric value after writing the incremented one.
+                    chunk.emit(Instruction::ToNumeric);
+                    chunk.emit(Instruction::Duplicate);
+                    chunk.emit(step);
+                    chunk.emit(Instruction::SetElementKeepOld);
+                    return Ok(());
+
+                    /* Superseded lowering retained temporarily for source
+                     * history; the executable sequence above preserves the
+                     * evaluated reference. */
+                    /*
                     // Postfix: need old_num as result, obj[key] = new_val as side-effect.
                     // The saved [obj,key] duplicates are at positions [-3,-2] under old_num.
                     // Sequence using re-evaluation of object+key (safe for pure expressions)
@@ -1531,6 +1543,7 @@ impl Compiler {
                     chunk.emit(Instruction::Pop); // [obj_s, old_num]
                     chunk.emit(Instruction::Swap); // [old_num, obj_s]
                     chunk.emit(Instruction::Pop); // [old_num]
+                    */
                 }
             }
             _ => {
@@ -5650,6 +5663,12 @@ mod tests {
     fn computed_member_assignment_emits_set_element() {
         let chunk = compile("arr[0] = 1");
         assert!(chunk.instructions.contains(&Instruction::SetElement));
+    }
+
+    #[test]
+    fn computed_postfix_update_preserves_the_evaluated_reference() {
+        let chunk = compile("obj[key()]++");
+        assert!(chunk.instructions.contains(&Instruction::SetElementKeepOld));
     }
 
     #[test]

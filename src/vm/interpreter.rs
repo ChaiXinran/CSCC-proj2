@@ -1158,13 +1158,22 @@ impl Vm {
                                     }
                                 }
                             }
+                            OperationResult::Value(JsValue::Symbol(symbol)) => {
+                                match self
+                                    .get_symbol_property_value_completion(object, symbol, context)?
+                                {
+                                    OperationResult::Value(value) => self.stack.push(value),
+                                    OperationResult::Throw(value) => {
+                                        abrupt = Some(Completion::Throw(value));
+                                        discard_saved_finally = true;
+                                    }
+                                }
+                            }
                             OperationResult::Throw(value) => {
                                 abrupt = Some(Completion::Throw(value));
                                 discard_saved_finally = true;
                             }
-                            _ => unreachable!(
-                                "coerce_to_property_key always returns String or Throw"
-                            ),
+                            _ => unreachable!("ToPropertyKey returns a string or symbol"),
                         }
                     }
                 }
@@ -1555,7 +1564,10 @@ impl Vm {
                             OperationResult::Value(JsValue::String(key)) => {
                                 self.get_super_property_value(&key, context)?
                             }
-                            _ => unreachable!(),
+                            OperationResult::Value(JsValue::Symbol(symbol)) => {
+                                self.get_super_symbol_property_value(symbol, context)?
+                            }
+                            _ => unreachable!("ToPropertyKey returns a string or symbol"),
                         }
                     };
                     match result {
@@ -1580,7 +1592,13 @@ impl Vm {
                             OperationResult::Value(JsValue::String(k)) => {
                                 self.get_property_value_completion(object.clone(), &k, context)?
                             }
-                            _ => unreachable!(),
+                            OperationResult::Value(JsValue::Symbol(symbol)) => self
+                                .get_symbol_property_value_completion(
+                                    object.clone(),
+                                    symbol,
+                                    context,
+                                )?,
+                            _ => unreachable!("ToPropertyKey returns a string or symbol"),
                         }
                     };
                     match result {
@@ -1612,53 +1630,24 @@ impl Vm {
                     let value = self.pop_value()?;
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
-                    // Fast path: non-negative integer key on Array / TypedArray.
-                    'fast: {
-                        let JsValue::Number(n) = key else { break 'fast };
-                        if n.fract() != 0.0 || n < 0.0 || n >= 4_294_967_295.0 {
-                            break 'fast;
-                        }
-                        let JsValue::Object(obj_id) = object else {
-                            break 'fast;
-                        };
-                        let idx = n as usize;
-                        let Some(result) =
-                            Self::fast_set_element(obj_id, idx, value.clone(), context)
-                        else {
-                            break 'fast;
-                        };
-                        match result {
-                            Ok(()) => {
-                                self.stack.push(value);
-                                continue 'dispatch;
-                            }
-                            Err(e) => return Err(e),
+                    match self.set_element_value(object, key, value, context)? {
+                        OperationResult::Value(result) => self.stack.push(result),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
                         }
                     }
-                    if let JsValue::Symbol(sym_id) = &key {
-                        match self.set_symbol_property_value(object, *sym_id, value, context)? {
-                            OperationResult::Value(result) => self.stack.push(result),
-                            OperationResult::Throw(value) => {
-                                abrupt = Some(Completion::Throw(value));
-                                discard_saved_finally = true;
-                            }
-                        }
-                    } else {
-                        match self.coerce_to_property_key(key, context)? {
-                            OperationResult::Throw(v) => {
-                                abrupt = Some(Completion::Throw(v));
-                                discard_saved_finally = true;
-                            }
-                            OperationResult::Value(JsValue::String(key_str)) => {
-                                match self.set_property_value(object, &key_str, value, context)? {
-                                    OperationResult::Value(result) => self.stack.push(result),
-                                    OperationResult::Throw(v) => {
-                                        abrupt = Some(Completion::Throw(v));
-                                        discard_saved_finally = true;
-                                    }
-                                }
-                            }
-                            _ => unreachable!(),
+                }
+                Instruction::SetElementKeepOld => {
+                    let value = self.pop_value()?;
+                    let old = self.pop_value()?;
+                    let key = self.pop_value()?;
+                    let object = self.pop_value()?;
+                    match self.set_element_value(object, key, value, context)? {
+                        OperationResult::Value(_) => self.stack.push(old),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
                         }
                     }
                 }
@@ -1833,7 +1822,19 @@ impl Vm {
                                 )?;
                             }
                         }
-                        _ => unreachable!(),
+                        OperationResult::Value(JsValue::Symbol(symbol)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class method (computed)",
+                            )?;
+                            context.set_function_home_object(&value, object)?;
+                            context.define_symbol_own_property(
+                                object,
+                                symbol,
+                                PropertyDescriptor::data_with(value, true, false, true),
+                            )?;
+                        }
+                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     }
                 }
                 Instruction::DefineClassGetterComputed => {
@@ -1868,7 +1869,22 @@ impl Vm {
                                 )?;
                             }
                         }
-                        _ => unreachable!(),
+                        OperationResult::Value(JsValue::Symbol(symbol)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class getter (computed)",
+                            )?;
+                            self.define_computed_accessor(
+                                object,
+                                JsValue::Symbol(symbol),
+                                Some(getter),
+                                None,
+                                false,
+                                true,
+                                context,
+                            )?;
+                        }
+                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     }
                 }
                 Instruction::DefineClassSetterComputed => {
@@ -1903,7 +1919,22 @@ impl Vm {
                                 )?;
                             }
                         }
-                        _ => unreachable!(),
+                        OperationResult::Value(JsValue::Symbol(symbol)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define class setter (computed)",
+                            )?;
+                            self.define_computed_accessor(
+                                object,
+                                JsValue::Symbol(symbol),
+                                None,
+                                Some(setter),
+                                false,
+                                true,
+                                context,
+                            )?;
+                        }
+                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     }
                 }
                 Instruction::DefineDataPropertyComputed => {
@@ -1926,7 +1957,19 @@ impl Vm {
                                 PropertyDescriptor::data(value),
                             )?;
                         }
-                        _ => unreachable!(),
+                        OperationResult::Value(JsValue::Symbol(symbol)) => {
+                            let object = context.require_object(
+                                self.peek_value()?,
+                                "define data property (computed)",
+                            )?;
+                            context.set_function_home_object(&value, object)?;
+                            context.define_symbol_own_property(
+                                object,
+                                symbol,
+                                PropertyDescriptor::data(value),
+                            )?;
+                        }
+                        _ => unreachable!("ToPropertyKey returns a string or symbol"),
                     }
                 }
                 Instruction::SpreadObject => {
@@ -4903,64 +4946,19 @@ impl Vm {
         }
     }
 
-    /// ToPrimitive(hint: string) for property keys.
-    /// For objects, calls `toString()` then `valueOf()` until a primitive is obtained.
-    /// Returns `Ok(OperationResult::Value(JsValue::String(...)))` on success,
+    /// `ToPropertyKey` through the shared `ToPrimitive` implementation.
+    /// Symbols remain symbols; every other primitive becomes a string key.
+    /// Returns a string or symbol key on success,
     /// or `Ok(OperationResult::Throw(...))` when conversion fails.
     fn coerce_to_property_key(
         &mut self,
         key: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        // Fast path: primitives that already convert cleanly.
-        match &key {
-            JsValue::String(_)
-            | JsValue::Number(_)
-            | JsValue::Boolean(_)
-            | JsValue::Null
-            | JsValue::Undefined
-            | JsValue::BigInt(_) => {
-                return match to_property_key(&key) {
-                    Ok(s) => Ok(OperationResult::Value(JsValue::String(s))),
-                    Err(e) => Ok(OperationResult::Throw(vm_error_to_value(e))),
-                };
-            }
-            JsValue::Symbol(_) => {
-                return Ok(OperationResult::Throw(vm_error_to_value(
-                    VmError::type_error("Cannot convert a Symbol value to a string"),
-                )));
-            }
-            _ => {}
+        match self.to_property_key_from_builtin(key, context) {
+            Ok(key) => Ok(OperationResult::Value(key)),
+            Err(error) => self.error_to_operation_result(error),
         }
-        // Object path: try toString() then valueOf().
-        for method in ["toString", "valueOf"] {
-            match self.get_property_value_completion(key.clone(), method, context)? {
-                OperationResult::Throw(v) => return Ok(OperationResult::Throw(v)),
-                OperationResult::Value(fn_val) => {
-                    if matches!(fn_val, JsValue::Function(_) | JsValue::BuiltinFunction(_)) {
-                        match self.call_value(fn_val, key.clone(), Vec::new(), context)? {
-                            OperationResult::Throw(v) => return Ok(OperationResult::Throw(v)),
-                            OperationResult::Value(result) => {
-                                if !matches!(
-                                    result,
-                                    JsValue::Object(_)
-                                        | JsValue::Function(_)
-                                        | JsValue::BuiltinFunction(_)
-                                ) {
-                                    return match to_property_key(&result) {
-                                        Ok(s) => Ok(OperationResult::Value(JsValue::String(s))),
-                                        Err(e) => Ok(OperationResult::Throw(vm_error_to_value(e))),
-                                    };
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Ok(OperationResult::Throw(vm_error_to_value(
-            VmError::type_error("Cannot convert object to primitive value"),
-        )))
     }
 
     fn get_property_value_completion(
@@ -5307,6 +5305,37 @@ impl Vm {
             ))),
             Ok(false) => Ok(OperationResult::Value(value)),
             Err(error) => self.error_to_operation_result(error),
+        }
+    }
+
+    fn set_element_value(
+        &mut self,
+        object: JsValue,
+        key: JsValue,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        if let (JsValue::Number(index), JsValue::Object(object_id)) = (&key, &object)
+            && index.fract() == 0.0
+            && *index >= 0.0
+            && *index < 4_294_967_295.0
+            && let Some(result) =
+                Self::fast_set_element(*object_id, *index as usize, value.clone(), context)
+        {
+            result?;
+            return Ok(OperationResult::Value(value));
+        }
+
+        let key = match self.coerce_to_property_key(key, context)? {
+            OperationResult::Value(key) => key,
+            OperationResult::Throw(value) => return Ok(OperationResult::Throw(value)),
+        };
+        match key {
+            JsValue::String(key) => self.set_property_value(object, &key, value, context),
+            JsValue::Symbol(symbol) => {
+                self.set_symbol_property_value(object, symbol, value, context)
+            }
+            _ => unreachable!("ToPropertyKey returns a string or symbol"),
         }
     }
 

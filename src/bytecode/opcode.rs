@@ -197,6 +197,10 @@ pub enum Instruction {
     /// Stack: [object, key, value] → [value]
     SetElement,
 
+    /// Stores a computed property while preserving the old numeric value used
+    /// by a postfix update. Stack: [object, key, old, value] → [old].
+    SetElementKeepOld,
+
     /// Calls a method with an explicit `this`. Stack layout:
     /// `[callee, this_value, arg0, ..., argN]`.
     /// Stack: [callee, this, args...] → [result]
@@ -468,6 +472,9 @@ impl Instruction {
 
             // SetElement: [object, key, value] → [value]  (net -2)
             Self::SetElement => StackEffect::with_required(3, 3, 1),
+
+            // SetElementKeepOld: [object, key, old, value] → [old] (net -3)
+            Self::SetElementKeepOld => StackEffect::with_required(4, 4, 1),
 
             // ArrayCreate(n): pops n, pushes 1
             Self::ArrayCreate(n) => StackEffect::with_required(n as u32, n as u32, 1),

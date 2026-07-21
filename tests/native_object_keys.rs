@@ -53,6 +53,19 @@ fn reflect_own_keys_keeps_symbols_after_string_keys() {
 }
 
 #[test]
+fn computed_property_key_preserves_symbol_from_to_primitive() {
+    assert_eq!(
+        native_eval(
+            "var symbol = Symbol('key'); \
+             var key = { [Symbol.toPrimitive]: function() { return symbol; } }; \
+             var object = {}; object[key] = 7; \
+             object[key] + ':' + (Reflect.ownKeys(object)[0] === symbol);"
+        ),
+        "7:true"
+    );
+}
+
+#[test]
 fn symbol_define_property_obeys_descriptor_invariants() {
     assert_eq!(
         native_eval(
