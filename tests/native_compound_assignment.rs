@@ -1,12 +1,9 @@
 //! Native execution coverage for compound assignment and computed object keys.
 
-use agentjs::{
-    backend::BackendKind,
-    engine::{Engine, ExecutionOptions, RuntimeConfig},
-};
+use agentjs::engine::{Engine, ExecutionOptions, RuntimeConfig};
 
 fn native_eval(source: &str) -> String {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))
         .value
@@ -39,6 +36,22 @@ fn compound_assignment_updates_computed_member_once() {
              o[key()] += 3; hits + ':' + o.x;"
         ),
         "1:5"
+    );
+}
+
+#[test]
+fn computed_postfix_update_evaluates_object_key_getter_and_setter_once() {
+    assert_eq!(
+        native_eval(
+            "var calls = []; var value = 2; \
+             function object() { calls.push('object'); return { \
+               get x() { calls.push('get'); return value; }, \
+               set x(next) { calls.push('set'); value = next; } \
+             }; } \
+             function key() { calls.push('key'); return 'x'; } \
+             var old = object()[key()]++; calls.join('|') + ':' + old + ':' + value;"
+        ),
+        "object|key|get|set:2:3"
     );
 }
 

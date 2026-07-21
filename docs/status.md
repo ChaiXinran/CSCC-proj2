@@ -8,15 +8,13 @@
 - Captured `print`/`console` output.
 - Loop, recursion, VM stack, backtrace, heap-object, heap-byte, and wall-clock
   limits — all categorised as `VmErrorKind::RuntimeLimit`.
-- Per-isolate LRU caching of parsed and compiled scripts (native and Boa).
+- Per-isolate LRU caching of parsed and compiled scripts.
 - Parallel Test262 discovery and execution.
 - Test262 harness includes, strict variants, negative tests, async completion,
   `$262` host support, filtering, result limits, and JSON summaries.
-- Cold-isolate and warm-runtime microbenchmark command (`bench`, or explicit
-  `bench --backend boa` when built with the optional Boa feature).
+- Cold-isolate and warm-runtime microbenchmark command (`bench`).
 - JetStream 2.0 CLI adapter and a pinned six-workload performance report.
-- Backend-neutral `Engine`/`Runtime` facade with isolated Boa and native
-  backend modules.
+- Backend-neutral `Engine`/`Runtime` facade with the native backend module.
 - **V7 — Stability, Limits, GC, and Performance Evidence** (completed):
   - `ExecutionBudget` with `check_loop`, `check_call_depth`, `check_stack_depth`,
     `check_deadline` called at all VM boundaries.
@@ -45,9 +43,9 @@
   skipped. Remaining failures are mostly import/export parser and linking gaps.
 - YAML frontmatter parsing supports only the Test262 fields consumed by the
   runner, not a general YAML parser.
-- Boa remains the compatibility baseline for the `eval`/`run`/`repl` CLI
-  commands. `BackendKind::Native` executes the self-developed V1-V6 lexer,
-  parser, bytecode, VM, runtime, and builtin path without falling back to Boa.
+- The embedded Boa backend was removed in V12. The native engine executes
+  the self-developed lexer, parser, bytecode, VM, runtime, and builtin path.
+  Boa is available as an external comparison engine via the pinned submodule.
 - The fixed Native V1-V6 gates pass 69 official Test262 files with no failures
   or skips. These curated gates are regression checks, not a full conformance
   percentage.

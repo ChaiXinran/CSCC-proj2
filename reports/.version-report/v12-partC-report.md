@@ -580,3 +580,62 @@ Date: 2026-06-29
   top-level chapters run continuously from 1 through 15.
 - Corrected inline-code spacing in the Boa feature-selection explanation.
 - No report data or engine behavior changed.
+
+## Native V12-C PropertyKey and Computed Update Repair
+
+Date: 2026-07-21
+
+### Changes
+
+- Routed VM computed-key coercion through the shared `ToPrimitive` path. A
+  `Symbol` returned directly or by `Symbol.toPrimitive` now remains a symbol
+  key for computed reads, writes, calls, `super` access, and computed class
+  member definitions.
+- Added `Instruction::SetElementKeepOld` with a verified stack contract of
+  `[object, key, old, value] -> [old]`. Computed postfix updates now evaluate
+  the object, key, getter, and setter exactly once while returning the prior
+  `ToNumeric` value. The opcode is included in `Instruction::stack_effect`,
+  so `Chunk::validate` stack analysis covers it.
+- Added focused regressions for `Symbol.toPrimitive` property keys and for
+  computed postfix update side-effect order, plus a compiler bytecode test for
+  the new store instruction.
+
+### Explicit-Frame Scheduler Design
+
+The scheduler remains design-first because the V12-B `BigIntValue` migration
+has not landed in this checkout (`JsValue::BigInt` is still `i128`). The staged
+design is:
+
+1. Keep a VM-owned `Vec<VmFrame>`; each frame records function/chunk, IP,
+   environment, `this`, `newTarget`, operand-stack base, and resume kind.
+2. Run a single frame-loop dispatching the active frame. A user-function
+   `Call` pushes a callee frame; a builtin call uses the existing catchable
+   completion path without changing synchronous order.
+3. `Return` truncates to the callee frame's base, pushes its result onto the
+   caller stack, and resumes the caller. `Throw` unwinds frames until an
+   existing bytecode handler is found.
+4. Preserve the current call-depth, operand-stack, wall-clock, GC, and
+   backtrace limits at frame-push/unwind boundaries. Generator and async
+   resumptions remain later stages after ordinary calls are stable.
+
+This is deliberately a stack-ordered trampoline, not fair or round-robin
+scheduling.
+
+### Validation
+
+Passed:
+
+```powershell
+rustfmt --edition 2024 --check src/bytecode/opcode.rs src/bytecode/compiler.rs src/vm/interpreter.rs tests/native_compound_assignment.rs tests/native_object_keys.rs
+git diff --check
+cargo test --no-default-features --test native_symbol
+cargo test --no-default-features --test native_object_keys
+cargo test --no-default-features --test native_compound_assignment
+cargo test --no-default-features --test native_test262
+```
+
+The focused suites completed at 28/28 (`native_symbol`), 16/16
+(`native_object_keys`), 6/6 (`native_compound_assignment`), and 15/15
+(`native_test262`). The repository's pinned `boa` and `test262` submodules
+were initialized before running the Cargo gates; no Cargo/backend files were
+changed.

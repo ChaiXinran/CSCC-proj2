@@ -1,14 +1,14 @@
-use agentjs::{BackendKind, Engine, ExecutionOptions, FailureKind, RuntimeConfig};
+use agentjs::{Engine, ExecutionOptions, FailureKind, RuntimeConfig};
 
 fn eval(source: &str) -> String {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("V4 source should execute: {error}"))
         .value
 }
 
 fn eval_error(source: &str) -> FailureKind {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .expect_err("V4 source should fail")
         .kind

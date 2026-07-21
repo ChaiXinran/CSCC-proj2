@@ -1,10 +1,7 @@
-use agentjs::{
-    backend::BackendKind,
-    engine::{Engine, ExecutionOptions, FailureKind, RuntimeConfig},
-};
+use agentjs::engine::{Engine, ExecutionOptions, FailureKind, RuntimeConfig};
 
 fn native_eval(source: &str) -> String {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("native V5 source should execute: {error}"))
         .value
@@ -103,7 +100,7 @@ fn lexical_bindings_are_block_scoped() {
 
 #[test]
 fn temporal_dead_zone_is_a_reference_error() {
-    let error = Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    let error = Engine::new(RuntimeConfig::default())
         .execute("x; let x;", ExecutionOptions::default())
         .unwrap_err();
 
@@ -112,7 +109,7 @@ fn temporal_dead_zone_is_a_reference_error() {
 
 #[test]
 fn initialized_const_rejects_assignment() {
-    let error = Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    let error = Engine::new(RuntimeConfig::default())
         .execute("const x = 1; x = 2;", ExecutionOptions::default())
         .unwrap_err();
 

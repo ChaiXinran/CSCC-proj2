@@ -1,7 +1,7 @@
-use agentjs::{BackendKind, ExecutionOptions, Runtime, RuntimeConfig};
+use agentjs::{ExecutionOptions, Runtime, RuntimeConfig};
 
 fn native_eval(source: &str) -> String {
-    Runtime::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Runtime::new(RuntimeConfig::default())
         .expect("native runtime should initialize")
         .eval(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))
@@ -49,6 +49,19 @@ fn reflect_own_keys_keeps_symbols_after_string_keys() {
              keys[0] === '1' && keys[1] === '4294967295' && typeof keys[2] === 'symbol';"
         ),
         "true"
+    );
+}
+
+#[test]
+fn computed_property_key_preserves_symbol_from_to_primitive() {
+    assert_eq!(
+        native_eval(
+            "var symbol = Symbol('key'); \
+             var key = { [Symbol.toPrimitive]: function() { return symbol; } }; \
+             var object = {}; object[key] = 7; \
+             object[key] + ':' + (Reflect.ownKeys(object)[0] === symbol);"
+        ),
+        "7:true"
     );
 }
 

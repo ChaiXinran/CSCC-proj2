@@ -6,7 +6,7 @@
 
 JavaScript 生态已经成为 AI 时代的重要技术设施。相比传统浏览器内部的重量级 JavaScript 引擎，一个能够快速启动、短时运行、频繁执行的轻量级 JS 引擎，在智能体工具调用和动态脚本执行场景中具有独特价值。
 
-**AgentJS** 是一个基于 Rust 实现的轻量级 JavaScript 执行引擎。项目默认运行自研的 **Native Runtime**，并保留 Boa 作为显式选择的参考后端，用于兼容性验证和性能对比。Native 后端可以独立构建和运行，不依赖 Boa 完成 JavaScript 执行。
+**AgentJS** 是一个基于 Rust 实现的轻量级 JavaScript 执行引擎。项目默认运行自研的 **Native Runtime**。Boa 作为外部参考引擎（通过 pinned submodule 独立构建），用于兼容性验证和性能对比。Native 后端独立构建和运行，不依赖 Boa 完成 JavaScript 执行。
 
 | 核心指标 | 当前结果 |
 | --- | ---: |
@@ -17,7 +17,7 @@ JavaScript 生态已经成为 AI 时代的重要技术设施。相比传统浏�
 
 ## 系统框架
 
-项目支持后端分发，便于进行正确性验证和性能分析。默认路径是自研 Native Runtime，Boa 仅作为显式启用的参考后端，不会在 Native 执行失败时静默回退。
+项目默认使用自研 Native Runtime 执行 JavaScript。V12 移除了嵌入式 Boa 后端分发路径。Boa 作为外部参考引擎独立构建（`cargo build --release --manifest-path boa/Cargo.toml -p boa_cli`），用于正确性验证和性能对比。AgentJS 不会在 Native 执行失败时静默回退到任何外部引擎。
 
 ![image.png](image.png)
 
@@ -137,15 +137,13 @@ cargo run --release  -- test262 \
   --json test262-final/final-all.json
 ```
 
-使用Boa后端对比结果：
-```
-cargo run --release --features boa-backend -- test262 `
-  --backend boa `
-  --root test262 `
-  --suite test `
-  --jobs 4 `
-  --progress `
-  --json reports/boa-test262-summary.json
+使用外部 Boa CLI 对比结果（V12 起嵌入式 Boa 后端已移除）：
+```powershell
+# 先构建外部 Boa CLI
+cargo build --release --manifest-path boa/Cargo.toml -p boa_cli
+
+# 用 Boa CLI 独立运行 Test262
+.\boa\target\release\boa.exe --test262 --root test262 --suite test --jobs 4
 ```
 ### SunSpider 测试与 Boa 对比
 

@@ -182,13 +182,10 @@ fn with_statement_resolves_nested_object_environments() {
         }
         ok;
     "#;
-    let result = agentjs::engine::Engine::with_backend(
-        agentjs::backend::BackendKind::Native,
-        agentjs::engine::RuntimeConfig::default(),
-    )
-    .execute(source, agentjs::engine::ExecutionOptions::default())
-    .unwrap_or_else(|error| panic!("native eval failed: {error}"))
-    .value;
+    let result = agentjs::engine::Engine::new(agentjs::engine::RuntimeConfig::default())
+        .execute(source, agentjs::engine::ExecutionOptions::default())
+        .unwrap_or_else(|error| panic!("native eval failed: {error}"))
+        .value;
     assert_eq!(result, "true");
 }
 

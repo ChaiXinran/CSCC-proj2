@@ -1,7 +1,6 @@
 //! V6 runtime foundation tests: PrimitiveWrapper, Intrinsics V6 fields, coercion.
 
 use agentjs::{
-    backend::BackendKind,
     builtins::install_foundation,
     bytecode::{Chunk, Constant, Instruction},
     engine::{Engine, ExecutionOptions, RuntimeConfig},
@@ -58,7 +57,7 @@ fn run(chunk: Chunk, context: &mut NativeContext) -> JsValue {
 }
 
 fn native_eval(source: &str) -> String {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_or_else(|e| panic!("native eval failed: {e}"))
         .value

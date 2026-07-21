@@ -4,7 +4,7 @@
 //! reaches the native runtime contracts expected by the VM.
 
 use agentjs::{
-    BackendKind, Engine, ExecutionOptions, RuntimeConfig,
+    Engine, ExecutionOptions, RuntimeConfig,
     ast::{Expression, ForBinding, FunctionLiteral, Program, Statement, VariableKind},
     bytecode::Instruction,
 };
@@ -26,7 +26,7 @@ fn compile(source: &str) -> agentjs::bytecode::Chunk {
 }
 
 fn run_native(source: &str) -> Result<String, String> {
-    let engine = Engine::with_backend(BackendKind::Native, RuntimeConfig::default());
+    let engine = Engine::new(RuntimeConfig::default());
     engine
         .execute(source, ExecutionOptions::default())
         .map(|r| r.value)
