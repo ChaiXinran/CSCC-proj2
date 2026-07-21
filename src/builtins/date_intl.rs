@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{
     runtime::{
         JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, ObjectId, PreferredType,
-        PropertyDescriptor, PropertyKind, bigint,
+        PrimitiveValue, PropertyDescriptor, PropertyKind, bigint,
     },
     vm::{Vm, VmError},
 };
@@ -25,6 +25,12 @@ const MS_PER_MINUTE: f64 = 60_000.0;
 const MS_PER_HOUR: f64 = 3_600_000.0;
 const MS_PER_DAY: f64 = 86_400_000.0;
 const MAX_TIME_VALUE: f64 = 8_640_000_000_000_000.0;
+const NS_PER_MILLISECOND_I128: i128 = 1_000_000;
+const NS_PER_SECOND_I128: i128 = 1_000_000_000;
+const NS_PER_MINUTE_I128: i128 = 60 * NS_PER_SECOND_I128;
+const NS_PER_HOUR_I128: i128 = 60 * NS_PER_MINUTE_I128;
+const NS_PER_DAY_I128: i128 = 24 * NS_PER_HOUR_I128;
+const MAX_INSTANT_NS: i128 = 8_640_000_000_000_000_000_000;
 
 fn bigint_to_i128_saturating(value: &crate::runtime::BigIntValue) -> i128 {
     bigint::to_i128_if_exact(value).unwrap_or_else(|| {
@@ -229,6 +235,10 @@ fn days_from_civil(mut year: i32, month: u32, day: u32) -> i64 {
 }
 
 fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    // ECMAScript Date and Temporal never expose civil dates beyond this
+    // representable window. Clamping here keeps hostile intermediate values
+    // from overflowing the conversion arithmetic before callers reject them.
+    let days = days.clamp(-100_000_000, 100_000_000);
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
     let doe = z - era * 146_097;
@@ -582,6 +592,347 @@ fn parse_iso_date_string(input: &str) -> Option<f64> {
         ),
     );
     Some(time_clip(local_ms - offset_ms as f64))
+}
+
+fn temporal_to_bigint(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<crate::runtime::BigIntValue, VmError> {
+    match value {
+        JsValue::BigInt(value) => Ok(value),
+        JsValue::Boolean(value) => Ok(bigint::from_i64(i64::from(value))),
+        JsValue::String(value) => bigint::parse_bigint_string(&value)
+            .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
+        JsValue::Object(object) => match context.primitive_value(object) {
+            Some(PrimitiveValue::BigInt(value)) => Ok(value.clone()),
+            Some(PrimitiveValue::Boolean(value)) => Ok(bigint::from_i64(i64::from(*value))),
+            Some(PrimitiveValue::String(value)) => bigint::parse_bigint_string(value)
+                .ok_or_else(|| VmError::syntax_error("Cannot convert string to BigInt")),
+            _ => {
+                let primitive =
+                    vm.to_primitive(JsValue::Object(object), PreferredType::Number, context)?;
+                temporal_to_bigint(vm, context, primitive)
+            }
+        },
+        JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            let primitive = vm.to_primitive(value, PreferredType::Number, context)?;
+            temporal_to_bigint(vm, context, primitive)
+        }
+        _ => Err(VmError::type_error("Cannot convert value to BigInt")),
+    }
+}
+
+fn is_valid_instant_ns(epoch_ns: i128) -> bool {
+    (-MAX_INSTANT_NS..=MAX_INSTANT_NS).contains(&epoch_ns)
+}
+
+fn validate_temporal_annotations(input: &str) -> Option<&str> {
+    let mut body_end = input.len();
+    let mut saw_annotation = false;
+    let mut seen_time_zone = false;
+    let mut rest = input;
+    while let Some(start) = rest.find('[') {
+        saw_annotation = true;
+        body_end = body_end.min(input.len() - rest.len() + start);
+        let after_start = &rest[start + 1..];
+        let end = after_start.find(']')?;
+        let annotation = &after_start[..end];
+        if annotation.is_empty() {
+            return None;
+        }
+        let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
+        if let Some((key, _value)) = annotation.split_once('=') {
+            if key.chars().any(|ch| ch.is_ascii_uppercase()) {
+                return None;
+            }
+        } else {
+            if seen_time_zone {
+                return None;
+            }
+            seen_time_zone = true;
+        }
+        rest = &after_start[end + 1..];
+    }
+    if (saw_annotation && !rest.is_empty()) || rest.contains(']') {
+        return None;
+    }
+    if body_end < input.len() && !input[body_end..].starts_with('[') {
+        return None;
+    }
+    Some(&input[..body_end])
+}
+
+fn validate_iso_calendar_annotations(input: &str) -> Option<&str> {
+    let mut body_end = input.len();
+    let mut saw_annotation = false;
+    let mut rest = input;
+    while let Some(start) = rest.find('[') {
+        saw_annotation = true;
+        body_end = body_end.min(input.len() - rest.len() + start);
+        let after_start = &rest[start + 1..];
+        let end = after_start.find(']')?;
+        let annotation = &after_start[..end];
+        if annotation.is_empty() {
+            return None;
+        }
+        let critical = annotation.starts_with('!');
+        let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
+        if let Some((key, value)) = annotation.split_once('=') {
+            if key.chars().any(|ch| ch.is_ascii_uppercase()) {
+                return None;
+            }
+            if key == "u-ca" {
+                if value.to_ascii_lowercase() != "iso8601" {
+                    return None;
+                }
+            } else if critical {
+                return None;
+            }
+        } else if critical {
+            return None;
+        }
+        rest = &after_start[end + 1..];
+    }
+    if (saw_annotation && !rest.is_empty()) || rest.contains(']') {
+        return None;
+    }
+    Some(&input[..body_end])
+}
+
+fn parse_temporal_date_part(input: &str) -> Option<(i32, u32, u32)> {
+    let signed = input.starts_with(['+', '-']);
+    let (year_text, rest) = if signed {
+        if input.len() < 7 {
+            return None;
+        }
+        (&input[..7], &input[7..])
+    } else {
+        if input.len() < 4 {
+            return None;
+        }
+        (&input[..4], &input[4..])
+    };
+    let digits = if signed { &year_text[1..] } else { year_text };
+    if digits.len() != if signed { 6 } else { 4 }
+        || !digits.chars().all(|ch| ch.is_ascii_digit())
+        || year_text == "-000000"
+    {
+        return None;
+    }
+    let year = year_text.parse::<i32>().ok()?;
+    if !(-271_821..=275_760).contains(&year) {
+        return None;
+    }
+    let (month, day) = if let Some(rest) = rest.strip_prefix('-') {
+        if rest.len() != 5 || !rest.as_bytes().get(2).is_some_and(|ch| *ch == b'-') {
+            return None;
+        }
+        (
+            parse_fixed_digits(&rest[..2], 2)?,
+            parse_fixed_digits(&rest[3..], 2)?,
+        )
+    } else {
+        if rest.len() != 4 {
+            return None;
+        }
+        (
+            parse_fixed_digits(&rest[..2], 2)?,
+            parse_fixed_digits(&rest[2..], 2)?,
+        )
+    };
+    if !(1..=12).contains(&month) || !(1..=month_day_count(year, month)).contains(&day) {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn validate_plain_date_time_tail(input: &str) -> Option<()> {
+    if input.is_empty()
+        || input.contains('\u{2212}')
+        || input.ends_with(['Z', 'z'])
+        || input.contains("Z[")
+        || input.contains("z[")
+    {
+        return None;
+    }
+    let offset_start = input.rfind('+').or_else(|| {
+        input
+            .get(1..)
+            .and_then(|rest| rest.rfind('-').map(|index| index + 1))
+    });
+    let time = if let Some(offset_start) = offset_start {
+        parse_time_zone_offset_ns(&input[offset_start..])?;
+        &input[..offset_start]
+    } else {
+        input
+    };
+    let compact = time.replace(':', "");
+    let (head, fraction) = compact
+        .split_once('.')
+        .map_or((compact.as_str(), ""), |(head, fraction)| (head, fraction));
+    if !fraction.is_empty() && parse_fraction_to_ns(fraction).is_none() {
+        return None;
+    }
+    if head.len() != 2 && head.len() != 4 && head.len() != 6 {
+        return None;
+    }
+    if !head.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let hour = parse_fixed_digits(&head[..2], 2)?;
+    let minute = if head.len() >= 4 {
+        parse_fixed_digits(&head[2..4], 2)?
+    } else {
+        0
+    };
+    let second = if head.len() == 6 {
+        parse_fixed_digits(&head[4..6], 2)?
+    } else {
+        0
+    };
+    (hour <= 23 && minute <= 59 && second <= 59).then_some(())
+}
+
+fn parse_temporal_plain_date_string(input: &str) -> Option<(f64, f64, f64)> {
+    let input = input.trim();
+    if input.is_empty() || input.contains('\u{2212}') {
+        return None;
+    }
+    let body = validate_iso_calendar_annotations(input)?;
+    let (date_part, time_part) = match body
+        .find('T')
+        .or_else(|| body.find('t'))
+        .or_else(|| body.find(' '))
+    {
+        Some(index) => (&body[..index], Some(&body[index + 1..])),
+        None => (body, None),
+    };
+    if let Some(time_part) = time_part {
+        validate_plain_date_time_tail(time_part)?;
+    }
+    let (year, month, day) = parse_temporal_date_part(date_part)?;
+    Some((year as f64, month as f64, day as f64))
+}
+
+fn parse_fraction_to_ns(fraction: &str) -> Option<i128> {
+    if fraction.is_empty() || fraction.len() > 9 || !fraction.chars().all(|ch| ch.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut text = fraction.to_string();
+    while text.len() < 9 {
+        text.push('0');
+    }
+    text.parse::<i128>().ok()
+}
+
+fn parse_iso_time_and_offset_ns(input: &str) -> Option<(u32, u32, u32, i128, i128)> {
+    let (time, offset_ns) =
+        if let Some(stripped) = input.strip_suffix('Z').or_else(|| input.strip_suffix('z')) {
+            (stripped, 0)
+        } else if let Some(index) = input.rfind('+') {
+            (&input[..index], parse_time_zone_offset_ns(&input[index..])?)
+        } else if let Some(index) = input.get(1..).and_then(|rest| rest.rfind('-')) {
+            let split = index + 1;
+            (&input[..split], parse_time_zone_offset_ns(&input[split..])?)
+        } else {
+            return None;
+        };
+    if time.is_empty() {
+        return None;
+    }
+    let mut pieces = time.split(':');
+    let hour = parse_fixed_digits(pieces.next()?, 2)?;
+    let minute = parse_fixed_digits(pieces.next().unwrap_or("00"), 2)?;
+    let seconds_piece = pieces.next().unwrap_or("00");
+    if pieces.next().is_some() || hour > 23 || minute > 59 {
+        return None;
+    }
+    let (second_text, fraction_text) = seconds_piece
+        .split_once('.')
+        .map_or((seconds_piece, ""), |(second, fraction)| (second, fraction));
+    let mut second = parse_fixed_digits(second_text, 2)?;
+    if second > 60 {
+        return None;
+    }
+    if second == 60 {
+        second = 59;
+    }
+    let fraction_ns = if fraction_text.is_empty() {
+        0
+    } else {
+        parse_fraction_to_ns(fraction_text)?
+    };
+    Some((hour, minute, second, fraction_ns, offset_ns))
+}
+
+fn parse_time_zone_offset_ns(input: &str) -> Option<i128> {
+    let sign = if input.starts_with('+') {
+        1
+    } else if input.starts_with('-') {
+        -1
+    } else {
+        return None;
+    };
+    let body = &input[1..];
+    if body.len() == 4 && body.chars().all(|ch| ch.is_ascii_digit()) {
+        let hour = parse_fixed_digits(&body[..2], 2)?;
+        let minute = parse_fixed_digits(&body[2..], 2)?;
+        if hour > 23 || minute > 59 {
+            return None;
+        }
+        return Some(
+            sign * (hour as i128 * NS_PER_HOUR_I128 + minute as i128 * NS_PER_MINUTE_I128),
+        );
+    }
+    let mut pieces = body.split(':');
+    let hour = parse_fixed_digits(pieces.next()?, 2)?;
+    let minute = parse_fixed_digits(pieces.next().unwrap_or("00"), 2)?;
+    let seconds_piece = pieces.next();
+    if pieces.next().is_some() || hour > 23 || minute > 59 {
+        return None;
+    }
+    if let Some(seconds_piece) = seconds_piece {
+        let (second_text, fraction_text) = seconds_piece
+            .split_once('.')
+            .map_or((seconds_piece, ""), |(second, fraction)| (second, fraction));
+        let second = parse_fixed_digits(second_text, 2)?;
+        if second > 59 {
+            return None;
+        }
+        let fraction_ns = if fraction_text.is_empty() {
+            0
+        } else {
+            parse_fraction_to_ns(fraction_text)?
+        };
+        if second != 0 || fraction_ns != 0 {
+            return None;
+        }
+    }
+    Some(sign * (hour as i128 * NS_PER_HOUR_I128 + minute as i128 * NS_PER_MINUTE_I128))
+}
+
+fn parse_instant_string(input: &str) -> Option<i128> {
+    let input = input.trim();
+    if input.is_empty() || input.contains('\u{2212}') {
+        return None;
+    }
+    let body = validate_temporal_annotations(input)?;
+    let separator = body.find('T').or_else(|| body.find('t'))?;
+    let (date_part, time_part) = (&body[..separator], &body[separator + 1..]);
+    let (year, month, day) = parse_iso_date_part(date_part)?;
+    if !(1..=12).contains(&month) || !(1..=month_day_count(year, month)).contains(&day) {
+        return None;
+    }
+    let (hour, minute, second, fraction_ns, offset_ns) = parse_iso_time_and_offset_ns(time_part)?;
+    let date_ns = days_from_civil(year, month, day) as i128 * NS_PER_DAY_I128;
+    let time_ns = hour as i128 * NS_PER_HOUR_I128
+        + minute as i128 * NS_PER_MINUTE_I128
+        + second as i128 * NS_PER_SECOND_I128
+        + fraction_ns;
+    let epoch_ns = date_ns + time_ns - offset_ns;
+    is_valid_instant_ns(epoch_ns).then_some(epoch_ns)
 }
 
 fn parse_iso_time_and_offset(input: &str) -> Option<(u32, u32, u32, u32, i64)> {
@@ -2795,7 +3146,7 @@ fn duration_values_from_args(
     context: &mut NativeContext,
     arguments: &[JsValue],
 ) -> Result<DurationValues, VmError> {
-    Ok(DurationValues {
+    validate_duration_values(DurationValues {
         years: duration_integer(number_or_default(vm, context, arguments, 0, 0.0)?)?,
         months: duration_integer(number_or_default(vm, context, arguments, 1, 0.0)?)?,
         weeks: duration_integer(number_or_default(vm, context, arguments, 2, 0.0)?)?,
@@ -2821,6 +3172,7 @@ fn create_duration(
     prototype: ObjectId,
     values: DurationValues,
 ) -> Result<JsValue, VmError> {
+    let values = values.map(clean_zero);
     create_temporal_object(
         context,
         prototype,
@@ -2857,7 +3209,8 @@ fn temporal_duration_from(
         .ok_or_else(|| VmError::runtime("Temporal.Duration prototype missing"))?;
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let values = match item {
-        JsValue::String(text) => parse_duration(&text).unwrap_or_default(),
+        JsValue::String(text) => parse_duration(&text)
+            .ok_or_else(|| VmError::range("invalid Temporal.Duration string"))?,
         value => {
             let object = context.require_object(&value, "Temporal.Duration.from")?;
             if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("Duration") {
@@ -2923,29 +3276,83 @@ fn duration_values_from_value(
     value: JsValue,
 ) -> Result<DurationValues, VmError> {
     match value {
-        JsValue::String(text) => {
-            parse_duration(&text).ok_or_else(|| VmError::range("invalid Temporal.Duration string"))
-        }
+        JsValue::String(text) => validate_duration_values(
+            parse_duration(&text)
+                .ok_or_else(|| VmError::range("invalid Temporal.Duration string"))?,
+        ),
         other => {
             let object = context.require_object(&other, "Temporal.Duration value")?;
             if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("Duration") {
                 Ok(duration_values_from_object(context, object))
             } else {
-                Ok(DurationValues {
-                    years: temporal_object_number(vm, context, object, "years")?,
-                    months: temporal_object_number(vm, context, object, "months")?,
-                    weeks: temporal_object_number(vm, context, object, "weeks")?,
-                    days: temporal_object_number(vm, context, object, "days")?,
-                    hours: temporal_object_number(vm, context, object, "hours")?,
-                    minutes: temporal_object_number(vm, context, object, "minutes")?,
-                    seconds: temporal_object_number(vm, context, object, "seconds")?,
-                    milliseconds: temporal_object_number(vm, context, object, "milliseconds")?,
-                    microseconds: temporal_object_number(vm, context, object, "microseconds")?,
-                    nanoseconds: temporal_object_number(vm, context, object, "nanoseconds")?,
+                let mut seen = false;
+                let mut read = |name: &str| -> Result<f64, VmError> {
+                    let value = temporal_get_property(vm, context, object, name)?;
+                    if matches!(value, JsValue::Undefined) {
+                        Ok(0.0)
+                    } else {
+                        seen = true;
+                        duration_integer(vm.to_number(value, context)?)
+                    }
+                };
+                let days = read("days")?;
+                let hours = read("hours")?;
+                let microseconds = read("microseconds")?;
+                let milliseconds = read("milliseconds")?;
+                let minutes = read("minutes")?;
+                let months = read("months")?;
+                let nanoseconds = read("nanoseconds")?;
+                let seconds = read("seconds")?;
+                let weeks = read("weeks")?;
+                let years = read("years")?;
+                if !seen {
+                    return Err(VmError::type_error(
+                        "Temporal duration-like object has no duration properties",
+                    ));
+                }
+                validate_duration_values(DurationValues {
+                    years,
+                    months,
+                    weeks,
+                    days,
+                    hours,
+                    minutes,
+                    seconds,
+                    milliseconds,
+                    microseconds,
+                    nanoseconds,
                 })
             }
         }
     }
+}
+
+fn validate_duration_values(values: DurationValues) -> Result<DurationValues, VmError> {
+    let mut sign = 0_i8;
+    for value in [
+        values.years,
+        values.months,
+        values.weeks,
+        values.days,
+        values.hours,
+        values.minutes,
+        values.seconds,
+        values.milliseconds,
+        values.microseconds,
+        values.nanoseconds,
+    ] {
+        duration_integer(value)?;
+        if value != 0.0 {
+            let next = if value < 0.0 { -1 } else { 1 };
+            if sign != 0 && sign != next {
+                return Err(VmError::range(
+                    "Temporal.Duration fields must have the same sign",
+                ));
+            }
+            sign = next;
+        }
+    }
+    Ok(values)
 }
 
 fn duration_this_values(
@@ -3036,13 +3443,93 @@ fn duration_additive(
 }
 
 fn temporal_duration_round(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let values = duration_this_values(context, &this_value)?;
-    create_duration_with_default_prototype(context, balance_duration(values))
+    let options = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let (largest_unit, smallest_unit, increment, mode) =
+        duration_round_options(vm, context, options, values)?;
+    let quantum = temporal_unit_nanoseconds(&smallest_unit)
+        .checked_mul(increment as i128)
+        .ok_or_else(|| VmError::range("invalid Temporal rounding increment"))?;
+    let total = duration_order_total(values).round() as i128;
+    let rounded = round_signed_i128(total, quantum, mode);
+    create_duration_from_nanoseconds(context, rounded, &largest_unit)
+}
+
+fn duration_largest_unit(values: DurationValues) -> String {
+    [
+        ("year", values.years),
+        ("month", values.months),
+        ("week", values.weeks),
+        ("day", values.days),
+        ("hour", values.hours),
+        ("minute", values.minutes),
+        ("second", values.seconds),
+        ("millisecond", values.milliseconds),
+        ("microsecond", values.microseconds),
+        ("nanosecond", values.nanoseconds),
+    ]
+    .into_iter()
+    .find(|(_, value)| *value != 0.0)
+    .map(|(unit, _)| unit.to_string())
+    .unwrap_or_else(|| "nanosecond".into())
+}
+
+fn duration_round_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    values: DurationValues,
+) -> Result<(String, String, u64, TemporalRoundMode), VmError> {
+    if let JsValue::String(unit) = value {
+        let smallest = normalize_temporal_unit(unit)?;
+        let largest = duration_largest_unit(values);
+        let largest = if temporal_unit_nanoseconds(&smallest) > temporal_unit_nanoseconds(&largest)
+        {
+            smallest.clone()
+        } else {
+            largest
+        };
+        return Ok((largest, smallest, 1, TemporalRoundMode::HalfExpand));
+    }
+    let object = context.require_object(&value, "Temporal.Duration.prototype.round options")?;
+    let largest = option_string(vm, context, object, "largestUnit")?;
+    let _relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
+    let increment = option_rounding_increment(vm, context, object)?;
+    let mode = temporal_round_mode(
+        option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+        TemporalRoundMode::HalfExpand,
+    )?;
+    let smallest = option_string(vm, context, object, "smallestUnit")?;
+    if largest.is_none() && smallest.is_none() {
+        return Err(VmError::range("largestUnit or smallestUnit is required"));
+    }
+    let input_largest = duration_largest_unit(values);
+    let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "nanosecond".into()))?;
+    let largest_unit = match largest.as_deref() {
+        Some("auto") | None => {
+            if temporal_unit_nanoseconds(&smallest_unit) > temporal_unit_nanoseconds(&input_largest)
+            {
+                smallest_unit.clone()
+            } else {
+                input_largest
+            }
+        }
+        Some(unit) => normalize_temporal_unit(unit.to_string())?,
+    };
+    if temporal_unit_nanoseconds(&largest_unit) < temporal_unit_nanoseconds(&smallest_unit) {
+        return Err(VmError::range(
+            "largestUnit must not be smaller than smallestUnit",
+        ));
+    }
+    if increment == 0 {
+        return Err(VmError::range("invalid Temporal rounding increment"));
+    }
+    Ok((largest_unit, smallest_unit, increment, mode))
 }
 
 fn temporal_duration_total(
@@ -3051,24 +3538,20 @@ fn temporal_duration_total(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let values = balance_duration(duration_this_values(context, &this_value)?);
+    let values = duration_this_values(context, &this_value)?;
     let unit = duration_total_unit(vm, context, arguments.first().cloned())?;
-    let total_ns = duration_time_nanoseconds(values);
+    let total_ns = duration_order_total(values);
     let value = match unit.as_str() {
-        "year" | "years" => values.years,
-        "month" | "months" => values.months + values.years * 12.0,
-        "week" | "weeks" => values.weeks,
-        "day" | "days" => values.days + total_ns / NS_PER_DAY,
-        "hour" | "hours" => (values.days * NS_PER_DAY + total_ns) / NS_PER_HOUR,
-        "minute" | "minutes" => (values.days * NS_PER_DAY + total_ns) / NS_PER_MINUTE,
-        "second" | "seconds" => (values.days * NS_PER_DAY + total_ns) / NS_PER_SECOND,
-        "millisecond" | "milliseconds" => {
-            (values.days * NS_PER_DAY + total_ns) / NS_PER_MILLISECOND
-        }
-        "microsecond" | "microseconds" => {
-            (values.days * NS_PER_DAY + total_ns) / NS_PER_MICROSECOND
-        }
-        "nanosecond" | "nanoseconds" => values.days * NS_PER_DAY + total_ns,
+        "year" => total_ns / (365.0 * NS_PER_DAY),
+        "month" => total_ns / (30.0 * NS_PER_DAY),
+        "week" => total_ns / (7.0 * NS_PER_DAY),
+        "day" => total_ns / NS_PER_DAY,
+        "hour" => total_ns / NS_PER_HOUR,
+        "minute" => total_ns / NS_PER_MINUTE,
+        "second" => total_ns / NS_PER_SECOND,
+        "millisecond" => total_ns / NS_PER_MILLISECOND,
+        "microsecond" => total_ns / NS_PER_MICROSECOND,
+        "nanosecond" => total_ns,
         _ => return Err(VmError::range("invalid Temporal.Duration total unit")),
     };
     Ok(JsValue::Number(value))
@@ -3080,13 +3563,18 @@ fn duration_total_unit(
     value: Option<JsValue>,
 ) -> Result<String, VmError> {
     match value.unwrap_or(JsValue::Undefined) {
-        JsValue::String(unit) => Ok(unit),
+        JsValue::String(unit) => normalize_temporal_unit(unit),
         JsValue::Object(object) => {
-            let unit = context.get_property(JsValue::Object(object), "unit")?;
-            vm.to_string_coerce(unit, context)
+            let _relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
+            let unit = temporal_get_property(vm, context, object, "unit")?;
+            if matches!(unit, JsValue::Undefined) {
+                return Err(VmError::range("Temporal.Duration total requires a unit"));
+            }
+            normalize_temporal_unit(vm.to_string_coerce(unit, context)?)
         }
+        JsValue::Undefined => Err(VmError::range("Temporal.Duration total requires a unit")),
         _ => Err(VmError::type_error(
-            "Temporal.Duration total requires a unit",
+            "Temporal.Duration total options must be an object or string",
         )),
     }
 }
@@ -3125,7 +3613,7 @@ fn duration_replacement(
     name: &str,
     current: f64,
 ) -> Result<f64, VmError> {
-    let value = context.get_property(JsValue::Object(object), name)?;
+    let value = temporal_get_property(vm, context, object, name)?;
     if matches!(value, JsValue::Undefined) {
         Ok(current)
     } else {
@@ -3249,13 +3737,27 @@ fn duration_sign(values: DurationValues) -> i8 {
     }
 }
 
+fn temporal_get_property(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    name: &str,
+) -> Result<JsValue, VmError> {
+    vm.get_property_value_with_receiver_from_builtin(
+        JsValue::Object(object),
+        JsValue::Object(object),
+        name,
+        context,
+    )
+}
+
 fn temporal_object_number(
     vm: &mut Vm,
     context: &mut NativeContext,
     object: ObjectId,
     name: &str,
 ) -> Result<f64, VmError> {
-    let value = context.get_property(JsValue::Object(object), name)?;
+    let value = temporal_get_property(vm, context, object, name)?;
     if matches!(value, JsValue::Undefined) {
         Ok(0.0)
     } else {
@@ -3263,47 +3765,144 @@ fn temporal_object_number(
     }
 }
 
+fn temporal_required_object_number(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    name: &str,
+) -> Result<f64, VmError> {
+    let value = temporal_get_property(vm, context, object, name)?;
+    if matches!(value, JsValue::Undefined) {
+        Err(VmError::type_error(format!(
+            "Temporal property `{name}` is required"
+        )))
+    } else {
+        vm.to_number(value, context)
+    }
+}
+
+fn temporal_required_month_from_object(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+) -> Result<f64, VmError> {
+    let month_value = temporal_get_property(vm, context, object, "month")?;
+    if !matches!(month_value, JsValue::Undefined) {
+        return Ok(vm.to_number(month_value, context)?.trunc());
+    }
+    let month_code_value = temporal_get_property(vm, context, object, "monthCode")?;
+    if matches!(month_code_value, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal property `month` or `monthCode` is required",
+        ));
+    }
+    let month_code = vm.to_string_coerce(month_code_value, context)?;
+    parse_month_code(&month_code).ok_or_else(|| VmError::range("invalid Temporal monthCode"))
+}
+
 fn parse_duration(text: &str) -> Option<DurationValues> {
-    let mut chars = text.strip_prefix('P')?.chars().peekable();
+    let text = text.trim();
+    let (duration_sign, body) = if let Some(body) = text.strip_prefix('-') {
+        (-1.0, body)
+    } else if let Some(body) = text.strip_prefix('+') {
+        (1.0, body)
+    } else {
+        (1.0, text)
+    };
+    let mut chars = body.strip_prefix('P')?.chars().peekable();
     let mut values = DurationValues::default();
     let mut in_time = false;
+    let mut saw_part = false;
+    let mut seen = std::collections::HashSet::new();
     while let Some(ch) = chars.peek().copied() {
         if ch == 'T' {
+            if in_time {
+                return None;
+            }
             in_time = true;
             chars.next();
             continue;
         }
         let mut number = String::new();
         while let Some(digit) = chars.peek().copied() {
-            if digit.is_ascii_digit() || digit == '-' || digit == '+' || digit == '.' {
+            if digit.is_ascii_digit() || digit == '.' {
                 number.push(digit);
                 chars.next();
             } else {
                 break;
             }
         }
+        if number.is_empty() || number == "." {
+            return None;
+        }
         let amount = number.parse::<f64>().ok()?;
-        match chars.next()? {
-            'Y' => values.years = amount,
-            'M' if in_time => values.minutes = amount,
-            'M' => values.months = amount,
-            'W' => values.weeks = amount,
-            'D' => values.days = amount,
-            'H' => values.hours = amount,
-            'S' => {
-                let seconds = amount.trunc();
-                let fraction = (amount.abs() - amount.abs().trunc()) * 1_000_000_000.0;
-                let sign = if amount.is_sign_negative() { -1.0 } else { 1.0 };
-                values.seconds = seconds;
-                let nanos = fraction.round();
-                values.milliseconds = sign * (nanos / 1_000_000.0).floor();
-                values.microseconds = sign * ((nanos % 1_000_000.0) / 1_000.0).floor();
-                values.nanoseconds = sign * (nanos % 1_000.0);
+        if !amount.is_finite() {
+            return None;
+        }
+        let designator = chars.next()?;
+        let key = if in_time && designator == 'M' {
+            "time-minute"
+        } else {
+            match designator {
+                'Y' => "year",
+                'M' => "month",
+                'W' => "week",
+                'D' => "day",
+                'H' => "hour",
+                'S' => "second",
+                _ => return None,
+            }
+        };
+        if !seen.insert(key) {
+            return None;
+        }
+        saw_part = true;
+        let signed = duration_sign * amount;
+        match (designator, in_time) {
+            ('Y', false) => values.years = signed,
+            ('M', false) => values.months = signed,
+            ('W', false) => values.weeks = signed,
+            ('D', false) => values.days = signed,
+            ('H', true) => {
+                let total = (signed * NS_PER_HOUR).round();
+                let balanced = balance_duration(DurationValues {
+                    nanoseconds: total,
+                    ..DurationValues::default()
+                });
+                values.hours += balanced.hours;
+                values.minutes += balanced.minutes;
+                values.seconds += balanced.seconds;
+                values.milliseconds += balanced.milliseconds;
+                values.microseconds += balanced.microseconds;
+                values.nanoseconds += balanced.nanoseconds;
+            }
+            ('M', true) => {
+                let total = (signed * NS_PER_MINUTE).round();
+                let balanced = balance_duration(DurationValues {
+                    nanoseconds: total,
+                    ..DurationValues::default()
+                });
+                values.minutes += balanced.minutes;
+                values.seconds += balanced.seconds;
+                values.milliseconds += balanced.milliseconds;
+                values.microseconds += balanced.microseconds;
+                values.nanoseconds += balanced.nanoseconds;
+            }
+            ('S', true) => {
+                let total = (signed * NS_PER_SECOND).round();
+                let balanced = balance_duration(DurationValues {
+                    nanoseconds: total,
+                    ..DurationValues::default()
+                });
+                values.seconds += balanced.seconds;
+                values.milliseconds += balanced.milliseconds;
+                values.microseconds += balanced.microseconds;
+                values.nanoseconds += balanced.nanoseconds;
             }
             _ => return None,
         }
     }
-    Some(values)
+    saw_part.then_some(values)
 }
 
 fn temporal_duration_to_string(
@@ -3336,7 +3935,13 @@ fn push_duration_part(text: &mut String, value: f64, suffix: &str) {
 }
 
 fn format_duration(values: DurationValues) -> String {
-    let mut text = String::from("P");
+    let negative = duration_sign(values) < 0;
+    let values = values.map(f64::abs);
+    let mut text = if negative {
+        String::from("-P")
+    } else {
+        String::from("P")
+    };
     push_duration_part(&mut text, values.years, "Y");
     push_duration_part(&mut text, values.months, "M");
     push_duration_part(&mut text, values.weeks, "W");
@@ -3344,16 +3949,35 @@ fn format_duration(values: DurationValues) -> String {
     let mut time = String::new();
     push_duration_part(&mut time, values.hours, "H");
     push_duration_part(&mut time, values.minutes, "M");
-    let seconds = values.seconds
-        + values.milliseconds / 1_000.0
-        + values.microseconds / 1_000_000.0
-        + values.nanoseconds / 1_000_000_000.0;
-    push_duration_part(&mut time, seconds, "S");
+    let subsecond_ns = (values.milliseconds as u128)
+        .saturating_mul(1_000_000)
+        .saturating_add((values.microseconds as u128).saturating_mul(1_000))
+        .saturating_add(values.nanoseconds as u128);
+    if values.seconds != 0.0 || subsecond_ns != 0 {
+        time.push_str(
+            &JsValue::Number(values.seconds)
+                .to_js_string()
+                .unwrap_or_default(),
+        );
+        if subsecond_ns != 0 {
+            let mut fraction = format!("{subsecond_ns:09}");
+            while fraction.ends_with('0') {
+                fraction.pop();
+            }
+            time.push('.');
+            time.push_str(&fraction);
+        }
+        time.push('S');
+    }
     if !time.is_empty() {
         text.push('T');
         text.push_str(&time);
     }
-    if text == "P" { "PT0S".into() } else { text }
+    if text == "P" || text == "-P" {
+        "PT0S".into()
+    } else {
+        text
+    }
 }
 
 fn install_temporal_instant(
@@ -3477,7 +4101,10 @@ fn create_instant_from_epoch_ns(
     prototype: ObjectId,
     epoch_ns: i128,
 ) -> Result<JsValue, VmError> {
-    let epoch_ms = time_clip(epoch_ns as f64 / 1_000_000.0);
+    if !is_valid_instant_ns(epoch_ns) {
+        return Err(VmError::range("invalid Temporal.Instant"));
+    }
+    let epoch_ms = epoch_ns.div_euclid(NS_PER_MILLISECOND_I128) as f64;
     create_temporal_object(
         context,
         prototype,
@@ -3513,7 +4140,7 @@ fn temporal_instant_epoch_nanoseconds_get(
 }
 
 fn temporal_instant_construct(
-    vm: &mut Vm,
+    _vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -3521,10 +4148,12 @@ fn temporal_instant_construct(
     let prototype = context
         .constructor_prototype(&new_target)?
         .ok_or_else(|| VmError::runtime("Temporal.Instant prototype missing"))?;
-    let epoch_ns = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
-        JsValue::BigInt(value) => bigint_to_i128_saturating(&value),
-        value => vm.to_number(value, context)? as i128,
+    let Some(argument) = arguments.first().cloned() else {
+        return Err(VmError::type_error(
+            "Temporal.Instant requires epochNanoseconds",
+        ));
     };
+    let epoch_ns = bigint_to_i128_saturating(&temporal_to_bigint(_vm, context, argument)?);
     create_instant_from_epoch_ns(context, prototype, epoch_ns)
 }
 
@@ -3546,19 +4175,32 @@ fn temporal_instant_from(
 ) -> Result<JsValue, VmError> {
     let prototype = temporal_instant_constructor_prototype(context)?;
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let ms = match item {
-        JsValue::String(text) => parse_iso_date_string(&text).unwrap_or(f64::NAN),
+    let epoch_ns = match item {
+        JsValue::Undefined | JsValue::Null => {
+            return Err(VmError::type_error(
+                "Temporal.Instant.from requires an instant value",
+            ));
+        }
+        JsValue::String(text) => {
+            parse_instant_string(&text).ok_or_else(|| VmError::range("invalid Temporal.Instant"))?
+        }
         value => {
             if let Some(object) = context.value_object(&value)
                 && own_string(context, object, TEMPORAL_KIND).as_deref() == Some("Instant")
             {
-                temporal_number_slot(context, object, "epochMilliseconds")
+                instant_epoch_ns(context, object)
+            } else if let Some(object) = context.value_object(&value)
+                && own_string(context, object, TEMPORAL_KIND).as_deref() == Some("ZonedDateTime")
+            {
+                zoned_date_time_epoch_ns(context, object)
             } else {
-                vm.to_number(value, context)?
+                let text = vm.to_string_coerce(value, context)?;
+                parse_instant_string(&text)
+                    .ok_or_else(|| VmError::range("invalid Temporal.Instant"))?
             }
         }
     };
-    create_instant(context, prototype, ms)
+    create_instant_from_epoch_ns(context, prototype, epoch_ns)
 }
 
 fn temporal_instant_from_epoch_milliseconds(
@@ -3568,24 +4210,27 @@ fn temporal_instant_from_epoch_milliseconds(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let prototype = temporal_instant_constructor_prototype(context)?;
-    let ms = vm.to_number(
-        arguments.first().cloned().unwrap_or(JsValue::Undefined),
-        context,
-    )?;
-    create_instant(context, prototype, ms)
+    let argument = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let ms = vm.to_number(argument, context)?;
+    if !ms.is_finite() || ms.fract() != 0.0 {
+        return Err(VmError::range("invalid Temporal.Instant epochMilliseconds"));
+    }
+    create_instant_from_epoch_ns(context, prototype, (ms as i128) * NS_PER_MILLISECOND_I128)
 }
 
 fn temporal_instant_from_epoch_nanoseconds(
-    vm: &mut Vm,
+    _vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let prototype = temporal_instant_constructor_prototype(context)?;
-    let epoch_ns = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
-        JsValue::BigInt(value) => bigint_to_i128_saturating(&value),
-        value => vm.to_number(value, context)? as i128,
+    let Some(argument) = arguments.first().cloned() else {
+        return Err(VmError::type_error(
+            "Temporal.Instant.fromEpochNanoseconds requires an argument",
+        ));
     };
+    let epoch_ns = bigint_to_i128_saturating(&temporal_to_bigint(_vm, context, argument)?);
     create_instant_from_epoch_ns(context, prototype, epoch_ns)
 }
 
@@ -3596,26 +4241,40 @@ fn temporal_instant_from_epoch_seconds(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let prototype = temporal_instant_constructor_prototype(context)?;
-    let seconds = vm.to_number(
-        arguments.first().cloned().unwrap_or(JsValue::Undefined),
-        context,
-    )?;
-    create_instant(context, prototype, seconds * 1_000.0)
+    let argument = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let seconds = vm.to_number(argument, context)?;
+    if !seconds.is_finite() || seconds.fract() != 0.0 {
+        return Err(VmError::range("invalid Temporal.Instant epochSeconds"));
+    }
+    create_instant_from_epoch_ns(context, prototype, (seconds as i128) * NS_PER_SECOND_I128)
 }
 
-fn instant_ms_from_value(
+fn instant_ns_from_value(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: JsValue,
-) -> Result<f64, VmError> {
+) -> Result<i128, VmError> {
     if let Some(object) = context.value_object(&value)
         && own_string(context, object, TEMPORAL_KIND).as_deref() == Some("Instant")
     {
-        return Ok(temporal_number_slot(context, object, "epochMilliseconds"));
+        return Ok(instant_epoch_ns(context, object));
+    }
+    if let Some(object) = context.value_object(&value)
+        && own_string(context, object, TEMPORAL_KIND).as_deref() == Some("ZonedDateTime")
+    {
+        return Ok(zoned_date_time_epoch_ns(context, object));
     }
     match value {
-        JsValue::String(text) => Ok(parse_iso_date_string(&text).unwrap_or(f64::NAN)),
-        other => vm.to_number(other, context),
+        JsValue::Undefined | JsValue::Null => Err(VmError::type_error(
+            "Temporal.Instant.compare requires instant values",
+        )),
+        JsValue::String(text) => {
+            parse_instant_string(&text).ok_or_else(|| VmError::range("invalid Temporal.Instant"))
+        }
+        other => {
+            let text = vm.to_string_coerce(other, context)?;
+            parse_instant_string(&text).ok_or_else(|| VmError::range("invalid Temporal.Instant"))
+        }
     }
 }
 
@@ -3625,12 +4284,12 @@ fn temporal_instant_compare(
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let left = instant_ms_from_value(
+    let left = instant_ns_from_value(
         vm,
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let right = instant_ms_from_value(
+    let right = instant_ns_from_value(
         vm,
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
@@ -3645,17 +4304,61 @@ fn temporal_instant_compare(
 }
 
 fn temporal_instant_to_string(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "Instant")?;
-    Ok(JsValue::String(format_iso(temporal_number_slot(
-        context,
-        object,
-        "epochMilliseconds",
-    ))?))
+    let option_value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let options = temporal_string_options(vm, context, option_value.clone())?;
+    let time_zone = if matches!(option_value, JsValue::Undefined) {
+        None
+    } else {
+        let option_object =
+            context.require_object(&option_value, "Temporal.Instant toString options")?;
+        let value = temporal_get_property(vm, context, option_object, "timeZone")?;
+        if matches!(value, JsValue::Undefined) {
+            None
+        } else if matches!(value, JsValue::Null) {
+            return Err(VmError::type_error("invalid Temporal time zone"));
+        } else {
+            Some(vm.to_string_coerce(value, context)?)
+        }
+    };
+    let epoch_ns = round_i128(
+        instant_epoch_ns(context, object),
+        options.quantum,
+        options.mode,
+    );
+    let (offset_ns, suffix) = match time_zone.as_deref() {
+        None => (0, "Z".to_string()),
+        Some("UTC") => (0, "+00:00".to_string()),
+        Some(zone) => {
+            let offset = parse_time_zone_offset_ns(zone)
+                .ok_or_else(|| VmError::range("invalid Temporal time zone"))?;
+            (offset, zone.to_string())
+        }
+    };
+    let local_ns = epoch_ns
+        .checked_add(offset_ns)
+        .ok_or_else(|| VmError::range("Temporal.Instant is out of range"))?;
+    let day_number = i64::try_from(local_ns.div_euclid(NS_PER_DAY_I128))
+        .map_err(|_| VmError::range("Temporal.Instant is out of range"))?;
+    let (year, month, day) = civil_from_days(day_number);
+    let time = format_plain_time_precision(
+        plain_time_from_nanoseconds_i128(local_ns.rem_euclid(NS_PER_DAY_I128)),
+        options.precision,
+        options.minute_only,
+    );
+    Ok(JsValue::String(format!(
+        "{}-{}-{}T{}{}",
+        iso_year(year),
+        two_digit(month),
+        two_digit(day),
+        time,
+        suffix
+    )))
 }
 
 fn temporal_instant_additive(
@@ -3663,7 +4366,7 @@ fn temporal_instant_additive(
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
-    sign: f64,
+    sign: i128,
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "Instant")?;
     let duration = duration_values_from_value(
@@ -3671,13 +4374,52 @@ fn temporal_instant_additive(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let delta = (sign * duration_order_total(duration)).trunc() as i128;
+    if duration.years != 0.0
+        || duration.months != 0.0
+        || duration.weeks != 0.0
+        || duration.days != 0.0
+    {
+        return Err(VmError::range(
+            "Temporal.Instant arithmetic does not accept calendar units",
+        ));
+    }
+    let components = [
+        (duration.hours, NS_PER_HOUR_I128),
+        (duration.minutes, NS_PER_MINUTE_I128),
+        (duration.seconds, NS_PER_SECOND_I128),
+        (duration.milliseconds, NS_PER_MILLISECOND_I128),
+        (duration.microseconds, 1_000),
+        (duration.nanoseconds, 1),
+    ];
+    let mut component_sign = 0_i8;
+    let mut delta = 0_i128;
+    for (value, scale) in components {
+        if !value.is_finite() || value.fract() != 0.0 {
+            return Err(VmError::range(
+                "Temporal duration fields must be finite integers",
+            ));
+        }
+        if value != 0.0 {
+            let next_sign = if value < 0.0 { -1 } else { 1 };
+            if component_sign != 0 && component_sign != next_sign {
+                return Err(VmError::range(
+                    "Temporal duration fields must have the same sign",
+                ));
+            }
+            component_sign = next_sign;
+        }
+        delta = delta
+            .checked_add((value as i128).saturating_mul(scale))
+            .ok_or_else(|| VmError::range("Temporal duration is out of range"))?;
+    }
+    delta = delta
+        .checked_mul(sign)
+        .ok_or_else(|| VmError::range("Temporal duration is out of range"))?;
+    let result = instant_epoch_ns(context, object)
+        .checked_add(delta)
+        .ok_or_else(|| VmError::range("Temporal.Instant is out of range"))?;
     let prototype = temporal_instant_constructor_prototype(context)?;
-    create_instant_from_epoch_ns(
-        context,
-        prototype,
-        instant_epoch_ns(context, object).saturating_add(delta),
-    )
+    create_instant_from_epoch_ns(context, prototype, result)
 }
 
 fn temporal_instant_add(
@@ -3686,7 +4428,7 @@ fn temporal_instant_add(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_instant_additive(vm, context, this_value, arguments, 1.0)
+    temporal_instant_additive(vm, context, this_value, arguments, 1)
 }
 
 fn temporal_instant_subtract(
@@ -3695,7 +4437,7 @@ fn temporal_instant_subtract(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_instant_additive(vm, context, this_value, arguments, -1.0)
+    temporal_instant_additive(vm, context, this_value, arguments, -1)
 }
 
 fn temporal_instant_equals(
@@ -3718,14 +4460,256 @@ fn temporal_instant_equals(
 }
 
 fn temporal_instant_round(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "Instant")?;
+    let options = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let (smallest_unit, increment, mode) = instant_round_options(vm, context, options)?;
+    let quantum = temporal_unit_nanoseconds(&smallest_unit)
+        .checked_mul(increment as i128)
+        .ok_or_else(|| VmError::range("invalid Temporal rounding increment"))?;
+    let rounded = round_i128(instant_epoch_ns(context, object), quantum, mode);
     let prototype = temporal_instant_constructor_prototype(context)?;
-    create_instant_from_epoch_ns(context, prototype, instant_epoch_ns(context, object))
+    create_instant_from_epoch_ns(context, prototype, rounded)
+}
+
+#[derive(Clone, Copy)]
+enum TemporalRoundMode {
+    Ceil,
+    Expand,
+    Floor,
+    Trunc,
+    HalfCeil,
+    HalfExpand,
+    HalfFloor,
+    HalfTrunc,
+    HalfEven,
+}
+
+fn normalize_temporal_unit(unit: String) -> Result<String, VmError> {
+    let normalized = unit.strip_suffix('s').unwrap_or(&unit).to_string();
+    match normalized.as_str() {
+        "year" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond"
+        | "microsecond" | "nanosecond" => Ok(normalized),
+        _ => Err(VmError::range("invalid Temporal unit")),
+    }
+}
+
+fn temporal_unit_nanoseconds(unit: &str) -> i128 {
+    match unit {
+        "year" => 365 * NS_PER_DAY_I128,
+        "month" => 30 * NS_PER_DAY_I128,
+        "week" => 7 * NS_PER_DAY_I128,
+        "day" => NS_PER_DAY_I128,
+        "hour" => NS_PER_HOUR_I128,
+        "minute" => NS_PER_MINUTE_I128,
+        "second" => NS_PER_SECOND_I128,
+        "millisecond" => NS_PER_MILLISECOND_I128,
+        "microsecond" => 1_000,
+        _ => 1,
+    }
+}
+
+fn temporal_round_mode(
+    text: String,
+    default: TemporalRoundMode,
+) -> Result<TemporalRoundMode, VmError> {
+    if text.is_empty() {
+        return Ok(default);
+    }
+    match text.as_str() {
+        "ceil" => Ok(TemporalRoundMode::Ceil),
+        "expand" => Ok(TemporalRoundMode::Expand),
+        "floor" => Ok(TemporalRoundMode::Floor),
+        "trunc" => Ok(TemporalRoundMode::Trunc),
+        "halfCeil" => Ok(TemporalRoundMode::HalfCeil),
+        "halfExpand" => Ok(TemporalRoundMode::HalfExpand),
+        "halfFloor" => Ok(TemporalRoundMode::HalfFloor),
+        "halfTrunc" => Ok(TemporalRoundMode::HalfTrunc),
+        "halfEven" => Ok(TemporalRoundMode::HalfEven),
+        _ => Err(VmError::range("invalid Temporal rounding mode")),
+    }
+}
+
+fn round_i128(value: i128, quantum: i128, mode: TemporalRoundMode) -> i128 {
+    let floor = value.div_euclid(quantum) * quantum;
+    let ceil = if value.rem_euclid(quantum) == 0 {
+        floor
+    } else {
+        floor + quantum
+    };
+    let trunc = floor;
+    let expand = ceil;
+    match mode {
+        TemporalRoundMode::Floor => floor,
+        TemporalRoundMode::Ceil => ceil,
+        TemporalRoundMode::Trunc => trunc,
+        TemporalRoundMode::Expand => expand,
+        half_mode => {
+            let distance_down = value - floor;
+            let distance_up = ceil - value;
+            if distance_down < distance_up {
+                floor
+            } else if distance_up < distance_down {
+                ceil
+            } else {
+                match half_mode {
+                    TemporalRoundMode::HalfCeil => ceil,
+                    TemporalRoundMode::HalfFloor => floor,
+                    TemporalRoundMode::HalfTrunc => trunc,
+                    TemporalRoundMode::HalfEven => {
+                        if floor.div_euclid(quantum) % 2 == 0 {
+                            floor
+                        } else {
+                            ceil
+                        }
+                    }
+                    _ => expand,
+                }
+            }
+        }
+    }
+}
+
+fn round_signed_i128(value: i128, quantum: i128, mode: TemporalRoundMode) -> i128 {
+    let quotient = value / quantum;
+    let trunc = quotient * quantum;
+    let remainder = value % quantum;
+    if remainder == 0 {
+        return value;
+    }
+    let expand = trunc + if value < 0 { -quantum } else { quantum };
+    match mode {
+        TemporalRoundMode::Trunc => trunc,
+        TemporalRoundMode::Expand => expand,
+        TemporalRoundMode::Floor => {
+            if value < 0 {
+                expand
+            } else {
+                trunc
+            }
+        }
+        TemporalRoundMode::Ceil => {
+            if value < 0 {
+                trunc
+            } else {
+                expand
+            }
+        }
+        half_mode => {
+            let twice = remainder.unsigned_abs() * 2;
+            let quantum_abs = quantum as u128;
+            if twice < quantum_abs {
+                trunc
+            } else if twice > quantum_abs {
+                expand
+            } else {
+                match half_mode {
+                    TemporalRoundMode::HalfCeil => {
+                        if value < 0 {
+                            trunc
+                        } else {
+                            expand
+                        }
+                    }
+                    TemporalRoundMode::HalfFloor => {
+                        if value < 0 {
+                            expand
+                        } else {
+                            trunc
+                        }
+                    }
+                    TemporalRoundMode::HalfTrunc => trunc,
+                    TemporalRoundMode::HalfEven => {
+                        if quotient % 2 == 0 {
+                            trunc
+                        } else {
+                            expand
+                        }
+                    }
+                    _ => expand,
+                }
+            }
+        }
+    }
+}
+
+fn option_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    name: &str,
+) -> Result<Option<String>, VmError> {
+    let value = temporal_get_property(vm, context, object, name)?;
+    if matches!(value, JsValue::Undefined) {
+        Ok(None)
+    } else {
+        Ok(Some(vm.to_string_coerce(value, context)?))
+    }
+}
+
+fn option_rounding_increment(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+) -> Result<u64, VmError> {
+    let value = temporal_get_property(vm, context, object, "roundingIncrement")?;
+    if matches!(value, JsValue::Undefined) {
+        return Ok(1);
+    }
+    let number = vm.to_number(value, context)?;
+    if !number.is_finite() || number < 1.0 {
+        return Err(VmError::range("invalid Temporal rounding increment"));
+    }
+    Ok(number.trunc() as u64)
+}
+
+fn validate_rounding_increment(unit: &str, increment: u64) -> Result<(), VmError> {
+    let maximum = match unit {
+        "hour" => 24,
+        "minute" => 24 * 60,
+        "second" => 24 * 60 * 60,
+        "millisecond" => 24 * 60 * 60 * 1_000,
+        "microsecond" => 24 * 60 * 60 * 1_000_000,
+        "nanosecond" => 24 * 60 * 60 * 1_000_000_000,
+        _ => 1,
+    };
+    if increment == 0 || increment > maximum || maximum % increment != 0 {
+        Err(VmError::range("invalid Temporal rounding increment"))
+    } else {
+        Ok(())
+    }
+}
+
+fn instant_round_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<(String, u64, TemporalRoundMode), VmError> {
+    if let JsValue::String(unit) = value {
+        let unit = normalize_temporal_unit(unit)?;
+        if matches!(unit.as_str(), "year" | "month" | "week" | "day") {
+            return Err(VmError::range("day is not a valid Instant rounding unit"));
+        }
+        return Ok((unit, 1, TemporalRoundMode::HalfExpand));
+    }
+    let object = context.require_object(&value, "Temporal.Instant.prototype.round options")?;
+    let increment = option_rounding_increment(vm, context, object)?;
+    let mode = temporal_round_mode(
+        option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+        TemporalRoundMode::HalfExpand,
+    )?;
+    let unit = option_string(vm, context, object, "smallestUnit")?
+        .ok_or_else(|| VmError::range("smallestUnit is required"))?;
+    let unit = normalize_temporal_unit(unit)?;
+    if matches!(unit.as_str(), "year" | "month" | "week" | "day") {
+        return Err(VmError::range("day is not a valid Instant rounding unit"));
+    }
+    validate_rounding_increment(&unit, increment)?;
+    Ok((unit, increment, mode))
 }
 
 fn temporal_instant_difference(
@@ -3733,7 +4717,7 @@ fn temporal_instant_difference(
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
-    sign: f64,
+    sign: i128,
 ) -> Result<JsValue, VmError> {
     let this_object = require_temporal_kind(context, &this_value, "Instant")?;
     let other = temporal_instant_from(
@@ -3743,15 +4727,131 @@ fn temporal_instant_difference(
         &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
     )?;
     let other_object = context.value_object(&other).unwrap();
-    create_duration_with_default_prototype(
+    let options = instant_difference_options(
+        vm,
         context,
-        balance_duration(DurationValues {
-            nanoseconds: sign
-                * (instant_epoch_ns(context, other_object) - instant_epoch_ns(context, this_object))
-                    as f64,
-            ..DurationValues::default()
-        }),
-    )
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let difference =
+        sign * (instant_epoch_ns(context, other_object) - instant_epoch_ns(context, this_object));
+    let quantum = temporal_unit_nanoseconds(&options.smallest_unit) * options.increment as i128;
+    let rounded = round_i128(difference, quantum, options.mode);
+    create_duration_from_nanoseconds(context, rounded, &options.largest_unit)
+}
+
+struct InstantDifferenceOptions {
+    largest_unit: String,
+    smallest_unit: String,
+    increment: u64,
+    mode: TemporalRoundMode,
+}
+
+fn instant_difference_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<InstantDifferenceOptions, VmError> {
+    let object = if matches!(value, JsValue::Undefined) {
+        None
+    } else {
+        Some(context.require_object(&value, "Temporal.Instant difference options")?)
+    };
+    let largest = match object {
+        Some(object) => option_string(vm, context, object, "largestUnit")?,
+        None => None,
+    };
+    let increment = match object {
+        Some(object) => option_rounding_increment(vm, context, object)?,
+        None => 1,
+    };
+    let mode = match object {
+        Some(object) => temporal_round_mode(
+            option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+            TemporalRoundMode::Trunc,
+        )?,
+        None => TemporalRoundMode::Trunc,
+    };
+    let smallest = match object {
+        Some(object) => option_string(vm, context, object, "smallestUnit")?,
+        None => None,
+    };
+    let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "nanosecond".into()))?;
+    let largest_unit = normalize_temporal_unit(largest.unwrap_or_else(|| {
+        if temporal_unit_nanoseconds(&smallest_unit) > NS_PER_SECOND_I128 {
+            smallest_unit.clone()
+        } else {
+            "second".into()
+        }
+    }))?;
+    if matches!(largest_unit.as_str(), "year" | "month" | "week" | "day")
+        || matches!(smallest_unit.as_str(), "year" | "month" | "week" | "day")
+    {
+        return Err(VmError::range("day is not a valid Instant difference unit"));
+    }
+    if temporal_unit_nanoseconds(&largest_unit) < temporal_unit_nanoseconds(&smallest_unit) {
+        return Err(VmError::range(
+            "largestUnit must not be smaller than smallestUnit",
+        ));
+    }
+    let maximum = match smallest_unit.as_str() {
+        "hour" => 24,
+        "minute" | "second" => 60,
+        "millisecond" | "microsecond" | "nanosecond" => 1_000,
+        _ => 1,
+    };
+    if increment >= maximum || maximum % increment != 0 {
+        return Err(VmError::range("invalid Temporal rounding increment"));
+    }
+    Ok(InstantDifferenceOptions {
+        largest_unit,
+        smallest_unit,
+        increment,
+        mode,
+    })
+}
+
+fn create_duration_from_nanoseconds(
+    context: &mut NativeContext,
+    value: i128,
+    largest_unit: &str,
+) -> Result<JsValue, VmError> {
+    let sign = if value < 0 { -1.0 } else { 1.0 };
+    let mut remainder = value.unsigned_abs();
+    let mut values = DurationValues::default();
+    let units = [
+        ("year", 365 * NS_PER_DAY_I128),
+        ("month", 30 * NS_PER_DAY_I128),
+        ("week", 7 * NS_PER_DAY_I128),
+        ("day", NS_PER_DAY_I128),
+        ("hour", NS_PER_HOUR_I128),
+        ("minute", NS_PER_MINUTE_I128),
+        ("second", NS_PER_SECOND_I128),
+        ("millisecond", NS_PER_MILLISECOND_I128),
+        ("microsecond", 1_000),
+        ("nanosecond", 1),
+    ];
+    let start = units
+        .iter()
+        .position(|(unit, _)| *unit == largest_unit)
+        .unwrap_or(3);
+    for (unit, size) in &units[start..] {
+        let size = *size as u128;
+        let part = (remainder / size) as f64 * sign;
+        remainder %= size;
+        match *unit {
+            "year" => values.years = part,
+            "month" => values.months = part,
+            "week" => values.weeks = part,
+            "day" => values.days = part,
+            "hour" => values.hours = part,
+            "minute" => values.minutes = part,
+            "second" => values.seconds = part,
+            "millisecond" => values.milliseconds = part,
+            "microsecond" => values.microseconds = part,
+            _ => values.nanoseconds = part,
+        }
+    }
+    create_duration_with_default_prototype(context, values)
 }
 
 fn temporal_instant_until(
@@ -3760,7 +4860,7 @@ fn temporal_instant_until(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_instant_difference(vm, context, this_value, arguments, 1.0)
+    temporal_instant_difference(vm, context, this_value, arguments, 1)
 }
 
 fn temporal_instant_since(
@@ -3769,7 +4869,7 @@ fn temporal_instant_since(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_instant_difference(vm, context, this_value, arguments, -1.0)
+    temporal_instant_difference(vm, context, this_value, arguments, -1)
 }
 
 fn temporal_instant_to_zoned_date_time_iso(
@@ -3997,21 +5097,7 @@ fn temporal_constructor_prototype(
 }
 
 fn parse_plain_date(text: &str) -> Option<(f64, f64, f64)> {
-    let date = text
-        .split('T')
-        .next()
-        .unwrap_or(text)
-        .split('[')
-        .next()
-        .unwrap_or(text);
-    let mut parts = date.split('-');
-    let year = parts.next()?.parse::<i32>().ok()?;
-    let month = parse_fixed_digits(parts.next()?, 2)?;
-    let day = parse_fixed_digits(parts.next()?, 2)?;
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((year as f64, month as f64, day as f64))
+    parse_temporal_plain_date_string(text)
 }
 
 fn temporal_plain_date_from(
@@ -4035,21 +5121,22 @@ fn temporal_plain_date_from(
                     temporal_number_slot(context, object, "day"),
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
-            } else {
-                let month_value = context.get_property(JsValue::Object(object), "month")?;
-                let month = if matches!(month_value, JsValue::Undefined) {
-                    let month_code_value =
-                        context.get_property(JsValue::Object(object), "monthCode")?;
-                    let month_code = vm.to_string_coerce(month_code_value, context)?;
-                    parse_month_code(&month_code)
-                        .ok_or_else(|| VmError::range("invalid Temporal.PlainDate monthCode"))?
-                } else {
-                    vm.to_number(month_value, context)?
-                };
+            } else if matches!(
+                own_string(context, object, TEMPORAL_KIND).as_deref(),
+                Some("PlainDateTime" | "ZonedDateTime")
+            ) {
                 (
-                    temporal_object_number(vm, context, object, "year")?,
+                    temporal_number_slot(context, object, "year"),
+                    temporal_number_slot(context, object, "month"),
+                    temporal_number_slot(context, object, "day"),
+                    own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                )
+            } else {
+                let month = temporal_required_month_from_object(vm, context, object)?;
+                (
+                    temporal_required_object_number(vm, context, object, "year")?,
                     month,
-                    temporal_object_number(vm, context, object, "day")?,
+                    temporal_required_object_number(vm, context, object, "day")?,
                     temporal_calendar_id_from_object(vm, context, object)?,
                 )
             }
@@ -4135,11 +5222,18 @@ fn temporal_date_replacement(
     name: &str,
     current: f64,
 ) -> Result<f64, VmError> {
-    let value = context.get_property(JsValue::Object(object), name)?;
+    let value = temporal_get_property(vm, context, object, name)?;
     if matches!(value, JsValue::Undefined) {
         Ok(current)
     } else {
-        Ok(vm.to_number(value, context)?.trunc())
+        let number = vm.to_number(value, context)?.trunc();
+        if number.is_finite() {
+            Ok(number)
+        } else {
+            Err(VmError::range(format!(
+                "Temporal {name} must be a finite number"
+            )))
+        }
     }
 }
 
@@ -4149,16 +5243,30 @@ fn temporal_month_from_object(
     object: ObjectId,
     current: f64,
 ) -> Result<f64, VmError> {
-    let month_value = context.get_property(JsValue::Object(object), "month")?;
-    if !matches!(month_value, JsValue::Undefined) {
-        return Ok(vm.to_number(month_value, context)?.trunc());
-    }
-    let month_code_value = context.get_property(JsValue::Object(object), "monthCode")?;
-    if matches!(month_code_value, JsValue::Undefined) {
-        Ok(current)
+    let month_value = temporal_get_property(vm, context, object, "month")?;
+    let month_code_value = temporal_get_property(vm, context, object, "monthCode")?;
+    let month_code = if matches!(month_code_value, JsValue::Undefined) {
+        None
     } else {
-        let month_code = vm.to_string_coerce(month_code_value, context)?;
-        parse_month_code(&month_code).ok_or_else(|| VmError::range("invalid Temporal monthCode"))
+        let value = vm.to_string_coerce(month_code_value, context)?;
+        Some(parse_month_code(&value).ok_or_else(|| VmError::range("invalid Temporal monthCode"))?)
+    };
+    let month = if matches!(month_value, JsValue::Undefined) {
+        None
+    } else {
+        let value = vm.to_number(month_value, context)?.trunc();
+        if !value.is_finite() {
+            return Err(VmError::range("Temporal month must be a finite number"));
+        }
+        Some(value)
+    };
+    match (month, month_code) {
+        (Some(month), Some(month_code)) if month != month_code => {
+            Err(VmError::range("Temporal month and monthCode must agree"))
+        }
+        (Some(month), _) => Ok(month),
+        (_, Some(month_code)) => Ok(month_code),
+        (None, None) => Ok(current),
     }
 }
 
@@ -4168,35 +5276,219 @@ fn apply_duration_to_date(
     day: f64,
     duration: DurationValues,
     sign: f64,
-) -> (f64, f64, f64) {
+    reject_overflow: bool,
+) -> Result<(f64, f64, f64), VmError> {
     let year_i = year.trunc() as i32;
     let month_i = month.trunc() as i32;
     let month_delta = (sign * (duration.years * 12.0 + duration.months)).trunc() as i64;
-    let month_index = year_i as i64 * 12 + month_i as i64 - 1 + month_delta;
-    let new_year = month_index.div_euclid(12) as i32;
+    let month_index = (year_i as i64 * 12 + month_i as i64 - 1)
+        .checked_add(month_delta)
+        .ok_or_else(|| VmError::range("Temporal date is out of range"))?;
+    let new_year = i32::try_from(month_index.div_euclid(12))
+        .map_err(|_| VmError::range("Temporal date is out of range"))?;
     let new_month = month_index.rem_euclid(12) as u32 + 1;
-    let clamped_day = (day.trunc() as u32).min(month_day_count(new_year, new_month));
+    let requested_day = day.trunc() as u32;
+    let maximum_day = month_day_count(new_year, new_month);
+    if reject_overflow && requested_day > maximum_day {
+        return Err(VmError::range("Temporal date overflows the target month"));
+    }
+    let clamped_day = requested_day.min(maximum_day);
     let extra_days = (sign * (duration.weeks * 7.0 + duration.days)).trunc() as i64;
-    let day_number = days_from_civil(new_year, new_month, clamped_day) + extra_days;
+    let day_number = days_from_civil(new_year, new_month, clamped_day)
+        .checked_add(extra_days)
+        .ok_or_else(|| VmError::range("Temporal date is out of range"))?;
     let (year, month, day) = civil_from_days(day_number);
-    (year as f64, month as f64, day as f64)
+    Ok((year as f64, month as f64, day as f64))
 }
 
-fn duration_between_dates(
+fn temporal_overflow_reject(
+    vm: &mut Vm,
     context: &mut NativeContext,
+    value: JsValue,
+) -> Result<bool, VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok(false);
+    }
+    let object = context.require_object(&value, "Temporal overflow options")?;
+    let value = temporal_get_property(vm, context, object, "overflow")?;
+    if matches!(value, JsValue::Undefined) {
+        return Ok(false);
+    }
+    match vm.to_string_coerce(value, context)?.as_str() {
+        "constrain" => Ok(false),
+        "reject" => Ok(true),
+        _ => Err(VmError::range("invalid Temporal overflow option")),
+    }
+}
+
+fn reject_temporal_with_metadata(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+) -> Result<(), VmError> {
+    if own_string(context, object, TEMPORAL_KIND).is_some() {
+        return Err(VmError::type_error(
+            "Temporal with() property bag must not be a Temporal object",
+        ));
+    }
+    let calendar = temporal_get_property(vm, context, object, "calendar")?;
+    if !matches!(calendar, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal with() property bag must not include calendar",
+        ));
+    }
+    let time_zone = temporal_get_property(vm, context, object, "timeZone")?;
+    if !matches!(time_zone, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal with() property bag must not include timeZone",
+        ));
+    }
+    Ok(())
+}
+
+fn require_temporal_with_field(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    fields: &[&str],
+) -> Result<(), VmError> {
+    for field in fields {
+        if !matches!(
+            temporal_get_property(vm, context, object, field)?,
+            JsValue::Undefined
+        ) {
+            return Ok(());
+        }
+    }
+    Err(VmError::type_error(
+        "Temporal with() property bag must contain a supported field",
+    ))
+}
+
+struct DateDifferenceOptions {
+    largest_unit: String,
+    smallest_unit: String,
+    increment: u64,
+    mode: TemporalRoundMode,
+}
+
+fn date_difference_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<DateDifferenceOptions, VmError> {
+    let object = if matches!(value, JsValue::Undefined) {
+        None
+    } else {
+        Some(context.require_object(&value, "Temporal.PlainDate difference options")?)
+    };
+    let largest = match object {
+        Some(object) => option_string(vm, context, object, "largestUnit")?,
+        None => None,
+    };
+    let increment = match object {
+        Some(object) => option_rounding_increment(vm, context, object)?,
+        None => 1,
+    };
+    let mode = match object {
+        Some(object) => temporal_round_mode(
+            option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+            TemporalRoundMode::Trunc,
+        )?,
+        None => TemporalRoundMode::Trunc,
+    };
+    let smallest = match object {
+        Some(object) => option_string(vm, context, object, "smallestUnit")?,
+        None => None,
+    };
+    let largest_unit = normalize_temporal_unit(largest.unwrap_or_else(|| "day".into()))?;
+    let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "day".into()))?;
+    let valid = |unit: &str| matches!(unit, "year" | "month" | "week" | "day");
+    if !valid(&largest_unit) || !valid(&smallest_unit) {
+        return Err(VmError::range("invalid PlainDate difference unit"));
+    }
+    if temporal_unit_nanoseconds(&largest_unit) < temporal_unit_nanoseconds(&smallest_unit) {
+        return Err(VmError::range(
+            "largestUnit must not be smaller than smallestUnit",
+        ));
+    }
+    Ok(DateDifferenceOptions {
+        largest_unit,
+        smallest_unit,
+        increment,
+        mode,
+    })
+}
+
+fn date_parts(context: &NativeContext, object: ObjectId) -> (i32, u32, u32) {
+    (
+        temporal_number_slot(context, object, "year") as i32,
+        temporal_number_slot(context, object, "month") as u32,
+        temporal_number_slot(context, object, "day") as u32,
+    )
+}
+
+fn add_iso_months(year: i32, month: u32, day: u32, delta: i64) -> (i32, u32, u32) {
+    let index = year as i64 * 12 + month as i64 - 1 + delta;
+    let result_year = index.div_euclid(12) as i32;
+    let result_month = index.rem_euclid(12) as u32 + 1;
+    let result_day = day.min(month_day_count(result_year, result_month));
+    (result_year, result_month, result_day)
+}
+
+fn iso_date_difference_values(
+    context: &NativeContext,
     start: ObjectId,
     end: ObjectId,
-    sign: f64,
-) -> Result<JsValue, VmError> {
-    let start_days = plain_date_order_key(context, start);
-    let end_days = plain_date_order_key(context, end);
-    create_duration_with_default_prototype(
-        context,
-        DurationValues {
-            days: sign * (end_days - start_days) as f64,
+    largest_unit: &str,
+) -> DurationValues {
+    let (start_year, start_month, start_day) = date_parts(context, start);
+    let (end_year, end_month, end_day) = date_parts(context, end);
+    let start_number = days_from_civil(start_year, start_month, start_day);
+    let end_number = days_from_civil(end_year, end_month, end_day);
+    let total_days = end_number - start_number;
+    if largest_unit == "day" {
+        return DurationValues {
+            days: total_days as f64,
             ..DurationValues::default()
-        },
-    )
+        };
+    }
+    if largest_unit == "week" {
+        return DurationValues {
+            weeks: (total_days / 7) as f64,
+            days: (total_days % 7) as f64,
+            ..DurationValues::default()
+        };
+    }
+    let mut months =
+        (end_year as i64 * 12 + end_month as i64) - (start_year as i64 * 12 + start_month as i64);
+    let direction = total_days.signum();
+    let mut candidate = add_iso_months(start_year, start_month, start_day, months);
+    let mut candidate_number = days_from_civil(candidate.0, candidate.1, candidate.2);
+    if direction > 0 && candidate_number > end_number {
+        months -= 1;
+        candidate = add_iso_months(start_year, start_month, start_day, months);
+        candidate_number = days_from_civil(candidate.0, candidate.1, candidate.2);
+    } else if direction < 0 && candidate_number < end_number {
+        months += 1;
+        candidate = add_iso_months(start_year, start_month, start_day, months);
+        candidate_number = days_from_civil(candidate.0, candidate.1, candidate.2);
+    }
+    let days = end_number - candidate_number;
+    if largest_unit == "year" {
+        DurationValues {
+            years: (months / 12) as f64,
+            months: (months % 12) as f64,
+            days: days as f64,
+            ..DurationValues::default()
+        }
+    } else {
+        DurationValues {
+            months: months as f64,
+            days: days as f64,
+            ..DurationValues::default()
+        }
+    }
 }
 
 fn temporal_plain_date_additive(
@@ -4212,13 +5504,30 @@ fn temporal_plain_date_additive(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let (year, month, day) = apply_duration_to_date(
+    let reject_overflow = temporal_overflow_reject(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let (mut year, mut month, mut day) = apply_duration_to_date(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
         duration,
         sign,
-    );
+        reject_overflow,
+    )?;
+    let time_days = plain_time_from_nanoseconds(sign * duration_time_nanoseconds(duration)).0;
+    if time_days != 0 {
+        let day_number = days_from_civil(year as i32, month as u32, day as u32)
+            .checked_add(time_days)
+            .filter(|value| value.unsigned_abs() <= 100_000_000)
+            .ok_or_else(|| VmError::range("Temporal.PlainDate is out of range"))?;
+        (year, month, day) = {
+            let fields = civil_from_days(day_number);
+            (fields.0 as f64, fields.1 as f64, fields.2 as f64)
+        };
+    }
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
     create_plain_date_with_calendar(
         context,
@@ -4259,6 +5568,7 @@ fn temporal_plain_date_with(
         &arguments.first().cloned().unwrap_or(JsValue::Undefined),
         "Temporal.PlainDate.prototype.with",
     )?;
+    reject_temporal_with_metadata(vm, context, replacement)?;
     let year = temporal_date_replacement(
         vm,
         context,
@@ -4279,6 +5589,27 @@ fn temporal_plain_date_with(
         "day",
         temporal_number_slot(context, this_object, "day"),
     )?;
+    require_temporal_with_field(
+        vm,
+        context,
+        replacement,
+        &["day", "month", "monthCode", "year"],
+    )?;
+    let reject_overflow = temporal_overflow_reject(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let month = if reject_overflow {
+        month
+    } else {
+        month.clamp(1.0, 12.0)
+    };
+    let day = if reject_overflow {
+        day
+    } else {
+        day.clamp(1.0, month_day_count(year as i32, month as u32) as f64)
+    };
     validate_plain_date(year, month, day)?;
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
     create_plain_date_with_calendar(
@@ -4342,26 +5673,15 @@ fn temporal_plain_date_until(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let this_object = require_temporal_kind(context, &this_value, "PlainDate")?;
-    let other = temporal_plain_date_from(
-        vm,
-        context,
-        JsValue::Undefined,
-        &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
-    )?;
-    duration_between_dates(
-        context,
-        this_object,
-        context.value_object(&other).unwrap(),
-        1.0,
-    )
+    temporal_plain_date_difference(vm, context, this_value, arguments, false)
 }
 
-fn temporal_plain_date_since(
+fn temporal_plain_date_difference(
     vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
+    reverse: bool,
 ) -> Result<JsValue, VmError> {
     let this_object = require_temporal_kind(context, &this_value, "PlainDate")?;
     let other = temporal_plain_date_from(
@@ -4370,12 +5690,52 @@ fn temporal_plain_date_since(
         JsValue::Undefined,
         &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
     )?;
-    duration_between_dates(
+    let other_object = context.value_object(&other).unwrap();
+    if own_string(context, this_object, "calendarId")
+        != own_string(context, other_object, "calendarId")
+    {
+        return Err(VmError::range("Temporal calendars must match"));
+    }
+    let options = date_difference_options(
+        vm,
         context,
-        this_object,
-        context.value_object(&other).unwrap(),
-        -1.0,
-    )
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let (start, end) = if reverse {
+        (other_object, this_object)
+    } else {
+        (this_object, other_object)
+    };
+    let mut values = iso_date_difference_values(context, start, end, &options.largest_unit);
+    if options.smallest_unit == "day" && options.increment > 1 {
+        let total_days = plain_date_order_key(context, end) - plain_date_order_key(context, start);
+        let rounded_days =
+            round_signed_i128(total_days as i128, options.increment as i128, options.mode) as f64;
+        values = if options.largest_unit == "week" {
+            DurationValues {
+                weeks: (rounded_days / 7.0).trunc(),
+                days: rounded_days % 7.0,
+                ..DurationValues::default()
+            }
+        } else if options.largest_unit == "day" {
+            DurationValues {
+                days: rounded_days,
+                ..DurationValues::default()
+            }
+        } else {
+            values
+        };
+    }
+    create_duration_with_default_prototype(context, values)
+}
+
+fn temporal_plain_date_since(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_difference(vm, context, this_value, arguments, true)
 }
 
 fn temporal_plain_date_to_plain_date_time(
@@ -4438,21 +5798,19 @@ fn temporal_plain_date_to_plain_month_day(
     )
 }
 
-fn epoch_nanoseconds_from_plain_parts(
+fn epoch_nanoseconds_i128_from_plain_parts(
     year: f64,
     month: f64,
     day: f64,
     time: PlainTimeValues,
-) -> f64 {
-    let days = days_from_civil(year as i32, month as u32, day as u32) as f64;
-    (days * MS_PER_DAY
-        + time.hour * MS_PER_HOUR
-        + time.minute * MS_PER_MINUTE
-        + time.second * MS_PER_SECOND
-        + time.millisecond)
-        * 1_000_000.0
-        + time.microsecond * 1_000.0
-        + time.nanosecond
+) -> i128 {
+    let days = days_from_civil(year as i32, month as u32, day as u32) as i128;
+    let seconds =
+        days * 86_400 + time.hour as i128 * 3_600 + time.minute as i128 * 60 + time.second as i128;
+    seconds * NS_PER_SECOND_I128
+        + time.millisecond as i128 * 1_000_000
+        + time.microsecond as i128 * 1_000
+        + time.nanosecond as i128
 }
 
 fn temporal_plain_date_to_zoned_date_time(
@@ -4464,8 +5822,8 @@ fn temporal_plain_date_to_zoned_date_time(
     let object = require_temporal_kind(context, &this_value, "PlainDate")?;
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let (time_zone_value, time) = if let Some(item_object) = context.value_object(&item) {
-        let time_zone = context.get_property(JsValue::Object(item_object), "timeZone")?;
-        let plain_time = context.get_property(JsValue::Object(item_object), "plainTime")?;
+        let time_zone = temporal_get_property(vm, context, item_object, "timeZone")?;
+        let plain_time = temporal_get_property(vm, context, item_object, "plainTime")?;
         (
             if matches!(time_zone, JsValue::Undefined) {
                 item.clone()
@@ -4483,17 +5841,18 @@ fn temporal_plain_date_to_zoned_date_time(
         ));
     }
     let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
-    let epoch_nanoseconds = epoch_nanoseconds_from_plain_parts(
+    let exact_epoch_nanoseconds = epoch_nanoseconds_i128_from_plain_parts(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
         time,
-    );
+    ) - parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    let epoch_nanoseconds = exact_epoch_nanoseconds as f64;
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
+        JsValue::BigInt(bigint::from_i128(exact_epoch_nanoseconds)),
         epoch_nanoseconds,
         time_zone_id,
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
@@ -4636,6 +5995,14 @@ fn create_plain_time(
     prototype: ObjectId,
     values: PlainTimeValues,
 ) -> Result<JsValue, VmError> {
+    let values = PlainTimeValues {
+        hour: clean_zero(values.hour),
+        minute: clean_zero(values.minute),
+        second: clean_zero(values.second),
+        millisecond: clean_zero(values.millisecond),
+        microsecond: clean_zero(values.microsecond),
+        nanosecond: clean_zero(values.nanosecond),
+    };
     create_temporal_object(
         context,
         prototype,
@@ -4666,36 +6033,71 @@ fn temporal_plain_time_construct(
 }
 
 fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
-    let time = text.split('T').next_back().unwrap_or(text);
-    if time.ends_with('Z') {
+    let body = validate_iso_calendar_annotations(text.trim())?;
+    let time = body
+        .rfind('T')
+        .or_else(|| body.rfind('t'))
+        .map(|index| &body[index + 1..])
+        .unwrap_or_else(|| {
+            body.strip_prefix('T')
+                .or_else(|| body.strip_prefix('t'))
+                .unwrap_or(body)
+        });
+    if time.is_empty()
+        || time.contains('\u{2212}')
+        || time.ends_with(['Z', 'z'])
+        || time.contains("Z[")
+        || time.contains("z[")
+    {
         return None;
     }
-    let time = time.split('[').next().unwrap_or(time);
-    let time = time
-        .char_indices()
-        .skip(1)
-        .find(|(_, ch)| *ch == '+' || *ch == '-')
-        .map(|(index, _)| &time[..index])
-        .unwrap_or(time);
-    let mut parts = time.split(':');
-    let hour = parse_fixed_digits(parts.next()?, 2)? as f64;
-    let minute = parse_fixed_digits(parts.next().unwrap_or("00"), 2)? as f64;
-    let seconds_piece = parts.next().unwrap_or("00");
-    if parts.next().is_some() {
-        return None;
-    }
-    let (second_text, fraction_text) = seconds_piece
+    let offset_start = time.rfind('+').or_else(|| {
+        time.get(1..)
+            .and_then(|rest| rest.rfind('-').map(|index| index + 1))
+    });
+    let time = if let Some(offset_start) = offset_start {
+        parse_time_zone_offset_ns(&time[offset_start..])?;
+        &time[..offset_start]
+    } else {
+        time
+    };
+    let normalized = time.replace(',', ".");
+    let (head, fraction_text) = normalized
         .split_once('.')
-        .map_or((seconds_piece, ""), |(second, fraction)| (second, fraction));
-    let second = parse_fixed_digits(second_text, 2)? as f64;
-    let mut fraction = fraction_text.chars().take(9).collect::<String>();
-    while fraction.len() < 9 {
-        fraction.push('0');
+        .map_or((normalized.as_str(), ""), |(head, fraction)| {
+            (head, fraction)
+        });
+    let colon_count = head.matches(':').count();
+    let compact = head.replace(':', "");
+    if colon_count > 0 && !(colon_count == 1 || colon_count == 2) {
+        return None;
     }
-    let fraction = if fraction.is_empty() {
+    if (colon_count > 0 && compact.len() != (colon_count + 1) * 2)
+        || (colon_count == 0 && !matches!(compact.len(), 2 | 4 | 6))
+    {
+        return None;
+    }
+    if !compact.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    };
+    let hour = parse_fixed_digits(&compact[..2], 2)? as f64;
+    let minute = if compact.len() >= 4 {
+        parse_fixed_digits(&compact[2..4], 2)? as f64
+    } else {
+        0.0
+    };
+    let mut second = if compact.len() == 6 {
+        parse_fixed_digits(&compact[4..6], 2)? as f64
+    } else {
+        0.0
+    };
+    if second == 60.0 {
+        second = 59.0;
+    }
+    let fraction = if fraction_text.is_empty() {
         0
     } else {
-        fraction.parse::<u32>().ok()?
+        parse_fraction_to_ns(fraction_text)? as u32
     };
     Some(PlainTimeValues {
         hour,
@@ -4785,7 +6187,18 @@ fn temporal_plain_time_compare(
     ))
 }
 
-fn format_plain_time(values: PlainTimeValues) -> String {
+fn format_plain_time_precision(
+    values: PlainTimeValues,
+    precision: Option<usize>,
+    minute_only: bool,
+) -> String {
+    if minute_only {
+        return format!(
+            "{}:{}",
+            two_digit(values.hour as u32),
+            two_digit(values.minute as u32)
+        );
+    }
     let mut text = format!(
         "{}:{}:{}",
         two_digit(values.hour as u32),
@@ -4795,10 +6208,17 @@ fn format_plain_time(values: PlainTimeValues) -> String {
     let fraction = values.millisecond as u32 * 1_000_000
         + values.microsecond as u32 * 1_000
         + values.nanosecond as u32;
-    if fraction != 0 {
+    if fraction != 0 || precision.unwrap_or(0) != 0 {
         let mut fraction_text = format!("{fraction:09}");
-        while fraction_text.ends_with('0') {
-            fraction_text.pop();
+        if let Some(precision) = precision {
+            fraction_text.truncate(precision);
+        } else {
+            while fraction_text.ends_with('0') {
+                fraction_text.pop();
+            }
+        }
+        if fraction_text.is_empty() {
+            return text;
         }
         text.push('.');
         text.push_str(&fraction_text);
@@ -4807,20 +6227,92 @@ fn format_plain_time(values: PlainTimeValues) -> String {
 }
 
 fn temporal_plain_time_to_string(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainTime")?;
-    Ok(JsValue::String(format_plain_time(PlainTimeValues {
-        hour: temporal_number_slot(context, object, "hour"),
-        minute: temporal_number_slot(context, object, "minute"),
-        second: temporal_number_slot(context, object, "second"),
-        millisecond: temporal_number_slot(context, object, "millisecond"),
-        microsecond: temporal_number_slot(context, object, "microsecond"),
-        nanosecond: temporal_number_slot(context, object, "nanosecond"),
-    })))
+    let options = temporal_string_options(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let total = plain_time_nanoseconds_i128(plain_time_values_from_temporal(context, object));
+    let rounded = round_i128(total, options.quantum, options.mode).rem_euclid(NS_PER_DAY_I128);
+    Ok(JsValue::String(format_plain_time_precision(
+        plain_time_from_nanoseconds_i128(rounded),
+        options.precision,
+        options.minute_only,
+    )))
+}
+
+struct TemporalStringOptions {
+    quantum: i128,
+    precision: Option<usize>,
+    minute_only: bool,
+    mode: TemporalRoundMode,
+}
+
+fn temporal_string_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<TemporalStringOptions, VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok(TemporalStringOptions {
+            quantum: 1,
+            precision: None,
+            minute_only: false,
+            mode: TemporalRoundMode::Trunc,
+        });
+    }
+    let object = context.require_object(&value, "Temporal toString options")?;
+    let fractional_value = temporal_get_property(vm, context, object, "fractionalSecondDigits")?;
+    let fractional_digits = if matches!(fractional_value, JsValue::Undefined) {
+        None
+    } else {
+        let text = vm.to_string_coerce(fractional_value, context)?;
+        if text == "auto" {
+            None
+        } else {
+            let number = text
+                .parse::<f64>()
+                .map_err(|_| VmError::range("invalid fractionalSecondDigits"))?;
+            if !number.is_finite() || !(0.0..=9.0).contains(&number) {
+                return Err(VmError::range("invalid fractionalSecondDigits"));
+            }
+            Some(number.floor() as usize)
+        }
+    };
+    let mode = temporal_round_mode(
+        option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+        TemporalRoundMode::Trunc,
+    )?;
+    let smallest = option_string(vm, context, object, "smallestUnit")?;
+    let (precision, minute_only) = match smallest.as_deref() {
+        None => (fractional_digits, false),
+        Some("minute" | "minutes") => (Some(0), true),
+        Some("second" | "seconds") => (Some(0), false),
+        Some("millisecond" | "milliseconds") => (Some(3), false),
+        Some("microsecond" | "microseconds") => (Some(6), false),
+        Some("nanosecond" | "nanoseconds") => (Some(9), false),
+        Some(_) => return Err(VmError::range("invalid Temporal string smallestUnit")),
+    };
+    let quantum = if minute_only {
+        NS_PER_MINUTE_I128
+    } else {
+        match precision {
+            None | Some(9) => 1,
+            Some(digits) => 10_i128.pow((9 - digits) as u32),
+        }
+    };
+    Ok(TemporalStringOptions {
+        quantum,
+        precision,
+        minute_only,
+        mode,
+    })
 }
 
 fn plain_time_values_from_temporal(context: &NativeContext, object: ObjectId) -> PlainTimeValues {
@@ -4891,7 +6383,8 @@ fn temporal_plain_time_with(
         &arguments.first().cloned().unwrap_or(JsValue::Undefined),
         "Temporal.PlainTime.prototype.with",
     )?;
-    let time = PlainTimeValues {
+    reject_temporal_with_metadata(vm, context, replacement)?;
+    let mut time = PlainTimeValues {
         hour: temporal_date_replacement(
             vm,
             context,
@@ -4935,6 +6428,32 @@ fn temporal_plain_time_with(
             temporal_number_slot(context, this_object, "nanosecond"),
         )?,
     };
+    require_temporal_with_field(
+        vm,
+        context,
+        replacement,
+        &[
+            "hour",
+            "microsecond",
+            "millisecond",
+            "minute",
+            "nanosecond",
+            "second",
+        ],
+    )?;
+    let reject_overflow = temporal_overflow_reject(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    if !reject_overflow {
+        time.hour = time.hour.clamp(0.0, 23.0);
+        time.minute = time.minute.clamp(0.0, 59.0);
+        time.second = time.second.clamp(0.0, 59.0);
+        time.millisecond = time.millisecond.clamp(0.0, 999.0);
+        time.microsecond = time.microsecond.clamp(0.0, 999.0);
+        time.nanosecond = time.nanosecond.clamp(0.0, 999.0);
+    }
     validate_plain_time(time)?;
     let prototype = temporal_constructor_prototype(context, "PlainTime")?;
     create_plain_time(context, prototype, time)
@@ -4961,17 +6480,25 @@ fn temporal_plain_time_equals(
 }
 
 fn temporal_plain_time_round(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainTime")?;
+    let (unit, increment, mode) = instant_round_options(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let quantum = temporal_unit_nanoseconds(&unit) * increment as i128;
+    let total = plain_time_nanoseconds_i128(plain_time_values_from_temporal(context, object));
+    let rounded = round_i128(total, quantum, mode).rem_euclid(NS_PER_DAY_I128);
     let prototype = temporal_constructor_prototype(context, "PlainTime")?;
     create_plain_time(
         context,
         prototype,
-        plain_time_values_from_temporal(context, object),
+        plain_time_from_nanoseconds_i128(rounded),
     )
 }
 
@@ -4980,7 +6507,7 @@ fn temporal_plain_time_difference(
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
-    sign: f64,
+    sign: i128,
 ) -> Result<JsValue, VmError> {
     let this_object = require_temporal_kind(context, &this_value, "PlainTime")?;
     let other = temporal_plain_time_from(
@@ -4990,16 +6517,19 @@ fn temporal_plain_time_difference(
         &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
     )?;
     let other_object = context.value_object(&other).unwrap();
-    let delta = sign
-        * (time_nanoseconds(plain_time_values_from_temporal(context, other_object))
-            - time_nanoseconds(plain_time_values_from_temporal(context, this_object)));
-    create_duration_with_default_prototype(
+    let options = plain_date_time_difference_options(
+        vm,
         context,
-        balance_duration(DurationValues {
-            nanoseconds: delta,
-            ..DurationValues::default()
-        }),
-    )
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+        "hour",
+        false,
+    )?;
+    let delta = sign
+        * (plain_time_nanoseconds_i128(plain_time_values_from_temporal(context, other_object))
+            - plain_time_nanoseconds_i128(plain_time_values_from_temporal(context, this_object)));
+    let quantum = temporal_unit_nanoseconds(&options.smallest_unit) * options.increment as i128;
+    let rounded = round_signed_i128(delta, quantum, options.mode);
+    create_duration_from_nanoseconds(context, rounded, &options.largest_unit)
 }
 
 fn temporal_plain_time_until(
@@ -5008,7 +6538,7 @@ fn temporal_plain_time_until(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_plain_time_difference(vm, context, this_value, arguments, 1.0)
+    temporal_plain_time_difference(vm, context, this_value, arguments, 1)
 }
 
 fn temporal_plain_time_since(
@@ -5017,7 +6547,7 @@ fn temporal_plain_time_since(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_plain_time_difference(vm, context, this_value, arguments, -1.0)
+    temporal_plain_time_difference(vm, context, this_value, arguments, -1)
 }
 
 fn install_temporal_plain_date_time(
@@ -5268,12 +6798,20 @@ fn temporal_plain_date_time_from(
                     },
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
-            } else {
-                let month = temporal_month_from_object(vm, context, object, 0.0)?;
+            } else if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("PlainDate") {
                 (
-                    temporal_object_number(vm, context, object, "year")?,
+                    temporal_number_slot(context, object, "year"),
+                    temporal_number_slot(context, object, "month"),
+                    temporal_number_slot(context, object, "day"),
+                    PlainTimeValues::default(),
+                    own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                )
+            } else {
+                let month = temporal_required_month_from_object(vm, context, object)?;
+                (
+                    temporal_required_object_number(vm, context, object, "year")?,
                     month,
-                    temporal_object_number(vm, context, object, "day")?,
+                    temporal_required_object_number(vm, context, object, "day")?,
                     PlainTimeValues {
                         hour: temporal_object_number(vm, context, object, "hour")?,
                         minute: temporal_object_number(vm, context, object, "minute")?,
@@ -5293,27 +6831,57 @@ fn temporal_plain_date_time_from(
 }
 
 fn temporal_plain_date_time_to_string(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
-    let date = format!(
-        "{}-{}-{}",
-        iso_year(temporal_number_slot(context, object, "year") as i32),
-        two_digit(temporal_number_slot(context, object, "month") as u32),
-        two_digit(temporal_number_slot(context, object, "day") as u32)
+    let option_value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let calendar_name = temporal_calendar_name_option(vm, context, option_value.clone())?;
+    let options = temporal_string_options(vm, context, option_value)?;
+    let local_ns = plain_date_order_key(context, object) as i128 * NS_PER_DAY_I128
+        + plain_time_nanoseconds_i128(plain_date_time_values(context, object));
+    let rounded = round_i128(local_ns, options.quantum, options.mode);
+    let day_number = i64::try_from(rounded.div_euclid(NS_PER_DAY_I128))
+        .map_err(|_| VmError::range("Temporal.PlainDateTime is out of range"))?;
+    let (year, month, day) = civil_from_days(day_number);
+    validate_plain_date(year as f64, month as f64, day as f64)?;
+    let date = format!("{}-{}-{}", iso_year(year), two_digit(month), two_digit(day));
+    let time = format_plain_time_precision(
+        plain_time_from_nanoseconds_i128(rounded.rem_euclid(NS_PER_DAY_I128)),
+        options.precision,
+        options.minute_only,
     );
-    let time = format_plain_time(PlainTimeValues {
-        hour: temporal_number_slot(context, object, "hour"),
-        minute: temporal_number_slot(context, object, "minute"),
-        second: temporal_number_slot(context, object, "second"),
-        millisecond: temporal_number_slot(context, object, "millisecond"),
-        microsecond: temporal_number_slot(context, object, "microsecond"),
-        nanosecond: temporal_number_slot(context, object, "nanosecond"),
-    });
-    Ok(JsValue::String(format!("{date}T{time}")))
+    let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let annotation = match calendar_name.as_str() {
+        "always" => format!("[u-ca={calendar_id}]"),
+        "critical" => format!("[!u-ca={calendar_id}]"),
+        "auto" if calendar_id != "iso8601" => format!("[u-ca={calendar_id}]"),
+        _ => String::new(),
+    };
+    Ok(JsValue::String(format!("{date}T{time}{annotation}")))
+}
+
+fn temporal_calendar_name_option(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<String, VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok("auto".into());
+    }
+    let object = context.require_object(&value, "Temporal toString options")?;
+    let value = temporal_get_property(vm, context, object, "calendarName")?;
+    let name = if matches!(value, JsValue::Undefined) {
+        "auto".into()
+    } else {
+        vm.to_string_coerce(value, context)?
+    };
+    match name.as_str() {
+        "auto" | "always" | "never" | "critical" => Ok(name),
+        _ => Err(VmError::range("invalid Temporal calendarName")),
+    }
 }
 
 fn plain_date_time_values(context: &NativeContext, object: ObjectId) -> PlainTimeValues {
@@ -5390,18 +6958,27 @@ fn temporal_plain_date_time_additive(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let reject_overflow = temporal_overflow_reject(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
     let (mut year, mut month, mut day) = apply_duration_to_date(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
         duration,
         sign,
-    );
+        reject_overflow,
+    )?;
     let time_ns = time_nanoseconds(plain_date_time_values(context, object))
         + sign * duration_time_nanoseconds(duration);
     let (extra_days, time) = plain_time_from_nanoseconds(time_ns);
     if extra_days != 0 {
-        let day_number = days_from_civil(year as i32, month as u32, day as u32) + extra_days;
+        let day_number = days_from_civil(year as i32, month as u32, day as u32)
+            .checked_add(extra_days)
+            .filter(|value| value.unsigned_abs() <= 100_000_000)
+            .ok_or_else(|| VmError::range("Temporal.PlainDateTime is out of range"))?;
         let fields = civil_from_days(day_number);
         year = fields.0 as f64;
         month = fields.1 as f64;
@@ -5448,6 +7025,7 @@ fn temporal_plain_date_time_with(
         &arguments.first().cloned().unwrap_or(JsValue::Undefined),
         "Temporal.PlainDateTime.prototype.with",
     )?;
+    reject_temporal_with_metadata(vm, context, replacement)?;
     let year = temporal_date_replacement(
         vm,
         context,
@@ -5468,7 +7046,7 @@ fn temporal_plain_date_time_with(
         "day",
         temporal_number_slot(context, this_object, "day"),
     )?;
-    let time = PlainTimeValues {
+    let mut time = PlainTimeValues {
         hour: temporal_date_replacement(
             vm,
             context,
@@ -5512,6 +7090,46 @@ fn temporal_plain_date_time_with(
             temporal_number_slot(context, this_object, "nanosecond"),
         )?,
     };
+    require_temporal_with_field(
+        vm,
+        context,
+        replacement,
+        &[
+            "day",
+            "hour",
+            "microsecond",
+            "millisecond",
+            "minute",
+            "month",
+            "monthCode",
+            "nanosecond",
+            "second",
+            "year",
+        ],
+    )?;
+    let reject_overflow = temporal_overflow_reject(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let month = if reject_overflow {
+        month
+    } else {
+        month.clamp(1.0, 12.0)
+    };
+    let day = if reject_overflow {
+        day
+    } else {
+        day.clamp(1.0, month_day_count(year as i32, month as u32) as f64)
+    };
+    if !reject_overflow {
+        time.hour = time.hour.clamp(0.0, 23.0);
+        time.minute = time.minute.clamp(0.0, 59.0);
+        time.second = time.second.clamp(0.0, 59.0);
+        time.millisecond = time.millisecond.clamp(0.0, 999.0);
+        time.microsecond = time.microsecond.clamp(0.0, 999.0);
+        time.nanosecond = time.nanosecond.clamp(0.0, 999.0);
+    }
     validate_plain_date(year, month, day)?;
     validate_plain_time(time)?;
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
@@ -5623,22 +7241,111 @@ fn temporal_plain_date_time_compare(
 }
 
 fn temporal_plain_date_time_round(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    let (unit, increment, mode) = plain_date_time_round_options(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let year = temporal_number_slot(context, object, "year") as i32;
+    let month = temporal_number_slot(context, object, "month") as u32;
+    let day = temporal_number_slot(context, object, "day") as u32;
+    let time = plain_date_time_values(context, object);
+    let local_ns = days_from_civil(year, month, day) as i128 * NS_PER_DAY_I128
+        + plain_time_nanoseconds_i128(time);
+    let quantum = temporal_unit_nanoseconds(&unit)
+        .checked_mul(increment as i128)
+        .ok_or_else(|| VmError::range("invalid Temporal rounding increment"))?;
+    let rounded = round_i128(local_ns, quantum, mode);
+    let rounded_day = rounded.div_euclid(NS_PER_DAY_I128);
+    let rounded_time = plain_time_from_nanoseconds_i128(rounded.rem_euclid(NS_PER_DAY_I128));
+    let rounded_day = i64::try_from(rounded_day)
+        .map_err(|_| VmError::range("Temporal.PlainDateTime is out of range"))?;
+    let (year, month, day) = civil_from_days(rounded_day);
+    validate_plain_date(year as f64, month as f64, day as f64)?;
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
     create_plain_date_time_with_calendar(
         context,
         prototype,
-        temporal_number_slot(context, object, "year"),
-        temporal_number_slot(context, object, "month"),
-        temporal_number_slot(context, object, "day"),
-        plain_date_time_values(context, object),
+        year as f64,
+        month as f64,
+        day as f64,
+        rounded_time,
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
     )
+}
+
+fn plain_time_nanoseconds_i128(values: PlainTimeValues) -> i128 {
+    values.hour as i128 * NS_PER_HOUR_I128
+        + values.minute as i128 * NS_PER_MINUTE_I128
+        + values.second as i128 * NS_PER_SECOND_I128
+        + values.millisecond as i128 * NS_PER_MILLISECOND_I128
+        + values.microsecond as i128 * 1_000
+        + values.nanosecond as i128
+}
+
+fn plain_time_from_nanoseconds_i128(mut value: i128) -> PlainTimeValues {
+    let hour = value / NS_PER_HOUR_I128;
+    value %= NS_PER_HOUR_I128;
+    let minute = value / NS_PER_MINUTE_I128;
+    value %= NS_PER_MINUTE_I128;
+    let second = value / NS_PER_SECOND_I128;
+    value %= NS_PER_SECOND_I128;
+    let millisecond = value / NS_PER_MILLISECOND_I128;
+    value %= NS_PER_MILLISECOND_I128;
+    let microsecond = value / 1_000;
+    let nanosecond = value % 1_000;
+    PlainTimeValues {
+        hour: hour as f64,
+        minute: minute as f64,
+        second: second as f64,
+        millisecond: millisecond as f64,
+        microsecond: microsecond as f64,
+        nanosecond: nanosecond as f64,
+    }
+}
+
+fn plain_date_time_round_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<(String, u64, TemporalRoundMode), VmError> {
+    if let JsValue::String(unit) = value {
+        let unit = normalize_temporal_unit(unit)?;
+        if matches!(unit.as_str(), "year" | "month" | "week") {
+            return Err(VmError::range("invalid PlainDateTime rounding unit"));
+        }
+        return Ok((unit, 1, TemporalRoundMode::HalfExpand));
+    }
+    let object =
+        context.require_object(&value, "Temporal.PlainDateTime.prototype.round options")?;
+    let increment = option_rounding_increment(vm, context, object)?;
+    let mode = temporal_round_mode(
+        option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+        TemporalRoundMode::HalfExpand,
+    )?;
+    let unit = option_string(vm, context, object, "smallestUnit")?
+        .ok_or_else(|| VmError::range("smallestUnit is required"))?;
+    let unit = normalize_temporal_unit(unit)?;
+    if matches!(unit.as_str(), "year" | "month" | "week") {
+        return Err(VmError::range("invalid PlainDateTime rounding unit"));
+    }
+    let maximum = match unit.as_str() {
+        "day" => 2,
+        "hour" => 24,
+        "minute" | "second" => 60,
+        "millisecond" | "microsecond" | "nanosecond" => 1_000,
+        _ => 1,
+    };
+    if increment >= maximum || maximum % increment != 0 {
+        return Err(VmError::range("invalid Temporal rounding increment"));
+    }
+    Ok((unit, increment, mode))
 }
 
 fn temporal_plain_date_time_difference(
@@ -5646,7 +7353,7 @@ fn temporal_plain_date_time_difference(
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
-    sign: f64,
+    sign: i128,
 ) -> Result<JsValue, VmError> {
     let this_object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
     let other = temporal_plain_date_time_from(
@@ -5656,28 +7363,88 @@ fn temporal_plain_date_time_difference(
         &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
     )?;
     let other_object = context.value_object(&other).unwrap();
-    let this_days = plain_date_order_key(context, this_object);
-    let other_days = plain_date_order_key(context, other_object);
-    let day_delta = other_days - this_days;
-    let time_delta = time_nanoseconds(plain_date_time_values(context, other_object))
-        - time_nanoseconds(plain_date_time_values(context, this_object));
-    let total_ns = sign * (day_delta as f64 * NS_PER_DAY + time_delta);
-    let day_part = (total_ns / NS_PER_DAY).trunc();
-    let remainder = total_ns - day_part * NS_PER_DAY;
-    let (_, time) = plain_time_from_nanoseconds(remainder);
-    create_duration_with_default_prototype(
+    if own_string(context, this_object, "calendarId")
+        != own_string(context, other_object, "calendarId")
+    {
+        return Err(VmError::range("Temporal calendars must match"));
+    }
+    let options = plain_date_time_difference_options(
+        vm,
         context,
-        DurationValues {
-            days: day_part,
-            hours: time.hour,
-            minutes: time.minute,
-            seconds: time.second,
-            milliseconds: time.millisecond,
-            microseconds: time.microsecond,
-            nanoseconds: time.nanosecond,
-            ..DurationValues::default()
-        },
-    )
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+        "day",
+        true,
+    )?;
+    let this_ns = plain_date_order_key(context, this_object) as i128 * NS_PER_DAY_I128
+        + plain_time_nanoseconds_i128(plain_date_time_values(context, this_object));
+    let other_ns = plain_date_order_key(context, other_object) as i128 * NS_PER_DAY_I128
+        + plain_time_nanoseconds_i128(plain_date_time_values(context, other_object));
+    let quantum = temporal_unit_nanoseconds(&options.smallest_unit) * options.increment as i128;
+    let rounded = round_signed_i128(sign * (other_ns - this_ns), quantum, options.mode);
+    create_duration_from_nanoseconds(context, rounded, &options.largest_unit)
+}
+
+fn plain_date_time_difference_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    default_largest_unit: &str,
+    allow_day: bool,
+) -> Result<InstantDifferenceOptions, VmError> {
+    let object = if matches!(value, JsValue::Undefined) {
+        None
+    } else {
+        Some(context.require_object(&value, "Temporal.PlainDateTime difference options")?)
+    };
+    let largest = match object {
+        Some(object) => option_string(vm, context, object, "largestUnit")?,
+        None => None,
+    };
+    let increment = match object {
+        Some(object) => option_rounding_increment(vm, context, object)?,
+        None => 1,
+    };
+    let mode = match object {
+        Some(object) => temporal_round_mode(
+            option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+            TemporalRoundMode::Trunc,
+        )?,
+        None => TemporalRoundMode::Trunc,
+    };
+    let smallest = match object {
+        Some(object) => option_string(vm, context, object, "smallestUnit")?,
+        None => None,
+    };
+    let largest_unit =
+        normalize_temporal_unit(largest.unwrap_or_else(|| default_largest_unit.into()))?;
+    let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "nanosecond".into()))?;
+    if temporal_unit_nanoseconds(&largest_unit) < temporal_unit_nanoseconds(&smallest_unit) {
+        return Err(VmError::range(
+            "largestUnit must not be smaller than smallestUnit",
+        ));
+    }
+    if matches!(smallest_unit.as_str(), "year" | "month" | "week") {
+        return Err(VmError::range("invalid PlainDateTime smallestUnit"));
+    }
+    if !allow_day && (largest_unit == "day" || smallest_unit == "day") {
+        return Err(VmError::range("day is not a valid PlainTime unit"));
+    }
+    let maximum = match smallest_unit.as_str() {
+        "day" => 2,
+        "hour" => 24,
+        "minute" | "second" => 60,
+        "millisecond" | "microsecond" | "nanosecond" => 1_000,
+        _ => 1,
+    };
+    if increment >= maximum || maximum % increment != 0 {
+        return Err(VmError::range("invalid Temporal rounding increment"));
+    }
+    Ok(InstantDifferenceOptions {
+        largest_unit,
+        smallest_unit,
+        increment,
+        mode,
+    })
 }
 
 fn temporal_plain_date_time_until(
@@ -5686,7 +7453,7 @@ fn temporal_plain_date_time_until(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_plain_date_time_difference(vm, context, this_value, arguments, 1.0)
+    temporal_plain_date_time_difference(vm, context, this_value, arguments, 1)
 }
 
 fn temporal_plain_date_time_since(
@@ -5695,7 +7462,7 @@ fn temporal_plain_date_time_since(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_plain_date_time_difference(vm, context, this_value, arguments, -1.0)
+    temporal_plain_date_time_difference(vm, context, this_value, arguments, -1)
 }
 
 fn temporal_plain_date_time_to_plain_date(
@@ -5741,17 +7508,18 @@ fn temporal_plain_date_time_to_zoned_date_time(
         ));
     }
     let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
-    let epoch_nanoseconds = epoch_nanoseconds_from_plain_parts(
+    let exact_epoch_nanoseconds = epoch_nanoseconds_i128_from_plain_parts(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
         plain_date_time_values(context, object),
-    );
+    ) - parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    let epoch_nanoseconds = exact_epoch_nanoseconds as f64;
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
+        JsValue::BigInt(bigint::from_i128(exact_epoch_nanoseconds)),
         epoch_nanoseconds,
         time_zone_id,
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
@@ -5772,9 +7540,9 @@ fn temporal_calendar_id_from_object(
     context: &mut NativeContext,
     object: ObjectId,
 ) -> Result<String, VmError> {
-    let value = context.get_property(JsValue::Object(object), "calendar")?;
+    let value = temporal_get_property(vm, context, object, "calendar")?;
     let value = if matches!(value, JsValue::Undefined) {
-        context.get_property(JsValue::Object(object), "calendarId")?
+        temporal_get_property(vm, context, object, "calendarId")?
     } else {
         value
     };
@@ -5995,9 +7763,9 @@ fn temporal_plain_year_month_from(
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let (year, month, reference_day, calendar_id) = match item {
         JsValue::String(text) => {
-            let (year, month, day) = parse_plain_year_month(&text)
+            let (year, month, _day) = parse_plain_year_month(&text)
                 .ok_or_else(|| VmError::range("invalid Temporal.PlainYearMonth"))?;
-            (year, month, day, "iso8601".into())
+            (year, month, 1.0, "iso8601".into())
         }
         value => {
             let object = context.require_object(&value, "Temporal.PlainYearMonth.from")?;
@@ -6005,15 +7773,14 @@ fn temporal_plain_year_month_from(
                 (
                     temporal_number_slot(context, object, "year"),
                     temporal_number_slot(context, object, "month"),
-                    1.0,
+                    temporal_number_slot(context, object, "referenceISODay"),
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
             } else {
-                let year = temporal_object_number(vm, context, object, "year")?;
-                let month_value = context.get_property(JsValue::Object(object), "month")?;
+                let year = temporal_required_object_number(vm, context, object, "year")?;
+                let month_value = temporal_get_property(vm, context, object, "month")?;
                 let month = if matches!(month_value, JsValue::Undefined) {
-                    let month_code_value =
-                        context.get_property(JsValue::Object(object), "monthCode")?;
+                    let month_code_value = temporal_get_property(vm, context, object, "monthCode")?;
                     let month_code = vm.to_string_coerce(month_code_value, context)?;
                     parse_month_code(&month_code).ok_or_else(|| {
                         VmError::range("invalid Temporal.PlainYearMonth monthCode")
@@ -6021,14 +7788,11 @@ fn temporal_plain_year_month_from(
                 } else {
                     vm.to_number(month_value, context)?
                 };
-                let reference_day = match context.get_property(JsValue::Object(object), "day")? {
-                    JsValue::Undefined => 1.0,
-                    value => vm.to_number(value, context)?,
-                };
+                let _day = temporal_get_property(vm, context, object, "day")?;
                 (
                     year,
                     month,
-                    reference_day,
+                    1.0,
                     temporal_calendar_id_from_object(vm, context, object)?,
                 )
             }
@@ -6079,12 +7843,18 @@ fn temporal_plain_year_month_to_string(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainYearMonth")?;
-    if temporal_calendar_name_always(vm, context, arguments)? {
+    let calendar_name = temporal_calendar_name_option(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    if matches!(calendar_name.as_str(), "always" | "critical") {
         return Ok(JsValue::String(format!(
-            "{}-{}-{}[u-ca={}]",
+            "{}-{}-{}[{}u-ca={}]",
             iso_year(temporal_number_slot(context, object, "year") as i32),
             two_digit(temporal_number_slot(context, object, "month") as u32),
             two_digit(temporal_number_slot(context, object, "referenceISODay") as u32),
+            if calendar_name == "critical" { "!" } else { "" },
             own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into())
         )));
     }
@@ -6093,26 +7863,6 @@ fn temporal_plain_year_month_to_string(
         iso_year(temporal_number_slot(context, object, "year") as i32),
         two_digit(temporal_number_slot(context, object, "month") as u32)
     )))
-}
-
-fn temporal_calendar_name_always(
-    vm: &mut Vm,
-    context: &mut NativeContext,
-    arguments: &[JsValue],
-) -> Result<bool, VmError> {
-    // ponytail: only the Test262-harvested `calendarName: "always"` branch is
-    // implemented here; full Temporal string option formatting remains future work.
-    let Some(options) = arguments.first() else {
-        return Ok(false);
-    };
-    let Some(object) = context.value_object(options) else {
-        return Ok(false);
-    };
-    let value = context.get_property(JsValue::Object(object), "calendarName")?;
-    if matches!(value, JsValue::Undefined) {
-        return Ok(false);
-    }
-    Ok(vm.to_string_coerce(value, context)? == "always")
 }
 
 fn temporal_plain_year_month_to_plain_date(
@@ -6178,10 +7928,11 @@ fn temporal_plain_year_month_additive(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
     let month_delta = (sign * (duration.years * 12.0 + duration.months)).trunc() as i64;
-    let month_index = temporal_number_slot(context, object, "year") as i64 * 12
+    let month_index = (temporal_number_slot(context, object, "year") as i64 * 12
         + temporal_number_slot(context, object, "month") as i64
-        - 1
-        + month_delta;
+        - 1)
+    .checked_add(month_delta)
+    .ok_or_else(|| VmError::range("Temporal.PlainYearMonth is out of range"))?;
     let year = month_index.div_euclid(12) as f64;
     let month = (month_index.rem_euclid(12) + 1) as f64;
     let prototype = temporal_constructor_prototype(context, "PlainYearMonth")?;
@@ -6260,7 +8011,7 @@ fn temporal_plain_year_month_difference(
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
-    sign: f64,
+    sign: i64,
 ) -> Result<JsValue, VmError> {
     let this_object = require_temporal_kind(context, &this_value, "PlainYearMonth")?;
     let other = temporal_plain_year_month_from(
@@ -6270,15 +8021,83 @@ fn temporal_plain_year_month_difference(
         &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
     )?;
     let other_object = context.value_object(&other).unwrap();
-    let months = plain_year_month_order_key(context, other_object)
-        - plain_year_month_order_key(context, this_object);
+    if own_string(context, this_object, "calendarId")
+        != own_string(context, other_object, "calendarId")
+    {
+        return Err(VmError::range("Temporal calendars must match"));
+    }
+    let options = year_month_difference_options(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let months = sign
+        * (plain_year_month_order_key(context, other_object)
+            - plain_year_month_order_key(context, this_object));
+    let quantum = if options.smallest_unit == "year" {
+        12
+    } else {
+        1
+    } * options.increment as i128;
+    let months = round_signed_i128(months as i128, quantum, options.mode) as i64;
+    let (years, months) = if options.largest_unit == "year" {
+        ((months / 12) as f64, (months % 12) as f64)
+    } else {
+        (0.0, months as f64)
+    };
     create_duration_with_default_prototype(
         context,
         DurationValues {
-            months: sign * months as f64,
+            years,
+            months,
             ..DurationValues::default()
         },
     )
+}
+
+fn year_month_difference_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<DateDifferenceOptions, VmError> {
+    let object = if matches!(value, JsValue::Undefined) {
+        None
+    } else {
+        Some(context.require_object(&value, "Temporal.PlainYearMonth difference options")?)
+    };
+    let largest = match object {
+        Some(object) => option_string(vm, context, object, "largestUnit")?,
+        None => None,
+    };
+    let increment = match object {
+        Some(object) => option_rounding_increment(vm, context, object)?,
+        None => 1,
+    };
+    let mode = match object {
+        Some(object) => temporal_round_mode(
+            option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+            TemporalRoundMode::Trunc,
+        )?,
+        None => TemporalRoundMode::Trunc,
+    };
+    let smallest = match object {
+        Some(object) => option_string(vm, context, object, "smallestUnit")?,
+        None => None,
+    };
+    let largest_unit = normalize_temporal_unit(largest.unwrap_or_else(|| "month".into()))?;
+    let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "month".into()))?;
+    if !matches!(largest_unit.as_str(), "year" | "month")
+        || !matches!(smallest_unit.as_str(), "year" | "month")
+        || temporal_unit_nanoseconds(&largest_unit) < temporal_unit_nanoseconds(&smallest_unit)
+    {
+        return Err(VmError::range("invalid PlainYearMonth difference units"));
+    }
+    Ok(DateDifferenceOptions {
+        largest_unit,
+        smallest_unit,
+        increment,
+        mode,
+    })
 }
 
 fn temporal_plain_year_month_until(
@@ -6287,7 +8106,7 @@ fn temporal_plain_year_month_until(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_plain_year_month_difference(vm, context, this_value, arguments, 1.0)
+    temporal_plain_year_month_difference(vm, context, this_value, arguments, 1)
 }
 
 fn temporal_plain_year_month_since(
@@ -6296,7 +8115,7 @@ fn temporal_plain_year_month_since(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_plain_year_month_difference(vm, context, this_value, arguments, -1.0)
+    temporal_plain_year_month_difference(vm, context, this_value, arguments, -1)
 }
 
 fn install_temporal_plain_month_day(
@@ -6446,9 +8265,9 @@ fn temporal_plain_month_day_from(
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let (month, day, reference_year, calendar_id) = match item {
         JsValue::String(text) => {
-            let (month, day, year) = parse_plain_month_day(&text)
+            let (month, day, _year) = parse_plain_month_day(&text)
                 .ok_or_else(|| VmError::range("invalid Temporal.PlainMonthDay"))?;
-            (month, day, year, "iso8601".into())
+            (month, day, 1972.0, "iso8601".into())
         }
         value => {
             let object = context.require_object(&value, "Temporal.PlainMonthDay.from")?;
@@ -6456,14 +8275,13 @@ fn temporal_plain_month_day_from(
                 (
                     temporal_number_slot(context, object, "month"),
                     temporal_number_slot(context, object, "day"),
-                    temporal_number_slot(context, object, "referenceISOYear").max(1972.0),
+                    temporal_number_slot(context, object, "referenceISOYear"),
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
             } else {
-                let month_value = context.get_property(JsValue::Object(object), "month")?;
+                let month_value = temporal_get_property(vm, context, object, "month")?;
                 let month = if matches!(month_value, JsValue::Undefined) {
-                    let month_code_value =
-                        context.get_property(JsValue::Object(object), "monthCode")?;
+                    let month_code_value = temporal_get_property(vm, context, object, "monthCode")?;
                     let month_code = vm.to_string_coerce(month_code_value, context)?;
                     parse_month_code(&month_code)
                         .ok_or_else(|| VmError::range("invalid Temporal.PlainMonthDay monthCode"))?
@@ -6471,14 +8289,11 @@ fn temporal_plain_month_day_from(
                     vm.to_number(month_value, context)?
                 };
                 let day = temporal_object_number(vm, context, object, "day")?;
-                let reference_year = match context.get_property(JsValue::Object(object), "year")? {
-                    JsValue::Undefined => 1972.0,
-                    value => vm.to_number(value, context)?,
-                };
+                let _year = temporal_get_property(vm, context, object, "year")?;
                 (
                     month,
                     day,
-                    reference_year,
+                    1972.0,
                     temporal_calendar_id_from_object(vm, context, object)?,
                 )
             }
@@ -6494,17 +8309,23 @@ fn temporal_plain_month_day_to_string(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainMonthDay")?;
-    if temporal_calendar_name_always(vm, context, arguments)? {
+    let calendar_name = temporal_calendar_name_option(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    if matches!(calendar_name.as_str(), "always" | "critical") {
         return Ok(JsValue::String(format!(
-            "{}-{}-{}[u-ca={}]",
+            "{}-{}-{}[{}u-ca={}]",
             iso_year(temporal_number_slot(context, object, "referenceISOYear") as i32),
             two_digit(temporal_number_slot(context, object, "month") as u32),
             two_digit(temporal_number_slot(context, object, "day") as u32),
+            if calendar_name == "critical" { "!" } else { "" },
             own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into())
         )));
     }
     Ok(JsValue::String(format!(
-        "--{}-{}",
+        "{}-{}",
         two_digit(temporal_number_slot(context, object, "month") as u32),
         two_digit(temporal_number_slot(context, object, "day") as u32)
     )))
@@ -6798,10 +8619,10 @@ fn install_temporal_zoned_date_time(
     Ok(())
 }
 
-fn epoch_nanoseconds_to_f64(value: &JsValue) -> Result<f64, VmError> {
+fn epoch_nanoseconds_to_i128(value: &JsValue) -> Result<i128, VmError> {
     match value {
-        JsValue::BigInt(value) => Ok(bigint::to_f64_lossy(value)),
-        JsValue::Number(value) => Ok(*value),
+        JsValue::BigInt(value) => Ok(bigint_to_i128_saturating(value)),
+        JsValue::Number(value) if value.is_finite() && value.fract() == 0.0 => Ok(*value as i128),
         JsValue::Undefined => Err(VmError::type_error(
             "Temporal.ZonedDateTime requires epochNanoseconds",
         )),
@@ -6820,7 +8641,18 @@ fn create_zoned_date_time(
     if !epoch_nanoseconds.is_finite() {
         return Err(VmError::range("invalid Temporal.ZonedDateTime"));
     }
-    let epoch_milliseconds = (epoch_nanoseconds / 1_000_000.0).trunc();
+    let exact_epoch_nanoseconds = epoch_nanoseconds_to_i128(&epoch_nanoseconds_value)?;
+    if !is_valid_instant_ns(exact_epoch_nanoseconds) {
+        return Err(VmError::range("invalid Temporal.ZonedDateTime"));
+    }
+    let offset_nanoseconds = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    let local_epoch_nanoseconds = exact_epoch_nanoseconds + offset_nanoseconds;
+    let epoch_milliseconds = local_epoch_nanoseconds.div_euclid(1_000_000) as f64;
+    let offset_string = if offset_nanoseconds == 0 {
+        "+00:00".into()
+    } else {
+        time_zone_id.clone()
+    };
     let fields = decompose_time(epoch_milliseconds).unwrap_or(DateFields {
         year: 1970,
         month: 1,
@@ -6847,8 +8679,11 @@ fn create_zoned_date_time(
             ("epochMilliseconds", JsValue::Number(epoch_milliseconds)),
             ("timeZoneId", JsValue::String(time_zone_id)),
             ("calendarId", JsValue::String(calendar_id)),
-            ("offset", JsValue::String("+00:00".into())),
-            ("offsetNanoseconds", JsValue::Number(0.0)),
+            ("offset", JsValue::String(offset_string)),
+            (
+                "offsetNanoseconds",
+                JsValue::Number(offset_nanoseconds as f64),
+            ),
             ("year", JsValue::Number(fields.year as f64)),
             ("month", JsValue::Number(fields.month as f64)),
             (
@@ -6862,11 +8697,15 @@ fn create_zoned_date_time(
             ("millisecond", JsValue::Number(fields.millisecond as f64)),
             (
                 "microsecond",
-                JsValue::Number(((epoch_nanoseconds / 1_000.0).trunc() % 1_000.0).abs()),
+                JsValue::Number(
+                    local_epoch_nanoseconds
+                        .rem_euclid(1_000_000)
+                        .div_euclid(1_000) as f64,
+                ),
             ),
             (
                 "nanosecond",
-                JsValue::Number((epoch_nanoseconds.trunc() % 1_000.0).abs()),
+                JsValue::Number(local_epoch_nanoseconds.rem_euclid(1_000) as f64),
             ),
             ("dayOfWeek", JsValue::Number(day_of_week as f64)),
             ("dayOfYear", JsValue::Number(day_of_year as f64)),
@@ -6898,7 +8737,11 @@ fn temporal_zoned_date_time_construct(
         .constructor_prototype(&new_target)?
         .ok_or_else(|| VmError::runtime("Temporal.ZonedDateTime prototype missing"))?;
     let epoch_nanoseconds_value = arg_or_undefined(arguments, 0);
-    let epoch_nanoseconds = epoch_nanoseconds_to_f64(&epoch_nanoseconds_value)?;
+    let epoch_nanoseconds_i128 = epoch_nanoseconds_to_i128(&epoch_nanoseconds_value)?;
+    if !is_valid_instant_ns(epoch_nanoseconds_i128) {
+        return Err(VmError::range("invalid Temporal.ZonedDateTime"));
+    }
+    let epoch_nanoseconds = epoch_nanoseconds_i128 as f64;
     let time_zone_id = if matches!(arguments.get(1), None | Some(JsValue::Undefined)) {
         return Err(VmError::type_error(
             "Temporal.ZonedDateTime requires a time zone",
@@ -6922,13 +8765,16 @@ fn temporal_zoned_date_time_construct(
     )
 }
 
-fn parse_zoned_date_time(text: &str) -> Option<(f64, String)> {
+fn parse_zoned_date_time(text: &str) -> Option<(i128, String)> {
     let time_zone_id = text
         .rsplit_once('[')
         .and_then(|(_, zone)| zone.strip_suffix(']'))
         .unwrap_or("UTC")
         .to_string();
     let without_annotation = text.split('[').next().unwrap_or(text);
+    if let Some(epoch_nanoseconds) = parse_instant_string(without_annotation) {
+        return Some((epoch_nanoseconds, time_zone_id));
+    }
     let (year, month, day) = parse_plain_date(without_annotation)?;
     let time = if without_annotation.contains('T') {
         parse_plain_time(
@@ -6942,13 +8788,10 @@ fn parse_zoned_date_time(text: &str) -> Option<(f64, String)> {
     };
     validate_plain_date(year, month, day).ok()?;
     validate_plain_time(time).ok()?;
-    let days = days_from_civil(year as i32, month as u32, day as u32);
-    let millis = days as f64 * MS_PER_DAY
-        + time.hour * MS_PER_HOUR
-        + time.minute * MS_PER_MINUTE
-        + time.second * MS_PER_SECOND
-        + time.millisecond;
-    Some((millis * 1_000_000.0, time_zone_id))
+    Some((
+        epoch_nanoseconds_i128_from_plain_parts(year, month, day, time),
+        time_zone_id,
+    ))
 }
 
 fn temporal_zoned_date_time_from(
@@ -6961,11 +8804,11 @@ fn temporal_zoned_date_time_from(
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let (epoch_nanoseconds, epoch_nanoseconds_value, time_zone_id, calendar_id) = match item {
         JsValue::String(text) => {
-            let (epoch_nanoseconds, time_zone_id) = parse_zoned_date_time(&text)
+            let (exact_epoch_nanoseconds, time_zone_id) = parse_zoned_date_time(&text)
                 .ok_or_else(|| VmError::range("invalid Temporal.ZonedDateTime"))?;
             (
-                epoch_nanoseconds,
-                JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
+                exact_epoch_nanoseconds as f64,
+                JsValue::BigInt(bigint::from_i128(exact_epoch_nanoseconds)),
                 time_zone_id,
                 "iso8601".into(),
             )
@@ -6981,7 +8824,7 @@ fn temporal_zoned_date_time_from(
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
             } else {
-                let time_zone = context.get_property(JsValue::Object(object), "timeZone")?;
+                let time_zone = temporal_get_property(vm, context, object, "timeZone")?;
                 let time_zone_id = if matches!(time_zone, JsValue::Undefined) {
                     "UTC".into()
                 } else {
@@ -6989,7 +8832,7 @@ fn temporal_zoned_date_time_from(
                 };
                 let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
                 let year = temporal_object_number(vm, context, object, "year")?;
-                let month = temporal_object_number(vm, context, object, "month")?;
+                let month = temporal_required_month_from_object(vm, context, object)?;
                 let day = temporal_object_number(vm, context, object, "day")?;
                 let time = PlainTimeValues {
                     hour: temporal_object_number(vm, context, object, "hour")?,
@@ -7001,16 +8844,13 @@ fn temporal_zoned_date_time_from(
                 };
                 validate_plain_date(year, month, day)?;
                 validate_plain_time(time)?;
-                let days = days_from_civil(year as i32, month as u32, day as u32);
-                let epoch_nanoseconds = (days as f64 * MS_PER_DAY
-                    + time.hour * MS_PER_HOUR
-                    + time.minute * MS_PER_MINUTE
-                    + time.second * MS_PER_SECOND
-                    + time.millisecond)
-                    * 1_000_000.0;
+                let exact_epoch_nanoseconds =
+                    epoch_nanoseconds_i128_from_plain_parts(year, month, day, time)
+                        - parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+                let epoch_nanoseconds = exact_epoch_nanoseconds as f64;
                 (
                     epoch_nanoseconds,
-                    JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
+                    JsValue::BigInt(bigint::from_i128(exact_epoch_nanoseconds)),
                     time_zone_id,
                     calendar_id,
                 )
@@ -7027,8 +8867,12 @@ fn temporal_zoned_date_time_from(
     )
 }
 
-fn zoned_date_time_order_key(context: &NativeContext, object: ObjectId) -> f64 {
-    temporal_number_slot(context, object, "epochNanosecondsNumber")
+fn zoned_date_time_epoch_ns(context: &NativeContext, object: ObjectId) -> i128 {
+    match own_data_value(context, object, "epochNanoseconds") {
+        Some(JsValue::BigInt(value)) => bigint_to_i128_saturating(&value),
+        Some(JsValue::Number(value)) => value as i128,
+        _ => temporal_number_slot(context, object, "epochNanosecondsNumber") as i128,
+    }
 }
 
 fn temporal_zoned_date_time_compare(
@@ -7049,8 +8893,8 @@ fn temporal_zoned_date_time_compare(
         JsValue::Undefined,
         &[arguments.get(1).cloned().unwrap_or(JsValue::Undefined)],
     )?;
-    let left = zoned_date_time_order_key(context, context.value_object(&left).unwrap());
-    let right = zoned_date_time_order_key(context, context.value_object(&right).unwrap());
+    let left = zoned_date_time_epoch_ns(context, context.value_object(&left).unwrap());
+    let right = zoned_date_time_epoch_ns(context, context.value_object(&right).unwrap());
     Ok(JsValue::Number(if left < right {
         -1.0
     } else if left > right {
@@ -7079,10 +8923,10 @@ fn temporal_zoned_date_time_to_instant(
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
     let prototype = temporal_instant_constructor_prototype(context)?;
-    create_instant(
+    create_instant_from_epoch_ns(
         context,
         prototype,
-        temporal_number_slot(context, object, "epochMilliseconds"),
+        zoned_date_time_epoch_ns(context, object),
     )
 }
 
@@ -7165,8 +9009,8 @@ fn temporal_zoned_date_time_equals(
     )?;
     let other_object = context.value_object(&other).unwrap();
     Ok(JsValue::Boolean(
-        temporal_number_slot(context, this_object, "epochNanosecondsNumber")
-            == temporal_number_slot(context, other_object, "epochNanosecondsNumber")
+        zoned_date_time_epoch_ns(context, this_object)
+            == zoned_date_time_epoch_ns(context, other_object)
             && own_string(context, this_object, "timeZoneId")
                 == own_string(context, other_object, "timeZoneId")
             && own_string(context, this_object, "calendarId")
@@ -7186,11 +9030,14 @@ fn create_zoned_date_time_from_parts(
 ) -> Result<JsValue, VmError> {
     validate_plain_date(year, month, day)?;
     validate_plain_time(time)?;
-    let epoch_nanoseconds = epoch_nanoseconds_from_plain_parts(year, month, day, time);
+    let offset_nanoseconds = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    let exact_epoch_nanoseconds =
+        epoch_nanoseconds_i128_from_plain_parts(year, month, day, time) - offset_nanoseconds;
+    let epoch_nanoseconds = exact_epoch_nanoseconds as f64;
     create_zoned_date_time(
         context,
         prototype,
-        JsValue::BigInt(bigint::from_i128(epoch_nanoseconds as i128)),
+        JsValue::BigInt(bigint::from_i128(exact_epoch_nanoseconds)),
         epoch_nanoseconds,
         time_zone_id,
         calendar_id,
@@ -7210,18 +9057,27 @@ fn temporal_zoned_date_time_additive(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let reject_overflow = temporal_overflow_reject(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
     let (mut year, mut month, mut day) = apply_duration_to_date(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
         duration,
         sign,
-    );
+        reject_overflow,
+    )?;
     let time_ns = time_nanoseconds(plain_date_time_values(context, object))
         + sign * duration_time_nanoseconds(duration);
     let (extra_days, time) = plain_time_from_nanoseconds(time_ns);
     if extra_days != 0 {
-        let day_number = days_from_civil(year as i32, month as u32, day as u32) + extra_days;
+        let day_number = days_from_civil(year as i32, month as u32, day as u32)
+            .checked_add(extra_days)
+            .filter(|value| value.unsigned_abs() <= 100_000_000)
+            .ok_or_else(|| VmError::range("Temporal.ZonedDateTime is out of range"))?;
         let fields = civil_from_days(day_number);
         year = fields.0 as f64;
         month = fields.1 as f64;
@@ -7259,19 +9115,25 @@ fn temporal_zoned_date_time_subtract(
 }
 
 fn temporal_zoned_date_time_round(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let (unit, increment, mode) = plain_date_time_round_options(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let quantum = temporal_unit_nanoseconds(&unit) * increment as i128;
+    let rounded = round_i128(zoned_date_time_epoch_ns(context, object), quantum, mode);
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time(
         context,
         prototype,
-        own_data_value(context, object, "epochNanoseconds")
-            .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))),
-        temporal_number_slot(context, object, "epochNanosecondsNumber"),
+        JsValue::BigInt(bigint::from_i128(rounded)),
+        rounded as f64,
         own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
     )
@@ -7282,7 +9144,7 @@ fn temporal_zoned_date_time_difference(
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
-    sign: f64,
+    sign: i128,
 ) -> Result<JsValue, VmError> {
     let this_object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
     let other = temporal_zoned_date_time_from(
@@ -7292,16 +9154,32 @@ fn temporal_zoned_date_time_difference(
         &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
     )?;
     let other_object = context.value_object(&other).unwrap();
-    let delta = sign
-        * (temporal_number_slot(context, other_object, "epochNanosecondsNumber")
-            - temporal_number_slot(context, this_object, "epochNanosecondsNumber"));
-    create_duration_with_default_prototype(
+    if own_string(context, this_object, "calendarId")
+        != own_string(context, other_object, "calendarId")
+    {
+        return Err(VmError::range("Temporal calendars must match"));
+    }
+    let options = plain_date_time_difference_options(
+        vm,
         context,
-        balance_duration(DurationValues {
-            nanoseconds: delta,
-            ..DurationValues::default()
-        }),
-    )
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+        "day",
+        true,
+    )?;
+    if matches!(
+        options.largest_unit.as_str(),
+        "year" | "month" | "week" | "day"
+    ) && own_string(context, this_object, "timeZoneId")
+        != own_string(context, other_object, "timeZoneId")
+    {
+        return Err(VmError::range("Temporal time zones must match"));
+    }
+    let delta = sign
+        * (zoned_date_time_epoch_ns(context, other_object)
+            - zoned_date_time_epoch_ns(context, this_object));
+    let quantum = temporal_unit_nanoseconds(&options.smallest_unit) * options.increment as i128;
+    let rounded = round_signed_i128(delta, quantum, options.mode);
+    create_duration_from_nanoseconds(context, rounded, &options.largest_unit)
 }
 
 fn temporal_zoned_date_time_until(
@@ -7310,7 +9188,7 @@ fn temporal_zoned_date_time_until(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_zoned_date_time_difference(vm, context, this_value, arguments, 1.0)
+    temporal_zoned_date_time_difference(vm, context, this_value, arguments, 1)
 }
 
 fn temporal_zoned_date_time_since(
@@ -7319,7 +9197,7 @@ fn temporal_zoned_date_time_since(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    temporal_zoned_date_time_difference(vm, context, this_value, arguments, -1.0)
+    temporal_zoned_date_time_difference(vm, context, this_value, arguments, -1)
 }
 
 fn temporal_zoned_date_time_with(
@@ -7333,6 +9211,7 @@ fn temporal_zoned_date_time_with(
         &arguments.first().cloned().unwrap_or(JsValue::Undefined),
         "Temporal.ZonedDateTime.prototype.with",
     )?;
+    reject_temporal_with_metadata(vm, context, replacement)?;
     let year = temporal_date_replacement(
         vm,
         context,
@@ -7353,7 +9232,7 @@ fn temporal_zoned_date_time_with(
         "day",
         temporal_number_slot(context, this_object, "day"),
     )?;
-    let time = PlainTimeValues {
+    let mut time = PlainTimeValues {
         hour: temporal_date_replacement(
             vm,
             context,
@@ -7397,6 +9276,77 @@ fn temporal_zoned_date_time_with(
             temporal_number_slot(context, this_object, "nanosecond"),
         )?,
     };
+    let replacement_offset = temporal_get_property(vm, context, replacement, "offset")?;
+    if !matches!(replacement_offset, JsValue::Undefined) {
+        let JsValue::String(offset) = replacement_offset else {
+            return Err(VmError::type_error(
+                "Temporal offset property must be a string",
+            ));
+        };
+        if parse_time_zone_offset_ns(&offset).is_none() {
+            return Err(VmError::range("invalid Temporal offset string"));
+        }
+    }
+    require_temporal_with_field(
+        vm,
+        context,
+        replacement,
+        &[
+            "day",
+            "hour",
+            "microsecond",
+            "millisecond",
+            "minute",
+            "month",
+            "monthCode",
+            "nanosecond",
+            "offset",
+            "second",
+            "year",
+        ],
+    )?;
+    let options = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    let options_object = if matches!(options, JsValue::Undefined) {
+        None
+    } else {
+        Some(context.require_object(&options, "Temporal.ZonedDateTime.prototype.with options")?)
+    };
+    if let Some(object) = options_object {
+        if let Some(value) = option_string(vm, context, object, "disambiguation")? {
+            if !matches!(
+                value.as_str(),
+                "compatible" | "earlier" | "later" | "reject"
+            ) {
+                return Err(VmError::range("invalid Temporal disambiguation option"));
+            }
+        }
+        if let Some(value) = option_string(vm, context, object, "offset")? {
+            if !matches!(value.as_str(), "use" | "prefer" | "ignore" | "reject") {
+                return Err(VmError::range("invalid Temporal offset option"));
+            }
+        }
+    }
+    let reject_overflow = temporal_overflow_reject(vm, context, options)?;
+    let month = if reject_overflow {
+        month
+    } else {
+        month.clamp(1.0, 12.0)
+    };
+    let day = if reject_overflow {
+        day
+    } else {
+        day.clamp(1.0, month_day_count(year as i32, month as u32) as f64)
+    };
+    if !reject_overflow {
+        time.hour = time.hour.clamp(0.0, 23.0);
+        time.minute = time.minute.clamp(0.0, 59.0);
+        time.second = time.second.clamp(0.0, 59.0);
+        time.millisecond = time.millisecond.clamp(0.0, 999.0);
+        time.microsecond = time.microsecond.clamp(0.0, 999.0);
+        time.nanosecond = time.nanosecond.clamp(0.0, 999.0);
+    }
+    validate_plain_date(year, month, day)?;
+    validate_plain_time(time)?;
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time_from_parts(
         context,
@@ -7515,7 +9465,7 @@ fn temporal_zoned_date_time_get_time_zone_transition(
         ));
     }
     let direction_value = if let Some(object) = context.value_object(&option) {
-        context.get_property(JsValue::Object(object), "direction")?
+        temporal_get_property(vm, context, object, "direction")?
     } else {
         option
     };
@@ -7529,28 +9479,72 @@ fn temporal_zoned_date_time_get_time_zone_transition(
 }
 
 fn temporal_zoned_date_time_to_string(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let option_value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let calendar_name = temporal_calendar_name_option(vm, context, option_value.clone())?;
+    let options = temporal_string_options(vm, context, option_value.clone())?;
+    let (offset_option, time_zone_name) = if matches!(option_value, JsValue::Undefined) {
+        ("auto".to_string(), "auto".to_string())
+    } else {
+        let option_object =
+            context.require_object(&option_value, "Temporal.ZonedDateTime toString options")?;
+        let offset =
+            option_string(vm, context, option_object, "offset")?.unwrap_or_else(|| "auto".into());
+        let time_zone = option_string(vm, context, option_object, "timeZoneName")?
+            .unwrap_or_else(|| "auto".into());
+        (offset, time_zone)
+    };
+    if !matches!(offset_option.as_str(), "auto" | "never") {
+        return Err(VmError::range("invalid Temporal offset display option"));
+    }
+    if !matches!(time_zone_name.as_str(), "auto" | "never" | "critical") {
+        return Err(VmError::range("invalid Temporal timeZoneName"));
+    }
+    let rounded = round_i128(
+        zoned_date_time_epoch_ns(context, object),
+        options.quantum,
+        options.mode,
+    );
+    let day_number = i64::try_from(rounded.div_euclid(NS_PER_DAY_I128))
+        .map_err(|_| VmError::range("Temporal.ZonedDateTime is out of range"))?;
+    let (year, month, day) = civil_from_days(day_number);
     let date_time = format!(
         "{}-{}-{}T{}",
-        iso_year(temporal_number_slot(context, object, "year") as i32),
-        two_digit(temporal_number_slot(context, object, "month") as u32),
-        two_digit(temporal_number_slot(context, object, "day") as u32),
-        format_plain_time(PlainTimeValues {
-            hour: temporal_number_slot(context, object, "hour"),
-            minute: temporal_number_slot(context, object, "minute"),
-            second: temporal_number_slot(context, object, "second"),
-            millisecond: temporal_number_slot(context, object, "millisecond"),
-            microsecond: temporal_number_slot(context, object, "microsecond"),
-            nanosecond: temporal_number_slot(context, object, "nanosecond"),
-        })
+        iso_year(year),
+        two_digit(month),
+        two_digit(day),
+        format_plain_time_precision(
+            plain_time_from_nanoseconds_i128(rounded.rem_euclid(NS_PER_DAY_I128)),
+            options.precision,
+            options.minute_only,
+        )
     );
     let zone = own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into());
-    Ok(JsValue::String(format!("{date_time}+00:00[{zone}]")))
+    let offset = if offset_option == "never" {
+        ""
+    } else {
+        "+00:00"
+    };
+    let zone_annotation = match time_zone_name.as_str() {
+        "never" => String::new(),
+        "critical" => format!("[!{zone}]"),
+        _ => format!("[{zone}]"),
+    };
+    let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let calendar_annotation = match calendar_name.as_str() {
+        "always" => format!("[u-ca={calendar_id}]"),
+        "critical" => format!("[!u-ca={calendar_id}]"),
+        "auto" if calendar_id != "iso8601" => format!("[u-ca={calendar_id}]"),
+        _ => String::new(),
+    };
+    Ok(JsValue::String(format!(
+        "{date_time}{offset}{zone_annotation}{calendar_annotation}"
+    )))
 }
 
 fn install_temporal_now(context: &mut NativeContext, temporal: ObjectId) -> Result<(), VmError> {

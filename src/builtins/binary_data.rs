@@ -1126,6 +1126,21 @@ fn to_bigint_for_data_view(
     }
 }
 
+fn coerce_typed_array_element(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    kind: TypedArrayElementKind,
+    value: JsValue,
+) -> Result<JsValue, VmError> {
+    if kind.is_bigint() {
+        Ok(JsValue::BigInt(to_bigint_for_data_view(
+            vm, context, value,
+        )?))
+    } else {
+        Ok(JsValue::Number(vm.to_number(value, context)?))
+    }
+}
+
 macro_rules! data_view_getter {
     ($name:ident, $kind:expr) => {
         fn $name(
@@ -1267,7 +1282,11 @@ fn install_typed_array_intrinsic(
         ("some", 1, typed_array_some as NativeCall),
         ("sort", 1, typed_array_sort as NativeCall),
         ("subarray", 2, typed_array_subarray as NativeCall),
-        ("toLocaleString", 0, typed_array_to_string as NativeCall),
+        (
+            "toLocaleString",
+            0,
+            typed_array_to_locale_string as NativeCall,
+        ),
         ("toReversed", 0, typed_array_to_reversed as NativeCall),
         ("toSorted", 1, typed_array_to_sorted as NativeCall),
         ("toString", 0, typed_array_to_string as NativeCall),
@@ -1705,6 +1724,93 @@ fn typed_array_parts(
     Ok((object, view, length, name, kind))
 }
 
+pub(crate) fn validate_typed_array(
+    context: &NativeContext,
+    value: JsValue,
+) -> Result<TypedArrayViewId, VmError> {
+    let object = context.require_object(&value, "value is not a TypedArray")?;
+    let view = typed_array_view_id_from_object(context, object)?;
+    require_not_detached(context, view)?;
+    Ok(view)
+}
+
+pub(crate) fn require_not_detached(
+    context: &NativeContext,
+    view: TypedArrayViewId,
+) -> Result<(), VmError> {
+    context.validate_typed_array_view(view).map(|_| ())
+}
+
+fn require_typed_array_writable(
+    context: &NativeContext,
+    view: TypedArrayViewId,
+) -> Result<(), VmError> {
+    let buffer = context
+        .typed_array_view(view)
+        .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
+        .buffer;
+    if context.is_array_buffer_immutable(buffer)? {
+        Err(VmError::type_error("ArrayBuffer is immutable"))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn typed_array_species_create(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    exemplar: JsValue,
+    length: usize,
+) -> Result<JsValue, VmError> {
+    let exemplar_object = context.require_object(&exemplar, "TypedArray exemplar")?;
+    let exemplar_name = typed_array_name_from_object(context, exemplar_object)?;
+    let exemplar_kind = typed_array_kind(&exemplar_name)?;
+    let default_constructor = context
+        .get_global(&exemplar_name)
+        .ok_or_else(|| VmError::runtime("TypedArray constructor missing"))?;
+    let constructor =
+        crate::builtins::array::species_constructor(vm, context, exemplar, default_constructor)?;
+    let result = vm.construct_value_from_builtin(
+        constructor,
+        vec![JsValue::Number(length as f64)],
+        context,
+    )?;
+    let result_object = context.require_object(&result, "TypedArray species result")?;
+    let result_view = validate_typed_array(context, result.clone())?;
+    let result_length = context.validate_typed_array_view(result_view)?;
+    if result_length < length {
+        return Err(VmError::type_error(
+            "TypedArray species constructor returned a short TypedArray",
+        ));
+    }
+    let result_name = typed_array_name_from_object(context, result_object)?;
+    let result_kind = typed_array_kind(&result_name)?;
+    let exemplar_bigint = matches!(
+        exemplar_kind,
+        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64
+    );
+    let result_bigint = matches!(
+        result_kind,
+        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64
+    );
+    if exemplar_bigint != result_bigint {
+        return Err(VmError::type_error(
+            "TypedArray species result has a different content type",
+        ));
+    }
+    Ok(result)
+}
+
+fn create_typed_array_species_from_values(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    exemplar: JsValue,
+    values: Vec<JsValue>,
+) -> Result<JsValue, VmError> {
+    let target = typed_array_species_create(vm, context, exemplar, values.len())?;
+    store_values_into_typed_array(context, target, values)
+}
+
 fn typed_array_values_vec(
     context: &NativeContext,
     view: TypedArrayViewId,
@@ -1876,9 +1982,79 @@ fn typed_array_from(
         require_callable(&map_fn, "TypedArray.from")?;
     }
 
-    let values = collect_typed_array_source_values(vm, context, source)?;
+    if let Some(values) = collect_iterable_values(vm, context, source.clone())? {
+        return typed_array_from_values(
+            vm,
+            context,
+            this_value,
+            values,
+            map_fn,
+            arguments.get(2).cloned().unwrap_or(JsValue::Undefined),
+        );
+    }
+
+    let source_object = vm.to_object(source, context)?;
+    let source_value = context.object_value(source_object);
+    let length_value = match vm.get_property_value_catching_from_builtin(
+        source_value.clone(),
+        "length",
+        context,
+    )? {
+        Ok(value) => value,
+        Err(error) => return Err(vm.throw_value_from_builtin(error)),
+    };
+    let source_length = to_length(vm, context, length_value)?.min(MAX_SKELETON_BUFFER_BYTES);
     let target = vm.construct_value_from_builtin(
         this_value,
+        vec![JsValue::Number(source_length as f64)],
+        context,
+    )?;
+    let object = context.require_object(&target, "TypedArray.from result")?;
+    let view = typed_array_view_id_from_object(context, object)?;
+    let (_, result_length) = context
+        .typed_array_indexed_view(object)
+        .ok_or_else(|| VmError::type_error("TypedArray.from result is not a TypedArray"))?;
+    if result_length < source_length {
+        return Err(VmError::type_error(
+            "TypedArray.from constructor returned a short TypedArray",
+        ));
+    }
+
+    let this_arg = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
+    for index in 0..source_length {
+        let value = match vm.get_property_value_catching_from_builtin(
+            source_value.clone(),
+            &index.to_string(),
+            context,
+        )? {
+            Ok(value) => value,
+            Err(error) => return Err(vm.throw_value_from_builtin(error)),
+        };
+        let value = if matches!(map_fn, JsValue::Undefined) {
+            value
+        } else {
+            vm.call_value_from_builtin(
+                map_fn.clone(),
+                this_arg.clone(),
+                vec![value, JsValue::Number(index as f64)],
+                context,
+            )?
+        };
+        context.typed_array_store_element(view, index, value)?;
+    }
+    Ok(target)
+}
+
+fn typed_array_from_values(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    constructor: JsValue,
+    values: Vec<JsValue>,
+    map_fn: JsValue,
+    this_arg: JsValue,
+) -> Result<JsValue, VmError> {
+    let target = vm.construct_value_from_builtin(
+        constructor,
         vec![JsValue::Number(values.len() as f64)],
         context,
     )?;
@@ -1892,8 +2068,6 @@ fn typed_array_from(
             "TypedArray.from constructor returned a short TypedArray",
         ));
     }
-
-    let this_arg = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
     for (index, value) in values.into_iter().enumerate() {
         let value = if matches!(map_fn, JsValue::Undefined) {
             value
@@ -2026,15 +2200,44 @@ fn typed_array_to_string(
     typed_array_join(vm, context, this_value, &[])
 }
 
+fn typed_array_to_locale_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let (_, view, length, _, _) =
+        typed_array_parts(context, &this_value, "TypedArray.prototype.toLocaleString")?;
+    let mut parts = Vec::with_capacity(length);
+    for index in 0..length {
+        let element = context.typed_array_load_element(view, index)?;
+        let to_locale = vm.get_property_value(element.clone(), "toLocaleString", context)?;
+        if !context.is_callable_value(&to_locale) {
+            return Err(VmError::type_error(
+                "TypedArray element toLocaleString is not callable",
+            ));
+        }
+        let localized = vm.call_value_from_builtin(to_locale, element, Vec::new(), context)?;
+        parts.push(vm.to_string_coerce(localized, context)?);
+    }
+    Ok(JsValue::String(parts.join(",")))
+}
+
 fn typed_array_fill(
     vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_, view, length, _, _) =
+    let (_, view, length, _, kind) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.fill")?;
-    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    require_typed_array_writable(context, view)?;
+    let value = coerce_typed_array_element(
+        vm,
+        context,
+        kind,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
     let start = normalize_relative_index(argument_integer(vm, context, arguments, 1, 0.0)?, length);
     let end = normalize_relative_index(
         argument_integer(vm, context, arguments, 2, length as f64)?,
@@ -2320,7 +2523,7 @@ fn typed_array_map(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (object, view, length, name, kind) =
+    let (_, view, length, _, _) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.map")?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     require_callable(&callback, "TypedArray.prototype.map")?;
@@ -2338,7 +2541,7 @@ fn typed_array_map(
             context,
         )?);
     }
-    create_typed_array_from_values(context, object, name, kind, values)
+    create_typed_array_species_from_values(vm, context, this_value, values)
 }
 
 fn typed_array_filter(
@@ -2347,7 +2550,7 @@ fn typed_array_filter(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (object, view, length, name, kind) =
+    let (_, view, length, _, _) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.filter")?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     require_callable(&callback, "TypedArray.prototype.filter")?;
@@ -2371,7 +2574,7 @@ fn typed_array_filter(
             values.push(value);
         }
     }
-    create_typed_array_from_values(context, object, name, kind, values)
+    create_typed_array_species_from_values(vm, context, this_value, values)
 }
 
 fn typed_array_reduce_common(
@@ -2440,6 +2643,7 @@ fn typed_array_reverse(
 ) -> Result<JsValue, VmError> {
     let (_, view, length, _, _) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.reverse")?;
+    require_typed_array_writable(context, view)?;
     let values = typed_array_values_vec(context, view, length)?;
     for (index, value) in values.into_iter().rev().enumerate() {
         context.typed_array_store_element(view, index, value)?;
@@ -2455,6 +2659,7 @@ fn typed_array_copy_within(
 ) -> Result<JsValue, VmError> {
     let (_, view, length, _, _) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.copyWithin")?;
+    require_typed_array_writable(context, view)?;
     let target =
         normalize_relative_index(argument_integer(vm, context, arguments, 0, 0.0)?, length);
     let start = normalize_relative_index(argument_integer(vm, context, arguments, 1, 0.0)?, length);
@@ -2479,22 +2684,59 @@ fn typed_array_set(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_, view, length, _, _) =
+    let (_, view, length, _, kind) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.set")?;
+    require_typed_array_writable(context, view)?;
     let source = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let offset = to_index(
         vm,
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let values = collect_array_like_values(vm, context, source)?;
+    if let Some(source_object) = context.value_object(&source)
+        && let Some((source_view, source_length)) = context.typed_array_indexed_view(source_object)
+    {
+        require_not_detached(context, source_view)?;
+        if offset
+            .checked_add(source_length)
+            .is_none_or(|end| end > length)
+        {
+            return Err(VmError::range("source is too large for target TypedArray"));
+        }
+        let values = typed_array_values_vec(context, source_view, source_length)?;
+        for (index, value) in values.into_iter().enumerate() {
+            context.typed_array_store_element(view, offset + index, value)?;
+        }
+        return Ok(JsValue::Undefined);
+    }
+
+    let source_object = vm.to_object(source, context)?;
+    let source_value = context.object_value(source_object);
+    let length_value = match vm.get_property_value_catching_from_builtin(
+        source_value.clone(),
+        "length",
+        context,
+    )? {
+        Ok(value) => value,
+        Err(error) => return Err(vm.throw_value_from_builtin(error)),
+    };
+    let source_length = to_length(vm, context, length_value)?;
     if offset
-        .checked_add(values.len())
+        .checked_add(source_length)
         .is_none_or(|end| end > length)
     {
         return Err(VmError::range("source is too large for target TypedArray"));
     }
-    for (index, value) in values.into_iter().enumerate() {
+    for index in 0..source_length {
+        let value = match vm.get_property_value_catching_from_builtin(
+            source_value.clone(),
+            &index.to_string(),
+            context,
+        )? {
+            Ok(value) => value,
+            Err(error) => return Err(vm.throw_value_from_builtin(error)),
+        };
+        let value = coerce_typed_array_element(vm, context, kind, value)?;
         context.typed_array_store_element(view, offset + index, value)?;
     }
     Ok(JsValue::Undefined)
@@ -2506,7 +2748,7 @@ fn typed_array_slice(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (object, view, length, name, kind) =
+    let (_, view, length, _, _) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.slice")?;
     let start = normalize_relative_index(argument_integer(vm, context, arguments, 0, 0.0)?, length);
     let end = normalize_relative_index(
@@ -2517,7 +2759,7 @@ fn typed_array_slice(
     for index in start..end.max(start).min(length) {
         values.push(context.typed_array_load_element(view, index)?);
     }
-    create_typed_array_from_values(context, object, name, kind, values)
+    create_typed_array_species_from_values(vm, context, this_value, values)
 }
 
 fn typed_array_subarray(
@@ -2545,17 +2787,38 @@ fn typed_array_subarray(
         .ok_or_else(|| VmError::range("typed array byteOffset overflow"))?;
     let buffer_value =
         own_data_value(context, object, TYPED_ARRAY_BUFFER).unwrap_or(JsValue::Undefined);
-    let prototype = typed_array_prototype_for_name(context, object, &name)?;
-    create_typed_array_object(
+    let default_constructor = context
+        .get_global(&name)
+        .ok_or_else(|| VmError::runtime("TypedArray constructor missing"))?;
+    let constructor =
+        crate::builtins::array::species_constructor(vm, context, this_value, default_constructor)?;
+    let result = vm.construct_value_from_builtin(
+        constructor,
+        vec![
+            buffer_value,
+            JsValue::Number(byte_offset as f64),
+            JsValue::Number((end - start) as f64),
+        ],
         context,
-        prototype,
-        name,
+    )?;
+    let result_view = validate_typed_array(context, result.clone())?;
+    let result_object = context.require_object(&result, "TypedArray species result")?;
+    let result_kind = typed_array_kind(&typed_array_name_from_object(context, result_object)?)?;
+    let source_bigint = matches!(
         kind,
-        buffer_value,
-        record.buffer,
-        byte_offset,
-        end - start,
-    )
+        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64
+    );
+    let result_bigint = matches!(
+        result_kind,
+        TypedArrayElementKind::BigInt64 | TypedArrayElementKind::BigUint64
+    );
+    if source_bigint != result_bigint {
+        return Err(VmError::type_error(
+            "TypedArray species result has a different content type",
+        ));
+    }
+    require_not_detached(context, result_view)?;
+    Ok(result)
 }
 
 fn typed_array_sort_values(
@@ -2626,6 +2889,7 @@ fn typed_array_sort(
 ) -> Result<JsValue, VmError> {
     let (_, view, length, _, _) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.sort")?;
+    require_typed_array_writable(context, view)?;
     let compare_fn = arguments
         .first()
         .cloned()
@@ -2691,6 +2955,12 @@ fn typed_array_with(
     let (object, view, length, name, kind) =
         typed_array_parts(context, &this_value, "TypedArray.prototype.with")?;
     let raw = argument_integer(vm, context, arguments, 0, 0.0)? as isize;
+    let value = coerce_typed_array_element(
+        vm,
+        context,
+        kind,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
     let index = if raw < 0 {
         let from_end = raw.unsigned_abs();
         if from_end > length {
@@ -2704,7 +2974,7 @@ fn typed_array_with(
         return Err(VmError::range("TypedArray index is out of range"));
     }
     let mut values = typed_array_values_vec(context, view, length)?;
-    values[index] = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    values[index] = value;
     create_typed_array_from_values(context, object, name, kind, values)
 }
 

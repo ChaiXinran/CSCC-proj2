@@ -26,6 +26,7 @@ pub struct WellKnownSymbols {
     pub match_all: SymbolId,
     pub search: SymbolId,
     pub dispose: SymbolId,
+    pub async_dispose: SymbolId,
     pub async_iterator: SymbolId,
 }
 
@@ -54,7 +55,8 @@ impl SymbolRegistry {
             "Symbol.matchAll",           // 9
             "Symbol.search",             // 10
             "Symbol.dispose",            // 11
-            "Symbol.asyncIterator",      // 12
+            "Symbol.asyncDispose",       // 12
+            "Symbol.asyncIterator",      // 13
         ] {
             symbols.push(Symbol {
                 description: Some(desc.into()),
@@ -75,7 +77,8 @@ impl SymbolRegistry {
                 match_all: SymbolId(9),
                 search: SymbolId(10),
                 dispose: SymbolId(11),
-                async_iterator: SymbolId(12),
+                async_dispose: SymbolId(12),
+                async_iterator: SymbolId(13),
             },
             symbols,
         }
@@ -115,7 +118,8 @@ mod tests {
         assert_eq!(reg.well_known.to_primitive, SymbolId(0));
         assert_eq!(reg.well_known.to_string_tag, SymbolId(1));
         assert_eq!(reg.well_known.iterator, SymbolId(2));
-        assert_eq!(reg.well_known.async_iterator, SymbolId(12));
+        assert_eq!(reg.well_known.async_dispose, SymbolId(12));
+        assert_eq!(reg.well_known.async_iterator, SymbolId(13));
     }
 
     #[test]
@@ -149,6 +153,10 @@ mod tests {
         assert_eq!(
             reg.description(reg.well_known.async_iterator),
             Some("Symbol.asyncIterator")
+        );
+        assert_eq!(
+            reg.description(reg.well_known.async_dispose),
+            Some("Symbol.asyncDispose")
         );
     }
 }

@@ -57,6 +57,18 @@ pub(crate) const ERROR_CONSTRUCTORS: &[ErrorConstructorSpec] = &[
         prototype_name: "URIError.prototype",
         parent_prototype_name: "Error.prototype",
     },
+    ErrorConstructorSpec {
+        name: "AggregateError",
+        length: 2,
+        prototype_name: "AggregateError.prototype",
+        parent_prototype_name: "Error.prototype",
+    },
+    ErrorConstructorSpec {
+        name: "SuppressedError",
+        length: 3,
+        prototype_name: "SuppressedError.prototype",
+        parent_prototype_name: "Error.prototype",
+    },
 ];
 
 #[must_use]
