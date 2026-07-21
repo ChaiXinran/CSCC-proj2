@@ -169,6 +169,76 @@ fn array_species_get(
     Ok(this_value)
 }
 
+fn get_property_preserving_throw(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    receiver: JsValue,
+    key: &str,
+) -> Result<JsValue, VmError> {
+    match vm.get_property_value_catching_from_builtin(receiver, key, context)? {
+        Ok(value) => Ok(value),
+        Err(error) => Err(vm.throw_value_from_builtin(error)),
+    }
+}
+
+/// Shared SpeciesConstructor abstract operation used by V13-C collection
+/// creation paths. Property access is observable and abrupt completions retain
+/// the original JavaScript throw value.
+pub(crate) fn species_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: JsValue,
+    default_constructor: JsValue,
+) -> Result<JsValue, VmError> {
+    let constructor = get_property_preserving_throw(vm, context, object, "constructor")?;
+    if matches!(constructor, JsValue::Undefined) {
+        return Ok(default_constructor);
+    }
+    if context.value_object(&constructor).is_none() {
+        return Err(VmError::type_error("constructor property is not an object"));
+    }
+    let species = vm.get_symbol_property_value_with_receiver_from_builtin(
+        constructor.clone(),
+        constructor,
+        context.well_known_symbols().species,
+        context,
+    )?;
+    if matches!(species, JsValue::Null | JsValue::Undefined) {
+        return Ok(default_constructor);
+    }
+    if !context.is_constructable_value(&species) {
+        return Err(VmError::type_error("Symbol.species is not a constructor"));
+    }
+    Ok(species)
+}
+
+/// Shared ArraySpeciesCreate abstract operation for Array methods that create
+/// result containers.
+pub(crate) fn array_species_create(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    original_array: JsValue,
+    length: usize,
+) -> Result<JsValue, VmError> {
+    let is_array = context
+        .value_object(&original_array)
+        .is_some_and(|object| context.is_array_object(object).unwrap_or(false));
+    if !is_array {
+        return context.create_sparse_array(length);
+    }
+    let default_constructor = context
+        .intrinsics()
+        .map(|intrinsics| intrinsics.array_constructor.clone())
+        .ok_or_else(|| VmError::runtime("Array constructor missing"))?;
+    let constructor =
+        species_constructor(vm, context, original_array, default_constructor.clone())?;
+    if constructor == default_constructor {
+        context.create_sparse_array(length)
+    } else {
+        vm.construct_value_from_builtin(constructor, vec![JsValue::Number(length as f64)], context)
+    }
+}
+
 pub fn array_call(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -220,21 +290,14 @@ fn array_like_length(context: &NativeContext, object: ObjectId) -> usize {
     0
 }
 
-fn to_length(value: JsValue) -> usize {
-    let Some(number) = value.to_number() else {
-        return 0;
-    };
+fn to_length_number(number: f64) -> usize {
     if number.is_nan() || number <= 0.0 {
-        return 0;
+        0
+    } else if !number.is_finite() || number >= MAX_SAFE_INTEGER as f64 {
+        MAX_SAFE_INTEGER
+    } else {
+        number.floor() as usize
     }
-    if !number.is_finite() {
-        return if number.is_sign_positive() {
-            MAX_ARRAY_LENGTH
-        } else {
-            0
-        };
-    }
-    number.floor().min(MAX_ARRAY_LENGTH as f64) as usize
 }
 
 fn array_like_length_from_value(
@@ -253,8 +316,8 @@ fn array_like_length_from_value(
     if let Some(PrimitiveValue::String(value)) = context.primitive_value(object) {
         return Ok(value.encode_utf16().count().min(MAX_ARRAY_LENGTH));
     }
-    vm.get_property_value(receiver, "length", context)
-        .map(to_length)
+    let length = get_property_preserving_throw(vm, context, receiver, "length")?;
+    Ok(to_length_number(vm.to_number(length, context)?))
 }
 
 fn string_index_value(value: &str, index: usize) -> Option<JsValue> {
@@ -316,11 +379,7 @@ fn create_array_data_property(
     let JsValue::Object(object) = array else {
         return Err(VmError::runtime("array result is not an object"));
     };
-    if context.define_own_property(*object, index.to_string(), PropertyDescriptor::data(value))? {
-        Ok(())
-    } else {
-        Err(VmError::type_error("cannot define array result property"))
-    }
+    create_data_property_or_throw(context, *object, index, value)
 }
 
 fn set_array_index_strict(
@@ -455,9 +514,11 @@ fn same_value_zero(left: &JsValue, right: &JsValue) -> bool {
 
 /// ECMAScript maximum array length.
 const MAX_ARRAY_LENGTH: usize = 4_294_967_295;
+const MAX_SAFE_INTEGER: usize = 9_007_199_254_740_991;
 /// Cap iteration/allocation to prevent O(N) hangs on sparse arrays with huge lengths.
-/// Test262 tests behavior at small indices; a 64K cap covers all realistic cases.
-const MAX_DENSE_ALLOC: usize = 1 << 16; // 65536 elements
+/// This covers Test262's common sparse index 99,999 without permitting
+/// unbounded iteration over adversarial near-MAX_SAFE_INTEGER lengths.
+const MAX_DENSE_ALLOC: usize = 1 << 20;
 
 /// Reads array element `index` via the full VM property-get path (supports accessor getters).
 fn get_elem(
@@ -942,33 +1003,62 @@ fn array_concat(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let mut result: Vec<JsValue> = Vec::new();
-    concat_spread(vm, context, this_value, &mut result)?;
-    for arg in arguments {
-        concat_spread(vm, context, arg.clone(), &mut result)?;
+    let this_object = vm.to_object(this_value, context)?;
+    let original = context.object_value(this_object);
+    let target = array_species_create(vm, context, original.clone(), 0)?;
+    let target_object = context
+        .value_object(&target)
+        .ok_or_else(|| VmError::type_error("Array species result is not an object"))?;
+    let mut result_length = 0usize;
+    for value in std::iter::once(original).chain(arguments.iter().cloned()) {
+        if is_concat_spreadable(vm, context, value.clone())? {
+            let object = context
+                .value_object(&value)
+                .ok_or_else(|| VmError::type_error("spreadable value is not an object"))?;
+            let length_value = get_property_preserving_throw(vm, context, value.clone(), "length")?;
+            let length = to_length_number(vm.to_number(length_value, context)?);
+            if result_length.saturating_add(length) > MAX_SAFE_INTEGER {
+                return Err(VmError::type_error(
+                    "concat result exceeds safe integer limit",
+                ));
+            }
+            for index in 0..length.min(MAX_DENSE_ALLOC) {
+                if array_index_exists(context, &value, object, index)? {
+                    let element = get_existing_elem(vm, context, value.clone(), object, index)?;
+                    create_data_property_or_throw(context, target_object, result_length, element)?;
+                }
+                result_length += 1;
+            }
+            if length > MAX_DENSE_ALLOC {
+                result_length = result_length.saturating_add(length - MAX_DENSE_ALLOC);
+            }
+        } else {
+            create_data_property_or_throw(context, target_object, result_length, value)?;
+            result_length += 1;
+        }
     }
-    context.create_array(result)
+    set_array_from_length(vm, context, target.clone(), result_length)?;
+    Ok(target)
 }
 
-fn concat_spread(
+fn is_concat_spreadable(
     vm: &mut Vm,
     context: &mut NativeContext,
-    val: JsValue,
-    out: &mut Vec<JsValue>,
-) -> Result<(), VmError> {
-    if let Some(id) = context
-        .value_object(&val)
-        .filter(|&id| context.is_array_object(id).unwrap_or(false))
-    {
-        let len = array_like_length(context, id);
-        for i in 0..len {
-            let elem = get_elem(vm, context, val.clone(), i)?;
-            out.push(elem);
-        }
-        return Ok(());
+    value: JsValue,
+) -> Result<bool, VmError> {
+    let Some(object) = context.value_object(&value) else {
+        return Ok(false);
+    };
+    let spreadable = vm.get_symbol_property_value_with_receiver_from_builtin(
+        value.clone(),
+        value,
+        context.well_known_symbols().is_concat_spreadable,
+        context,
+    )?;
+    if !matches!(spreadable, JsValue::Undefined) {
+        return Ok(spreadable.to_boolean());
     }
-    out.push(val);
-    Ok(())
+    context.is_array_object(object)
 }
 
 fn array_slice(
@@ -984,7 +1074,7 @@ fn array_slice(
         length,
     );
     let count = end.saturating_sub(start);
-    let result = context.create_sparse_array(count)?;
+    let result = array_species_create(vm, context, receiver.clone(), count)?;
     for (target, source) in (start..end).take(MAX_DENSE_ALLOC).enumerate() {
         if !array_index_exists(context, &receiver, object, source)? {
             continue;
@@ -1010,10 +1100,12 @@ fn array_splice(
     let insert_items: Vec<JsValue> = arguments.get(2..).unwrap_or(&[]).to_vec();
 
     // Collect removed elements
-    let mut removed = Vec::with_capacity(delete_count.min(MAX_DENSE_ALLOC));
+    let removed = array_species_create(vm, context, target.clone(), delete_count)?;
     for i in 0..delete_count {
-        let val = get_elem(vm, context, target.clone(), start + i)?;
-        removed.push(val);
+        if array_index_exists(context, &target, object, start + i)? {
+            let val = get_existing_elem(vm, context, target.clone(), object, start + i)?;
+            create_array_data_property(context, &removed, i, val)?;
+        }
     }
 
     // Calculate new length
@@ -1048,7 +1140,7 @@ fn array_splice(
     }
 
     set_array_length_strict(vm, context, target, new_length)?;
-    context.create_array(removed)
+    Ok(removed)
 }
 
 fn array_index_of(
@@ -1059,6 +1151,9 @@ fn array_index_of(
 ) -> Result<JsValue, VmError> {
     let (object, receiver, _, length) = array_callback_target(vm, context, this_value)?;
     let search = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if length == 0 {
+        return Ok(JsValue::Number(-1.0));
+    }
     let from_index =
         array_from_start_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     for i in from_index..length.min(MAX_DENSE_ALLOC) {
@@ -1081,6 +1176,9 @@ fn array_last_index_of(
 ) -> Result<JsValue, VmError> {
     let (object, receiver, _, length) = array_callback_target(vm, context, this_value)?;
     let search = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if length == 0 {
+        return Ok(JsValue::Number(-1.0));
+    }
     let from_raw = argument_number(vm, context, arguments, 1, (length - 1) as f64)?;
     let Some(from) = array_from_last_index(from_raw, length) else {
         return Ok(JsValue::Number(-1.0));
@@ -1219,7 +1317,7 @@ fn array_map(
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     require_callable(&callback, "Array.prototype.map")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    let result = context.create_sparse_array(length)?;
+    let result = array_species_create(vm, context, receiver.clone(), length)?;
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         if !array_index_exists(context, &receiver, object, i)? {
             continue;
@@ -1232,7 +1330,7 @@ fn array_map(
             this_arg.clone(),
             vec![val, JsValue::Number(i as f64), callback_object.clone()],
         )?;
-        context.set_element(result.clone(), JsValue::Number(i as f64), mapped)?;
+        create_array_data_property(context, &result, i, mapped)?;
     }
     Ok(result)
 }
@@ -1248,7 +1346,8 @@ fn array_filter(
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     require_callable(&callback, "Array.prototype.filter")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    let mut result = Vec::new();
+    let result = array_species_create(vm, context, receiver.clone(), 0)?;
+    let mut target_index = 0usize;
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         if !array_index_exists(context, &receiver, object, i)? {
             continue;
@@ -1266,10 +1365,11 @@ fn array_filter(
             ],
         )?;
         if keep.to_boolean() {
-            result.push(val);
+            create_array_data_property(context, &result, target_index, val)?;
+            target_index += 1;
         }
     }
-    context.create_array(result)
+    Ok(result)
 }
 
 fn array_reduce(
@@ -1527,8 +1627,12 @@ fn array_flat(
         value if value.is_infinite() && value > 0.0 => usize::MAX,
         value => value.max(0.0) as usize,
     };
-    let result = flat_collect(vm, context, &target, length, depth)?;
-    context.create_array(result)
+    let values = flat_collect(vm, context, &target, length, depth)?;
+    let result = array_species_create(vm, context, target, 0)?;
+    for (index, value) in values.into_iter().enumerate() {
+        create_array_data_property(context, &result, index, value)?;
+    }
+    Ok(result)
 }
 
 fn flat_collect(
@@ -1565,7 +1669,8 @@ fn array_flat_map(
     let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    let mut result = Vec::new();
+    let result = array_species_create(vm, context, target.clone(), 0)?;
+    let mut target_index = 0usize;
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, target.clone(), i)?;
         let mapped = call_callback(
@@ -1582,13 +1687,15 @@ fn array_flat_map(
             let inner_len = array_like_length(context, id);
             for j in 0..inner_len {
                 let inner = get_elem(vm, context, mapped.clone(), j)?;
-                result.push(inner);
+                create_array_data_property(context, &result, target_index, inner)?;
+                target_index += 1;
             }
             continue;
         }
-        result.push(mapped);
+        create_array_data_property(context, &result, target_index, mapped)?;
+        target_index += 1;
     }
-    context.create_array(result)
+    Ok(result)
 }
 
 fn array_sort(
@@ -1597,26 +1704,33 @@ fn array_sort(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_object, target, length) = array_object_target(vm, context, this_value)?;
+    let (object, target, length) = array_object_target(vm, context, this_value)?;
     let compare_fn = arguments
         .first()
         .cloned()
         .filter(|v| !matches!(v, JsValue::Undefined));
+    if let Some(compare_fn) = &compare_fn {
+        require_callable(compare_fn, "Array.prototype.sort")?;
+    }
 
-    // Collect elements
     let elements: Vec<JsValue> = {
         let mut v = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
         for i in 0..length.min(MAX_DENSE_ALLOC) {
-            v.push(get_elem(vm, context, target.clone(), i)?);
+            if array_index_exists(context, &target, object, i)? {
+                v.push(get_existing_elem(vm, context, target.clone(), object, i)?);
+            }
         }
         v
     };
 
     let elements = merge_sort_array_elements(vm, context, elements, &compare_fn)?;
+    let item_count = elements.len();
 
-    // Write sorted elements back
     for (i, elem) in elements.into_iter().enumerate() {
         set_array_index_strict(vm, context, target.clone(), i, elem)?;
+    }
+    for index in item_count..length.min(MAX_DENSE_ALLOC) {
+        context.delete_property(object, &index.to_string(), true)?;
     }
     Ok(target)
 }
@@ -1676,6 +1790,12 @@ fn compare_two(
     b: &JsValue,
     compare_fn: &Option<JsValue>,
 ) -> Result<bool, VmError> {
+    match (a, b) {
+        (JsValue::Undefined, JsValue::Undefined) => return Ok(false),
+        (JsValue::Undefined, _) => return Ok(true),
+        (_, JsValue::Undefined) => return Ok(false),
+        _ => {}
+    }
     if let Some(func) = compare_fn {
         let result = vm.call_value_from_builtin(
             func.clone(),

@@ -26,6 +26,31 @@ use crate::vm::{CallFrame, Vm, VmError};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RealmId(pub u32);
 
+#[derive(Debug, Clone)]
+pub(crate) struct DisposableStackEntry {
+    pub value: JsValue,
+    pub disposer: JsValue,
+    pub this_value: JsValue,
+    pub pass_value: bool,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DisposableStackState {
+    pub asynchronous: bool,
+    pub disposed: bool,
+    pub entries: Vec<DisposableStackEntry>,
+}
+
+impl DisposableStackState {
+    fn new(asynchronous: bool) -> Self {
+        Self {
+            asynchronous,
+            disposed: false,
+            entries: Vec::new(),
+        }
+    }
+}
+
 /// Stable references to all fundamental constructors and prototypes installed during
 /// `install_foundation`. The V6 additions (string/number/boolean/error prototypes) are
 /// pre-created as ordinary objects in `install_foundation` so that builtins can install
@@ -162,6 +187,7 @@ pub struct NativeContext {
     /// `throw_value` can produce a correctly-typed VmError for top-level throws.
     error_object_names: HashMap<ObjectId, &'static str>,
     raw_json_objects: HashMap<ObjectId, String>,
+    disposable_stacks: HashMap<ObjectId, DisposableStackState>,
     builtin_registry: Vec<BuiltinFunction>,
     builtin_realm_globals: HashMap<BuiltinId, ObjectId>,
     current_builtin_stack: Vec<BuiltinId>,
@@ -249,6 +275,7 @@ impl NativeContext {
             error_objects: HashSet::new(),
             error_object_names: HashMap::new(),
             raw_json_objects: HashMap::new(),
+            disposable_stacks: HashMap::new(),
             builtin_registry: Vec::new(),
             builtin_realm_globals: HashMap::new(),
             current_builtin_stack: Vec::new(),
@@ -503,6 +530,15 @@ impl NativeContext {
                 Job::HostCallback(_) => {}
             }
         }
+        for state in self.disposable_stacks.values() {
+            for entry in &state.entries {
+                roots.value_roots.extend([
+                    entry.value.clone(),
+                    entry.disposer.clone(),
+                    entry.this_value.clone(),
+                ]);
+            }
+        }
     }
 
     fn prune_swept_metadata(&mut self) {
@@ -523,6 +559,8 @@ impl NativeContext {
         self.error_objects
             .retain(|object| self.heap.contains_object(*object));
         self.raw_json_objects
+            .retain(|object, _| self.heap.contains_object(*object));
+        self.disposable_stacks
             .retain(|object, _| self.heap.contains_object(*object));
         let builtin_count = self.builtin_registry.len();
         self.builtin_realm_globals.retain(|builtin, global| {
@@ -679,6 +717,14 @@ impl NativeContext {
             .position(|realm| realm.global_object == global_object)
             .and_then(|index| u32::try_from(index).ok())
             .map(RealmId)
+    }
+
+    /// Return the global object of the Realm that owns a callable.  V13-C uses
+    /// this for OrdinaryCreateFromConstructor fallback prototypes when a
+    /// resource-stack `newTarget.prototype` is not an object.
+    #[must_use]
+    pub(crate) fn global_object_for_callable(&self, value: &JsValue) -> ObjectId {
+        self.callable_realm_global(value)
     }
 
     fn callable_realm_global(&self, value: &JsValue) -> ObjectId {
@@ -1271,6 +1317,22 @@ impl NativeContext {
 
     pub fn mark_raw_json_object(&mut self, object: ObjectId, raw_json: String) {
         self.raw_json_objects.insert(object, raw_json);
+    }
+
+    pub(crate) fn create_disposable_stack(&mut self, object: ObjectId, asynchronous: bool) {
+        self.disposable_stacks
+            .insert(object, DisposableStackState::new(asynchronous));
+    }
+
+    pub(crate) fn disposable_stack(&self, object: ObjectId) -> Option<&DisposableStackState> {
+        self.disposable_stacks.get(&object)
+    }
+
+    pub(crate) fn disposable_stack_mut(
+        &mut self,
+        object: ObjectId,
+    ) -> Option<&mut DisposableStackState> {
+        self.disposable_stacks.get_mut(&object)
     }
 
     #[must_use]

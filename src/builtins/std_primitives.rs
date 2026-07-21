@@ -10,8 +10,9 @@
 
 use super::{boolean, error, json, math, number, proxy, regexp, string};
 use crate::runtime::{
-    BigIntValue, IteratorMode, JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind,
-    PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, bigint,
+    BigIntValue, IteratorMode, JsObject, JsValue, NativeCall, NativeConstruct, NativeContext,
+    NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
+    PropertyDescriptorUpdate, PropertyKind, bigint,
 };
 use crate::vm::{Vm, VmError, VmErrorKind};
 
@@ -25,6 +26,7 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_math(context)?;
     install_json(context)?;
     install_global_functions(context)?;
+    install_disposable_stacks(context)?;
     install_regexp(context)?;
     install_symbol(context)?;
     install_reflect(context)?;
@@ -237,12 +239,23 @@ fn install_error(context: &mut NativeContext) -> Result<(), VmError> {
 
         let call = error_constructor_call(spec.name)
             .ok_or_else(|| VmError::runtime("missing Error constructor adapter"))?;
-        let constructor =
-            context.register_builtin(spec.name, spec.length, call, Some(error_construct))?;
+        let construct: Option<NativeConstruct> = match spec.name {
+            "AggregateError" => Some(aggregate_error_construct),
+            "SuppressedError" => Some(suppressed_error_construct),
+            _ => Some(error_construct),
+        };
+        let constructor = context.register_builtin(spec.name, spec.length, call, construct)?;
         let JsValue::BuiltinFunction(id) = &constructor else {
             unreachable!()
         };
         let backing = context.builtin(*id).unwrap().object;
+
+        if matches!(spec.name, "AggregateError" | "SuppressedError")
+            && let Some(error_constructor) = context.get_global("Error")
+            && let Some(error_constructor) = context.value_object(&error_constructor)
+        {
+            context.set_prototype_of(backing, Some(error_constructor))?;
+        }
 
         context.define_own_property(
             backing,
@@ -264,7 +277,12 @@ fn install_error(context: &mut NativeContext) -> Result<(), VmError> {
             "message".into(),
             method_descriptor(JsValue::String(String::new())),
         )?;
-        context.declare_global(spec.name, constructor);
+        context.declare_global(spec.name, constructor.clone());
+        context.define_own_property(
+            context.global_object(),
+            spec.name.into(),
+            PropertyDescriptor::data_with(constructor, true, false, true),
+        )?;
     }
 
     let error_constructor = context
@@ -302,6 +320,8 @@ fn error_constructor_call(name: &str) -> Option<NativeCall> {
         "SyntaxError" => syntax_error_call,
         "TypeError" => type_error_call,
         "URIError" => uri_error_call,
+        "AggregateError" => aggregate_error_call,
+        "SuppressedError" => suppressed_error_call,
         _ => return None,
     })
 }
@@ -315,6 +335,11 @@ fn install_json(context: &mut NativeContext) -> Result<(), VmError> {
     define_method(context, object, "stringify", 3, json_stringify)?;
     define_method(context, object, "rawJSON", 1, json_raw_json)?;
     define_method(context, object, "isRawJSON", 1, json_is_raw_json)?;
+    context.define_symbol_own_property(
+        object,
+        context.well_known_symbols().to_string_tag,
+        constant_descriptor(JsValue::String("JSON".into())),
+    )?;
     context.declare_global("JSON", JsValue::Object(object));
     Ok(())
 }
@@ -446,6 +471,30 @@ error_call_adapter!(syntax_error_call, "SyntaxError");
 error_call_adapter!(type_error_call, "TypeError");
 error_call_adapter!(uri_error_call, "URIError");
 
+fn aggregate_error_call(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let constructor = context
+        .get_global("AggregateError")
+        .ok_or_else(|| VmError::runtime("AggregateError constructor missing"))?;
+    aggregate_error_create(vm, context, arguments, constructor)
+}
+
+fn suppressed_error_call(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let constructor = context
+        .get_global("SuppressedError")
+        .ok_or_else(|| VmError::runtime("SuppressedError constructor missing"))?;
+    suppressed_error_create(vm, context, arguments, constructor)
+}
+
 fn create_error_object(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -501,6 +550,103 @@ fn error_construct(
         context.set_error_object_name(*id, name);
     }
     Ok(result)
+}
+
+fn aggregate_error_construct(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    aggregate_error_create(vm, context, arguments, new_target)
+}
+
+fn aggregate_error_create(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    let prototype =
+        error_like_prototype_from_constructor(vm, context, new_target, "AggregateError")?;
+    let message_and_options = [arg(arguments, 1), arg(arguments, 2)];
+    let result = create_error_object(vm, context, &message_and_options, prototype)?;
+    let errors = vm.collect_iterable_values_from_builtin(arg(arguments, 0), context)?;
+    let errors = context.create_array(errors)?;
+    let JsValue::Object(object) = result else {
+        unreachable!("create_error_object returns an object")
+    };
+    context.define_own_property(object, "errors".into(), method_descriptor(errors))?;
+    context.set_error_object_name(object, "AggregateError");
+    Ok(JsValue::Object(object))
+}
+
+fn suppressed_error_construct(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    suppressed_error_create(vm, context, arguments, new_target)
+}
+
+fn suppressed_error_create(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    let prototype =
+        error_like_prototype_from_constructor(vm, context, new_target, "SuppressedError")?;
+    let message_and_options = [arg(arguments, 2), arg(arguments, 3)];
+    let result = create_error_object(vm, context, &message_and_options, prototype)?;
+    let JsValue::Object(object) = result else {
+        unreachable!("create_error_object returns an object")
+    };
+    context.define_own_property(object, "error".into(), method_descriptor(arg(arguments, 0)))?;
+    context.define_own_property(
+        object,
+        "suppressed".into(),
+        method_descriptor(arg(arguments, 1)),
+    )?;
+    context.set_error_object_name(object, "SuppressedError");
+    Ok(JsValue::Object(object))
+}
+
+fn error_like_prototype_from_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    new_target: JsValue,
+    name: &str,
+) -> Result<ObjectId, VmError> {
+    let prototype = match vm.get_property_value_catching_from_builtin(
+        new_target.clone(),
+        "prototype",
+        context,
+    )? {
+        Ok(value) => value,
+        Err(error) => return Err(vm.throw_value_from_builtin(error)),
+    };
+    if let Some(prototype) = context.value_object(&prototype) {
+        return Ok(prototype);
+    }
+    let global = context.global_object_for_callable(&new_target);
+    let constructor = match vm.get_property_value_catching_from_builtin(
+        JsValue::Object(global),
+        name,
+        context,
+    )? {
+        Ok(value) => value,
+        Err(error) => return Err(vm.throw_value_from_builtin(error)),
+    };
+    let prototype =
+        match vm.get_property_value_catching_from_builtin(constructor, "prototype", context)? {
+            Ok(value) => value,
+            Err(error) => return Err(vm.throw_value_from_builtin(error)),
+        };
+    context
+        .value_object(&prototype)
+        .ok_or_else(|| VmError::runtime("error-like prototype missing"))
 }
 
 fn error_is_error(
@@ -2522,6 +2668,11 @@ fn install_math(context: &mut NativeContext) -> Result<(), VmError> {
             math_method_call(spec.name).ok_or_else(|| VmError::runtime("missing Math adapter"))?;
         define_method(context, math_object, spec.name, spec.length, call)?;
     }
+    context.define_symbol_own_property(
+        math_object,
+        context.well_known_symbols().to_string_tag,
+        constant_descriptor(JsValue::String("Math".into())),
+    )?;
 
     context.declare_global("Math", JsValue::Object(math_object));
     Ok(())
@@ -2805,21 +2956,562 @@ fn math_random(
 // ── Global functions ─────────────────────────────────────────────────────────
 
 fn install_global_functions(context: &mut NativeContext) -> Result<(), VmError> {
-    let parse_int = context.register_builtin("parseInt", 2, global_parse_int, None)?;
-    context.declare_global("parseInt", parse_int);
-    let parse_float = context.register_builtin("parseFloat", 1, global_parse_float, None)?;
-    context.declare_global("parseFloat", parse_float);
-    let is_nan = context.register_builtin("isNaN", 1, global_is_nan, None)?;
-    context.declare_global("isNaN", is_nan);
-    let is_finite = context.register_builtin("isFinite", 1, global_is_finite, None)?;
-    context.declare_global("isFinite", is_finite);
-    let decode_uri =
-        context.register_builtin("decodeURIComponent", 1, decode_uri_component, None)?;
-    context.declare_global("decodeURIComponent", decode_uri);
-    let encode_uri =
-        context.register_builtin("encodeURIComponent", 1, encode_uri_component, None)?;
-    context.declare_global("encodeURIComponent", encode_uri);
+    install_global_function(context, "parseInt", 2, global_parse_int)?;
+    install_global_function(context, "parseFloat", 1, global_parse_float)?;
+    install_global_function(context, "isNaN", 1, global_is_nan)?;
+    install_global_function(context, "isFinite", 1, global_is_finite)?;
+    install_global_function(context, "decodeURI", 1, decode_uri)?;
+    install_global_function(context, "encodeURI", 1, encode_uri)?;
+    install_global_function(context, "decodeURIComponent", 1, decode_uri_component)?;
+    install_global_function(context, "encodeURIComponent", 1, encode_uri_component)?;
     Ok(())
+}
+
+fn install_global_function(
+    context: &mut NativeContext,
+    name: &'static str,
+    length: u8,
+    call: NativeCall,
+) -> Result<(), VmError> {
+    let function = context.register_builtin(name, length, call, None)?;
+    context.declare_global(name, function.clone());
+    context.define_own_property(
+        context.global_object(),
+        name.into(),
+        PropertyDescriptor::data_with(function, true, false, true),
+    )?;
+    Ok(())
+}
+
+fn install_disposable_stacks(context: &mut NativeContext) -> Result<(), VmError> {
+    install_disposable_stack(context, "DisposableStack", false)?;
+    install_disposable_stack(context, "AsyncDisposableStack", true)
+}
+
+fn install_disposable_stack(
+    context: &mut NativeContext,
+    name: &'static str,
+    asynchronous: bool,
+) -> Result<(), VmError> {
+    let mut prototype = JsObject::ordinary();
+    prototype.prototype = context.object_prototype();
+    let prototype = context
+        .heap_mut()
+        .allocate_object(prototype)
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    let construct = if asynchronous {
+        async_disposable_stack_construct as NativeConstruct
+    } else {
+        disposable_stack_construct as NativeConstruct
+    };
+    let constructor = context.register_builtin(name, 0, disposable_stack_call, Some(construct))?;
+    let backing = context
+        .value_object(&constructor)
+        .ok_or_else(|| VmError::runtime("DisposableStack constructor missing"))?;
+    context.define_own_property(
+        backing,
+        "prototype".into(),
+        constant_descriptor(JsValue::Object(prototype)),
+    )?;
+    context.define_own_property(
+        prototype,
+        "constructor".into(),
+        method_descriptor(constructor.clone()),
+    )?;
+    context.define_symbol_own_property(
+        prototype,
+        context.well_known_symbols().to_string_tag,
+        PropertyDescriptor::data_with(JsValue::String(name.into()), false, false, true),
+    )?;
+    let disposed_call = if asynchronous {
+        async_disposable_stack_disposed_get as NativeCall
+    } else {
+        disposable_stack_disposed_get as NativeCall
+    };
+    let disposed_getter = context.register_builtin("get disposed", 0, disposed_call, None)?;
+    context.define_own_property(
+        prototype,
+        "disposed".into(),
+        PropertyDescriptor::accessor(Some(disposed_getter), None, false, true),
+    )?;
+    let methods: [(&str, u8, NativeCall); 5] = if asynchronous {
+        [
+            ("use", 1, async_disposable_stack_use),
+            ("adopt", 2, async_disposable_stack_adopt),
+            ("defer", 1, async_disposable_stack_defer),
+            ("move", 0, async_disposable_stack_move),
+            ("disposeAsync", 0, async_disposable_stack_dispose),
+        ]
+    } else {
+        [
+            ("use", 1, disposable_stack_use),
+            ("adopt", 2, disposable_stack_adopt),
+            ("defer", 1, disposable_stack_defer),
+            ("move", 0, disposable_stack_move),
+            ("dispose", 0, disposable_stack_dispose),
+        ]
+    };
+    for (method, length, call) in methods {
+        define_method(context, prototype, method, length, call)?;
+    }
+    let dispose = if asynchronous {
+        context.well_known_symbols().async_dispose
+    } else {
+        context.well_known_symbols().dispose
+    };
+    let dispose_method = context.get_property(
+        JsValue::Object(prototype),
+        if asynchronous {
+            "disposeAsync"
+        } else {
+            "dispose"
+        },
+    )?;
+    context.define_symbol_own_property(prototype, dispose, method_descriptor(dispose_method))?;
+    context.declare_global(name, constructor.clone());
+    context.define_own_property(
+        context.global_object(),
+        name.into(),
+        PropertyDescriptor::data_with(constructor, true, false, true),
+    )?;
+    Ok(())
+}
+
+fn disposable_stack_call(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Err(VmError::type_error(
+        "DisposableStack constructor must be called with new",
+    ))
+}
+
+fn disposable_stack_construct(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    construct_disposable_stack(vm, context, arguments, new_target, false)
+}
+
+fn async_disposable_stack_construct(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    construct_disposable_stack(vm, context, arguments, new_target, true)
+}
+
+fn construct_disposable_stack(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _arguments: &[JsValue],
+    new_target: JsValue,
+    asynchronous: bool,
+) -> Result<JsValue, VmError> {
+    let prototype =
+        disposable_stack_prototype_from_constructor(vm, context, new_target.clone(), asynchronous)?;
+    let mut object = JsObject::ordinary();
+    object.prototype = Some(prototype);
+    let id = context
+        .heap_mut()
+        .allocate_object(object)
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    context.create_disposable_stack(id, asynchronous);
+    Ok(JsValue::Object(id))
+}
+
+fn disposable_stack_prototype_from_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    new_target: JsValue,
+    asynchronous: bool,
+) -> Result<ObjectId, VmError> {
+    let prototype = vm.get_property_value(new_target.clone(), "prototype", context)?;
+    if let Some(prototype) = context.value_object(&prototype) {
+        return Ok(prototype);
+    }
+    let global = context.global_object_for_callable(&new_target);
+    let name = if asynchronous {
+        "AsyncDisposableStack"
+    } else {
+        "DisposableStack"
+    };
+    let constructor = vm.get_property_value(JsValue::Object(global), name, context)?;
+    let prototype = vm.get_property_value(constructor, "prototype", context)?;
+    context
+        .value_object(&prototype)
+        .ok_or_else(|| VmError::runtime("DisposableStack prototype missing"))
+}
+
+fn disposable_stack_use(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_use_impl(vm, context, this, arguments, false)
+}
+
+fn async_disposable_stack_use(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_use_impl(vm, context, this, arguments, true)
+}
+
+fn disposable_stack_use_impl(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+    asynchronous: bool,
+) -> Result<JsValue, VmError> {
+    let object = disposable_stack_object(context, &this, asynchronous)?;
+    if context.disposable_stack(object).unwrap().disposed {
+        return Err(VmError::reference("DisposableStack is disposed"));
+    }
+    let value = arg(arguments, 0);
+    if matches!(value, JsValue::Null | JsValue::Undefined) {
+        return Ok(value);
+    }
+    if context.value_object(&value).is_none() {
+        return Err(VmError::type_error("resource is not an object"));
+    }
+    let mut disposer = JsValue::Undefined;
+    if asynchronous {
+        disposer = vm.get_symbol_property_value_with_receiver_from_builtin(
+            value.clone(),
+            value.clone(),
+            context.well_known_symbols().async_dispose,
+            context,
+        )?;
+    }
+    if matches!(disposer, JsValue::Null | JsValue::Undefined) {
+        disposer = vm.get_symbol_property_value_with_receiver_from_builtin(
+            value.clone(),
+            value.clone(),
+            context.well_known_symbols().dispose,
+            context,
+        )?;
+    }
+    if !context.is_callable_value(&disposer) {
+        return Err(VmError::type_error("resource is not disposable"));
+    }
+    let state = context.disposable_stack_mut(object).unwrap();
+    state.entries.push(crate::runtime::DisposableStackEntry {
+        value: value.clone(),
+        disposer,
+        this_value: value.clone(),
+        pass_value: false,
+    });
+    Ok(value)
+}
+fn disposable_stack_adopt(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_adopt_impl(context, this, arguments, false)
+}
+
+fn async_disposable_stack_adopt(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_adopt_impl(context, this, arguments, true)
+}
+
+fn disposable_stack_adopt_impl(
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+    asynchronous: bool,
+) -> Result<JsValue, VmError> {
+    let object = disposable_stack_object(context, &this, asynchronous)?;
+    let disposer = arg(arguments, 1);
+    if !context.is_callable_value(&disposer) {
+        return Err(VmError::type_error("onDispose is not callable"));
+    }
+    let state = context.disposable_stack_mut(object).unwrap();
+    if state.disposed {
+        return Err(VmError::reference("DisposableStack is disposed"));
+    }
+    state.entries.push(crate::runtime::DisposableStackEntry {
+        value: arg(arguments, 0),
+        disposer,
+        this_value: JsValue::Undefined,
+        pass_value: true,
+    });
+    Ok(arg(arguments, 0))
+}
+fn disposable_stack_defer(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_defer_impl(context, this, arguments, false)
+}
+
+fn async_disposable_stack_defer(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_defer_impl(context, this, arguments, true)
+}
+
+fn disposable_stack_defer_impl(
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+    asynchronous: bool,
+) -> Result<JsValue, VmError> {
+    let object = disposable_stack_object(context, &this, asynchronous)?;
+    let disposer = arg(arguments, 0);
+    if !context.is_callable_value(&disposer) {
+        return Err(VmError::type_error("onDispose is not callable"));
+    }
+    let state = context.disposable_stack_mut(object).unwrap();
+    if state.disposed {
+        return Err(VmError::reference("DisposableStack is disposed"));
+    }
+    state.entries.push(crate::runtime::DisposableStackEntry {
+        value: JsValue::Undefined,
+        disposer,
+        this_value: JsValue::Undefined,
+        pass_value: false,
+    });
+    Ok(JsValue::Undefined)
+}
+
+fn disposable_stack_disposed_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_disposed_get_impl(context, this, false)
+}
+
+fn async_disposable_stack_disposed_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_disposed_get_impl(context, this, true)
+}
+
+fn disposable_stack_disposed_get_impl(
+    context: &NativeContext,
+    this: JsValue,
+    asynchronous: bool,
+) -> Result<JsValue, VmError> {
+    let object = disposable_stack_object(context, &this, asynchronous)?;
+    Ok(JsValue::Boolean(
+        context.disposable_stack(object).unwrap().disposed,
+    ))
+}
+fn disposable_stack_move(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_move_impl(context, this, false)
+}
+
+fn async_disposable_stack_move(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    disposable_stack_move_impl(context, this, true)
+}
+
+fn disposable_stack_move_impl(
+    context: &mut NativeContext,
+    this: JsValue,
+    asynchronous: bool,
+) -> Result<JsValue, VmError> {
+    let source = disposable_stack_object(context, &this, asynchronous)?;
+    let constructor_name = if asynchronous {
+        "AsyncDisposableStack"
+    } else {
+        "DisposableStack"
+    };
+    let constructor = context
+        .get_global(constructor_name)
+        .ok_or_else(|| VmError::runtime("DisposableStack constructor missing"))?;
+    let prototype = context
+        .constructor_prototype(&constructor)?
+        .ok_or_else(|| VmError::runtime("DisposableStack prototype missing"))?;
+    let mut object = JsObject::ordinary();
+    object.prototype = Some(prototype);
+    let id = context
+        .heap_mut()
+        .allocate_object(object)
+        .ok_or_else(|| VmError::runtime("heap exhausted"))?;
+    let entries = {
+        let state = context.disposable_stack_mut(source).unwrap();
+        if state.disposed {
+            return Err(VmError::reference("DisposableStack is disposed"));
+        }
+        state.disposed = true;
+        std::mem::take(&mut state.entries)
+    };
+    context.create_disposable_stack(id, asynchronous);
+    context.disposable_stack_mut(id).unwrap().entries = entries;
+    Ok(JsValue::Object(id))
+}
+
+fn disposable_stack_dispose(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = disposable_stack_object(context, &this, false)?;
+    let entries = {
+        let state = context.disposable_stack_mut(object).unwrap();
+        if state.disposed {
+            return Ok(JsValue::Undefined);
+        }
+        state.disposed = true;
+        std::mem::take(&mut state.entries)
+    };
+    dispose_stack_entries(vm, context, entries)?;
+    Ok(JsValue::Undefined)
+}
+
+fn async_disposable_stack_dispose(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let outcome = (|| {
+        let object = disposable_stack_object(context, &this, true)?;
+        let entries = {
+            let state = context.disposable_stack_mut(object).unwrap();
+            if state.disposed {
+                return Ok(JsValue::Undefined);
+            }
+            state.disposed = true;
+            std::mem::take(&mut state.entries)
+        };
+        dispose_stack_entries(vm, context, entries)?;
+        Ok(JsValue::Undefined)
+    })();
+    settled_native_promise(vm, context, outcome)
+}
+
+fn dispose_stack_entries(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    entries: Vec<crate::runtime::DisposableStackEntry>,
+) -> Result<(), VmError> {
+    let mut thrown: Option<JsValue> = None;
+    for entry in entries.into_iter().rev() {
+        let args = if entry.pass_value {
+            vec![entry.value]
+        } else {
+            Vec::new()
+        };
+        if let Err(error) =
+            vm.call_value_from_builtin(entry.disposer, entry.this_value, args, context)
+        {
+            let error = vm
+                .take_pending_exception_from_builtin()
+                .unwrap_or_else(|| vm_error_value(error));
+            thrown = Some(if let Some(suppressed) = thrown {
+                let constructor = context
+                    .get_global("SuppressedError")
+                    .ok_or_else(|| VmError::runtime("SuppressedError constructor missing"))?;
+                suppressed_error_create(
+                    vm,
+                    context,
+                    &[error, suppressed, JsValue::String(String::new())],
+                    constructor,
+                )?
+            } else {
+                error
+            });
+        }
+    }
+    if let Some(error) = thrown {
+        return Err(vm.throw_value_from_builtin(error));
+    }
+    Ok(())
+}
+
+fn vm_error_value(error: VmError) -> JsValue {
+    let kind = match error.kind {
+        VmErrorKind::Reference => NativeErrorKind::Reference,
+        VmErrorKind::Type => NativeErrorKind::Type,
+        VmErrorKind::Syntax => NativeErrorKind::Syntax,
+        VmErrorKind::Range => NativeErrorKind::Range,
+        VmErrorKind::Test262 => NativeErrorKind::Test262,
+        VmErrorKind::RuntimeLimit => NativeErrorKind::RuntimeLimit,
+        VmErrorKind::Runtime => NativeErrorKind::Error,
+    };
+    JsValue::Error(NativeErrorValue::new(kind, error.message))
+}
+
+fn settled_native_promise(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    outcome: Result<JsValue, VmError>,
+) -> Result<JsValue, VmError> {
+    let promise = context.create_promise()?;
+    let prototype = context
+        .get_global("Promise")
+        .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten());
+    let object = context.create_promise_object(promise, prototype)?;
+    match outcome {
+        Ok(value) => {
+            crate::builtins::promise::resolve_promise_id(vm, context, promise, value)?;
+        }
+        Err(error) => {
+            let reason = vm
+                .take_pending_exception_from_builtin()
+                .unwrap_or_else(|| vm_error_value(error));
+            context.reject_promise(promise, reason)?;
+        }
+    }
+    Ok(object)
+}
+
+fn disposable_stack_object(
+    context: &NativeContext,
+    value: &JsValue,
+    asynchronous: bool,
+) -> Result<ObjectId, VmError> {
+    let object = context.value_object(value).ok_or_else(|| {
+        VmError::type_error("DisposableStack method called on incompatible receiver")
+    })?;
+    let state = context.disposable_stack(object).ok_or_else(|| {
+        VmError::type_error("DisposableStack method called on incompatible receiver")
+    })?;
+    if state.asynchronous != asynchronous {
+        return Err(VmError::type_error(
+            "DisposableStack method called on incompatible receiver",
+        ));
+    }
+    Ok(object)
 }
 
 fn global_parse_int(
@@ -2869,22 +3561,152 @@ fn global_is_finite(
     Ok(JsValue::Boolean(number::is_finite(value)))
 }
 
-fn decode_uri_component(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
+fn decode_uri(
+    vm: &mut Vm,
+    context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(arguments.first().cloned().unwrap_or(JsValue::Undefined))
+    let input = arg_string(vm, context, arguments, 0)?;
+    let decoded =
+        percent_decode_uri(&input, true).map_err(|message| uri_error(vm, context, message))?;
+    Ok(JsValue::String(decoded))
+}
+
+fn encode_uri(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let input = arg_string(vm, context, arguments, 0)?;
+    Ok(JsValue::String(percent_encode_uri(&input, true)))
+}
+
+fn decode_uri_component(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let input = arg_string(vm, context, arguments, 0)?;
+    let decoded =
+        percent_decode_uri(&input, false).map_err(|message| uri_error(vm, context, message))?;
+    Ok(JsValue::String(decoded))
 }
 
 fn encode_uri_component(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
+    vm: &mut Vm,
+    context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(arguments.first().cloned().unwrap_or(JsValue::Undefined))
+    let input = arg_string(vm, context, arguments, 0)?;
+    Ok(JsValue::String(percent_encode_uri(&input, false)))
+}
+
+fn percent_encode_uri(input: &str, preserve_uri_reserved: bool) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(input.len());
+    for byte in input.bytes() {
+        let unescaped = byte.is_ascii_alphanumeric()
+            || matches!(
+                byte,
+                b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
+            )
+            || (preserve_uri_reserved
+                && matches!(
+                    byte,
+                    b';' | b'/' | b'?' | b':' | b'@' | b'&' | b'=' | b'+' | b'$' | b',' | b'#'
+                ));
+        if unescaped {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+    }
+    encoded
+}
+
+fn percent_decode_uri(input: &str, preserve_uri_reserved: bool) -> Result<String, &'static str> {
+    let bytes = input.as_bytes();
+    let mut decoded = String::with_capacity(input.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] != b'%' {
+            let tail = &input[index..];
+            let character = tail.chars().next().ok_or("malformed URI")?;
+            decoded.push(character);
+            index += character.len_utf8();
+            continue;
+        }
+
+        let first = percent_byte(bytes, index)?;
+        if first.is_ascii() {
+            if preserve_uri_reserved && is_uri_reserved(first) {
+                decoded.push_str(&input[index..index + 3]);
+            } else {
+                decoded.push(char::from(first));
+            }
+            index += 3;
+            continue;
+        }
+
+        let sequence_start = index;
+        let mut sequence = Vec::new();
+        while index < bytes.len() && bytes[index] == b'%' {
+            let byte = percent_byte(bytes, index)?;
+            if byte.is_ascii() {
+                break;
+            }
+            sequence.push(byte);
+            index += 3;
+        }
+        let value = std::str::from_utf8(&sequence).map_err(|_| "malformed URI")?;
+        if value.is_empty() {
+            return Err("malformed URI");
+        }
+        decoded.push_str(value);
+        if index == sequence_start {
+            return Err("malformed URI");
+        }
+    }
+    Ok(decoded)
+}
+
+fn percent_byte(input: &[u8], index: usize) -> Result<u8, &'static str> {
+    let Some(&high) = input.get(index + 1) else {
+        return Err("malformed URI");
+    };
+    let Some(&low) = input.get(index + 2) else {
+        return Err("malformed URI");
+    };
+    let hex = |byte: u8| match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    };
+    match (hex(high), hex(low)) {
+        (Some(high), Some(low)) => Ok((high << 4) | low),
+        _ => Err("malformed URI"),
+    }
+}
+
+fn is_uri_reserved(byte: u8) -> bool {
+    matches!(
+        byte,
+        b';' | b'/' | b'?' | b':' | b'@' | b'&' | b'=' | b'+' | b'$' | b',' | b'#'
+    )
+}
+
+fn uri_error(vm: &mut Vm, context: &mut NativeContext, message: &'static str) -> VmError {
+    match call_error_constructor(vm, context, &[JsValue::String(message.into())], "URIError") {
+        Ok(error) => vm.throw_value_from_builtin(error),
+        Err(error) => error,
+    }
 }
 
 // ── RegExp ────────────────────────────────────────────────────────────────────
@@ -3659,6 +4481,7 @@ fn install_symbol(context: &mut NativeContext) -> Result<(), VmError> {
         ("matchAll", wk.match_all),
         ("search", wk.search),
         ("dispose", wk.dispose),
+        ("asyncDispose", wk.async_dispose),
         ("asyncIterator", wk.async_iterator),
     ];
     for (name, sym_id) in well_known {
