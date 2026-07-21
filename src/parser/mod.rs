@@ -144,6 +144,7 @@ impl Parser {
             body.push(self.parse_statement()?);
         }
         self.validate_lexical_declarations(&body)?;
+        self.validate_private_names(&body)?;
         Ok(Program { body })
     }
 
@@ -165,6 +166,7 @@ impl Parser {
             }
             self.validate_lexical_declarations(&body)?;
             self.validate_module_declarations(&body)?;
+            self.validate_private_names(&body)?;
             Ok(Program { body })
         })();
         self.is_strict = outer_strict;

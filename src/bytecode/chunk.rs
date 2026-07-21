@@ -237,6 +237,9 @@ pub struct FunctionTemplate {
     pub is_arrow: bool,
     /// Class constructor created for a class with an `extends` clause.
     pub is_derived_constructor: bool,
+    pub is_constructable: bool,
+    pub has_own_prototype_property: bool,
+    pub prototype_writable: bool,
     /// True when this function body directly references the `arguments` binding.
     pub uses_arguments: bool,
     pub environment_policy: EnvironmentCapturePolicy,
