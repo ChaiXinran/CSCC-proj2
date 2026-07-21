@@ -235,6 +235,8 @@ pub struct FunctionTemplate {
     pub is_async: bool,
     pub is_generator: bool,
     pub is_arrow: bool,
+    /// Class constructor created for a class with an `extends` clause.
+    pub is_derived_constructor: bool,
     /// True when this function body directly references the `arguments` binding.
     pub uses_arguments: bool,
     pub environment_policy: EnvironmentCapturePolicy,

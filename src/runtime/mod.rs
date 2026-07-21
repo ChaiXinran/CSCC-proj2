@@ -12,6 +12,7 @@ mod iterator;
 mod job;
 mod module;
 mod object;
+mod private;
 mod property;
 mod property_map;
 mod symbol;
@@ -40,14 +41,16 @@ pub use job::{
     PromiseRecord, PromiseState, PromiseThenReaction,
 };
 pub use module::{
-    ModuleEvaluationState, ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleRecord,
-    ModuleRegistry, ModuleStatus, normalize_module_path, resolve_module_specifier,
+    DynamicImportOutcome, DynamicImportRequest, ModuleEvaluationState, ModuleExportBinding,
+    ModuleId, ModuleImportBinding, ModuleLoadState, ModuleRecord, ModuleRegistry, ModuleStatus,
+    normalize_module_path, resolve_module_specifier,
 };
 pub(crate) use object::array_index;
 pub use object::{
     GeneratorRecord, GeneratorState, JsObject, ObjectId, ObjectKind, PrimitiveValue, PropertyKey,
     ProxyRecord,
 };
+pub use private::{PrivateBrandId, PrivateSlot};
 pub use property::{PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind};
 pub use property_map::{PropertyEntry, PropertyMap};
 pub use symbol::{Symbol, SymbolId, SymbolRegistry, WellKnownSymbols};

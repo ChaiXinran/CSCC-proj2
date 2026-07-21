@@ -3,7 +3,33 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::JsValue;
+use super::{EnvironmentId, JsValue};
+
+/// Lifecycle used by dynamic import while a local module is being resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleLoadState {
+    New,
+    Loading,
+    Loaded,
+    Evaluating,
+    Evaluated,
+    Failed,
+}
+
+/// Request data preserved at the NativeRuntime boundary for `import()`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DynamicImportRequest {
+    pub specifier: String,
+    pub referrer: Option<PathBuf>,
+    pub attributes: Vec<(String, JsValue)>,
+}
+
+/// Promise settlement outcome used by hosts which need to observe an import.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DynamicImportOutcome {
+    Fulfilled(JsValue),
+    Rejected(JsValue),
+}
 
 /// Stable numeric identity for a module record inside one native isolate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -59,6 +85,8 @@ pub struct ModuleRegistry {
     records: HashMap<PathBuf, ModuleRecord>,
     statuses: HashMap<ModuleId, ModuleStatus>,
     evaluation_states: HashMap<ModuleId, ModuleEvaluationState>,
+    environments: HashMap<ModuleId, EnvironmentId>,
+    namespaces: HashMap<ModuleId, JsValue>,
 }
 
 impl ModuleRegistry {
@@ -124,6 +152,32 @@ impl ModuleRegistry {
 
     pub fn set_evaluation_state(&mut self, id: ModuleId, state: ModuleEvaluationState) {
         self.evaluation_states.insert(id, state);
+    }
+
+    pub fn set_environment(&mut self, id: ModuleId, environment: EnvironmentId) {
+        self.environments.insert(id, environment);
+    }
+
+    #[must_use]
+    pub fn environment(&self, id: ModuleId) -> Option<EnvironmentId> {
+        self.environments.get(&id).copied()
+    }
+
+    pub fn set_namespace(&mut self, id: ModuleId, namespace: JsValue) {
+        self.namespaces.insert(id, namespace);
+    }
+
+    #[must_use]
+    pub fn namespace(&self, id: ModuleId) -> Option<JsValue> {
+        self.namespaces.get(&id).cloned()
+    }
+
+    pub(crate) fn environments(&self) -> impl Iterator<Item = EnvironmentId> + '_ {
+        self.environments.values().copied()
+    }
+
+    pub(crate) fn namespaces(&self) -> impl Iterator<Item = &JsValue> {
+        self.namespaces.values()
     }
 
     pub fn set_metadata(

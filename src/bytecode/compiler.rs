@@ -1460,6 +1460,7 @@ impl Compiler {
             is_async,
             is_generator,
             is_arrow: false,
+            is_derived_constructor: false,
             uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -1850,9 +1851,19 @@ impl Compiler {
                 chunk.emit(Instruction::AwaitValue);
                 Ok(())
             }
-            Expression::DynamicImport { .. } => Err(CompileError::unsupported(
-                "dynamic import execution is owned by the V12-B module protocol",
-            )),
+            Expression::DynamicImport { specifier, options } => {
+                self.compile_expression(specifier, chunk, context)?;
+                if let Some(options) = options {
+                    self.compile_expression(options, chunk, context)?;
+                } else {
+                    let undefined = chunk
+                        .add_constant(Constant::Undefined)
+                        .map_err(CompileError::from_chunk)?;
+                    chunk.emit(Instruction::Constant(undefined));
+                }
+                chunk.emit(Instruction::DynamicImport);
+                Ok(())
+            }
             Expression::Sequence(exprs) => {
                 for (i, expr) in exprs.iter().enumerate() {
                     self.compile_expression(expr, chunk, context)?;
@@ -3031,6 +3042,40 @@ impl Compiler {
             .iter()
             .any(|a| matches!(a, CallArgument::Spread(_)));
 
+        if matches!(callee, Expression::Super) {
+            let super_name = self.add_name("\u{0}class_super", chunk)?;
+            chunk.emit(Instruction::LoadName(super_name));
+            let (regular, spread) = if has_spread {
+                let (regular, spread) = self.split_trailing_spread(arguments, "super()")?;
+                (regular, Some(spread))
+            } else {
+                (arguments.len(), None)
+            };
+            for argument in &arguments[..regular] {
+                let CallArgument::Expression(expression) = argument else {
+                    unreachable!()
+                };
+                self.compile_expression(expression, chunk, context)?;
+            }
+            let count = u16::try_from(regular).map_err(|_| CompileError {
+                is_syntax: false,
+                message: "super() argument count exceeds the u16 bytecode range".into(),
+            })?;
+            if let Some(spread) = spread {
+                self.compile_expression(spread, chunk, context)?;
+                if regular == 0
+                    && matches!(spread, Expression::Identifier(name) if name == "\0default_ctor_args")
+                {
+                    chunk.emit(Instruction::SuperForwardCall);
+                } else {
+                    chunk.emit(Instruction::SuperSpreadCall(count));
+                }
+            } else {
+                chunk.emit(Instruction::SuperCall(count));
+            }
+            return Ok(());
+        }
+
         if let Expression::Member {
             object,
             property,
@@ -3607,6 +3652,7 @@ impl Compiler {
             is_async: false,
             is_generator: false,
             is_arrow: false,
+            is_derived_constructor: false,
             uses_arguments: compiled.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3821,7 +3867,12 @@ impl Compiler {
                     // Use the NUL-prefixed storage key for private fields so that
                     // `hasOwnProperty("#name")` returns false while the field is still
                     // accessible via `this.#name` (which also uses the NUL prefix).
-                    let key = Self::class_member_storage_key(prop_name);
+                    let key = match prop_name {
+                        crate::ast::PropertyName::PrivateName(name) => {
+                            format!("\0#init#{name}")
+                        }
+                        _ => Self::class_member_storage_key(prop_name),
+                    };
                     instance_field_specs.push(InstanceField {
                         static_name: Some(key),
                         computed_binding: None,
@@ -3863,6 +3914,23 @@ impl Compiler {
             })
             .collect();
 
+        // Evaluate and capture the superclass before creating the constructor so
+        // the constructor closure can resolve `super()` through this lexical
+        // binding. The value is reused below for both constructor and prototype
+        // inheritance setup.
+        let super_binding = if let Some(super_expr) = super_class {
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+            let super_name = "\u{0}class_super";
+            let super_idx = self.add_name(super_name, chunk)?;
+            chunk.emit(Instruction::CreateMutableBinding(super_idx));
+            self.compile_expression(super_expr, chunk, context)?;
+            chunk.emit(Instruction::InitializeBinding(super_idx));
+            Some(super_idx)
+        } else {
+            None
+        };
+
         // Emit constructor function.
         let ctor_body = if let Some(lit) = ctor_literal {
             if field_init_stmts.is_empty() {
@@ -3877,11 +3945,28 @@ impl Compiler {
         } else {
             // Synthesize a default constructor with field initializations.
             // Class bodies are always strict per spec.
+            let (params, statements) = if super_class.is_some() {
+                let mut statements = vec![Statement::Expression(Expression::Call {
+                    callee: Box::new(Expression::Super),
+                    arguments: vec![crate::ast::CallArgument::Spread(Expression::Identifier(
+                        "\0default_ctor_args".into(),
+                    ))],
+                })];
+                statements.extend(field_init_stmts);
+                (
+                    vec![crate::ast::FunctionParam::Rest(
+                        "\0default_ctor_args".into(),
+                    )],
+                    statements,
+                )
+            } else {
+                (vec![], field_init_stmts)
+            };
             FunctionLiteral {
                 name: name.map(String::from),
-                params: vec![],
+                params,
                 body: FunctionBody {
-                    statements: field_init_stmts,
+                    statements,
                     is_strict: true,
                 },
                 is_async: false,
@@ -3900,6 +3985,7 @@ impl Compiler {
             is_async: false,
             is_generator: false,
             is_arrow: false,
+            is_derived_constructor: super_class.is_some(),
             uses_arguments: ctor_fn.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3909,20 +3995,10 @@ impl Compiler {
         chunk.emit(Instruction::CreateFunction(ctor_idx)); // [ctor]
         chunk.emit(Instruction::Duplicate); // [ctor, ctor_copy]
 
-        let super_binding = if let Some(super_expr) = super_class {
-            chunk.emit(Instruction::CreateLexicalEnvironment);
-            context.environment_depth += 1;
-            let super_name = "\u{0}class_super";
-            let super_idx = self.add_name(super_name, chunk)?;
-            chunk.emit(Instruction::CreateMutableBinding(super_idx));
-            self.compile_expression(super_expr, chunk, context)?; // [ctor, ctor_copy, super]
-            chunk.emit(Instruction::Duplicate); // [ctor, ctor_copy, super, super]
-            chunk.emit(Instruction::InitializeBinding(super_idx)); // [ctor, ctor_copy, super]
+        if let Some(super_idx) = super_binding {
+            chunk.emit(Instruction::LoadName(super_idx)); // [ctor, ctor_copy, super]
             chunk.emit(Instruction::SetObjectPrototype); // [ctor, ctor_copy]
-            Some(super_idx)
-        } else {
-            None
-        };
+        }
 
         // Static methods — defined on the constructor itself.
         for element in elements {
@@ -3955,6 +4031,7 @@ impl Compiler {
                     is_async: function.is_async,
                     is_generator: function.is_generator,
                     is_arrow: false,
+                    is_derived_constructor: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -3997,8 +4074,7 @@ impl Compiler {
         // Set up prototype inheritance if there is a super class.
         if let Some(super_idx) = super_binding {
             chunk.emit(Instruction::LoadName(super_idx)); // [.., proto, super]
-            let proto_key = self.add_name("prototype", chunk)?;
-            chunk.emit(Instruction::GetProperty(proto_key)); // [.., proto, super.prototype]
+            chunk.emit(Instruction::GetClassHeritagePrototype); // [.., proto, super.prototype]
             chunk.emit(Instruction::SetObjectPrototype); // [.., proto]
         }
 
@@ -4033,6 +4109,7 @@ impl Compiler {
                     is_async: function.is_async,
                     is_generator: function.is_generator,
                     is_arrow: false,
+                    is_derived_constructor: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -4131,6 +4208,7 @@ impl Compiler {
                         is_generator: false,
                         is_async: false,
                         is_arrow: false,
+                        is_derived_constructor: false,
                         uses_arguments: block_fn.uses_arguments,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
@@ -4512,6 +4590,7 @@ impl Compiler {
             is_async: literal.is_async,
             is_generator: literal.is_generator,
             is_arrow: literal.is_arrow,
+            is_derived_constructor: false,
             uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };

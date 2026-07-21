@@ -11,12 +11,12 @@ use super::{
     ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction, BuiltinId,
     CollectionStats, Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId,
     Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue,
-    NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue, NativeJob, ObjectId,
-    ObjectKind, PrimitiveValue, PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction,
-    PromiseRecord, PromiseState, PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate,
-    PropertyKey, PropertyKind, ProxyRecord, RootSet, SymbolId, SymbolRegistry,
-    TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint,
-    iterator::IteratorKind, object::array_index,
+    ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue, NativeJob,
+    ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot, PromiseCallbackJob,
+    PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState, PromiseThenReaction,
+    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, ProxyRecord, RootSet,
+    SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
+    WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
 };
 use crate::builtins::string;
 use crate::vm::{CallFrame, Vm, VmError};
@@ -141,6 +141,12 @@ pub struct NativeContext {
     current_environment: EnvironmentId,
     environment_stack: Vec<EnvironmentId>,
     call_frames: Vec<CallFrame>,
+    /// B: preallocated receiver for an active derived constructor until `super()`.
+    pending_derived_this: Vec<(JsValue, bool)>,
+    module_registry: ModuleRegistry,
+    pending_module_imports: HashMap<String, JsValue>,
+    next_private_brand: u32,
+    private_slots: HashMap<ObjectId, HashMap<String, PrivateSlot>>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
     function_objects: HashMap<FunctionId, ObjectId>,
     function_realm_globals: HashMap<FunctionId, ObjectId>,
@@ -226,6 +232,11 @@ impl NativeContext {
             current_environment: global_environment,
             environment_stack: Vec::new(),
             call_frames: Vec::new(),
+            pending_derived_this: Vec::new(),
+            module_registry: ModuleRegistry::default(),
+            pending_module_imports: HashMap::new(),
+            next_private_brand: 1,
+            private_slots: HashMap::new(),
             function_prototypes: HashMap::new(),
             function_objects: HashMap::new(),
             function_realm_globals: HashMap::new(),
@@ -372,6 +383,17 @@ impl NativeContext {
     fn add_internal_roots(&self, roots: &mut RootSet) {
         roots.object_roots.push(self.global_object);
         roots.value_roots.push(self.top_level_this.clone());
+        roots.value_roots.extend(
+            self.private_slots
+                .values()
+                .flat_map(|slots| slots.values().map(|slot| slot.value.clone())),
+        );
+        roots
+            .environment_stack
+            .extend(self.module_registry.environments());
+        roots
+            .value_roots
+            .extend(self.module_registry.namespaces().cloned());
         if let Some(intrinsics) = &self.intrinsics {
             roots.object_roots.extend([
                 intrinsics.object_prototype,
@@ -1551,6 +1573,108 @@ impl NativeContext {
         environment.set_mutable_binding(&name, value)
     }
 
+    pub fn binding_value_in_environment(
+        &self,
+        environment: EnvironmentId,
+        name: &str,
+    ) -> Result<JsValue, VmError> {
+        self.heap
+            .environment(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .get_binding_value(name)
+    }
+
+    pub fn module_registry(&self) -> &ModuleRegistry {
+        &self.module_registry
+    }
+
+    pub fn module_registry_mut(&mut self) -> &mut ModuleRegistry {
+        &mut self.module_registry
+    }
+
+    pub fn set_pending_module_imports(&mut self, imports: HashMap<String, JsValue>) {
+        self.pending_module_imports = imports;
+    }
+
+    pub fn take_pending_module_import(&mut self, name: &str) -> Option<JsValue> {
+        self.pending_module_imports.remove(name)
+    }
+
+    pub fn allocate_private_brand(&mut self) -> PrivateBrandId {
+        let brand = PrivateBrandId(self.next_private_brand);
+        self.next_private_brand = self.next_private_brand.saturating_add(1);
+        brand
+    }
+
+    pub fn define_private_slot(
+        &mut self,
+        object: ObjectId,
+        name: String,
+        brand: PrivateBrandId,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        let slots = self.private_slots.entry(object).or_default();
+        if slots.contains_key(&name) {
+            return Err(VmError::type_error(format!(
+                "duplicate private field #{name}"
+            )));
+        }
+        slots.insert(name, PrivateSlot { brand, value });
+        Ok(())
+    }
+
+    pub fn get_private_slot(&self, object: ObjectId, name: &str) -> Result<JsValue, VmError> {
+        let mut current = Some(object);
+        while let Some(id) = current {
+            if let Some(value) = self
+                .private_slots
+                .get(&id)
+                .and_then(|slots| slots.get(name))
+                .map(|slot| slot.value.clone())
+            {
+                return Ok(value);
+            }
+            current = self.heap.object(id).and_then(|object| object.prototype);
+        }
+        Err(VmError::type_error(format!(
+            "object does not have private field #{name}"
+        )))
+    }
+
+    pub fn set_private_slot(
+        &mut self,
+        object: ObjectId,
+        name: &str,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        let slot = self
+            .private_slots
+            .get_mut(&object)
+            .and_then(|slots| slots.get_mut(name))
+            .ok_or_else(|| {
+                VmError::type_error(format!("object does not have private field #{name}"))
+            })?;
+        slot.value = value;
+        Ok(())
+    }
+
+    pub fn initialize_or_set_private_slot(
+        &mut self,
+        object: ObjectId,
+        name: &str,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        if self
+            .private_slots
+            .get(&object)
+            .is_some_and(|slots| slots.contains_key(name))
+        {
+            return self.set_private_slot(object, name, value);
+        }
+        let brand = self.allocate_private_brand();
+        self.define_private_slot(object, name.to_string(), brand, value)
+    }
+
     pub fn create_mutable_binding(
         &mut self,
         environment: EnvironmentId,
@@ -1799,6 +1923,29 @@ impl NativeContext {
             .ok_or_else(|| VmError::runtime("call frame stack underflow"))?;
         self.call_depth = self.call_depth.saturating_sub(1);
         Ok(frame)
+    }
+
+    pub fn push_pending_derived_this(&mut self, value: JsValue) {
+        self.pending_derived_this.push((value, false));
+    }
+
+    pub fn pop_pending_derived_this(&mut self) -> Option<(JsValue, bool)> {
+        self.pending_derived_this.pop()
+    }
+
+    pub fn initialize_derived_this(&mut self, value: JsValue) -> Result<JsValue, VmError> {
+        let (pending_value, initialized) = self
+            .pending_derived_this
+            .last_mut()
+            .ok_or_else(|| VmError::reference("super() called outside a derived constructor"))?;
+        *initialized = true;
+        *pending_value = value.clone();
+        let frame = self
+            .call_frames
+            .last_mut()
+            .ok_or_else(|| VmError::runtime("missing derived constructor frame"))?;
+        frame.this_value = value.clone();
+        Ok(value)
     }
 
     #[must_use]
@@ -2367,9 +2514,9 @@ impl NativeContext {
     #[must_use]
     pub fn is_constructable_value(&self, value: &JsValue) -> bool {
         match value {
-            JsValue::Function(function) => self
-                .function(*function)
-                .is_some_and(|function| !function.is_generator && !function.is_async),
+            JsValue::Function(function) => self.function(*function).is_some_and(|function| {
+                !function.is_generator && !function.is_async && !function.is_arrow
+            }),
             JsValue::BuiltinFunction(id) => self.builtin(*id).is_some_and(|builtin| {
                 if let Some(bound) = &builtin.bound {
                     self.is_constructable_value(&bound.target)

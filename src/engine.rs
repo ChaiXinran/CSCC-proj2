@@ -194,6 +194,11 @@ impl Runtime {
         self.backend.set_strict(strict);
     }
 
+    /// Supplies the source path used by B's local dynamic-import resolver.
+    pub(crate) fn set_dynamic_import_referrer(&mut self, path: &Path) {
+        self.backend.set_dynamic_import_referrer(path);
+    }
+
     pub(crate) fn clear_output(&mut self) {
         self.backend.clear_output();
     }

@@ -207,6 +207,7 @@ fn create_dynamic_function(
         is_async: false,
         is_generator: false,
         is_arrow: false,
+        is_derived_constructor: false,
         uses_arguments,
         lexical_this: None,
         lexical_new_target: None,
