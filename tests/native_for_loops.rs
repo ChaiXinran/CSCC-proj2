@@ -214,3 +214,110 @@ fn for_in_walks_prototype_chain() {
 fn while_loop_with_increment_still_works() {
     assert_eq!(native_eval("var i = 0; while (i < 3) { i++; } i;"), "3");
 }
+
+// ── for-of ─────────────────────────────────────────────────────────────────────
+
+#[test]
+fn for_of_iterates_array_elements() {
+    assert_eq!(
+        native_eval("var r = ''; for (var x of [1, 2, 3]) { r = r + x; } r;"),
+        "123"
+    );
+}
+
+#[test]
+fn for_of_with_let_binding() {
+    assert_eq!(
+        native_eval("var r = ''; for (let x of ['a', 'b', 'c']) { r = r + x; } r;"),
+        "abc"
+    );
+}
+
+#[test]
+fn for_of_with_const_binding() {
+    assert_eq!(
+        native_eval("var r = ''; for (const x of ['a', 'b', 'c']) { r = r + x; } r;"),
+        "abc"
+    );
+}
+
+#[test]
+fn for_of_const_each_iteration_gets_fresh_binding() {
+    // Each iteration creates a new immutable binding, so closures capture
+    // different values per iteration.
+    assert_eq!(
+        native_eval(
+            "var fns = []; for (const x of [1, 2, 3]) { fns.push(function() { return x; }); } \
+             fns[0]() + ',' + fns[1]() + ',' + fns[2]();"
+        ),
+        "1,2,3"
+    );
+}
+
+#[test]
+fn for_of_const_break_works() {
+    assert_eq!(
+        native_eval(
+            "var r = ''; for (const x of [1, 2, 3, 4, 5]) { if (x === 3) { break; } r = r + x; } r;"
+        ),
+        "12"
+    );
+}
+
+#[test]
+fn for_of_const_continue_works() {
+    assert_eq!(
+        native_eval(
+            "var r = ''; for (const x of [1, 2, 3, 4]) { if (x === 2) { continue; } r = r + x; } r;"
+        ),
+        "134"
+    );
+}
+
+#[test]
+fn for_of_const_with_array_destructuring() {
+    assert_eq!(
+        native_eval(
+            "var r = ''; for (const [a, b] of [[1,2], [3,4]]) { r = r + a + ':' + b + ','; } r;"
+        ),
+        "1:2,3:4,"
+    );
+}
+
+#[test]
+fn for_of_const_with_object_destructuring() {
+    assert_eq!(
+        native_eval(
+            "var r = ''; \
+             for (const {x, y} of [{x:1, y:2}, {x:3, y:4}]) { r = r + x + ':' + y + ','; } r;"
+        ),
+        "1:2,3:4,"
+    );
+}
+
+#[test]
+fn for_of_const_nested_break() {
+    // break exits the inner for-of only; outer for-of continues.
+    assert_eq!(
+        native_eval(
+            "var r = ''; \
+             for (const a of [1, 2]) { \
+               r = r + a + '['; \
+               for (const b of ['x', 'y']) { \
+                 if (b === 'y') { break; } \
+                 r = r + b; \
+               } \
+               r = r + ']'; \
+             } r;"
+        ),
+        "1[x]2[x]"
+    );
+}
+
+#[test]
+fn for_of_const_works_with_string_iterable() {
+    assert_eq!(
+        native_eval("var r = ''; for (const ch of 'abc') { r = r + ch; } r;"),
+        "abc"
+    );
+}
