@@ -1091,6 +1091,14 @@ impl Vm {
                     for _ in 0..count {
                         let value = self.pop_value()?;
                         let key = to_property_key(&self.pop_value()?)?;
+                        // ObjectCreate only handles string keys (non-computed
+                        // property names in object literals). Computed symbol
+                        // keys use SetElement at runtime instead.
+                        let PropertyKey::String(key) = key else {
+                            return Err(VmError::type_error(
+                                "symbol keys in object literals are not yet supported",
+                            ));
+                        };
                         properties.push((key, value));
                     }
                     properties.reverse();
@@ -2096,17 +2104,17 @@ impl Vm {
                         Ok(object) => {
                             let strict = context.is_strict_code();
                             let result = if context.proxy_record(object).is_some() {
-                                let property_key = if let JsValue::Symbol(symbol) = key {
-                                    PropertyKey::Symbol(symbol)
-                                } else {
-                                    PropertyKey::String(to_property_key(&key)?)
-                                };
+                                let property_key = to_property_key(&key)?;
                                 proxy::internal_delete(self, context, value, &property_key)
-                            } else if let JsValue::Symbol(symbol) = key {
-                                context.delete_symbol_property(object, symbol, strict)
                             } else {
-                                let key = to_property_key(&key)?;
-                                context.delete_property(object, &key, strict)
+                                match to_property_key(&key)? {
+                                    PropertyKey::Symbol(symbol) => {
+                                        context.delete_symbol_property(object, symbol, strict)
+                                    }
+                                    PropertyKey::String(key) => {
+                                        context.delete_property(object, &key, strict)
+                                    }
+                                }
                             };
                             match result {
                                 Ok(false) if strict => {
@@ -2138,11 +2146,7 @@ impl Vm {
                     let value = self.pop_value()?;
                     context.require_object(&value, "test property")?;
                     let key = self.pop_value()?;
-                    let property_key = if let JsValue::Symbol(symbol) = key {
-                        PropertyKey::Symbol(symbol)
-                    } else {
-                        PropertyKey::String(to_property_key(&key)?)
-                    };
+                    let property_key = to_property_key(&key)?;
                     let result = proxy::internal_has_property(self, context, value, &property_key);
                     match result {
                         Ok(has) => self.stack.push(JsValue::Boolean(has)),
@@ -4313,6 +4317,7 @@ impl Vm {
         value: JsValue,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
+        // Symbols pass through unchanged (ToPropertyKey spec step 1).
         if matches!(value, JsValue::Symbol(_)) {
             return Ok(value);
         }
@@ -4324,7 +4329,10 @@ impl Vm {
         if matches!(primitive, JsValue::Symbol(_)) {
             return Ok(primitive);
         }
-        Ok(JsValue::String(to_property_key(&primitive)?))
+        match to_property_key(&primitive)? {
+            PropertyKey::String(key) => Ok(JsValue::String(key)),
+            PropertyKey::Symbol(symbol) => Ok(JsValue::Symbol(symbol)),
+        }
     }
 
     fn define_computed_accessor(

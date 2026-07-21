@@ -1,7 +1,7 @@
-use agentjs::{BackendKind, ExecutionOptions, Runtime, RuntimeConfig};
+use agentjs::{ExecutionOptions, Runtime, RuntimeConfig};
 
 fn native_eval(source: &str) -> String {
-    Runtime::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Runtime::new(RuntimeConfig::default())
         .expect("native runtime should initialize")
         .eval(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))

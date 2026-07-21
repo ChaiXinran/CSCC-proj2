@@ -191,16 +191,40 @@ fn with_statement_resolves_nested_object_environments() {
 
 #[test]
 fn runtime_property_key_conversion_matches_the_v3_minimum() {
-    assert_eq!(to_property_key(&JsValue::String("x".into())).unwrap(), "x");
-    assert_eq!(to_property_key(&JsValue::Number(7.0)).unwrap(), "7");
-    assert_eq!(to_property_key(&JsValue::Boolean(true)).unwrap(), "true");
-    assert_eq!(to_property_key(&JsValue::Null).unwrap(), "null");
-    assert_eq!(to_property_key(&JsValue::Undefined).unwrap(), "undefined");
+    use agentjs::runtime::PropertyKey;
+    assert_eq!(
+        to_property_key(&JsValue::String("x".into())).unwrap(),
+        PropertyKey::String("x".into())
+    );
+    assert_eq!(
+        to_property_key(&JsValue::Number(7.0)).unwrap(),
+        PropertyKey::String("7".into())
+    );
+    assert_eq!(
+        to_property_key(&JsValue::Boolean(true)).unwrap(),
+        PropertyKey::String("true".into())
+    );
+    assert_eq!(
+        to_property_key(&JsValue::Null).unwrap(),
+        PropertyKey::String("null".into())
+    );
+    assert_eq!(
+        to_property_key(&JsValue::Undefined).unwrap(),
+        PropertyKey::String("undefined".into())
+    );
 
     let mut context = NativeContext::default();
     let object = context.create_object([]).unwrap();
     assert_eq!(
         to_property_key(&object).unwrap_err().kind,
         VmErrorKind::Type
+    );
+
+    // V12: Symbol keys now pass through ToPropertyKey unchanged.
+    let sym = context.create_symbol(Some("test".into()));
+    let sym_result = to_property_key(&sym).unwrap();
+    assert!(
+        matches!(sym_result, PropertyKey::Symbol(_)),
+        "symbol property keys must pass through ToPropertyKey unchanged"
     );
 }
