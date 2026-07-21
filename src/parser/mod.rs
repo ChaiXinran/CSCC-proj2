@@ -215,7 +215,7 @@ impl Parser {
     }
 
     fn eat_operator(&mut self, op: &str) -> bool {
-        if matches!(&self.peek().kind, TokenKind::Operator(value) if value == op) {
+        if matches!(&self.peek().kind, TokenKind::Operator(value) if *value == op) {
             self.advance();
             true
         } else {
@@ -225,7 +225,7 @@ impl Parser {
 
     /// Returns `true` if the next token is `...` (spread / rest operator).
     pub(super) fn check_spread(&self) -> bool {
-        matches!(&self.peek().kind, TokenKind::Operator(v) if v == "...")
+        matches!(&self.peek().kind, TokenKind::Operator(v) if *v == "...")
     }
 
     fn check_keyword(&self, keyword: Keyword) -> bool {

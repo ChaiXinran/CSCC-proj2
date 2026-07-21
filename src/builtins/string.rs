@@ -213,6 +213,7 @@ pub(crate) fn utf16_code_unit_at(value: &str, index: usize) -> Option<u16> {
     value.encode_utf16().nth(index)
 }
 
+#[allow(dead_code)]
 pub(crate) fn utf16_slice(value: &str, start: usize, end: usize) -> String {
     if value.is_ascii() {
         let start = start.min(value.len());

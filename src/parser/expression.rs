@@ -109,7 +109,7 @@ impl Parser {
                 value: Box::new(value),
             })
         } else if let TokenKind::Operator(operator_text) = self.peek().kind.clone()
-            && let Some(operator) = compound_assignment_operator(&operator_text)
+            && let Some(operator) = compound_assignment_operator(operator_text)
         {
             if !is_assignment_target(&left) {
                 return Err(self.error("invalid assignment target".into()));
@@ -179,7 +179,7 @@ impl Parser {
                     kind: TokenKind::Operator(op),
                     line_terminator_before: false,
                     ..
-                }) if op == "=>"
+                }) if  *op == "=>"
             )
         };
         let params = match self.peek().kind.clone() {
@@ -308,19 +308,17 @@ impl Parser {
         Ok(left)
     }
 
-    fn peek_binary_operator(&self) -> Option<(u8, String)> {
+    fn peek_binary_operator(&self) -> Option<(u8, &'static str)> {
         match &self.peek().kind {
-            TokenKind::Operator(operator) => {
-                binary_precedence(operator).map(|p| (p, operator.clone()))
-            }
+            TokenKind::Operator(operator) => binary_precedence(operator).map(|p| (p, *operator)),
             // `in` and `instanceof` are keyword binary operators at relational precedence.
             // `in` is suppressed inside a `for` header (`no_in`) so the header can be
             // disambiguated as a for-in statement.
             TokenKind::Keyword(Keyword::In) if !self.no_in => {
-                binary_precedence("in").map(|p| (p, "in".into()))
+                binary_precedence("in").map(|p| (p, "in"))
             }
             TokenKind::Keyword(Keyword::InstanceOf) => {
-                binary_precedence("instanceof").map(|p| (p, "instanceof".into()))
+                binary_precedence("instanceof").map(|p| (p, "instanceof"))
             }
             _ => None,
         }
@@ -388,7 +386,7 @@ impl Parser {
             });
         }
         if let TokenKind::Operator(operator) = &self.peek().kind {
-            let operator = match operator.as_str() {
+            let operator = match *operator {
                 "+" => Some(UnaryOperator::Plus),
                 "-" => Some(UnaryOperator::Minus),
                 "!" => Some(UnaryOperator::Not),
@@ -747,7 +745,7 @@ impl Parser {
             // literal, not a division operator. Use the source text to re-read the
             // full `/pattern/flags` sequence, then skip the tokens that the
             // context-free lexer split it into.
-            TokenKind::Operator(ref op) if op == "/" || op == "/=" => self.parse_regex_literal(),
+            TokenKind::Operator(ref op) if *op == "/" || *op == "/=" => self.parse_regex_literal(),
             // V8-A: template literals
             TokenKind::TemplateLiteral(value) => {
                 self.advance();
@@ -931,7 +929,7 @@ impl Parser {
                 !t.line_terminator_before
                     && matches!(
                         &t.kind,
-                        TokenKind::Operator(op) if op == "*"
+                        TokenKind::Operator(op) if *op == "*"
                     )
                     || next.is_some_and(|t| {
                         !t.line_terminator_before
@@ -1358,7 +1356,7 @@ impl Parser {
                         kind: TokenKind::Operator(op),
                         line_terminator_before: false,
                         ..
-                    }) if op == "=>"
+                    }) if  *op == "=>"
                 ) =>
             {
                 self.advance(); // param name
@@ -1545,7 +1543,7 @@ impl Parser {
                 let after = self.tokens.get(self.cursor + 1);
                 let next_is_field_or_method_name = after.is_some_and(|t| {
                     matches!(&t.kind, TokenKind::Punctuator(';' | '}' | '('))
-                        || matches!(&t.kind, TokenKind::Operator(op) if op == "=")
+                        || matches!(&t.kind, TokenKind::Operator(op) if *op == "=")
                 });
                 if next_is_field_or_method_name {
                     false
@@ -1618,7 +1616,7 @@ impl Parser {
                 next.is_some_and(|t| {
                     !t.line_terminator_before
                         && !matches!(t.kind, TokenKind::Punctuator('(' | ';' | '}'))
-                        && !matches!(&t.kind, TokenKind::Operator(op) if op == "=")
+                        && !matches!(&t.kind, TokenKind::Operator(op) if *op == "=")
                 })
             };
             if is_accessor {

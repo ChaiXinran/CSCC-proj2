@@ -8,7 +8,7 @@
 use std::{
     collections::VecDeque,
     fs,
-    hash::{Hash, Hasher, DefaultHasher},
+    hash::{DefaultHasher, Hash, Hasher},
     path::Path,
 };
 

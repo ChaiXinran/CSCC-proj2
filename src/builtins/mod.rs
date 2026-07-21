@@ -15,23 +15,17 @@ pub(crate) mod proxy;
 mod annex_b;
 /// ArrayBuffer / DataView / TypedArray constructors + Intl skeleton.
 mod binary_data;
-#[allow(dead_code)]
 mod boolean;
 /// Map / Set / WeakMap / WeakSet + iterator infrastructure.
 mod collections;
 /// Date / Intl / Temporal built-ins.
 mod date_intl;
-#[allow(dead_code)]
 mod error;
-#[allow(dead_code)]
 mod math;
-#[allow(dead_code)]
 mod number;
-#[allow(dead_code)]
 pub(crate) mod regexp;
 /// String / Number / Boolean / Math / Error / JSON adapter layer.
 mod std_primitives;
-#[allow(dead_code)]
 pub(crate) mod string;
 
 use crate::{
@@ -205,6 +199,19 @@ pub fn ordinary_own_property_keys(ctx: &NativeContext, object: ObjectId) -> Vec<
 /// construct=None already does this; this function exists for documentation/interface purposes).
 pub fn mark_not_constructor(_ctx: &mut NativeContext, _function: &JsValue) {
     // register_builtin with construct = None already yields [[Construct]]:absent.
+}
+
+/// Returns true when `value` is a callable object (function or builtin).
+#[must_use]
+pub fn is_callable(value: &JsValue) -> bool {
+    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
+}
+
+/// Returns the first argument or `Undefined` when the argument list is empty.
+/// Used pervasively by builtin methods with an optional first parameter.
+#[must_use]
+pub fn arg_first(arguments: &[JsValue]) -> JsValue {
+    arguments.first().cloned().unwrap_or(JsValue::Undefined)
 }
 
 /// Installs the foundational constructors, prototypes, and V4 methods.

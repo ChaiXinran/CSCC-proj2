@@ -1393,157 +1393,6 @@ impl Compiler {
                     chunk.emit(step);
                     chunk.emit(Instruction::SetElementKeepOld);
                     return Ok(());
-
-                    /* Superseded lowering retained temporarily for source
-                     * history; the executable sequence above preserves the
-                     * evaluated reference. */
-                    /*
-                    // Postfix: need old_num as result, obj[key] = new_val as side-effect.
-                    // The saved [obj,key] duplicates are at positions [-3,-2] under old_num.
-                    // Sequence using re-evaluation of object+key (safe for pure expressions)
-                    // and two Swap instructions:
-                    //
-                    //   [obj_s, key_s, old_num]  (obj_s/key_s from DuplicatePair above)
-                    //   Duplicate     → [obj_s, key_s, old_num, old_num]
-                    //   Constant(1)   → [obj_s, key_s, old_num, old_num, 1]
-                    //   step          → [obj_s, key_s, old_num, new_val]
-                    //   compile(obj)  → [obj_s, key_s, old_num, new_val, obj2]
-                    //   Swap          → [obj_s, key_s, old_num, obj2, new_val]
-                    //   compile(key)  → [obj_s, key_s, old_num, obj2, new_val, key2]
-                    //   Swap          → [obj_s, key_s, old_num, obj2, key2, new_val]
-                    //   SetElement    → [obj_s, key_s, old_num, new_val]  (pushes value back)
-                    //   Pop           → [obj_s, key_s, old_num]
-                    //   ... but obj_s and key_s are still on the stack from the earlier DuplicatePair!
-                    //   We need to pop those too. Use a trick: instead of DuplicatePair above,
-                    //   don't duplicate at all; just GetElement and save old then re-eval for store.
-                    //
-                    // Better: skip the DuplicatePair/GetElement above and use a simpler sequence.
-                    // Since we already emitted DuplicatePair + GetElement + UnaryPlus, the stack
-                    // is now [obj_s, key_s, old_num]. Pop obj_s and key_s AFTER the SetElement:
-                    //
-                    //   [obj_s, key_s, old_num]
-                    //   Duplicate      → [obj_s, key_s, old_num, old_num]
-                    //   Constant(1)    → [obj_s, key_s, old_num, old_num, 1]
-                    //   step           → [obj_s, key_s, old_num, new_val]
-                    //   compile(obj)   → [obj_s, key_s, old_num, new_val, obj2]
-                    //   Swap           → [obj_s, key_s, old_num, obj2, new_val]
-                    //   compile(key)   → [obj_s, key_s, old_num, obj2, new_val, key2]
-                    //   Swap           → [obj_s, key_s, old_num, obj2, key2, new_val]
-                    //   SetElement     → [obj_s, key_s, old_num, new_val]
-                    //   Pop            → [obj_s, key_s, old_num]
-                    //   PopTwo          → [old_num]  ← need to remove obj_s and key_s
-                    //
-                    // We don't have PopTwo. Alternative: just pop twice:
-                    //   Pop, Pop — but then stack has wrong top (popping old_num and key_s).
-                    //
-                    // Use a different structure: DON'T DuplicatePair before GetElement in
-                    // the postfix computed case. Instead just GetElement and re-eval for store.
-                    //
-                    // Since we've already emitted [DuplicatePair, GetElement, UnaryPlus]
-                    // for both prefix and postfix above, and the obj_s/key_s ARE on the stack,
-                    // we need to clean them up. Use a sequence that leverages them:
-                    //
-                    //   [obj_s, key_s, old_num]
-                    //   Duplicate      → [obj_s, key_s, old_num, old_num]
-                    //   Constant(1)    → [obj_s, key_s, old_num, old_num, 1]
-                    //   step           → [obj_s, key_s, old_num, new_val]
-                    //   Swap           → [obj_s, key_s, new_val, old_num]
-                    //   SetElement uses TOP 3: [key_s, new_val, old_num] as [object, key, value]
-                    //   → key_s[new_val] = old_num — WRONG
-                    //
-                    // Still wrong without a full rotate. Re-evaluate the object and key:
-                    // After re-evaluation, we need 2 pops for obj_s/key_s.
-                    //
-                    // Final approach: after [obj_s, key_s, old_num, new_val, obj2, key2, new_val]
-                    // from SetElement, the stack is [obj_s, key_s, old_num, new_val].
-                    // Pop new_val → [obj_s, key_s, old_num].
-                    // Rotate top 3: [old_num, obj_s, key_s] — move obj_s and key_s to top
-                    //   then pop twice → [old_num].
-                    // This requires a rotate. So we still need Rotate3.
-                    //
-                    // For now, use a simpler workaround: emit a separate GetElement for
-                    // the old value WITHOUT keeping obj/key, then re-eval for SetElement.
-                    // This sequence avoids the dangling obj_s/key_s:
-                    //
-                    // NOTE: We've already emitted DuplicatePair + GetElement + UnaryPlus.
-                    // The obj_s + key_s are still on the stack below old_num.
-                    // Clean-up: emit two more pops AFTER the postfix sequence removes obj_s/key_s.
-                    //
-                    // [obj_s, key_s, old_num]
-                    // Duplicate     → [obj_s, key_s, old_num, old_num]
-                    // Const(1)/step → [obj_s, key_s, old_num, new_val]
-                    // compile(obj2) → [obj_s, key_s, old_num, new_val, obj2]
-                    // Swap          → [obj_s, key_s, old_num, obj2, new_val]  ← new_val below obj2? No.
-                    // Wait: Swap swaps TOP 2. Stack top=new_val, 2nd=obj2. After Swap: top=obj2, 2nd=new_val.
-                    // So [obj_s, key_s, old_num, new_val, obj2] → Swap → [obj_s, key_s, old_num, obj2, new_val]? No!
-                    // Swap: top=obj2, 2nd=new_val → after: top=new_val, 2nd=obj2.
-                    // Wait I keep confusing myself. Let me be pedantic.
-                    //
-                    // Stack representation: push to right (rightmost = TOP).
-                    // [obj_s, key_s, old_num, new_val, obj2]
-                    // TOP = obj2. 2nd from top = new_val.
-                    // Swap → [obj_s, key_s, old_num, obj2, new_val]  (obj2 and new_val swapped)
-                    // Now TOP = new_val, 2nd = obj2. ← Hmm, that's the SAME order?
-                    //
-                    // No wait: Swap swaps the TWO topmost values.
-                    // Before Swap: [..., new_val, obj2]  TOP = obj2
-                    // After Swap:  [..., obj2, new_val]  TOP = new_val
-                    //
-                    // So from [obj_s, key_s, old_num, new_val, obj2]:
-                    // After Swap: [obj_s, key_s, old_num, obj2, new_val]
-                    // Now top=new_val, 2nd=obj2.
-                    // compile(key2): [obj_s, key_s, old_num, obj2, new_val, key2]
-                    // After Swap: [obj_s, key_s, old_num, obj2, key2, new_val]
-                    // SetElement pops top 3: object=obj2, key=key2, value=new_val → obj2[key2]=new_val ✓
-                    // Pushes new_val back. Stack: [obj_s, key_s, old_num, new_val]
-                    // Pop → [obj_s, key_s, old_num]
-                    // Now need to remove obj_s and key_s. Two more Pops would remove old_num and key_s.
-                    // But I want to keep old_num!
-                    //
-                    // So I need: [obj_s, key_s, old_num] → remove obj_s and key_s → [old_num]
-                    // This requires moving old_num "past" obj_s and key_s, then popping them.
-                    //
-                    // Without a rotate: I can Swap top 2 then pop:
-                    // [obj_s, key_s, old_num]: top=old_num, 2nd=key_s
-                    // Swap → [obj_s, old_num, key_s]: top=key_s, 2nd=old_num
-                    // Pop → [obj_s, old_num]: top=old_num, 2nd=obj_s
-                    // Swap → [old_num, obj_s]: top=obj_s
-                    // Pop → [old_num] ✓
-                    //
-                    // YES! Two Swap+Pop pairs to remove the two extra items below old_num!
-                    //
-                    // Full sequence:
-                    // [obj_s, key_s, old_num]  (from DuplicatePair+GetElement+UnaryPlus)
-                    // Duplicate     → [obj_s, key_s, old_num, old_num]
-                    // Constant(1)   → [obj_s, key_s, old_num, old_num, 1]
-                    // step          → [obj_s, key_s, old_num, new_val]
-                    // compile(obj2) → [obj_s, key_s, old_num, new_val, obj2]
-                    // Swap          → [obj_s, key_s, old_num, obj2, new_val]
-                    // compile(key2) → [obj_s, key_s, old_num, obj2, new_val, key2]
-                    // Swap          → [obj_s, key_s, old_num, obj2, key2, new_val]
-                    // SetElement    → [obj_s, key_s, old_num, new_val]
-                    // Pop           → [obj_s, key_s, old_num]
-                    // Swap          → [obj_s, old_num, key_s]
-                    // Pop           → [obj_s, old_num]
-                    // Swap          → [old_num, obj_s]
-                    // Pop           → [old_num] ✓
-                    // ToNumeric so the returned old value is a Number/BigInt, not
-                    // the original uncoerced type (e.g. false → 0).
-                    chunk.emit(Instruction::ToNumeric);
-                    chunk.emit(Instruction::Duplicate);
-                    chunk.emit(step);
-                    self.compile_expression(object, chunk, context)?;
-                    chunk.emit(Instruction::Swap);
-                    self.compile_expression(property, chunk, context)?;
-                    chunk.emit(Instruction::Swap);
-                    chunk.emit(Instruction::SetElement);
-                    chunk.emit(Instruction::Pop); // remove new_val pushed by SetElement
-                    // Remove obj_s and key_s while preserving old_num:
-                    chunk.emit(Instruction::Swap); // [obj_s, old_num, key_s]
-                    chunk.emit(Instruction::Pop); // [obj_s, old_num]
-                    chunk.emit(Instruction::Swap); // [old_num, obj_s]
-                    chunk.emit(Instruction::Pop); // [old_num]
-                    */
                 }
             }
             _ => {
@@ -5284,6 +5133,84 @@ fn annex_b_collect_stmt(
     }
 }
 
+// ── Shared statement-sub-statement walker ────────────────────────────────────
+//
+// Both `collect_var_names` and `collect_annex_b_fn_candidates` need to recurse
+// into nested statements (but not into nested function bodies). This helper
+// centralizes the "which statements have sub-statements" knowledge so the two
+// traversals only contain their collection logic.
+
+/// Calls `f` for each direct sub-statement of `stmt`, without descending into
+/// nested function bodies. Returns `false` when the stmt itself is a
+/// function-like boundary (declaration / expression).
+fn for_each_sub_statement(stmt: &Statement, f: &mut impl FnMut(&Statement)) -> bool {
+    // Don't descend into function bodies — they have their own var scope.
+    match stmt {
+        Statement::FunctionDeclaration { .. }
+        | Statement::Expression(Expression::Function(_))
+        | Statement::Expression(Expression::Class(_))
+        | Statement::ClassDeclaration { .. }
+        | Statement::ModuleDeclaration(_) => return false,
+        _ => {}
+    }
+    match stmt {
+        Statement::Block(stmts) => {
+            for s in stmts {
+                f(s);
+            }
+        }
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
+            f(consequent);
+            if let Some(alt) = alternate {
+                f(alt);
+            }
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::Labelled { body, .. }
+        | Statement::With { body, .. } => f(body),
+        Statement::For { init, body, .. } => {
+            if let Some(s) = init {
+                f(s);
+            }
+            f(body);
+        }
+        Statement::ForIn { body, .. } | Statement::ForOf { body, .. } => f(body),
+        Statement::Try {
+            block,
+            handler,
+            finalizer,
+        } => {
+            for s in block {
+                f(s);
+            }
+            if let Some(h) = handler {
+                for s in &h.body {
+                    f(s);
+                }
+            }
+            if let Some(fin) = finalizer {
+                for s in fin {
+                    f(s);
+                }
+            }
+        }
+        Statement::Switch { cases, .. } => {
+            for case in cases {
+                for s in &case.consequent {
+                    f(s);
+                }
+            }
+        }
+        _ => {}
+    }
+    true
+}
+
 /// Collect all `var`-declared names from a statement list, recursing into
 /// nested blocks/if/loops/try, but NOT into nested function bodies.
 /// Used to hoist `var` declarations before executing a program or function.
@@ -5294,6 +5221,7 @@ fn collect_var_names(statements: &[Statement], names: &mut Vec<String>) {
 }
 
 fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
+    // Collect var names from this statement itself.
     match stmt {
         Statement::VariableDeclaration {
             kind: crate::ast::VariableKind::Var,
@@ -5322,27 +5250,7 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
                 }
             }
         }
-        Statement::Block(stmts) => collect_var_names(stmts, names),
-        Statement::If {
-            consequent,
-            alternate,
-            ..
-        } => {
-            collect_var_names_in(consequent, names);
-            if let Some(alt) = alternate {
-                collect_var_names_in(alt, names);
-            }
-        }
-        Statement::While { body, .. } | Statement::DoWhile { body, .. } => {
-            collect_var_names_in(body, names)
-        }
-        Statement::For { init, body, .. } => {
-            if let Some(s) = init {
-                collect_var_names_in(s, names);
-            }
-            collect_var_names_in(body, names);
-        }
-        Statement::ForIn { left, body, .. } => {
+        Statement::ForIn { left, .. } | Statement::ForOf { left, .. } => {
             if let crate::ast::ForBinding::Declaration {
                 kind: crate::ast::VariableKind::Var,
                 pattern,
@@ -5354,52 +5262,11 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
                     }
                 }
             }
-            collect_var_names_in(body, names);
         }
-        Statement::ForOf { left, body, .. } => {
-            if let crate::ast::ForBinding::Declaration {
-                kind: crate::ast::VariableKind::Var,
-                pattern,
-            } = left
-            {
-                for n in binding_pattern_names(pattern) {
-                    if !names.contains(&n) {
-                        names.push(n);
-                    }
-                }
-            }
-            collect_var_names_in(body, names);
-        }
-        Statement::Try {
-            block,
-            handler,
-            finalizer,
-        } => {
-            collect_var_names(block, names);
-            if let Some(h) = handler {
-                collect_var_names(&h.body, names);
-            }
-            if let Some(f) = finalizer {
-                collect_var_names(f, names);
-            }
-        }
-        Statement::Labelled { body, .. } | Statement::With { body, .. } => {
-            collect_var_names_in(body, names)
-        }
-        Statement::ModuleDeclaration(ModuleDeclaration::Export(decl)) => {
-            if let Some(statement) = decl.declaration.as_deref() {
-                collect_var_names_in(statement, names);
-            }
-        }
-        Statement::ModuleDeclaration(ModuleDeclaration::Import(_)) => {}
-        Statement::Switch { cases, .. } => {
-            for case in cases {
-                collect_var_names(&case.consequent, names);
-            }
-        }
-        // FunctionDeclaration: don't recurse — nested vars are local to that function
         _ => {}
     }
+    // Recurse into sub-statements via the shared walker.
+    for_each_sub_statement(stmt, &mut |sub| collect_var_names_in(sub, names));
 }
 
 fn completion_expression_index(statements: &[Statement]) -> Option<usize> {
