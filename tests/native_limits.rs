@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use agentjs::{
-    backend::BackendKind,
     bytecode::{Chunk, Constant, Instruction},
     engine::{Engine, ExecutionOptions, FailureKind, RuntimeConfig},
     runtime::{JsValue, NativeContext},
@@ -14,13 +13,10 @@ fn number_constant(chunk: &mut Chunk, value: f64) -> u16 {
 
 #[test]
 fn wall_clock_deadline_reports_runtime_limit() {
-    let engine = Engine::with_backend(
-        BackendKind::Native,
-        RuntimeConfig {
-            wall_clock_limit: Some(Duration::from_nanos(0)),
-            ..RuntimeConfig::default()
-        },
-    );
+    let engine = Engine::new(RuntimeConfig {
+        wall_clock_limit: Some(Duration::from_nanos(0)),
+        ..RuntimeConfig::default()
+    });
 
     let error = engine
         .execute("1 + 1", ExecutionOptions::default())
@@ -40,7 +36,7 @@ fn heap_byte_limit_guards_large_heap_values() {
 
 #[test]
 fn string_repeat_allocation_limit_is_runtime_limit() {
-    let engine = Engine::with_backend(BackendKind::Native, RuntimeConfig::default());
+    let engine = Engine::new(RuntimeConfig::default());
     let error = engine
         .execute("'x'.repeat(9000000);", ExecutionOptions::default())
         .unwrap_err();

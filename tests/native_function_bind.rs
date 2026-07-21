@@ -1,7 +1,7 @@
-use agentjs::{BackendKind, ExecutionOptions, Runtime, RuntimeConfig};
+use agentjs::{ExecutionOptions, Runtime, RuntimeConfig};
 
 fn native_eval(source: &str) -> String {
-    Runtime::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Runtime::new(RuntimeConfig::default())
         .expect("native runtime should initialize")
         .eval(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))
@@ -9,7 +9,7 @@ fn native_eval(source: &str) -> String {
 }
 
 fn native_eval_strict(source: &str) -> String {
-    Runtime::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Runtime::new(RuntimeConfig::default())
         .expect("native runtime should initialize")
         .eval(
             source,
@@ -24,7 +24,7 @@ fn native_eval_strict(source: &str) -> String {
 }
 
 fn native_eval_err(source: &str) -> String {
-    Runtime::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Runtime::new(RuntimeConfig::default())
         .expect("native runtime should initialize")
         .eval(source, ExecutionOptions::default())
         .expect_err("native eval should fail")

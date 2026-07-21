@@ -1,7 +1,7 @@
-use agentjs::{BackendKind, Engine, ExecutionOptions, FailureKind, RuntimeConfig};
+use agentjs::{Engine, ExecutionOptions, FailureKind, RuntimeConfig};
 
 fn native_engine() -> Engine {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
 }
 
 fn eval(source: &str) -> String {
@@ -52,13 +52,10 @@ fn reports_v2_parse_and_runtime_limit_failures() {
         .unwrap_err();
     assert_eq!(syntax.kind, FailureKind::Syntax);
 
-    let engine = Engine::with_backend(
-        BackendKind::Native,
-        RuntimeConfig {
-            loop_limit: 4,
-            ..RuntimeConfig::default()
-        },
-    );
+    let engine = Engine::new(RuntimeConfig {
+        loop_limit: 4,
+        ..RuntimeConfig::default()
+    });
     let limit = engine
         .execute("while (true) {}", ExecutionOptions::default())
         .unwrap_err();
@@ -67,13 +64,10 @@ fn reports_v2_parse_and_runtime_limit_failures() {
 
 #[test]
 fn maps_thrown_test262_error_through_the_complete_pipeline() {
-    let engine = Engine::with_backend(
-        BackendKind::Native,
-        RuntimeConfig {
-            install_test262_host: true,
-            ..RuntimeConfig::default()
-        },
-    );
+    let engine = Engine::new(RuntimeConfig {
+        install_test262_host: true,
+        ..RuntimeConfig::default()
+    });
     let error = engine
         .execute(
             "throw new Test262Error('expected');",

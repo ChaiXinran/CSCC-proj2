@@ -483,8 +483,6 @@ struct Metadata {
 #[derive(Debug, Clone)]
 struct Harness {
     assert: Arc<str>,
-    #[cfg(feature = "boa-backend")]
-    sta: Arc<str>,
     doneprint: Arc<str>,
     includes: Arc<HashMap<String, Arc<str>>>,
 }
@@ -496,8 +494,6 @@ impl Harness {
     fn minimal_native() -> Self {
         Self {
             assert: Arc::from(""),
-            #[cfg(feature = "boa-backend")]
-            sta: Arc::from(""),
             doneprint: Arc::from(""),
             includes: Arc::new(HashMap::new()),
         }
@@ -556,7 +552,6 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
         let sender = sender.clone();
         let harness = Arc::clone(&harness);
         let config = options.runtime;
-        let backend = options.backend;
         workers.push(
             thread::Builder::new()
                 // Default Rust thread stack is 2 MB. With recursion_limit=256 each JS
@@ -587,7 +582,6 @@ pub fn run(options: RunnerOptions) -> Result<Summary, String> {
                                 run_case(
                                     &path,
                                     &harness,
-                                    backend,
                                     config,
                                     skip_unsupported,
                                     skip_runtime_errors,
@@ -688,7 +682,6 @@ fn status_label(status: Status) -> &'static str {
 fn run_case(
     path: &Path,
     harness: &Harness,
-    backend: BackendKind,
     config: RuntimeConfig,
     skip_unsupported: bool,
     skip_runtime_errors: bool,
@@ -727,7 +720,6 @@ fn run_case(
                 source: &source,
                 metadata: &metadata,
                 harness,
-                backend,
                 config,
                 source_kind,
                 strict: *strict,
@@ -779,7 +771,6 @@ struct VariantRun<'a> {
     source: &'a str,
     metadata: &'a Metadata,
     harness: &'a Harness,
-    backend: BackendKind,
     config: RuntimeConfig,
     source_kind: SourceKind,
     strict: bool,
@@ -793,14 +784,13 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
         source,
         metadata,
         harness,
-        backend,
         config,
         source_kind,
         strict,
         skip_unsupported,
         skip_runtime_errors,
     } = run;
-    let mut runtime = Runtime::with_backend(backend, config).map_err(|error| {
+    let mut runtime = Runtime::new(config).map_err(|error| {
         runtime_error_failure("runtime creation failed", error, skip_runtime_errors)
     })?;
     runtime.clear_output();
@@ -820,84 +810,53 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
         );
     }
 
-    #[cfg(feature = "boa-backend")]
-    if backend == BackendKind::Boa && !metadata.flags.contains("raw") {
+    // Eval the official assert.js to provide the full assert suite:
+    // assert.compareArray, assert.throws (with constructor check), assert._isSameValue,
+    // isNegativeZero, compareArray, etc.  Test262Error stays as a Rust host function
+    // so the test runner can detect assertion failures; assert.js calls it via
+    // `throw new Test262Error(...)` which routes through our Rust builtin correctly.
+    // sta.js is intentionally skipped: it redefines Test262Error as a plain JS class
+    // which would shadow the Rust host function and break error detection.
+    if !metadata.flags.contains("raw") {
         runtime.eval_fragment(&harness.assert).map_err(|error| {
             runtime_error_failure("assert.js failed", error, skip_runtime_errors)
         })?;
-        runtime
-            .eval_fragment(&harness.sta)
-            .map_err(|error| runtime_error_failure("sta.js failed", error, skip_runtime_errors))?;
-
         if metadata.flags.contains("async") {
             runtime.eval_fragment(&harness.doneprint).map_err(|error| {
                 runtime_error_failure("doneprintHandle.js failed", error, skip_runtime_errors)
             })?;
         }
-        for include in &metadata.includes {
-            let code = harness
-                .includes
-                .get(include)
-                .ok_or_else(|| format!("missing harness include `{include}`"))?;
-            runtime.eval_fragment(code).map_err(|error| {
-                runtime_error_failure(
-                    format!("harness `{include}` failed"),
-                    error,
-                    skip_runtime_errors,
-                )
-            })?;
-        }
     }
-
-    if backend == BackendKind::Native {
-        // Eval the official assert.js to provide the full assert suite:
-        // assert.compareArray, assert.throws (with constructor check), assert._isSameValue,
-        // isNegativeZero, compareArray, etc.  Test262Error stays as a Rust host function
-        // so the test runner can detect assertion failures; assert.js calls it via
-        // `throw new Test262Error(...)` which routes through our Rust builtin correctly.
-        // sta.js is intentionally skipped: it redefines Test262Error as a plain JS class
-        // which would shadow the Rust host function and break error detection.
-        if !metadata.flags.contains("raw") {
-            runtime.eval_fragment(&harness.assert).map_err(|error| {
-                runtime_error_failure("assert.js failed", error, skip_runtime_errors)
-            })?;
-            if metadata.flags.contains("async") {
-                runtime.eval_fragment(&harness.doneprint).map_err(|error| {
-                    runtime_error_failure("doneprintHandle.js failed", error, skip_runtime_errors)
-                })?;
+    for include in &metadata.includes {
+        let code = harness.includes.get(include).ok_or_else(|| {
+            VariantFailure::Failed(format!("missing harness include `{include}`"))
+        })?;
+        if let Err(error) = runtime.eval_fragment(code) {
+            if skip_unsupported && error.kind == FailureKind::Unsupported {
+                return Err(VariantFailure::Skipped(format!(
+                    "unsupported native feature in harness `{include}`: {error}"
+                )));
             }
+            return Err(runtime_error_failure(
+                format!("harness `{include}` failed"),
+                error,
+                skip_runtime_errors,
+            ));
         }
-        for include in &metadata.includes {
-            let code = harness.includes.get(include).ok_or_else(|| {
-                VariantFailure::Failed(format!("missing harness include `{include}`"))
-            })?;
-            if let Err(error) = runtime.eval_fragment(code) {
-                if skip_unsupported && error.kind == FailureKind::Unsupported {
-                    return Err(VariantFailure::Skipped(format!(
-                        "unsupported native feature in harness `{include}`: {error}"
-                    )));
-                }
-                return Err(runtime_error_failure(
-                    format!("harness `{include}` failed"),
-                    error,
-                    skip_runtime_errors,
-                ));
-            }
-            if include == "regExpUtils.js" {
-                // ponytail: generated Unicode property-escape tests build
-                // megabyte-scale strings through this harness helper. Keep the
-                // helper semantics but run the hot loop in the native $262 host;
-                // upgrade path is a faster general JS loop/JIT/string builder.
-                runtime
-                    .eval_fragment("buildString = $262.buildString;")
-                    .map_err(|error| {
-                        runtime_error_failure(
-                            "native regExpUtils buildString override failed",
-                            error,
-                            skip_runtime_errors,
-                        )
-                    })?;
-            }
+        if include == "regExpUtils.js" {
+            // ponytail: generated Unicode property-escape tests build
+            // megabyte-scale strings through this harness helper. Keep the
+            // helper semantics but run the hot loop in the native $262 host;
+            // upgrade path is a faster general JS loop/JIT/string builder.
+            runtime
+                .eval_fragment("buildString = $262.buildString;")
+                .map_err(|error| {
+                    runtime_error_failure(
+                        "native regExpUtils buildString override failed",
+                        error,
+                        skip_runtime_errors,
+                    )
+                })?;
         }
     }
 
@@ -1108,8 +1067,6 @@ fn load_harness(root: &Path) -> Result<Harness, String> {
 
     Ok(Harness {
         assert: required("assert.js")?,
-        #[cfg(feature = "boa-backend")]
-        sta: required("sta.js")?,
         doneprint: required("doneprintHandle.js")?,
         includes: Arc::new(files),
     })
@@ -1280,7 +1237,6 @@ mod tests {
             source: "$DONOTEVALUATE(); 1;",
             metadata: &metadata,
             harness: &Harness::minimal_native(),
-            backend: BackendKind::Native,
             config: test_config(),
             source_kind: SourceKind::Script,
             strict: false,
@@ -1309,7 +1265,6 @@ mod tests {
             source: "$DONOTEVALUATE(); var ;",
             metadata: &metadata,
             harness: &Harness::minimal_native(),
-            backend: BackendKind::Native,
             config: test_config(),
             source_kind: SourceKind::Script,
             strict: false,
@@ -1338,7 +1293,6 @@ mod tests {
         let result = run_case(
             &path,
             &Harness::minimal_native(),
-            BackendKind::Native,
             test_config(),
             true,
             false,

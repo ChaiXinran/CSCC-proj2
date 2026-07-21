@@ -1,19 +1,16 @@
 //! Track B — Symbol infrastructure, ToPrimitive, and Symbol.toStringTag tests.
 
-use agentjs::{
-    backend::BackendKind,
-    engine::{Engine, ExecutionOptions, RuntimeConfig},
-};
+use agentjs::engine::{Engine, ExecutionOptions, RuntimeConfig};
 
 fn native_eval(source: &str) -> String {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))
         .value
 }
 
 fn native_eval_err(source: &str) -> String {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_err()
         .to_string()

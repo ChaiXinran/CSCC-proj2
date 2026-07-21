@@ -1,7 +1,7 @@
-use agentjs::{BackendKind, Engine, ExecutionOptions, FailureKind, RuntimeConfig};
+use agentjs::{Engine, ExecutionOptions, FailureKind, RuntimeConfig};
 
 fn native_engine() -> Engine {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
 }
 
 fn eval(source: &str) -> String {
@@ -175,13 +175,10 @@ fn rejects_invalid_calls_and_limits_recursion() {
         .unwrap_err();
     assert_eq!(not_callable.kind, FailureKind::Type);
 
-    let engine = Engine::with_backend(
-        BackendKind::Native,
-        RuntimeConfig {
-            recursion_limit: 8,
-            ..RuntimeConfig::default()
-        },
-    );
+    let engine = Engine::new(RuntimeConfig {
+        recursion_limit: 8,
+        ..RuntimeConfig::default()
+    });
     let recursion = engine
         .execute(
             "function recurse() { return recurse(); } recurse();",

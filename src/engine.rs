@@ -129,7 +129,7 @@ pub struct ExecutionReport {
     pub elapsed: Duration,
 }
 
-/// A persistent JavaScript isolate backed by a selectable implementation.
+/// A persistent JavaScript isolate backed by the native engine.
 pub struct Runtime {
     backend: Box<dyn RuntimeBackend>,
 }
@@ -137,13 +137,8 @@ pub struct Runtime {
 impl Runtime {
     /// Creates a runtime using the native backend.
     pub fn new(config: RuntimeConfig) -> Result<Self, EvalFailure> {
-        Self::with_backend(BackendKind::default(), config)
-    }
-
-    /// Creates a runtime using an explicitly selected backend.
-    pub fn with_backend(kind: BackendKind, config: RuntimeConfig) -> Result<Self, EvalFailure> {
         Ok(Self {
-            backend: create_runtime(kind, config)?,
+            backend: create_runtime(BackendKind::Native, config)?,
         })
     }
 
@@ -213,21 +208,12 @@ impl Runtime {
 #[derive(Debug, Clone, Copy)]
 pub struct Engine {
     config: RuntimeConfig,
-    backend: BackendKind,
 }
 
 impl Engine {
     #[must_use]
     pub const fn new(config: RuntimeConfig) -> Self {
-        Self {
-            config,
-            backend: BackendKind::Native,
-        }
-    }
-
-    #[must_use]
-    pub const fn with_backend(backend: BackendKind, config: RuntimeConfig) -> Self {
-        Self { config, backend }
+        Self { config }
     }
 
     pub fn execute(
@@ -235,7 +221,7 @@ impl Engine {
         source: &str,
         options: ExecutionOptions,
     ) -> Result<ExecutionReport, EvalFailure> {
-        Runtime::with_backend(self.backend, self.config)?.eval(source, options)
+        Runtime::new(self.config)?.eval(source, options)
     }
 }
 

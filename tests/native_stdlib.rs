@@ -1,13 +1,10 @@
 //! End-to-end tests for the V6 builtin surface wired through the thin adapter
 //! layer (`src/builtins/v6.rs`) into the pure C1/C2 algorithm modules.
 
-use agentjs::{
-    backend::BackendKind,
-    engine::{Engine, ExecutionOptions, FailureKind, RuntimeConfig},
-};
+use agentjs::engine::{Engine, ExecutionOptions, FailureKind, RuntimeConfig};
 
 fn native_eval(source: &str) -> String {
-    Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    Engine::new(RuntimeConfig::default())
         .execute(source, ExecutionOptions::default())
         .unwrap_or_else(|error| panic!("native eval failed for `{source}`: {error}"))
         .value
@@ -74,7 +71,7 @@ fn string_repeat_with_negative_count_throws_catchable_range_error() {
 
 #[test]
 fn regexp_replacement_allocation_limit_is_catchable() {
-    let error = Engine::with_backend(BackendKind::Native, RuntimeConfig::default())
+    let error = Engine::new(RuntimeConfig::default())
         .execute(
             "function puff(x, n) { while (x.length < n) x += x; return x.substring(0, n); } \
              var x = puff('1', 1 << 20); \

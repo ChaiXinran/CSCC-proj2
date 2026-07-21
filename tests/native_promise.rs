@@ -1,5 +1,4 @@
 use agentjs::{
-    BackendKind,
     backend::NativeRuntime,
     engine::{ExecutionOptions, Runtime, RuntimeConfig},
 };
@@ -379,7 +378,7 @@ fn for_await_of_uses_the_sync_iterator_fallback() {
 fn for_await_promise_chain_signals_async_completion() {
     let mut config = RuntimeConfig::default();
     config.install_test262_host = true;
-    let mut runtime = Runtime::with_backend(BackendKind::Native, config).expect("native runtime");
+    let mut runtime = Runtime::new(config).expect("native runtime");
     let report = runtime
         .eval(
             "function $DONE(error) { print(error ? 'failed' : 'complete'); } \

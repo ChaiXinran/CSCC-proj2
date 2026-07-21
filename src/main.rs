@@ -8,7 +8,6 @@ use std::{
 
 use agentjs::{
     BackendKind, Engine, ExecutionOptions, Runtime, RuntimeConfig,
-    backend::NativeRuntime,
     test262::{RunnerOptions, Status},
 };
 
@@ -50,10 +49,10 @@ fn run() -> Result<(), String> {
 }
 
 fn command_eval(args: &[String]) -> Result<(), String> {
-    let (backend, source_args) =
-        parse_backend_prefixed_args(args, "usage: agentjs eval [--backend boa|native] <source>")?;
+    let (_backend, source_args) =
+        parse_backend_prefixed_args(args, "usage: agentjs eval [--backend native] <source>")?;
     let source = source_args.join(" ");
-    let report = Engine::with_backend(backend, RuntimeConfig::default())
+    let report = Engine::new(RuntimeConfig::default())
         .execute(&source, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
     print_report(report);
@@ -61,13 +60,13 @@ fn command_eval(args: &[String]) -> Result<(), String> {
 }
 
 fn command_run(args: &[String]) -> Result<(), String> {
-    let (backend, file_args) =
-        parse_backend_prefixed_args(args, "usage: agentjs run [--backend boa|native] <file.js>")?;
+    let (_backend, file_args) =
+        parse_backend_prefixed_args(args, "usage: agentjs run [--backend native] <file.js>")?;
     let path = file_args
         .first()
-        .ok_or_else(|| "usage: agentjs run [--backend boa|native] <file.js>".to_string())?;
+        .ok_or_else(|| "usage: agentjs run [--backend native] <file.js>".to_string())?;
     let source = fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
-    let report = Engine::with_backend(backend, RuntimeConfig::default())
+    let report = Engine::new(RuntimeConfig::default())
         .execute(&source, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
     print_report(report);
@@ -120,18 +119,16 @@ fn jetstream_run(source: &str) -> Result<(), String> {
 }
 
 fn command_repl(args: &[String]) -> Result<(), String> {
-    let backend = parse_backend_only_args(args, "usage: agentjs repl [--backend boa|native]")?;
-    let mut runtime = Runtime::with_backend(backend, RuntimeConfig::default())
-        .map_err(|error| error.to_string())?;
+    let _backend = parse_backend_only_args(args, "usage: agentjs repl [--backend native]")?;
+    let mut runtime = Runtime::new(RuntimeConfig::default()).map_err(|error| error.to_string())?;
     let stdin = io::stdin();
     println!(
-        "AgentJS {} ({}) - Ctrl-D to exit",
-        env!("CARGO_PKG_VERSION"),
-        backend.name()
+        "AgentJS {} (native) - Ctrl-D to exit",
+        env!("CARGO_PKG_VERSION")
     );
 
     loop {
-        print!("agentjs:{}> ", backend.name());
+        print!("agentjs:native> ");
         io::stdout().flush().map_err(|error| error.to_string())?;
         let mut line = String::new();
         if stdin
@@ -247,23 +244,22 @@ fn command_test262(args: &[String]) -> Result<(), String> {
 }
 
 fn command_bench(args: &[String]) -> Result<(), String> {
-    let mut backend = BackendKind::default();
     let mut iter_arg: Option<&str> = None;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
             "--backend" => {
                 index += 1;
-                backend = parse_backend(required_value(args, index, "--backend")?)?;
+                let _backend = parse_backend(required_value(args, index, "--backend")?)?;
             }
             value if value.starts_with("--") => {
                 return Err(format!(
-                    "unknown option `{value}`; usage: agentjs bench [--backend boa|native] [iterations]"
+                    "unknown option `{value}`; usage: agentjs bench [--backend native] [iterations]"
                 ));
             }
             value if iter_arg.is_none() => iter_arg = Some(value),
             _ => {
-                return Err("usage: agentjs bench [--backend boa|native] [iterations]".into());
+                return Err("usage: agentjs bench [--backend native] [iterations]".into());
             }
         }
         index += 1;
@@ -276,63 +272,17 @@ fn command_bench(args: &[String]) -> Result<(), String> {
         return Err("benchmark iterations must be greater than zero".into());
     }
     let source = "(function(){ let x = 0; for (let i = 0; i < 1000; i++) x += i; return x; })()";
-
-    match backend {
-        #[cfg(feature = "boa-backend")]
-        BackendKind::Boa => bench_boa(source, iterations),
-        BackendKind::Native => bench_native(source, iterations),
-    }
-}
-
-#[cfg(feature = "boa-backend")]
-fn bench_boa(source: &str, iterations: usize) -> Result<(), String> {
-    println!("backend=boa iterations={iterations}");
-
-    let cold_started = Instant::now();
-    let engine = Engine::with_backend(BackendKind::Boa, RuntimeConfig::default());
-    for _ in 0..iterations {
-        engine
-            .execute(source, ExecutionOptions::default())
-            .map_err(|error| error.to_string())?;
-    }
-    let cold = cold_started.elapsed();
-
-    let mut uncached_runtime = Runtime::with_backend(
-        BackendKind::Boa,
-        RuntimeConfig {
-            script_cache_capacity: 0,
-            ..RuntimeConfig::default()
-        },
-    )
-    .map_err(|error| error.to_string())?;
-    let uncached_started = Instant::now();
-    for _ in 0..iterations {
-        uncached_runtime
-            .eval(source, ExecutionOptions::default())
-            .map_err(|error| error.to_string())?;
-    }
-    let uncached = uncached_started.elapsed();
-
-    let mut cached_runtime = Runtime::with_backend(BackendKind::Boa, RuntimeConfig::default())
-        .map_err(|error| error.to_string())?;
-    let cached_started = Instant::now();
-    for _ in 0..iterations {
-        cached_runtime
-            .eval(source, ExecutionOptions::default())
-            .map_err(|error| error.to_string())?;
-    }
-    let cached = cached_started.elapsed();
-
-    print_bench_results(cold, uncached, cached, iterations);
-    Ok(())
+    bench_native(source, iterations)
 }
 
 fn bench_native(source: &str, iterations: usize) -> Result<(), String> {
+    use agentjs::backend::NativeRuntime;
+
     println!("backend=native iterations={iterations}");
 
-    // Cold: fresh isolate per iteration via Engine::with_backend.
+    // Cold: fresh isolate per iteration via Engine.
     let cold_started = Instant::now();
-    let engine = Engine::with_backend(BackendKind::Native, RuntimeConfig::default());
+    let engine = Engine::new(RuntimeConfig::default());
     for _ in 0..iterations {
         engine
             .execute(source, ExecutionOptions::default())
@@ -476,28 +426,12 @@ fn parse_backend_only_args(args: &[String], usage: &str) -> Result<BackendKind, 
 
 fn parse_backend(value: &str) -> Result<BackendKind, String> {
     match value {
-        #[cfg(feature = "boa-backend")]
-        "boa" => Ok(BackendKind::Boa),
-        #[cfg(not(feature = "boa-backend"))]
-        "boa" => Err("backend `boa` is not compiled; rebuild with `--features boa-backend`".into()),
         "native" => Ok(BackendKind::Native),
-        _ => Err(format!(
-            "unknown backend `{value}`; expected `boa` or `native`"
-        )),
-    }
-}
-
-trait BackendName {
-    fn name(self) -> &'static str;
-}
-
-impl BackendName for BackendKind {
-    fn name(self) -> &'static str {
-        match self {
-            #[cfg(feature = "boa-backend")]
-            Self::Boa => "boa",
-            Self::Native => "native",
-        }
+        "boa" => Err("the embedded Boa backend was removed in V12; \
+             build the external Boa CLI for comparison experiments: \
+             `cargo build --release --manifest-path boa/Cargo.toml -p boa_cli`"
+            .into()),
+        _ => Err(format!("unknown backend `{value}`; expected `native`")),
     }
 }
 
@@ -507,18 +441,19 @@ fn print_help() {
 AgentJS - lightweight JavaScript execution for AI agents
 
 USAGE:
-  agentjs eval [--backend boa|native] <source>
-  agentjs run [--backend boa|native] <file.js>
+  agentjs eval [--backend native] <source>
+  agentjs run [--backend native] <file.js>
   agentjs jetstream <generated-runner.js>
-  agentjs repl [--backend boa|native]
+  agentjs repl [--backend native]
   agentjs test262 [--root test262] [--suite test] [--filter text]
-                  [--backend boa|native] [--limit N] [--jobs N]
+                  [--backend native] [--limit N] [--jobs N]
                   [--native-v1|--native-v2|--native-v3|--native-v4|--native-v4-scan|--native-v5|--native-v5-scan|--native-v6|--native-v6-scan|--native-v7|--native-v7-scan|--native-v8-scan|--native-v9-scan|--native-v10-scan|--native-v11-scan]
                   [--progress] [--skip-runtime-errors] [--json result.json] [-v]
-  agentjs bench [--backend boa|native] [iterations]
+  agentjs bench [--backend native] [iterations]
 
 BACKENDS:
-  native  Default backend
-  boa     Requires a build with --features boa-backend and explicit --backend boa"
+  native  Default self-developed engine (always available).
+  boa     Removed from embedded dispatch in V12. Build the external Boa CLI
+          for comparison: cargo build --release --manifest-path boa/Cargo.toml -p boa_cli"
     );
 }

@@ -7,27 +7,12 @@ description = "A lightweight JavaScript execution runtime for AI agents"
 license = "MIT"
 
 [features]
-# Native is always compiled and is the runtime default. Boa is available only
-# when this optional feature is enabled and callers explicitly select it.
+# Native is always compiled and is the only runtime backend. Boa is available
+# only as an external comparison engine via the pinned submodule:
+#   cargo build --release --manifest-path boa/Cargo.toml -p boa_cli
 default = []
-boa-backend = ["dep:boa_engine", "dep:boa_runtime"]
-conformance = [
-    "boa-backend",
-    "boa_engine/experimental",
-    "boa_engine/intl_bundled",
-    "boa_engine/temporal",
-]
 
 [dependencies]
-boa_engine = { path = "boa/core/engine", optional = true, default-features = false, features = [
-    "annex-b",
-    "float16",
-    "xsum",
-] }
-boa_runtime = { path = "boa/core/runtime", optional = true, default-features = false, features = [
-    "annex-b",
-    "test262",
-] }
 regex = "1"
 
 [profile.release]

@@ -1,18 +1,4 @@
-use agentjs::{BackendKind, Engine, ExecutionOptions, Runtime, RuntimeConfig};
-
-#[test]
-fn default_backend_is_native() {
-    assert_eq!(BackendKind::default(), BackendKind::Native);
-}
-
-#[cfg(feature = "boa-backend")]
-#[test]
-fn boa_backend_remains_explicitly_selectable() {
-    let report = Engine::with_backend(BackendKind::Boa, RuntimeConfig::default())
-        .execute("6 * 7", ExecutionOptions::default())
-        .unwrap();
-    assert_eq!(report.value, "42");
-}
+use agentjs::{Engine, ExecutionOptions, Runtime, RuntimeConfig};
 
 #[test]
 fn evaluates_javascript() {
@@ -82,7 +68,7 @@ fn reuses_prepared_scripts_in_a_persistent_runtime() {
 
 #[test]
 fn native_backend_executes_v1_expressions() {
-    let engine = Engine::with_backend(BackendKind::Native, RuntimeConfig::default());
+    let engine = Engine::new(RuntimeConfig::default());
     let report = engine
         .execute("1 + 2 * 3;", ExecutionOptions::default())
         .unwrap();
