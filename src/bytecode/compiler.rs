@@ -3817,6 +3817,35 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         use crate::ast::ClassElement;
 
+        // A private name belongs to a particular evaluation of a class, not
+        // to its spelling. Keep a class lexical environment alive while all
+        // constructor/method closures are created and allocate fresh brands
+        // every time evaluation reaches this class expression.
+        let mut private_names = Vec::new();
+        for element in elements {
+            let name = match element {
+                ClassElement::Field {
+                    name: crate::ast::PropertyName::PrivateName(name),
+                    ..
+                } => Some(name),
+                _ => None,
+            };
+            if let Some(name) = name
+                && !private_names.contains(name)
+            {
+                private_names.push(name.clone());
+            }
+        }
+        let private_brand_env = !private_names.is_empty();
+        if private_brand_env {
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+            for name in &private_names {
+                let index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::CreatePrivateBrand(index));
+            }
+        }
+
         // Find the constructor element, if any.
         let ctor_literal = elements.iter().find_map(|e| {
             if let ClassElement::Constructor(lit) = e {
@@ -4185,10 +4214,19 @@ impl Compiler {
                         self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, key, val]
                         chunk.emit(Instruction::DefineDataPropertyComputed); // [ctor, ctor]
                     } else {
-                        let key = Self::class_member_storage_key(prop_name);
                         self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, val]
+                        let (key, private) = match prop_name {
+                            crate::ast::PropertyName::PrivateName(name) => {
+                                (format!("\0#init#{name}"), true)
+                            }
+                            _ => (Self::class_member_storage_key(prop_name), false),
+                        };
                         let key_idx = self.add_name(&key, chunk)?;
-                        chunk.emit(Instruction::DefineDataProperty(key_idx)); // [ctor, ctor]
+                        chunk.emit(if private {
+                            Instruction::SetProperty(key_idx)
+                        } else {
+                            Instruction::DefineDataProperty(key_idx)
+                        }); // [ctor, ctor]
                     }
                     chunk.emit(Instruction::Pop); // [ctor]
                 }
@@ -4225,6 +4263,11 @@ impl Compiler {
                 }
                 _ => {}
             }
+        }
+
+        if private_brand_env {
+            chunk.emit(Instruction::PopEnvironment);
+            context.environment_depth -= 1;
         }
 
         Ok(())

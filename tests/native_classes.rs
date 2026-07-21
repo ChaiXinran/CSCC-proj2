@@ -93,6 +93,28 @@ fn private_field_rejects_an_unbranded_receiver() {
 }
 
 #[test]
+fn equal_private_spellings_from_distinct_classes_have_distinct_brands() {
+    let error = Engine::new(RuntimeConfig::default())
+        .execute(
+            "class A { #x = 'a'; read(value) { return value.#x; } } class B { #x = 'b'; } new A().read(new B())",
+            ExecutionOptions::default(),
+        )
+        .expect_err("the spelling #x must not identify a different class's field");
+    assert_eq!(error.kind.name(), "TypeError");
+}
+
+#[test]
+fn repeated_evaluation_of_one_class_expression_allocates_fresh_brands() {
+    let error = Engine::new(RuntimeConfig::default())
+        .execute(
+            "function make() { return class { #x = 1; read(value) { return value.#x; } }; } let A = make(); let B = make(); new A().read(new B())",
+            ExecutionOptions::default(),
+        )
+        .expect_err("each class evaluation must allocate a new private brand");
+    assert_eq!(error.kind.name(), "TypeError");
+}
+
+#[test]
 fn derived_constructor_rejects_a_primitive_return_override() {
     let error = Engine::new(RuntimeConfig::default())
         .execute(

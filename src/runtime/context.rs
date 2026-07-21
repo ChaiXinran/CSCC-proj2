@@ -145,6 +145,8 @@ pub struct NativeContext {
     pending_derived_this: Vec<(JsValue, bool)>,
     module_registry: ModuleRegistry,
     pending_module_imports: HashMap<String, JsValue>,
+    pending_module_import_links: HashMap<String, (EnvironmentId, String)>,
+    module_import_links: HashMap<(EnvironmentId, String), (EnvironmentId, String)>,
     next_private_brand: u32,
     private_slots: HashMap<ObjectId, HashMap<String, PrivateSlot>>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
@@ -235,6 +237,8 @@ impl NativeContext {
             pending_derived_this: Vec::new(),
             module_registry: ModuleRegistry::default(),
             pending_module_imports: HashMap::new(),
+            pending_module_import_links: HashMap::new(),
+            module_import_links: HashMap::new(),
             next_private_brand: 1,
             private_slots: HashMap::new(),
             function_prototypes: HashMap::new(),
@@ -1578,10 +1582,32 @@ impl NativeContext {
         environment: EnvironmentId,
         name: &str,
     ) -> Result<JsValue, VmError> {
+        let mut current_environment = environment;
+        let mut current_name = name.to_string();
+        let mut visited = HashSet::new();
+        while let Some((target_environment, target_name)) = self
+            .module_import_links
+            .get(&(current_environment, current_name.clone()))
+        {
+            if !visited.insert((current_environment, current_name.clone())) {
+                return Err(VmError::reference(format!(
+                    "circular module binding for {name}"
+                )));
+            }
+            current_environment = *target_environment;
+            current_name = target_name.clone();
+        }
+        self.heap
+            .environment(current_environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .get_binding_value(&current_name)
+    }
+
+    #[must_use]
+    pub fn has_binding_in_environment(&self, environment: EnvironmentId, name: &str) -> bool {
         self.heap
             .environment(environment)
-            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
-            .get_binding_value(name)
+            .is_some_and(|environment| environment.has_binding(name))
     }
 
     pub fn module_registry(&self) -> &ModuleRegistry {
@@ -1596,8 +1622,38 @@ impl NativeContext {
         self.pending_module_imports = imports;
     }
 
+    pub fn set_pending_module_import_links(
+        &mut self,
+        imports: HashMap<String, (EnvironmentId, String)>,
+    ) {
+        self.pending_module_import_links = imports;
+    }
+
+    pub fn clear_pending_module_imports(&mut self) {
+        self.pending_module_imports.clear();
+        self.pending_module_import_links.clear();
+    }
+
     pub fn take_pending_module_import(&mut self, name: &str) -> Option<JsValue> {
         self.pending_module_imports.remove(name)
+    }
+
+    pub fn take_pending_module_import_link(
+        &mut self,
+        name: &str,
+    ) -> Option<(EnvironmentId, String)> {
+        self.pending_module_import_links.remove(name)
+    }
+
+    pub fn create_module_import_link(
+        &mut self,
+        environment: EnvironmentId,
+        local_name: String,
+        target_environment: EnvironmentId,
+        target_name: String,
+    ) {
+        self.module_import_links
+            .insert((environment, local_name), (target_environment, target_name));
     }
 
     pub fn allocate_private_brand(&mut self) -> PrivateBrandId {
@@ -1639,6 +1695,45 @@ impl NativeContext {
         Err(VmError::type_error(format!(
             "object does not have private field #{name}"
         )))
+    }
+
+    pub fn get_private_slot_with_brand(
+        &self,
+        object: ObjectId,
+        name: &str,
+        brand: PrivateBrandId,
+    ) -> Result<JsValue, VmError> {
+        self.private_slots
+            .get(&object)
+            .and_then(|slots| slots.get(name))
+            .filter(|slot| slot.brand == brand)
+            .map(|slot| slot.value.clone())
+            .ok_or_else(|| {
+                VmError::type_error(format!(
+                    "object does not have private field #{name} for this class"
+                ))
+            })
+    }
+
+    pub fn set_private_slot_with_brand(
+        &mut self,
+        object: ObjectId,
+        name: &str,
+        brand: PrivateBrandId,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        let slot = self
+            .private_slots
+            .get_mut(&object)
+            .and_then(|slots| slots.get_mut(name))
+            .filter(|slot| slot.brand == brand)
+            .ok_or_else(|| {
+                VmError::type_error(format!(
+                    "object does not have private field #{name} for this class"
+                ))
+            })?;
+        slot.value = value;
+        Ok(())
     }
 
     pub fn set_private_slot(
@@ -1731,6 +1826,13 @@ impl NativeContext {
                 return Ok(Some((id, value)));
             }
             if let Some(binding) = environment.binding(name) {
+                if let Some((target_environment, target_name)) =
+                    self.module_import_links.get(&(id, name.to_string()))
+                {
+                    let value =
+                        self.binding_value_in_environment(*target_environment, target_name)?;
+                    return Ok(Some((id, value)));
+                }
                 if !binding.initialized {
                     return Err(VmError::reference(format!(
                         "cannot access {name} before initialization"

@@ -67,7 +67,9 @@ pub struct ModuleExportBinding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleStatus {
     Parsed,
+    Linking,
     Linked,
+    Evaluating,
     Evaluated,
     Failed,
 }
@@ -161,6 +163,13 @@ impl ModuleRegistry {
     #[must_use]
     pub fn environment(&self, id: ModuleId) -> Option<EnvironmentId> {
         self.environments.get(&id).copied()
+    }
+
+    #[must_use]
+    pub fn is_module_environment(&self, environment: EnvironmentId) -> bool {
+        self.environments
+            .values()
+            .any(|candidate| *candidate == environment)
     }
 
     pub fn set_namespace(&mut self, id: ModuleId, namespace: JsValue) {

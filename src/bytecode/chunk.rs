@@ -377,7 +377,8 @@ impl Chunk {
                 | Instruction::DeleteProperty(index)
                 | Instruction::CreateMutableBinding(index)
                 | Instruction::CreateImmutableBinding(index)
-                | Instruction::InitializeBinding(index) => Some(index),
+                | Instruction::InitializeBinding(index)
+                | Instruction::CreatePrivateBrand(index) => Some(index),
                 Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };
@@ -407,7 +408,8 @@ impl Chunk {
                 | Instruction::DeleteProperty(index)
                 | Instruction::CreateMutableBinding(index)
                 | Instruction::CreateImmutableBinding(index)
-                | Instruction::InitializeBinding(index) => Some(index),
+                | Instruction::InitializeBinding(index)
+                | Instruction::CreatePrivateBrand(index) => Some(index),
                 Instruction::DeclareFunction { name, .. } => Some(name),
                 _ => None,
             };

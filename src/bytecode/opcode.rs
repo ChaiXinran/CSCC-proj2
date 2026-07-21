@@ -253,6 +253,9 @@ pub enum Instruction {
     CreateMutableBinding(u16),
     CreateImmutableBinding(u16),
     InitializeBinding(u16),
+    /// Allocates a fresh runtime identity for one private name in the current
+    /// class lexical environment. The operand is the source-level name.
+    CreatePrivateBrand(u16),
     LoadException,
     EndFinally,
 
@@ -468,6 +471,7 @@ impl Instruction {
             | Self::PopEnvironment
             | Self::CreateMutableBinding(_)
             | Self::CreateImmutableBinding(_)
+            | Self::CreatePrivateBrand(_)
             | Self::EndFinally => StackEffect::new(0, 0),
 
             // call variants

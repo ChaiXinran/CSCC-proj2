@@ -86,12 +86,6 @@ impl Parser {
         }
 
         // V9-A: `await expr` — only valid inside an async function.
-        if self.is_async_context && self.check_keyword(Keyword::Await) {
-            self.advance();
-            let value = self.parse_unary()?;
-            return Ok(Expression::Await(Box::new(value)));
-        }
-
         if let Some(arrow) = self.try_parse_arrow_function()? {
             return Ok(arrow);
         }
@@ -328,6 +322,13 @@ impl Parser {
     /// `delete`).
     /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`, `void`, `delete`).
     fn parse_unary(&mut self) -> Result<Expression, ParseError> {
+        if self.is_async_context && self.check_keyword(Keyword::Await) {
+            self.advance();
+            self.enter_depth()?;
+            let value = self.parse_unary()?;
+            self.leave_depth();
+            return Ok(Expression::Await(Box::new(value)));
+        }
         if let TokenKind::Operator(operator) = &self.peek().kind
             && let Some(operator) = update_operator(operator)
         {

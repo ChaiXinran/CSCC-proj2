@@ -14,18 +14,31 @@ use crate::{
     runtime::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
         Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
-        PreferredType, PrimitiveValue, PromiseCallbackJob, PromiseReaction, PropertyDescriptor,
-        PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, array_index, bigint,
-        to_property_key,
+        PreferredType, PrimitiveValue, PrivateBrandId, PromiseCallbackJob, PromiseReaction,
+        PropertyDescriptor, PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, array_index,
+        bigint, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
 
-fn evaluate_local_module(context: &mut NativeContext, path: &Path) -> Result<JsValue, VmError> {
+#[derive(Debug)]
+struct LoadedModule {
+    id: crate::runtime::ModuleId,
+    program: crate::ast::Program,
+    chunk: Chunk,
+    imports: Vec<crate::runtime::ModuleImportBinding>,
+    exports: Vec<crate::runtime::ModuleExportBinding>,
+    dependencies: Vec<String>,
+}
+
+fn load_module_graph(
+    context: &mut NativeContext,
+    path: &Path,
+    graph: &mut HashMap<std::path::PathBuf, LoadedModule>,
+) -> Result<(), VmError> {
     let path = crate::runtime::normalize_module_path(path);
-    let id = context.module_registry_mut().ensure_record(&path);
-    if let Some(namespace) = context.module_registry().namespace(id) {
-        return Ok(namespace);
+    if graph.contains_key(&path) {
+        return Ok(());
     }
     let source = fs::read_to_string(&path).map_err(|error| {
         VmError::reference(format!("cannot load module `{}`: {error}", path.display()))
@@ -33,9 +46,10 @@ fn evaluate_local_module(context: &mut NativeContext, path: &Path) -> Result<JsV
     let tokens = Lexer::new(&source)
         .tokenize()
         .map_err(|error| VmError::syntax_error(error.to_string()))?;
-    let program = Parser::with_source(tokens, &source)
+    let mut program = Parser::with_source(tokens, &source)
         .parse_module()
         .map_err(|error| VmError::syntax_error(error.to_string()))?;
+    normalize_default_export_bindings(&mut program);
     let chunk = Compiler::new()
         .compile_program(&program)
         .map_err(|error| VmError::runtime(error.to_string()))?;
@@ -81,103 +95,351 @@ fn evaluate_local_module(context: &mut NativeContext, path: &Path) -> Result<JsV
             _ => {}
         }
     }
+    let id = context.module_registry_mut().ensure_record(&path);
     context.module_registry_mut().set_metadata(
         id,
-        dependencies,
+        dependencies.clone(),
         import_metadata.clone(),
         export_metadata.clone(),
     );
-    // Publish the namespace identity before descending into dependencies. A
-    // back-edge in a module cycle observes this placeholder instead of
-    // recursively re-entering the loader until the native stack overflows.
-    let namespace = context.create_object(std::iter::empty())?;
-    context
-        .module_registry_mut()
-        .set_namespace(id, namespace.clone());
-
-    let mut imports = HashMap::new();
-    for binding in &import_metadata {
-        let dependency_path = crate::runtime::resolve_module_specifier(&path, &binding.source)
+    graph.insert(
+        path.clone(),
+        LoadedModule {
+            id,
+            program,
+            chunk,
+            imports: import_metadata,
+            exports: export_metadata,
+            dependencies: dependencies.clone(),
+        },
+    );
+    for specifier in dependencies {
+        let dependency_path = crate::runtime::resolve_module_specifier(&path, &specifier)
             .map_err(VmError::type_error)?;
-        let namespace = evaluate_local_module(context, &dependency_path)?;
-        let value = if binding.imported_name == "*" {
-            namespace
-        } else {
-            context.get_property(namespace, &binding.imported_name)?
-        };
-        imports.insert(binding.local_name.clone(), value);
+        load_module_graph(context, &dependency_path, graph)?;
     }
-    let depth = context.environment_depth();
-    let environment = context.push_environment(Some(context.global_environment()))?;
-    context
-        .module_registry_mut()
-        .set_environment(id, environment);
-    context.set_pending_module_imports(imports);
-    let execution = Vm::default().execute_with_context(&chunk, context);
-    context.restore_environment_depth(depth)?;
-    context.set_pending_module_imports(HashMap::new());
-    // Parsing/linking failures reject import(). During the V13 transition an
-    // otherwise linked module may still contain an execution feature outside
-    // the native subset; preserve its namespace identity instead of turning
-    // that implementation gap into a loader failure.
-    let _execution_error = execution.err();
+    Ok(())
+}
 
-    let mut exports = Vec::new();
-    for binding in export_metadata {
-        let mut value = binding.local_name.as_ref().and_then(|local| {
-            context
-                .binding_value_in_environment(environment, local)
-                .ok()
-                .or_else(|| context.get_global(local))
-        });
-        if value.is_none() {
-            let fallback_expression = program.body.iter().find_map(|item| {
-                let Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) = item
-                else {
-                    return None;
-                };
-                if binding.export_name == "default" && binding.local_name.is_none() {
-                    return declaration.declaration.as_deref().and_then(
-                        |statement| match statement {
-                            Statement::Expression(expression) => Some(expression.clone()),
-                            _ => None,
-                        },
-                    );
-                }
-                let local = binding.local_name.as_ref()?;
-                let Statement::VariableDeclaration { declarations, .. } =
-                    declaration.declaration.as_deref()?
-                else {
-                    return None;
-                };
-                declarations
-                    .iter()
-                    .find(|declarator| &declarator.name == local)
-                    .and_then(|declarator| declarator.initializer.clone())
-            });
-            if let Some(expression) = fallback_expression {
-                let fallback_program = crate::ast::Program {
-                    body: vec![Statement::Expression(expression)],
-                };
-                let fallback_chunk = Compiler::new()
-                    .compile_program(&fallback_program)
-                    .map_err(|error| VmError::runtime(error.to_string()))?;
-                value = Some(Vm::default().execute_with_context(&fallback_chunk, context)?);
+fn normalize_default_export_bindings(program: &mut crate::ast::Program) {
+    for statement in &mut program.body {
+        let Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) = statement else {
+            continue;
+        };
+        if !declaration
+            .entries
+            .iter()
+            .any(|entry| entry.export_name == "default" && entry.local_name.is_none())
+        {
+            continue;
+        }
+        let Some(Statement::Expression(expression)) = declaration.declaration.as_deref() else {
+            continue;
+        };
+        let binding_name = "\0module_default".to_string();
+        declaration.declaration = Some(Box::new(Statement::VariableDeclaration {
+            kind: crate::ast::VariableKind::Const,
+            declarations: vec![crate::ast::VariableDeclarator {
+                name: binding_name.clone(),
+                pattern: None,
+                initializer: Some(expression.clone()),
+            }],
+        }));
+        for entry in &mut declaration.entries {
+            if entry.export_name == "default" && entry.local_name.is_none() {
+                entry.local_name = Some(binding_name.clone());
             }
         }
-        if let Some(value) = value {
-            exports.push((binding.export_name, value));
+    }
+}
+
+fn instantiate_module_graph(
+    context: &mut NativeContext,
+    graph: &HashMap<std::path::PathBuf, LoadedModule>,
+) -> Result<(), VmError> {
+    for module in graph.values() {
+        context
+            .module_registry_mut()
+            .set_status(module.id, crate::runtime::ModuleStatus::Linking);
+        if context.module_registry().environment(module.id).is_none() {
+            let depth = context.environment_depth();
+            let environment = context.push_environment(Some(context.global_environment()))?;
+            context.restore_environment_depth(depth)?;
+            context
+                .module_registry_mut()
+                .set_environment(module.id, environment);
+        }
+        if context.module_registry().namespace(module.id).is_none() {
+            let namespace = context.create_object(std::iter::empty())?;
+            context
+                .module_registry_mut()
+                .set_namespace(module.id, namespace);
+        }
+        context
+            .module_registry_mut()
+            .set_status(module.id, crate::runtime::ModuleStatus::Linked);
+    }
+    // Declaration instantiation is graph-wide and precedes evaluation. This
+    // creates TDZ cells before following a cycle, so a back-edge observes an
+    // uninitialized binding instead of an absent global.
+    for module in graph.values() {
+        let environment = context
+            .module_registry()
+            .environment(module.id)
+            .ok_or_else(|| VmError::runtime("module environment is missing"))?;
+        instantiate_module_declarations(context, environment, &module.program.body)?;
+    }
+    // Imports are indirect cells, not copied values. Wire them only after all
+    // module environments and export cells exist.
+    for module in graph.values() {
+        let environment = context
+            .module_registry()
+            .environment(module.id)
+            .ok_or_else(|| VmError::runtime("module environment is missing"))?;
+        for binding in &module.imports {
+            let dependency_path = crate::runtime::resolve_module_specifier(
+                &module_path_for(graph, module.id)?,
+                &binding.source,
+            )
+            .map_err(VmError::type_error)?;
+            let dependency = graph
+                .get(&dependency_path)
+                .ok_or_else(|| VmError::reference("missing linked dependency"))?;
+            if binding.imported_name == "*" {
+                let namespace = context
+                    .module_registry()
+                    .namespace(dependency.id)
+                    .ok_or_else(|| VmError::runtime("module namespace is missing"))?;
+                context.initialize_binding(environment, &binding.local_name, namespace)?;
+            } else {
+                let (target_environment, target_name) = resolve_export_target(
+                    context,
+                    graph,
+                    &dependency_path,
+                    &binding.imported_name,
+                )?;
+                context.create_module_import_link(
+                    environment,
+                    binding.local_name.clone(),
+                    target_environment,
+                    target_name,
+                );
+            }
         }
     }
-    let namespace_object = context.require_object(&namespace, "populate module namespace")?;
-    for (name, value) in exports {
-        context.define_own_property(
-            namespace_object,
-            name,
-            PropertyDescriptor::data_with(value, false, true, false),
-        )?;
+    Ok(())
+}
+
+fn module_path_for(
+    graph: &HashMap<std::path::PathBuf, LoadedModule>,
+    id: crate::runtime::ModuleId,
+) -> Result<std::path::PathBuf, VmError> {
+    graph
+        .iter()
+        .find_map(|(path, module)| (module.id == id).then(|| path.clone()))
+        .ok_or_else(|| VmError::runtime("module path is missing"))
+}
+
+fn instantiate_module_declarations(
+    context: &mut NativeContext,
+    environment: EnvironmentId,
+    statements: &[Statement],
+) -> Result<(), VmError> {
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration { kind, declarations } => {
+                for declaration in declarations {
+                    if declaration.pattern.is_none() {
+                        match kind {
+                            crate::ast::VariableKind::Const => context
+                                .create_immutable_binding(environment, declaration.name.clone())?,
+                            crate::ast::VariableKind::Let => context.create_mutable_binding(
+                                environment,
+                                declaration.name.clone(),
+                                false,
+                            )?,
+                            crate::ast::VariableKind::Var => context.declare_binding(
+                                environment,
+                                declaration.name.clone(),
+                                JsValue::Undefined,
+                                true,
+                            )?,
+                        }
+                    }
+                }
+            }
+            Statement::ClassDeclaration(declaration) => {
+                context.create_mutable_binding(environment, declaration.name.clone(), false)?
+            }
+            Statement::FunctionDeclaration { name, .. } => {
+                context.declare_binding(environment, name.clone(), JsValue::Undefined, true)?
+            }
+            Statement::ModuleDeclaration(ModuleDeclaration::Import(declaration)) => {
+                for entry in &declaration.entries {
+                    context.create_immutable_binding(environment, entry.local_name.clone())?;
+                }
+            }
+            Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) => {
+                if let Some(statement) = declaration.declaration.as_deref() {
+                    instantiate_module_declarations(
+                        context,
+                        environment,
+                        std::slice::from_ref(statement),
+                    )?;
+                }
+            }
+            _ => {}
+        }
     }
+    Ok(())
+}
+
+fn resolve_export_target(
+    context: &NativeContext,
+    graph: &HashMap<std::path::PathBuf, LoadedModule>,
+    module_path: &Path,
+    export_name: &str,
+) -> Result<(EnvironmentId, String), VmError> {
+    let mut visited = std::collections::HashSet::new();
+    resolve_export_target_inner(context, graph, module_path, export_name, &mut visited)
+}
+
+fn resolve_export_target_inner(
+    context: &NativeContext,
+    graph: &HashMap<std::path::PathBuf, LoadedModule>,
+    module_path: &Path,
+    export_name: &str,
+    visited: &mut std::collections::HashSet<(std::path::PathBuf, String)>,
+) -> Result<(EnvironmentId, String), VmError> {
+    let module_path = crate::runtime::normalize_module_path(module_path);
+    if !visited.insert((module_path.clone(), export_name.to_string())) {
+        return Err(VmError::syntax_error(format!(
+            "circular re-export of {export_name}"
+        )));
+    }
+    let module = graph
+        .get(&module_path)
+        .ok_or_else(|| VmError::reference("missing linked module"))?;
+    let binding = module
+        .exports
+        .iter()
+        .find(|binding| binding.export_name == export_name)
+        .ok_or_else(|| {
+            VmError::syntax_error(format!("module has no export named {export_name}"))
+        })?;
+    if let Some(source) = &binding.source {
+        let dependency_path = crate::runtime::resolve_module_specifier(&module_path, source)
+            .map_err(VmError::type_error)?;
+        return resolve_export_target_inner(context, graph, &dependency_path, export_name, visited);
+    }
+    let environment = context
+        .module_registry()
+        .environment(module.id)
+        .ok_or_else(|| VmError::runtime("module was not instantiated"))?;
+    Ok((
+        environment,
+        binding
+            .local_name
+            .clone()
+            .unwrap_or_else(|| export_name.to_string()),
+    ))
+}
+
+fn evaluate_module_graph(
+    context: &mut NativeContext,
+    graph: &HashMap<std::path::PathBuf, LoadedModule>,
+    path: &Path,
+) -> Result<JsValue, VmError> {
+    let path = crate::runtime::normalize_module_path(path);
+    let module = graph
+        .get(&path)
+        .ok_or_else(|| VmError::reference("missing loaded module"))?;
+    match context.module_registry().status_for_path(&path) {
+        Some(crate::runtime::ModuleStatus::Evaluated)
+        | Some(crate::runtime::ModuleStatus::Evaluating) => {
+            return context
+                .module_registry()
+                .namespace(module.id)
+                .ok_or_else(|| VmError::runtime("module namespace is missing"));
+        }
+        Some(crate::runtime::ModuleStatus::Failed) => {
+            return Err(VmError::runtime("module evaluation previously failed"));
+        }
+        _ => {}
+    }
+    context
+        .module_registry_mut()
+        .set_status(module.id, crate::runtime::ModuleStatus::Evaluating);
+    context
+        .module_registry_mut()
+        .set_evaluation_state(module.id, crate::runtime::ModuleEvaluationState::Pending);
+
+    for specifier in &module.dependencies {
+        let dependency_path = crate::runtime::resolve_module_specifier(&path, specifier)
+            .map_err(VmError::type_error)?;
+        evaluate_module_graph(context, graph, &dependency_path)?;
+    }
+
+    let environment = context
+        .module_registry()
+        .environment(module.id)
+        .ok_or_else(|| VmError::runtime("module environment is missing"))?;
+    let depth = context.environment_depth();
+    context.push_existing_environment(environment)?;
+    let execution = Vm::default().execute_with_context(&module.chunk, context);
+    context.restore_environment_depth(depth)?;
+    // Keep the established V13 supported-subset boundary: parse/link failures
+    // reject the import, while an execution opcode that the native VM has not
+    // implemented yet leaves the namespace usable. The graph/state machinery
+    // still prevents duplicate and recursive evaluation.
+    let _unsupported_execution = execution.err();
+
+    let namespace = context
+        .module_registry()
+        .namespace(module.id)
+        .ok_or_else(|| VmError::runtime("module namespace is missing"))?;
+    let namespace_object = context.require_object(&namespace, "populate module namespace")?;
+    for binding in &module.exports {
+        if binding.source.is_some() {
+            continue;
+        }
+        let local_name = binding
+            .local_name
+            .as_deref()
+            .unwrap_or(&binding.export_name);
+        if let Ok(value) = context.binding_value_in_environment(environment, local_name) {
+            context.define_own_property(
+                namespace_object,
+                binding.export_name.clone(),
+                PropertyDescriptor::data_with(value, false, true, false),
+            )?;
+        }
+    }
+    context
+        .module_registry_mut()
+        .set_status(module.id, crate::runtime::ModuleStatus::Evaluated);
+    context
+        .module_registry_mut()
+        .set_evaluation_state(module.id, crate::runtime::ModuleEvaluationState::Fulfilled);
     Ok(namespace)
+}
+
+fn evaluate_local_module(context: &mut NativeContext, path: &Path) -> Result<JsValue, VmError> {
+    let path = crate::runtime::normalize_module_path(path);
+    if matches!(
+        context.module_registry().status_for_path(&path),
+        Some(crate::runtime::ModuleStatus::Evaluated | crate::runtime::ModuleStatus::Evaluating)
+    ) {
+        let id = context.module_registry_mut().ensure_record(&path);
+        return context
+            .module_registry()
+            .namespace(id)
+            .ok_or_else(|| VmError::runtime("module namespace is missing"));
+    }
+    let mut graph = HashMap::new();
+    load_module_graph(context, &path, &mut graph)?;
+    instantiate_module_graph(context, &graph)?;
+    evaluate_module_graph(context, &graph, &path)
 }
 
 /// B's local dynamic-module loader. Each module owns a persistent lexical
@@ -569,12 +831,30 @@ impl Vm {
                 Instruction::DeclareGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let value = self.pop_value()?;
-                    if !context.declare_global(name, value.clone()) {
+                    if context
+                        .module_registry()
+                        .is_module_environment(context.current_environment())
+                    {
+                        context.declare_binding(
+                            context.current_environment(),
+                            name,
+                            value,
+                            true,
+                        )?;
+                    } else if !context.declare_global(name, value.clone()) {
                         context.set_global(name, value);
                     }
                 }
                 Instruction::LoadGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
+                    if context
+                        .module_registry()
+                        .is_module_environment(context.current_environment())
+                        && let Some((_, value)) = context.resolve_binding_value(name)?
+                    {
+                        self.stack.push(value);
+                        continue;
+                    }
                     match context.get_global(name) {
                         Some(value) => self.stack.push(value),
                         None => {
@@ -604,7 +884,15 @@ impl Vm {
                 Instruction::StoreGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let value = self.pop_value()?;
-                    if !context.set_global(name, value.clone()) {
+                    let stored = if context
+                        .module_registry()
+                        .is_module_environment(context.current_environment())
+                    {
+                        context.set_binding(name, value.clone()).is_ok()
+                    } else {
+                        context.set_global(name, value.clone())
+                    };
+                    if !stored {
                         let error = VmError::reference(format!(
                             "{name} is not defined at instruction {current_instruction}"
                         ));
@@ -2569,15 +2857,42 @@ impl Vm {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
-                    context.create_mutable_binding(context.current_environment(), name, false)?;
+                    if !(context
+                        .module_registry()
+                        .is_module_environment(context.current_environment())
+                        && context.has_binding_in_environment(context.current_environment(), &name))
+                    {
+                        context.create_mutable_binding(
+                            context.current_environment(),
+                            name,
+                            false,
+                        )?;
+                    }
                 }
                 Instruction::CreateImmutableBinding(index) => {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
-                    context
-                        .create_immutable_binding(context.current_environment(), name.clone())?;
-                    if let Some(value) = context.take_pending_module_import(&name) {
+                    if !(context
+                        .module_registry()
+                        .is_module_environment(context.current_environment())
+                        && context.has_binding_in_environment(context.current_environment(), &name))
+                    {
+                        context.create_immutable_binding(
+                            context.current_environment(),
+                            name.clone(),
+                        )?;
+                    }
+                    if let Some((target_environment, target_name)) =
+                        context.take_pending_module_import_link(&name)
+                    {
+                        context.create_module_import_link(
+                            context.current_environment(),
+                            name,
+                            target_environment,
+                            target_name,
+                        );
+                    } else if let Some(value) = context.take_pending_module_import(&name) {
                         context.initialize_binding(context.current_environment(), &name, value)?;
                     }
                 }
@@ -2591,6 +2906,17 @@ impl Vm {
                             ))
                         })?;
                     context.initialize_binding(environment, name, value)?;
+                }
+                Instruction::CreatePrivateBrand(index) => {
+                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    let binding_name = format!("\0#brand#{name}");
+                    let brand = context.allocate_private_brand();
+                    context.declare_binding(
+                        context.current_environment(),
+                        binding_name,
+                        JsValue::Number(f64::from(brand.0)),
+                        false,
+                    )?;
                 }
                 Instruction::LoadException => {
                     let value = self.pending_exception.take().ok_or_else(|| {
@@ -3847,8 +4173,12 @@ impl Vm {
         value: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        let Some(promise) = context.promise_id_from_value(&value) else {
-            return Ok(OperationResult::Value(value));
+        let promise = if let Some(promise) = context.promise_id_from_value(&value) {
+            promise
+        } else {
+            let promise = context.create_promise()?;
+            crate::builtins::promise::resolve_promise_id(self, context, promise, value)?;
+            promise
         };
         self.drain_jobs(context)?;
         match context.promise_state(promise) {
@@ -5385,6 +5715,19 @@ impl Vm {
             return Ok(OperationResult::Value(value));
         }
 
+        if let Some(name) = key.strip_prefix("\0#")
+            && let Some(brand) = Self::private_brand_for_name(context, name)?
+        {
+            let object = match context.require_object(&receiver, "read private field") {
+                Ok(object) => object,
+                Err(error) => return self.error_to_operation_result(error),
+            };
+            return match context.get_private_slot_with_brand(object, name, brand) {
+                Ok(value) => Ok(OperationResult::Value(value)),
+                Err(error) => self.error_to_operation_result(error),
+            };
+        }
+
         if key.starts_with("\0#") {
             let object = match context.require_object(&receiver, "read private field") {
                 Ok(object) => object,
@@ -5658,16 +6001,26 @@ impl Vm {
             Err(error) => return Err(error),
         };
         if let Some(name) = key.strip_prefix("\0#init#") {
-            let private_key = format!("\0#{name}");
-            return match context.define_own_property(
-                object,
-                private_key,
-                PropertyDescriptor::data_with(value.clone(), true, false, false),
-            ) {
-                Ok(true) => Ok(OperationResult::Value(value)),
-                Ok(false) => self.error_to_operation_result(VmError::type_error(
-                    "cannot initialize private field",
-                )),
+            if let Some(brand) = Self::private_brand_for_name(context, name)? {
+                return match context.define_private_slot(
+                    object,
+                    name.to_string(),
+                    brand,
+                    value.clone(),
+                ) {
+                    Ok(()) => Ok(OperationResult::Value(value)),
+                    Err(error) => self.error_to_operation_result(error),
+                };
+            }
+            return self.error_to_operation_result(VmError::reference(format!(
+                "private name #{name} is not in scope"
+            )));
+        }
+        if let Some(name) = key.strip_prefix("\0#")
+            && let Some(brand) = Self::private_brand_for_name(context, name)?
+        {
+            return match context.set_private_slot_with_brand(object, name, brand, value.clone()) {
+                Ok(()) => Ok(OperationResult::Value(value)),
                 Err(error) => self.error_to_operation_result(error),
             };
         }
@@ -5698,6 +6051,23 @@ impl Vm {
             Ok(false) => Ok(OperationResult::Value(value)),
             Err(error) => self.error_to_operation_result(error),
         }
+    }
+
+    fn private_brand_for_name(
+        context: &NativeContext,
+        name: &str,
+    ) -> Result<Option<PrivateBrandId>, VmError> {
+        let binding = format!("\0#brand#{name}");
+        let Some((_, value)) = context.resolve_binding_value(&binding)? else {
+            return Ok(None);
+        };
+        let JsValue::Number(value) = value else {
+            return Err(VmError::runtime("invalid private brand binding"));
+        };
+        if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > u32::MAX as f64 {
+            return Err(VmError::runtime("invalid private brand identity"));
+        }
+        Ok(Some(PrivateBrandId(value as u32)))
     }
 
     fn set_symbol_property_value(
