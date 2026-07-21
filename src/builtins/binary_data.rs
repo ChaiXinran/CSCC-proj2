@@ -1327,8 +1327,8 @@ fn install_typed_array_constructor(
     bytes_per_element: usize,
 ) -> Result<(), VmError> {
     let prototype = new_ordinary_object(context, Some(intrinsic.prototype))?;
-    let constructor =
-        context.register_builtin(name, 3, typed_array_call, Some(typed_array_construct))?;
+    let construct = typed_array_construct_for_name(name)?;
+    let constructor = context.register_builtin(name, 3, typed_array_call, Some(construct))?;
     let constructor_object = context
         .value_object(&constructor)
         .ok_or_else(|| VmError::runtime("typed array constructor object missing"))?;
@@ -1408,20 +1408,14 @@ fn typed_array_call(
     Err(VmError::type_error("TypedArray constructor requires 'new'"))
 }
 
-fn typed_array_construct(
+fn typed_array_construct_impl(
     vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
+    name: &'static str,
 ) -> Result<JsValue, VmError> {
-    let constructor_object = context
-        .value_object(&new_target)
-        .ok_or_else(|| VmError::type_error("typed array new target must be a constructor"))?;
-    let name = match own_data_value(context, constructor_object, TYPED_ARRAY_NAME) {
-        Some(JsValue::String(name)) => name,
-        _ => "TypedArray".into(),
-    };
-    let kind = typed_array_kind(&name)?;
+    let kind = typed_array_kind(name)?;
     let bytes_per_element = kind.bytes_per_element();
     let prototype = context
         .constructor_prototype(&new_target)?
@@ -1456,7 +1450,7 @@ fn typed_array_construct(
         return create_typed_array_object_with_tracking(
             context,
             prototype,
-            name,
+            name.into(),
             kind,
             source,
             buffer_id,
@@ -1500,7 +1494,7 @@ fn typed_array_construct(
     let result = create_typed_array_object(
         context,
         prototype,
-        name,
+        name.into(),
         kind,
         buffer.clone(),
         buffer_id,
@@ -1515,6 +1509,48 @@ fn typed_array_construct(
     Ok(result)
 }
 
+macro_rules! typed_array_constructor {
+    ($function:ident, $name:literal) => {
+        fn $function(
+            vm: &mut Vm,
+            context: &mut NativeContext,
+            arguments: &[JsValue],
+            new_target: JsValue,
+        ) -> Result<JsValue, VmError> {
+            typed_array_construct_impl(vm, context, arguments, new_target, $name)
+        }
+    };
+}
+
+typed_array_constructor!(int8_array_construct, "Int8Array");
+typed_array_constructor!(uint8_array_construct, "Uint8Array");
+typed_array_constructor!(uint8_clamped_array_construct, "Uint8ClampedArray");
+typed_array_constructor!(int16_array_construct, "Int16Array");
+typed_array_constructor!(uint16_array_construct, "Uint16Array");
+typed_array_constructor!(int32_array_construct, "Int32Array");
+typed_array_constructor!(uint32_array_construct, "Uint32Array");
+typed_array_constructor!(float32_array_construct, "Float32Array");
+typed_array_constructor!(float64_array_construct, "Float64Array");
+typed_array_constructor!(bigint64_array_construct, "BigInt64Array");
+typed_array_constructor!(biguint64_array_construct, "BigUint64Array");
+
+fn typed_array_construct_for_name(name: &str) -> Result<crate::runtime::NativeConstruct, VmError> {
+    Ok(match name {
+        "Int8Array" => int8_array_construct,
+        "Uint8Array" => uint8_array_construct,
+        "Uint8ClampedArray" => uint8_clamped_array_construct,
+        "Int16Array" => int16_array_construct,
+        "Uint16Array" => uint16_array_construct,
+        "Int32Array" => int32_array_construct,
+        "Uint32Array" => uint32_array_construct,
+        "Float32Array" => float32_array_construct,
+        "Float64Array" => float64_array_construct,
+        "BigInt64Array" => bigint64_array_construct,
+        "BigUint64Array" => biguint64_array_construct,
+        _ => return Err(VmError::type_error("unknown TypedArray constructor")),
+    })
+}
+
 fn typed_array_constructor_values(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -1524,7 +1560,7 @@ fn typed_array_constructor_values(
     if matches!(source, JsValue::Undefined) {
         return Ok(Vec::new());
     }
-    if matches!(source, JsValue::Number(_)) {
+    if context.value_object(&source).is_none() {
         let length = to_index(vm, context, source)?;
         let byte_length = length
             .checked_mul(kind.bytes_per_element())
@@ -3366,7 +3402,12 @@ fn intl_number_format_format(
 ) -> Result<JsValue, VmError> {
     require_intl_kind(context, &this_value, "NumberFormat")?;
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    Ok(JsValue::String(vm.to_string_coerce(value, context)?))
+    let text = vm.to_string_coerce(value, context)?;
+    Ok(JsValue::String(match text.as_str() {
+        "Infinity" => "∞".into(),
+        "-Infinity" => "-∞".into(),
+        _ => text,
+    }))
 }
 
 fn intl_collator_compare(

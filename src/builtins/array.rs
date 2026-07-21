@@ -2,8 +2,8 @@
 
 use crate::{
     runtime::{
-        IteratorKind, IteratorMode, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue,
-        PropertyDescriptor, PropertyDescriptorUpdate,
+        IteratorKind, IteratorMode, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
+        ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate,
     },
     vm::{Vm, VmError},
 };
@@ -49,6 +49,17 @@ pub fn install_array(context: &mut NativeContext) {
             PropertyDescriptor::data_with(from, true, false, true),
         )
         .expect("define Array.from");
+
+    let from_async = context
+        .register_builtin("fromAsync", 1, array_from_async, None)
+        .expect("install Array.fromAsync");
+    context
+        .define_own_property(
+            constructor_object,
+            "fromAsync".into(),
+            PropertyDescriptor::data_with(from_async, true, false, true),
+        )
+        .expect("define Array.fromAsync");
 
     let of = context
         .register_builtin("of", 0, array_of, None)
@@ -651,6 +662,43 @@ fn array_from(
     let length = array_like_length_from_value(vm, context, source_value.clone(), object)?;
 
     array_from_array_like(vm, context, this, source_value, length, map_fn, map_this)
+}
+
+fn array_from_async_error(error: VmError) -> JsValue {
+    let kind = match error.kind {
+        crate::vm::VmErrorKind::Reference => NativeErrorKind::Reference,
+        crate::vm::VmErrorKind::Type => NativeErrorKind::Type,
+        crate::vm::VmErrorKind::Syntax => NativeErrorKind::Syntax,
+        crate::vm::VmErrorKind::Range => NativeErrorKind::Range,
+        crate::vm::VmErrorKind::Test262 => NativeErrorKind::Test262,
+        crate::vm::VmErrorKind::RuntimeLimit => NativeErrorKind::RuntimeLimit,
+        crate::vm::VmErrorKind::Runtime => NativeErrorKind::Error,
+    };
+    JsValue::Error(NativeErrorValue::new(kind, error.message))
+}
+
+fn array_from_async(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let outcome = array_from(vm, context, this, arguments);
+    let promise = context.create_promise()?;
+    let prototype = context
+        .get_global("Promise")
+        .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten());
+    let object = context.create_promise_object(promise, prototype)?;
+    match outcome {
+        Ok(value) => crate::builtins::promise::resolve_promise_id(vm, context, promise, value)?,
+        Err(error) => {
+            let reason = vm
+                .take_pending_exception_from_builtin()
+                .unwrap_or_else(|| array_from_async_error(error));
+            context.reject_promise(promise, reason)?;
+        }
+    }
+    Ok(object)
 }
 
 fn array_from_array_like(
@@ -1877,7 +1925,9 @@ fn array_copy_within(
         argument_number(vm, context, arguments, 2, length as f64)?,
         length,
     );
-    let copy_len = (end - start).min(length - target_index);
+    let copy_len = end
+        .saturating_sub(start)
+        .min(length.saturating_sub(target_index));
     let src: Vec<JsValue> = {
         let mut v = Vec::with_capacity(copy_len);
         for i in 0..copy_len {
