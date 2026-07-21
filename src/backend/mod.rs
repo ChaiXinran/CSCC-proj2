@@ -9,7 +9,7 @@ use std::{
     collections::VecDeque,
     fs,
     hash::{DefaultHasher, Hash, Hasher},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crate::{
@@ -20,8 +20,9 @@ use crate::{
     lexer::Lexer,
     parser::Parser,
     runtime::{
-        JsValue, ModuleEvaluationState, ModuleExportBinding, ModuleImportBinding, ModuleRegistry,
-        ModuleStatus, resolve_module_specifier,
+        DynamicImportRequest, JsValue, ModuleEvaluationState, ModuleExportBinding,
+        ModuleImportBinding, ModuleRegistry, ModuleStatus, NativeErrorKind,
+        resolve_module_specifier,
     },
 };
 
@@ -71,6 +72,8 @@ pub(crate) trait RuntimeBackend {
     fn run_jobs(&mut self) -> Result<(), EvalFailure>;
 
     fn set_strict(&mut self, strict: bool);
+
+    fn set_dynamic_import_referrer(&mut self, path: &Path);
 
     fn clear_output(&mut self);
 
@@ -278,6 +281,72 @@ impl NativeRuntime {
         })?;
         self.eval_module_source(&source, &path, drain_jobs)
     }
+
+    fn set_dynamic_import_referrer(&mut self, path: &Path) {
+        self.context.declare_global(
+            "__agentjs_dynamic_import_referrer",
+            JsValue::String(path.to_string_lossy().into_owned()),
+        );
+    }
+
+    /// Resolves a local dynamic import and returns its already-settled native Promise.
+    ///
+    /// Import attributes are accepted at this boundary for forward compatibility;
+    /// V13 deliberately does not implement a host attribute resolver.
+    #[allow(dead_code)] // Called by the host dynamic-import bridge as it is installed.
+    pub(crate) fn dynamic_import(
+        &mut self,
+        request: DynamicImportRequest,
+    ) -> Result<JsValue, EvalFailure> {
+        let promise = self
+            .context
+            .create_promise()
+            .map_err(|error| classify_native_error(NativeError::Execute(error)))?;
+        let prototype = self
+            .context
+            .get_global("Promise")
+            .and_then(|value| self.context.get_property(value, "prototype").ok())
+            .and_then(|value| match value {
+                JsValue::Object(id) => Some(id),
+                _ => None,
+            });
+        let promise_value = self
+            .context
+            .create_promise_object(promise, prototype)
+            .map_err(|error| classify_native_error(NativeError::Execute(error)))?;
+
+        let outcome: Result<JsValue, EvalFailure> = (|| {
+            let referrer = request.referrer.as_deref().ok_or_else(|| {
+                EvalFailure::new(
+                    FailureKind::Reference,
+                    "dynamic import has no referrer path",
+                )
+            })?;
+            let path: PathBuf = resolve_module_specifier(referrer, &request.specifier)
+                .map_err(|message| EvalFailure::new(FailureKind::Unsupported, message))?;
+            let source = fs::read_to_string(&path).map_err(|error| {
+                EvalFailure::new(
+                    FailureKind::Reference,
+                    format!("cannot load module `{}`: {error}", path.display()),
+                )
+            })?;
+            self.eval_module_source(&source, &path, true)?;
+            Ok(JsValue::Undefined)
+        })();
+
+        match outcome {
+            Ok(namespace) => self.context.fulfill_promise(promise, namespace),
+            Err(error) => self.context.reject_promise(
+                promise,
+                JsValue::Error(crate::runtime::NativeErrorValue::new(
+                    NativeErrorKind::Type,
+                    error.message,
+                )),
+            ),
+        }
+        .map_err(|error| classify_native_error(NativeError::Execute(error)))?;
+        Ok(promise_value)
+    }
 }
 
 impl RuntimeBackend for NativeRuntime {
@@ -410,6 +479,10 @@ impl RuntimeBackend for NativeRuntime {
 
     fn set_strict(&mut self, strict: bool) {
         self.context.set_strict(strict);
+    }
+
+    fn set_dynamic_import_referrer(&mut self, path: &Path) {
+        self.set_dynamic_import_referrer(path);
     }
 
     fn clear_output(&mut self) {

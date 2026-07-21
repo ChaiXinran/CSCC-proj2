@@ -26,6 +26,7 @@ pub struct JsFunction {
     pub is_async: bool,
     pub is_generator: bool,
     pub is_arrow: bool,
+    pub is_derived_constructor: bool,
     pub uses_arguments: bool,
     pub lexical_this: Option<JsValue>,
     pub lexical_new_target: Option<JsValue>,

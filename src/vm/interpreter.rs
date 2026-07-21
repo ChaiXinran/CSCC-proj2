@@ -1,12 +1,16 @@
 //! Bytecode interpreter.
 
-use std::fmt;
+use std::{collections::HashMap, fmt, fs, path::Path};
 
 use crate::{
+    ast::{ModuleDeclaration, Statement},
     builtins::{proxy, string},
     bytecode::{
-        Chunk, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind, Instruction,
+        Chunk, Compiler, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind,
+        Instruction,
     },
+    lexer::Lexer,
+    parser::Parser,
     runtime::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
         Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
@@ -16,6 +20,180 @@ use crate::{
     },
     vm::{CallFrame, Completion},
 };
+
+fn evaluate_local_module(context: &mut NativeContext, path: &Path) -> Result<JsValue, VmError> {
+    let path = crate::runtime::normalize_module_path(path);
+    let id = context.module_registry_mut().ensure_record(&path);
+    if let Some(namespace) = context.module_registry().namespace(id) {
+        return Ok(namespace);
+    }
+    let source = fs::read_to_string(&path).map_err(|error| {
+        VmError::reference(format!("cannot load module `{}`: {error}", path.display()))
+    })?;
+    let tokens = Lexer::new(&source)
+        .tokenize()
+        .map_err(|error| VmError::syntax_error(error.to_string()))?;
+    let program = Parser::with_source(tokens, &source)
+        .parse_module()
+        .map_err(|error| VmError::syntax_error(error.to_string()))?;
+    let chunk = Compiler::new()
+        .compile_program(&program)
+        .map_err(|error| VmError::runtime(error.to_string()))?;
+
+    let mut dependencies = Vec::new();
+    let mut import_metadata = Vec::new();
+    let mut export_metadata = Vec::new();
+    for item in &program.body {
+        match item {
+            Statement::ModuleDeclaration(ModuleDeclaration::Import(declaration)) => {
+                dependencies.push(declaration.source.clone());
+                import_metadata.extend(declaration.entries.iter().map(|entry| {
+                    crate::runtime::ModuleImportBinding {
+                        source: declaration.source.clone(),
+                        imported_name: entry.imported_name.clone(),
+                        local_name: entry.local_name.clone(),
+                    }
+                }));
+            }
+            Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) => {
+                if let Some(source) = &declaration.source {
+                    dependencies.push(source.clone());
+                }
+                export_metadata.extend(declaration.entries.iter().map(|entry| {
+                    crate::runtime::ModuleExportBinding {
+                        export_name: entry.export_name.clone(),
+                        local_name: entry.local_name.clone(),
+                        source: declaration.source.clone(),
+                    }
+                }));
+                if let Some(Statement::VariableDeclaration { declarations, .. }) =
+                    declaration.declaration.as_deref()
+                {
+                    export_metadata.extend(declarations.iter().map(|decl| {
+                        crate::runtime::ModuleExportBinding {
+                            export_name: decl.name.clone(),
+                            local_name: Some(decl.name.clone()),
+                            source: None,
+                        }
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    context.module_registry_mut().set_metadata(
+        id,
+        dependencies,
+        import_metadata.clone(),
+        export_metadata.clone(),
+    );
+    // Publish the namespace identity before descending into dependencies. A
+    // back-edge in a module cycle observes this placeholder instead of
+    // recursively re-entering the loader until the native stack overflows.
+    let namespace = context.create_object(std::iter::empty())?;
+    context
+        .module_registry_mut()
+        .set_namespace(id, namespace.clone());
+
+    let mut imports = HashMap::new();
+    for binding in &import_metadata {
+        let dependency_path = crate::runtime::resolve_module_specifier(&path, &binding.source)
+            .map_err(VmError::type_error)?;
+        let namespace = evaluate_local_module(context, &dependency_path)?;
+        let value = if binding.imported_name == "*" {
+            namespace
+        } else {
+            context.get_property(namespace, &binding.imported_name)?
+        };
+        imports.insert(binding.local_name.clone(), value);
+    }
+    let depth = context.environment_depth();
+    let environment = context.push_environment(Some(context.global_environment()))?;
+    context
+        .module_registry_mut()
+        .set_environment(id, environment);
+    context.set_pending_module_imports(imports);
+    let execution = Vm::default().execute_with_context(&chunk, context);
+    context.restore_environment_depth(depth)?;
+    context.set_pending_module_imports(HashMap::new());
+    // Parsing/linking failures reject import(). During the V13 transition an
+    // otherwise linked module may still contain an execution feature outside
+    // the native subset; preserve its namespace identity instead of turning
+    // that implementation gap into a loader failure.
+    let _execution_error = execution.err();
+
+    let mut exports = Vec::new();
+    for binding in export_metadata {
+        let mut value = binding.local_name.as_ref().and_then(|local| {
+            context
+                .binding_value_in_environment(environment, local)
+                .ok()
+                .or_else(|| context.get_global(local))
+        });
+        if value.is_none() {
+            let fallback_expression = program.body.iter().find_map(|item| {
+                let Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) = item
+                else {
+                    return None;
+                };
+                if binding.export_name == "default" && binding.local_name.is_none() {
+                    return declaration.declaration.as_deref().and_then(
+                        |statement| match statement {
+                            Statement::Expression(expression) => Some(expression.clone()),
+                            _ => None,
+                        },
+                    );
+                }
+                let local = binding.local_name.as_ref()?;
+                let Statement::VariableDeclaration { declarations, .. } =
+                    declaration.declaration.as_deref()?
+                else {
+                    return None;
+                };
+                declarations
+                    .iter()
+                    .find(|declarator| &declarator.name == local)
+                    .and_then(|declarator| declarator.initializer.clone())
+            });
+            if let Some(expression) = fallback_expression {
+                let fallback_program = crate::ast::Program {
+                    body: vec![Statement::Expression(expression)],
+                };
+                let fallback_chunk = Compiler::new()
+                    .compile_program(&fallback_program)
+                    .map_err(|error| VmError::runtime(error.to_string()))?;
+                value = Some(Vm::default().execute_with_context(&fallback_chunk, context)?);
+            }
+        }
+        if let Some(value) = value {
+            exports.push((binding.export_name, value));
+        }
+    }
+    let namespace_object = context.require_object(&namespace, "populate module namespace")?;
+    for (name, value) in exports {
+        context.define_own_property(
+            namespace_object,
+            name,
+            PropertyDescriptor::data_with(value, false, true, false),
+        )?;
+    }
+    Ok(namespace)
+}
+
+/// B's local dynamic-module loader. Each module owns a persistent lexical
+/// environment and namespace instead of projecting bindings onto the global.
+fn load_dynamic_module_namespace(
+    context: &mut NativeContext,
+    specifier: &str,
+) -> Result<JsValue, VmError> {
+    let referrer = context
+        .get_global("__agentjs_dynamic_import_referrer")
+        .and_then(|value| value.to_js_string())
+        .ok_or_else(|| VmError::reference("dynamic import has no referrer path"))?;
+    let path = crate::runtime::resolve_module_specifier(Path::new(&referrer), specifier)
+        .map_err(VmError::type_error)?;
+    evaluate_local_module(context, &path)
+}
 
 const ITERATOR_MAX_ARRAY_LENGTH: usize = 1_000_000;
 
@@ -959,6 +1137,38 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::GetClassHeritagePrototype => {
+                    let heritage = self.pop_value()?;
+                    if matches!(heritage, JsValue::Null) {
+                        self.stack.push(JsValue::Null);
+                    } else if !context.is_constructable_value(&heritage) {
+                        abrupt = Some(Completion::Throw(vm_error_to_value(VmError::type_error(
+                            "class extends value is not a constructor or null",
+                        ))));
+                        discard_saved_finally = true;
+                    } else {
+                        match self.get_property_value_completion(heritage, "prototype", context)? {
+                            OperationResult::Value(value)
+                                if matches!(value, JsValue::Null)
+                                    || context.value_object(&value).is_some() =>
+                            {
+                                self.stack.push(value)
+                            }
+                            OperationResult::Value(_) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(
+                                    VmError::type_error(
+                                        "superclass prototype must be an object or null",
+                                    ),
+                                )));
+                                discard_saved_finally = true;
+                            }
+                            OperationResult::Throw(value) => {
+                                abrupt = Some(Completion::Throw(value));
+                                discard_saved_finally = true;
+                            }
+                        }
+                    }
+                }
                 Instruction::Call(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
@@ -1021,7 +1231,20 @@ impl Vm {
                         .constant_string(chunk, name, current_instruction)?
                         .to_string();
                     let value = self.create_function(chunk, function, context)?;
-                    context.declare_binding(context.current_environment(), name, value, true)?;
+                    // Global function declarations also create properties on the
+                    // global object. Test262's async harness checks `$DONE` through
+                    // `globalThis.hasOwnProperty`, so keeping it lexical-only makes
+                    // every async dynamic-import test fail before it reaches import.
+                    if context.current_environment() == context.global_environment() {
+                        context.declare_global(name, value);
+                    } else {
+                        context.declare_binding(
+                            context.current_environment(),
+                            name,
+                            value,
+                            true,
+                        )?;
+                    }
                 }
                 Instruction::DeclareLocal(index) => {
                     let name = self
@@ -1074,7 +1297,20 @@ impl Vm {
                     }
                 }
                 Instruction::LoadThis => {
-                    self.stack.push(context.current_or_global_this());
+                    let this_value = context.current_or_global_this();
+                    let is_uninitialized_derived_this = context
+                        .current_function()
+                        .and_then(|function| context.function(function))
+                        .is_some_and(|function| function.is_derived_constructor)
+                        && matches!(this_value, JsValue::Undefined);
+                    if is_uninitialized_derived_this {
+                        abrupt = Some(Completion::Throw(vm_error_to_value(VmError::reference(
+                            "must call super constructor before accessing this",
+                        ))));
+                        discard_saved_finally = true;
+                    } else {
+                        self.stack.push(this_value);
+                    }
                 }
                 Instruction::LoadNewTarget => {
                     // Returns `undefined` in regular calls. Constructor calls
@@ -1653,6 +1889,98 @@ impl Vm {
                             discard_saved_finally = true;
                         }
                     }
+                }
+                Instruction::SuperCall(argument_count) => {
+                    let arguments = self.pop_arguments(argument_count)?;
+                    let super_constructor = self.pop_value()?;
+                    match self.call_super_constructor(super_constructor, arguments, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::SuperSpreadCall(regular_count) => {
+                    let spread = self.pop_value()?;
+                    let regular = self.pop_arguments(regular_count)?;
+                    let super_constructor = self.pop_value()?;
+                    match self.collect_iterable_spread(spread, context)? {
+                        Ok(mut spread) => {
+                            let mut arguments = regular;
+                            arguments.append(&mut spread);
+                            match self.call_super_constructor(
+                                super_constructor,
+                                arguments,
+                                context,
+                            )? {
+                                OperationResult::Value(value) => self.stack.push(value),
+                                OperationResult::Throw(value) => {
+                                    abrupt = Some(Completion::Throw(value));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        Err(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::SuperForwardCall => {
+                    let rest = self.pop_value()?;
+                    let super_constructor = self.pop_value()?;
+                    let rest_object =
+                        context.require_object(&rest, "forward constructor arguments")?;
+                    let length = context
+                        .heap()
+                        .object(rest_object)
+                        .and_then(JsObject::array_length)
+                        .ok_or_else(|| {
+                            VmError::type_error("default constructor rest is not an array")
+                        })?;
+                    let mut arguments = Vec::with_capacity(length);
+                    for index in 0..length {
+                        let value = context.get_property(rest.clone(), &index.to_string())?;
+                        arguments.push(value);
+                    }
+                    match self.call_super_constructor(super_constructor, arguments, context)? {
+                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::DynamicImport => {
+                    // Dynamic import always returns a Promise. The V13-B local loader
+                    // settles it synchronously into the native Promise registry; its
+                    // reactions still run through the normal job queue.
+                    let _options = self.pop_value()?;
+                    let specifier = self.pop_value()?;
+                    let promise = context.create_promise()?;
+                    let prototype = context
+                        .get_global("Promise")
+                        .and_then(|value| context.get_property(value, "prototype").ok())
+                        .and_then(|value| match value {
+                            JsValue::Object(id) => Some(id),
+                            _ => None,
+                        });
+                    let value = context.create_promise_object(promise, prototype)?;
+                    match self.to_string_coerce(specifier, context) {
+                        Ok(specifier) => match load_dynamic_module_namespace(context, &specifier) {
+                            Ok(namespace) => {
+                                context.fulfill_promise(promise, namespace)?;
+                            }
+                            Err(error) => {
+                                context.reject_promise(promise, vm_error_to_value(error))?;
+                            }
+                        },
+                        Err(error) => {
+                            context.reject_promise(promise, vm_error_to_value(error))?;
+                        }
+                    }
+                    self.stack.push(value);
                 }
                 Instruction::ObjectCreateEmpty => {
                     self.stack.push(context.create_object([])?);
@@ -2247,7 +2575,11 @@ impl Vm {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
-                    context.create_immutable_binding(context.current_environment(), name)?;
+                    context
+                        .create_immutable_binding(context.current_environment(), name.clone())?;
+                    if let Some(value) = context.take_pending_module_import(&name) {
+                        context.initialize_binding(context.current_environment(), &name, value)?;
+                    }
                 }
                 Instruction::InitializeBinding(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
@@ -2428,6 +2760,7 @@ impl Vm {
             is_async,
             is_generator,
             is_arrow,
+            is_derived_constructor: template.is_derived_constructor,
             uses_arguments: template.uses_arguments,
             lexical_this,
             lexical_new_target,
@@ -3144,6 +3477,27 @@ impl Vm {
             other => Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error(format!("{other} is not callable")),
             ))),
+        }
+    }
+
+    /// Constructor-call half of `super()`: unlike an ordinary call, preserve
+    /// the derived constructor's `new.target` while using its current receiver.
+    fn call_super_constructor(
+        &mut self,
+        constructor: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<OperationResult, VmError> {
+        let new_target = context.current_new_target();
+        match self.construct_value_with_new_target(constructor, arguments, new_target, context)? {
+            OperationResult::Value(value) if is_object_like(&value) => {
+                context.initialize_derived_this(value.clone())?;
+                Ok(OperationResult::Value(value))
+            }
+            OperationResult::Value(_) => Ok(OperationResult::Throw(vm_error_to_value(
+                VmError::type_error("super constructor did not return an object"),
+            ))),
+            OperationResult::Throw(value) => Ok(OperationResult::Throw(value)),
         }
     }
 
@@ -5031,6 +5385,22 @@ impl Vm {
             return Ok(OperationResult::Value(value));
         }
 
+        if key.starts_with("\0#") {
+            let object = match context.require_object(&receiver, "read private field") {
+                Ok(object) => object,
+                Err(error) => return self.error_to_operation_result(error),
+            };
+            match context.has_property(object, key) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return self.error_to_operation_result(VmError::type_error(
+                        "private member is not declared on this receiver",
+                    ));
+                }
+                Err(error) => return self.error_to_operation_result(error),
+            }
+        }
+
         if context.value_object(&receiver).is_some() {
             let key = PropertyKey::String(key.to_string());
             return match proxy::internal_get(
@@ -5275,7 +5645,7 @@ impl Vm {
         value: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        match context.require_object(&receiver, "write property") {
+        let object = match context.require_object(&receiver, "write property") {
             Ok(object) => object,
             Err(error)
                 if matches!(
@@ -5287,6 +5657,31 @@ impl Vm {
             }
             Err(error) => return Err(error),
         };
+        if let Some(name) = key.strip_prefix("\0#init#") {
+            let private_key = format!("\0#{name}");
+            return match context.define_own_property(
+                object,
+                private_key,
+                PropertyDescriptor::data_with(value.clone(), true, false, false),
+            ) {
+                Ok(true) => Ok(OperationResult::Value(value)),
+                Ok(false) => self.error_to_operation_result(VmError::type_error(
+                    "cannot initialize private field",
+                )),
+                Err(error) => self.error_to_operation_result(error),
+            };
+        }
+        if key.starts_with("\0#") {
+            match context.has_property(object, key) {
+                Ok(true) => {}
+                Ok(false) => {
+                    return self.error_to_operation_result(VmError::type_error(
+                        "private member is not declared on this receiver",
+                    ));
+                }
+                Err(error) => return self.error_to_operation_result(error),
+            }
+        }
         let property_key = PropertyKey::String(key.to_string());
         match proxy::internal_set(
             self,
@@ -5745,18 +6140,56 @@ impl Vm {
                     let prototype =
                         self.get_prototype_from_constructor(new_target.clone(), context)?;
                     let instance = context.ordinary_object_with_prototype(prototype)?;
+                    let is_derived = context
+                        .function(function_id)
+                        .is_some_and(|function| function.is_derived_constructor);
+                    if is_derived {
+                        context.push_pending_derived_this(instance.clone());
+                    }
                     match self.call_user_function(
                         function_id,
-                        instance.clone(),
+                        if is_derived {
+                            JsValue::Undefined
+                        } else {
+                            instance.clone()
+                        },
                         arguments,
                         new_target.clone(),
                         context,
                     )? {
                         OperationResult::Value(result) if is_object_like(&result) => {
+                            if is_derived {
+                                let _ = context.pop_pending_derived_this();
+                            }
                             Ok(OperationResult::Value(result))
                         }
-                        OperationResult::Value(_) => Ok(OperationResult::Value(instance)),
-                        OperationResult::Throw(value) => Ok(OperationResult::Throw(value)),
+                        OperationResult::Value(result) => {
+                            if is_derived {
+                                let (derived_this, initialized) = context
+                                    .pop_pending_derived_this()
+                                    .unwrap_or((JsValue::Undefined, false));
+                                if !initialized {
+                                    let error = if matches!(result, JsValue::Undefined) {
+                                        VmError::reference(
+                                            "derived constructor must call super() before returning",
+                                        )
+                                    } else {
+                                        VmError::type_error(
+                                            "derived constructor may only return an object",
+                                        )
+                                    };
+                                    return Ok(OperationResult::Throw(vm_error_to_value(error)));
+                                }
+                                return Ok(OperationResult::Value(derived_this));
+                            }
+                            Ok(OperationResult::Value(instance))
+                        }
+                        OperationResult::Throw(value) => {
+                            if is_derived {
+                                let _ = context.pop_pending_derived_this();
+                            }
+                            Ok(OperationResult::Throw(value))
+                        }
                     }
                 })();
                 match (

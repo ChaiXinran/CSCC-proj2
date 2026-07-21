@@ -1,0 +1,43 @@
+//! V13-B parser and lowering checks for class and dynamic-import syntax.
+
+use agentjs::{bytecode::Instruction, lexer::Lexer, parser::Parser};
+
+fn compile(source: &str) -> agentjs::bytecode::Chunk {
+    let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
+    let program = Parser::with_source(tokens, source)
+        .parse_program()
+        .expect("parsing succeeds");
+    agentjs::bytecode::Compiler::new()
+        .compile_program(&program)
+        .expect("compilation succeeds")
+}
+
+#[test]
+fn dynamic_import_with_options_lowers_to_the_runtime_instruction() {
+    let chunk = compile("import('./entry.js', { with: { type: 'json' } })");
+    assert!(
+        chunk
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::DynamicImport))
+    );
+}
+
+#[test]
+fn async_arrow_concise_body_keeps_await_context_for_dynamic_import() {
+    let tokens = agentjs::lexer::Lexer::new("async () => await import('./fixture.js')")
+        .tokenize()
+        .expect("tokenize");
+    agentjs::parser::Parser::new(tokens)
+        .parse_program()
+        .expect("async concise body parses");
+}
+
+#[test]
+fn private_name_is_not_accepted_as_a_standalone_expression() {
+    let tokens = Lexer::new("#x").tokenize().expect("lexing succeeds");
+    let error = Parser::with_source(tokens, "#x")
+        .parse_program()
+        .expect_err("private names require a class member access");
+    assert!(!error.message.is_empty());
+}

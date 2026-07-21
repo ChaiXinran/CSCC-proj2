@@ -234,6 +234,9 @@ pub enum Instruction {
     /// Computed-key data property: Stack `[obj, key, val]` → `[obj]`.
     /// Defines obj[key] = val with {writable, enumerable, configurable}.
     DefineDataPropertyComputed,
+    /// Resolves `extends` heritage for the instance prototype. `null` stays
+    /// null; every other value reads its `prototype` property.
+    GetClassHeritagePrototype,
     SetObjectPrototype,
     DefineElement(u32),
     DeleteProperty(u16),
@@ -358,6 +361,21 @@ pub enum Instruction {
     /// Suspends the async function, awaiting a Promise resolution.
     /// Stack: [value] → [resolved_value]
     AwaitValue,
+
+    /// Starts a dynamic module import.
+    /// Stack: [specifier, options] -> [promise]
+    DynamicImport,
+
+    /// Invokes a derived class's captured superclass constructor with the
+    /// current constructor receiver. Stack: [super_ctor, args...] -> [value]
+    SuperCall(u16),
+
+    /// As [`SuperCall`] with a final spread argument.
+    SuperSpreadCall(u16),
+
+    /// Default derived-constructor forwarding. Consumes the internal rest
+    /// array without invoking its observable iterator.
+    SuperForwardCall,
 }
 
 impl Instruction {
@@ -403,6 +421,7 @@ impl Instruction {
             | Self::LogicalNot
             | Self::BitwiseNot
             | Self::GetProperty(_)
+            | Self::GetClassHeritagePrototype
             | Self::ForInKeys
             | Self::TypeOf => StackEffect::new(1, 1),
 
@@ -535,6 +554,10 @@ impl Instruction {
             // V9-A generator / async
             Self::CreateGenerator(_) | Self::CreateAsyncFunction(_) => StackEffect::new(0, 1),
             Self::YieldValue | Self::AwaitValue | Self::YieldDelegate => StackEffect::new(1, 1),
+            Self::DynamicImport => StackEffect::new(2, 1),
+            Self::SuperCall(argument_count) => StackEffect::new(argument_count as u32 + 1, 1),
+            Self::SuperSpreadCall(argument_count) => StackEffect::new(argument_count as u32 + 2, 1),
+            Self::SuperForwardCall => StackEffect::new(2, 1),
         }
     }
 

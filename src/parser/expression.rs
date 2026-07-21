@@ -1397,10 +1397,10 @@ impl Parser {
             self.is_async_context = outer_async;
             b
         } else {
+            let value = self.parse_assignment();
             self.is_async_context = outer_async;
-            let value = self.parse_assignment()?;
             crate::ast::FunctionBody {
-                statements: vec![Statement::Return(Some(value))],
+                statements: vec![Statement::Return(Some(value?))],
                 is_strict: self.is_strict,
             }
         };
@@ -1632,18 +1632,24 @@ impl Parser {
             // Private name duplicate check.
             // Getter + setter with the same name is a valid accessor pair.
             if let PropertyName::PrivateName(pn) = &prop_name {
-                let prefix = if is_static { "s" } else { "i" };
-                let key = format!("{}#{}", prefix, pn);
+                // Static and instance elements share one class private-name
+                // environment. Only one getter/setter pair may share a name.
+                let key = pn.clone();
                 if is_accessor && is_getter {
-                    if !seen_private_getters.insert(key) {
+                    if seen_private_names.contains(&key) || !seen_private_getters.insert(key) {
                         return Err(self.error(format!("duplicate private getter `#{pn}`")));
                     }
                 } else if is_accessor && is_setter {
-                    if !seen_private_setters.insert(key) {
+                    if seen_private_names.contains(&key) || !seen_private_setters.insert(key) {
                         return Err(self.error(format!("duplicate private setter `#{pn}`")));
                     }
-                } else if !seen_private_names.insert(key) {
-                    return Err(self.error(format!("duplicate private name `#{pn}`")));
+                } else {
+                    if seen_private_getters.contains(&key)
+                        || seen_private_setters.contains(&key)
+                        || !seen_private_names.insert(key)
+                    {
+                        return Err(self.error(format!("duplicate private name `#{pn}`")));
+                    }
                 }
                 // `#constructor` is forbidden (per spec, in any position).
                 if pn == "constructor" {
@@ -2997,6 +3003,7 @@ fn update_operator(operator: &str) -> Option<UpdateOperator> {
 /// via non-computed member access — e.g. `expr.#x` or `(a.b).#x`.
 fn is_private_member_access(expr: &crate::ast::Expression) -> bool {
     match expr {
+        crate::ast::Expression::Parenthesized(inner) => is_private_member_access(inner),
         crate::ast::Expression::Member {
             property,
             computed: false,

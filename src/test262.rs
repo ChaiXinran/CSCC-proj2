@@ -795,6 +795,9 @@ fn run_variant(run: VariantRun<'_>) -> Result<(), VariantFailure> {
     })?;
     runtime.clear_output();
     runtime.set_strict(false);
+    // V13-B bridge: dynamic import resolves relative specifiers from the
+    // currently executing Test262 source file.
+    runtime.set_dynamic_import_referrer(path);
 
     if is_static_negative(metadata) {
         return run_static_negative_variant(
