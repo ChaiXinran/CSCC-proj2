@@ -123,7 +123,7 @@ impl<'source> Lexer<'source> {
             } else if is_identifier_start(ch)
                 || (self.cursor.rest().starts_with("\\u")
                     && !tokens.last().is_some_and(|token| {
-                        matches!(&token.kind, TokenKind::Operator(op) if op == "/" || op == "/=")
+                        matches!(&token.kind, TokenKind::Operator(op) if *op == "/" || *op == "/=")
                     }))
             {
                 self.read_identifier_or_keyword()?
@@ -154,7 +154,7 @@ impl<'source> Lexer<'source> {
                     Ok((_body, _flags, end)) => {
                         self.cursor.advance_to(end);
                         Token::new(
-                            TokenKind::Operator("/".to_owned()),
+                            TokenKind::Operator("/"),
                             Span::new(start, start + 1),
                         )
                     }
@@ -196,7 +196,7 @@ impl<'source> Lexer<'source> {
                 ) => false,
                 // Postfix `++`/`--` end an expression; prefix would already have
                 // `last_allows_regex = true` from the preceding token.
-                TokenKind::Operator(op) if op == "++" || op == "--" => false,
+                TokenKind::Operator(op) if *op == "++" || *op == "--" => false,
                 // Everything else (operators, `(`, `[`, `{`, `}`, `,`, `;`, `:`
                 // keywords like `return`/`typeof`/`new`, template head/middle) allows regex.
                 _ => true,
@@ -727,7 +727,7 @@ impl<'source> Lexer<'source> {
         let start = self.cursor.offset();
         self.cursor.bump();
         Token::new(
-            TokenKind::Operator("\0".to_owned()),
+            TokenKind::Operator(" "),
             Span::new(start, self.cursor.offset()),
         )
     }
@@ -906,7 +906,7 @@ impl<'source> Lexer<'source> {
             self.cursor.bump();
             self.cursor.bump();
             return Ok(Token::new(
-                TokenKind::Operator("...".to_owned()),
+                TokenKind::Operator("..."),
                 Span::new(start, self.cursor.offset()),
             ));
         }
@@ -929,7 +929,7 @@ impl<'source> Lexer<'source> {
             let kind = if len == 1 {
                 TokenKind::Punctuator('?')
             } else {
-                TokenKind::Operator(op_str.to_owned())
+                TokenKind::Operator(op_str)
             };
             return Ok(Token::new(kind, Span::new(start, self.cursor.offset())));
         }
@@ -949,7 +949,7 @@ impl<'source> Lexer<'source> {
                 self.cursor.bump();
             }
             return Ok(Token::new(
-                TokenKind::Operator((*operator).to_owned()),
+                TokenKind::Operator(*operator),
                 Span::new(start, self.cursor.offset()),
             ));
         }
@@ -964,7 +964,7 @@ impl<'source> Lexer<'source> {
             self.cursor.bump();
         }
         Ok(Token::new(
-            TokenKind::Operator("\0".to_owned()),
+            TokenKind::Operator(" "),
             Span::new(start, self.cursor.offset()),
         ))
     }
@@ -2293,7 +2293,7 @@ mod tests {
             [
                 TokenKind::Keyword(Keyword::Var),
                 TokenKind::Identifier("𠮷".into()),
-                TokenKind::Operator("=".into()),
+                TokenKind::Operator("="),
                 TokenKind::Number(1.0),
                 TokenKind::Punctuator(';'),
                 TokenKind::Identifier("𠮷".into()),
@@ -2309,7 +2309,7 @@ mod tests {
             [
                 TokenKind::Keyword(Keyword::Var),
                 TokenKind::Identifier("a".into()),
-                TokenKind::Operator("=".into()),
+                TokenKind::Operator("="),
                 TokenKind::Number(1.0),
                 TokenKind::Punctuator(';'),
                 TokenKind::Identifier("a".into()),
@@ -2329,19 +2329,19 @@ mod tests {
         assert_eq!(
             kinds("=== !== <= >= && || += -= *= /= %= + ="),
             [
-                TokenKind::Operator("===".into()),
-                TokenKind::Operator("!==".into()),
-                TokenKind::Operator("<=".into()),
-                TokenKind::Operator(">=".into()),
-                TokenKind::Operator("&&".into()),
-                TokenKind::Operator("||".into()),
-                TokenKind::Operator("+=".into()),
-                TokenKind::Operator("-=".into()),
-                TokenKind::Operator("*=".into()),
-                TokenKind::Operator("/=".into()),
-                TokenKind::Operator("%=".into()),
-                TokenKind::Operator("+".into()),
-                TokenKind::Operator("=".into()),
+                TokenKind::Operator("==="),
+                TokenKind::Operator("!=="),
+                TokenKind::Operator("<="),
+                TokenKind::Operator(">="),
+                TokenKind::Operator("&&"),
+                TokenKind::Operator("||"),
+                TokenKind::Operator("+="),
+                TokenKind::Operator("-="),
+                TokenKind::Operator("*="),
+                TokenKind::Operator("/="),
+                TokenKind::Operator("%="),
+                TokenKind::Operator("+"),
+                TokenKind::Operator("="),
                 TokenKind::Eof,
             ]
         );
@@ -2353,9 +2353,9 @@ mod tests {
             kinds("a/b/c"),
             [
                 TokenKind::Identifier("a".into()),
-                TokenKind::Operator("/".into()),
+                TokenKind::Operator("/"),
                 TokenKind::Identifier("b".into()),
-                TokenKind::Operator("/".into()),
+                TokenKind::Operator("/"),
                 TokenKind::Identifier("c".into()),
                 TokenKind::Eof,
             ]
@@ -2376,7 +2376,7 @@ mod tests {
         // causing an immediate lex error. A parse error is raised later if the
         // token appears outside a regex context.
         let tokens = Lexer::new("@").tokenize().unwrap();
-        assert!(matches!(&tokens[0].kind, TokenKind::Operator(op) if op == "\0"));
+        assert!(matches!(&tokens[0].kind, TokenKind::Operator(op) if *op == " "));
     }
 
     #[test]

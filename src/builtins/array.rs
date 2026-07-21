@@ -536,9 +536,7 @@ fn is_array_value(context: &NativeContext, value: &JsValue) -> Result<bool, VmEr
     is_array_value(context, &record.target)
 }
 
-fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
-}
+use super::is_callable;
 
 fn array_from(
     vm: &mut Vm,

@@ -68,9 +68,7 @@ fn sort_regexp_flags(flags: &str) -> String {
     ORDER.iter().filter(|&&flag| flags.contains(flag)).collect()
 }
 
-fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
-}
+use super::is_callable;
 
 fn get_property(
     vm: &mut Vm,

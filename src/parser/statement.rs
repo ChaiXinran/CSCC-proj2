@@ -1453,7 +1453,7 @@ impl Parser {
             // Annex B legacy form: `for (var k = init in obj)`.
             // Keep the initializer as a preceding var declaration so side
             // effects and the visible var binding are preserved.
-            if matches!(&self.peek().kind, TokenKind::Operator(op) if op == "=") {
+            if matches!(&self.peek().kind, TokenKind::Operator(op) if *op == "=") {
                 self.advance(); // `=`
                 let saved_no_in = std::mem::replace(&mut self.no_in, true);
                 let initializer = self.parse_assignment();

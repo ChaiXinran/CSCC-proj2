@@ -127,7 +127,7 @@ pub enum TokenKind {
     TemplateTail(String),
     Keyword(Keyword),
     Punctuator(char),
-    Operator(String),
+    Operator(&'static str),
     /// `#name` — private class field/method identifier.
     PrivateName(String),
 }
