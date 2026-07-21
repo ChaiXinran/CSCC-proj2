@@ -278,7 +278,32 @@ impl<'source> Lexer<'source> {
         let start = self.cursor.offset();
         self.cursor.bump(); // consume `#`
         let mut name = String::new();
-        // Private names follow the same IdentifierName rules, including Unicode escapes.
+        // Private names follow IdentifierName: first code point must be
+        // IdentifierStart; later code points may be IdentifierPart.
+        if self.cursor.rest().starts_with("\\u") {
+            let ch = self.read_identifier_escape(start)?;
+            if !is_identifier_start(ch) {
+                return Err(LexError {
+                    span: Span::new(start, self.cursor.offset()),
+                    message: "private name must start with an identifier-start character".into(),
+                });
+            }
+            name.push(ch);
+        } else {
+            let Some(ch) = self.cursor.peek() else {
+                return Err(LexError {
+                    span: Span::new(start, self.cursor.offset()),
+                    message: "private name is missing an identifier".into(),
+                });
+            };
+            if !is_identifier_start(ch) {
+                return Err(LexError {
+                    span: Span::new(start, self.cursor.offset() + ch.len_utf8()),
+                    message: "private name must start with an identifier-start character".into(),
+                });
+            }
+            name.push(self.cursor.bump().expect("private name start exists"));
+        }
         loop {
             if self.cursor.rest().starts_with("\\u") {
                 let saved = self.cursor.clone();

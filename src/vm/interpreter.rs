@@ -2293,7 +2293,7 @@ impl Vm {
                     context.define_own_property(
                         ctor,
                         "prototype".into(),
-                        PropertyDescriptor::data_with(proto, true, false, false),
+                        PropertyDescriptor::data_with(proto, false, false, false),
                     )?;
                 }
                 Instruction::DefineGetter(index) => {
@@ -2422,6 +2422,12 @@ impl Vm {
                                 discard_saved_finally = true;
                             } else {
                                 context.set_function_home_object(&value, object)?;
+                                self.maybe_set_function_name_from_key(
+                                    &value,
+                                    &JsValue::String(name.clone()),
+                                    None,
+                                    context,
+                                );
                                 context.define_own_property(
                                     object,
                                     name,
@@ -2435,6 +2441,12 @@ impl Vm {
                                 "define class method (computed)",
                             )?;
                             context.set_function_home_object(&value, object)?;
+                            self.maybe_set_function_name_from_key(
+                                &value,
+                                &JsValue::Symbol(symbol),
+                                None,
+                                context,
+                            );
                             context.define_symbol_own_property(
                                 object,
                                 symbol,
@@ -2810,38 +2822,7 @@ impl Vm {
                     let inferred_name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
-                    let func_val = self.peek_value()?.clone();
-                    // Find the object id that carries the `name` property.
-                    let obj_id_opt = match &func_val {
-                        JsValue::Function(func_id) => context.function_object(*func_id),
-                        JsValue::Object(obj_id) => Some(*obj_id),
-                        _ => None,
-                    };
-                    if let Some(obj_id) = obj_id_opt {
-                        // Spec §9.3.9 SetFunctionName: infer only if the function's own "name"
-                        // is absent OR is a data property with the empty-string value.
-                        // An accessor (e.g. class { static get name(){} }) blocks inference.
-                        let should_set = match context.get_own_property(obj_id, "name") {
-                            None => true,
-                            Some(desc) => match &desc.kind {
-                                PropertyKind::Data { value, .. } => {
-                                    matches!(value, JsValue::String(s) if s.is_empty())
-                                }
-                                _ => false, // accessor blocks inference
-                            },
-                        };
-                        if should_set && let Some(obj) = context.heap_mut().object_mut(obj_id) {
-                            obj.define_property(
-                                "name",
-                                PropertyDescriptor::data_with(
-                                    JsValue::String(inferred_name.to_string()),
-                                    false,
-                                    false,
-                                    true,
-                                ),
-                            );
-                        }
-                    }
+                    self.maybe_set_function_name(&inferred_name, context);
                 }
                 Instruction::CreateLexicalEnvironment => {
                     context.push_environment(Some(context.current_environment()))?;
@@ -3087,6 +3068,9 @@ impl Vm {
             is_generator,
             is_arrow,
             is_derived_constructor: template.is_derived_constructor,
+            is_constructable: template.is_constructable,
+            has_own_prototype_property: template.has_own_prototype_property,
+            prototype_writable: template.prototype_writable,
             uses_arguments: template.uses_arguments,
             lexical_this,
             lexical_new_target,
@@ -5019,6 +5003,93 @@ impl Vm {
         }
     }
 
+    fn maybe_set_function_name(&mut self, inferred_name: &str, context: &mut NativeContext) {
+        let Ok(func_val) = self.peek_value().cloned() else {
+            return;
+        };
+        let obj_id_opt = match &func_val {
+            JsValue::Function(func_id) => context.function_object(*func_id),
+            JsValue::Object(obj_id) => Some(*obj_id),
+            _ => None,
+        };
+        let Some(obj_id) = obj_id_opt else {
+            return;
+        };
+        let should_set = match context.get_own_property(obj_id, "name") {
+            None => true,
+            Some(desc) => match &desc.kind {
+                PropertyKind::Data { value, .. } => {
+                    matches!(value, JsValue::String(s) if s.is_empty())
+                }
+                _ => false,
+            },
+        };
+        if should_set && let Some(obj) = context.heap_mut().object_mut(obj_id) {
+            obj.define_property(
+                "name",
+                PropertyDescriptor::data_with(
+                    JsValue::String(inferred_name.to_string()),
+                    false,
+                    false,
+                    true,
+                ),
+            );
+        }
+    }
+
+    fn maybe_set_function_name_from_key(
+        &mut self,
+        func_val: &JsValue,
+        key: &JsValue,
+        prefix: Option<&str>,
+        context: &mut NativeContext,
+    ) {
+        let inferred_name = match key {
+            JsValue::String(name) => match prefix {
+                Some(prefix) => format!("{prefix} {name}"),
+                None => name.clone(),
+            },
+            JsValue::Symbol(symbol) => {
+                let desc = context.symbol_description(*symbol).unwrap_or("");
+                match prefix {
+                    Some(prefix) if desc.is_empty() => format!("{prefix} "),
+                    Some(prefix) => format!("{prefix} [{desc}]"),
+                    None if desc.is_empty() => String::new(),
+                    None => format!("[{desc}]"),
+                }
+            }
+            _ => return,
+        };
+        let obj_id_opt = match func_val {
+            JsValue::Function(func_id) => context.function_object(func_id.clone()),
+            JsValue::Object(obj_id) => Some(obj_id.clone()),
+            _ => None,
+        };
+        let Some(obj_id) = obj_id_opt else {
+            return;
+        };
+        let should_set = match context.get_own_property(obj_id, "name") {
+            None => true,
+            Some(desc) => match &desc.kind {
+                PropertyKind::Data { value, .. } => {
+                    matches!(value, JsValue::String(s) if s.is_empty())
+                }
+                _ => false,
+            },
+        };
+        if should_set && let Some(obj) = context.heap_mut().object_mut(obj_id) {
+            obj.define_property(
+                "name",
+                PropertyDescriptor::data_with(
+                    JsValue::String(inferred_name),
+                    false,
+                    false,
+                    true,
+                ),
+            );
+        }
+    }
+
     fn define_computed_accessor(
         &mut self,
         object: ObjectId,
@@ -5031,9 +5102,11 @@ impl Vm {
     ) -> Result<(), VmError> {
         if let Some(value) = &getter {
             context.set_function_home_object(value, object)?;
+            self.maybe_set_function_name_from_key(value, &key, Some("get"), context);
         }
         if let Some(value) = &setter {
             context.set_function_home_object(value, object)?;
+            self.maybe_set_function_name_from_key(value, &key, Some("set"), context);
         }
         match self.to_property_key_from_builtin(key, context)? {
             JsValue::Symbol(symbol) => {

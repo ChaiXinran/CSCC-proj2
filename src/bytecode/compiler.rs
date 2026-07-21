@@ -1461,6 +1461,9 @@ impl Compiler {
             is_generator,
             is_arrow: false,
             is_derived_constructor: false,
+            is_constructable: !is_async && !is_generator,
+            has_own_prototype_property: !is_async,
+            prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3653,6 +3656,9 @@ impl Compiler {
             is_generator: false,
             is_arrow: false,
             is_derived_constructor: false,
+            is_constructable: false,
+            has_own_prototype_property: false,
+            prototype_writable: false,
             uses_arguments: compiled.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -3805,6 +3811,31 @@ impl Compiler {
             crate::ast::PropertyName::PrivateName(n) => format!("\x00#{n}"),
             other => other.to_key_string(),
         }
+    }
+
+    fn insert_instance_field_initializers_after_super(
+        statements: Vec<Statement>,
+        initializers: Vec<Statement>,
+    ) -> Vec<Statement> {
+        let mut output = Vec::with_capacity(statements.len() + initializers.len());
+        let mut pending_initializers = Some(initializers);
+        for statement in statements {
+            let is_super_statement = matches!(
+                &statement,
+                Statement::Expression(Expression::Call { callee, .. })
+                    if matches!(callee.as_ref(), Expression::Super)
+            );
+            output.push(statement);
+            if is_super_statement
+                && let Some(mut initializers) = pending_initializers.take()
+            {
+                output.append(&mut initializers);
+            }
+        }
+        if let Some(mut initializers) = pending_initializers {
+            output.append(&mut initializers);
+        }
+        output
     }
 
     fn compile_class_body(
@@ -3964,6 +3995,13 @@ impl Compiler {
         let ctor_body = if let Some(lit) = ctor_literal {
             if field_init_stmts.is_empty() {
                 lit.clone()
+            } else if super_class.is_some() {
+                let mut body = lit.clone();
+                body.body.statements = Self::insert_instance_field_initializers_after_super(
+                    body.body.statements,
+                    field_init_stmts,
+                );
+                body
             } else {
                 let mut body = lit.clone();
                 let mut new_stmts = field_init_stmts;
@@ -4015,6 +4053,9 @@ impl Compiler {
             is_generator: false,
             is_arrow: false,
             is_derived_constructor: super_class.is_some(),
+            is_constructable: true,
+            has_own_prototype_property: true,
+            prototype_writable: false,
             uses_arguments: ctor_fn.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -4051,7 +4092,11 @@ impl Compiler {
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
                 let fn_template = FunctionTemplate {
-                    name: Some(fn_name.clone()),
+                    name: if matches!(prop_name, crate::ast::PropertyName::Computed(_)) {
+                        None
+                    } else {
+                        Some(fn_name.clone())
+                    },
                     params: fn_compiled.params,
                     rest_param: fn_compiled.rest_param,
                     length_override: Some(fn_compiled.length),
@@ -4061,6 +4106,9 @@ impl Compiler {
                     is_generator: function.is_generator,
                     is_arrow: false,
                     is_derived_constructor: false,
+                    is_constructable: false,
+                    has_own_prototype_property: false,
+                    prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -4129,7 +4177,11 @@ impl Compiler {
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
                 let fn_template = FunctionTemplate {
-                    name: Some(fn_name.clone()),
+                    name: if matches!(prop_name, crate::ast::PropertyName::Computed(_)) {
+                        None
+                    } else {
+                        Some(fn_name.clone())
+                    },
                     params: fn_compiled.params,
                     rest_param: fn_compiled.rest_param,
                     length_override: Some(fn_compiled.length),
@@ -4139,6 +4191,9 @@ impl Compiler {
                     is_generator: function.is_generator,
                     is_arrow: false,
                     is_derived_constructor: false,
+                    is_constructable: false,
+                    has_own_prototype_property: false,
+                    prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -4247,6 +4302,9 @@ impl Compiler {
                         is_async: false,
                         is_arrow: false,
                         is_derived_constructor: false,
+                        is_constructable: false,
+                        has_own_prototype_property: false,
+                        prototype_writable: true,
                         uses_arguments: block_fn.uses_arguments,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
@@ -4634,6 +4692,9 @@ impl Compiler {
             is_generator: literal.is_generator,
             is_arrow: literal.is_arrow,
             is_derived_constructor: false,
+            is_constructable: !literal.is_arrow && !literal.is_async && !literal.is_generator,
+            has_own_prototype_property: !literal.is_arrow && !literal.is_async,
+            prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
