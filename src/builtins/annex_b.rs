@@ -8,7 +8,7 @@ use super::regexp;
 use crate::{
     runtime::{
         IteratorMode, JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind,
-        PropertyDescriptor, PropertyKind, to_property_key,
+        PropertyDescriptor, PropertyKey, PropertyKind, to_property_key,
     },
     vm::{Vm, VmError},
 };
@@ -1645,7 +1645,13 @@ fn define_legacy_accessor(
     getter: bool,
 ) -> Result<JsValue, VmError> {
     let object = vm.to_object(this_value, context)?;
-    let key = to_property_key(&arguments.first().cloned().unwrap_or(JsValue::Undefined))?;
+    let PropertyKey::String(key) =
+        to_property_key(&arguments.first().cloned().unwrap_or(JsValue::Undefined))?
+    else {
+        return Err(VmError::type_error(
+            "legacy accessor does not support symbol keys",
+        ));
+    };
     let callable = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     if !is_callable(&callable) {
         return Err(VmError::type_error("legacy accessor must be callable"));
@@ -1691,7 +1697,11 @@ fn lookup_legacy_accessor(
     getter: bool,
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "legacy accessor lookup")?;
-    let key = to_property_key(&arguments.first().cloned().unwrap_or(JsValue::Undefined))?;
+    let PropertyKey::String(key) =
+        to_property_key(&arguments.first().cloned().unwrap_or(JsValue::Undefined))?
+    else {
+        return Ok(JsValue::Undefined);
+    };
     let Some((_, descriptor)) = context.find_property_descriptor(object, &key)? else {
         return Ok(JsValue::Undefined);
     };

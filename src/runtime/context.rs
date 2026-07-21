@@ -14,9 +14,9 @@ use super::{
     NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue, NativeJob, ObjectId,
     ObjectKind, PrimitiveValue, PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction,
     PromiseRecord, PromiseState, PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate,
-    PropertyKind, ProxyRecord, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind,
-    TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind,
-    object::array_index,
+    PropertyKey, PropertyKind, ProxyRecord, RootSet, SymbolId, SymbolRegistry,
+    TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint,
+    iterator::IteratorKind, object::array_index,
 };
 use crate::builtins::string;
 use crate::vm::{CallFrame, Vm, VmError};
@@ -2459,14 +2459,15 @@ impl NativeContext {
     }
 
     pub fn get_element(&mut self, object: JsValue, key: JsValue) -> Result<JsValue, VmError> {
-        if let JsValue::Symbol(symbol) = key {
-            let object = self.require_object(&object, "read property")?;
-            return Ok(self
-                .get_symbol_property_value(object, symbol)
-                .unwrap_or(JsValue::Undefined));
+        match to_property_key(&key)? {
+            PropertyKey::Symbol(symbol) => {
+                let object = self.require_object(&object, "read property")?;
+                Ok(self
+                    .get_symbol_property_value(object, symbol)
+                    .unwrap_or(JsValue::Undefined))
+            }
+            PropertyKey::String(key) => self.get_property(object, &key),
         }
-        let key = to_property_key(&key)?;
-        self.get_property(object, &key)
     }
 
     pub fn get_iterator(&mut self, value: JsValue) -> Result<IteratorRecord, VmError> {
@@ -2747,13 +2748,14 @@ impl NativeContext {
         key: JsValue,
         value: JsValue,
     ) -> Result<JsValue, VmError> {
-        if let JsValue::Symbol(symbol) = key {
-            let object_id = self.require_object(&object, "write property")?;
-            self.set_symbol_property(object_id, symbol, value.clone(), self.strict)?;
-            return Ok(value);
+        match to_property_key(&key)? {
+            PropertyKey::Symbol(symbol) => {
+                let object_id = self.require_object(&object, "write property")?;
+                self.set_symbol_property(object_id, symbol, value.clone(), self.strict)?;
+                Ok(value)
+            }
+            PropertyKey::String(key) => self.set_property(object, key, value),
         }
-        let key = to_property_key(&key)?;
-        self.set_property(object, key, value)
     }
 
     /// Like `set_property` but always uses strict-mode semantics (throws TypeError for
@@ -2779,15 +2781,16 @@ impl NativeContext {
         key: JsValue,
         value: JsValue,
     ) -> Result<JsValue, VmError> {
-        if let JsValue::Symbol(symbol) = key {
-            let object_id = self.require_object(&object, "write property")?;
-            if self.set_symbol_property(object_id, symbol, value.clone(), true)? {
-                return Ok(value);
+        match to_property_key(&key)? {
+            PropertyKey::Symbol(symbol) => {
+                let object_id = self.require_object(&object, "write property")?;
+                if self.set_symbol_property(object_id, symbol, value.clone(), true)? {
+                    return Ok(value);
+                }
+                Err(VmError::type_error("cannot write symbol property"))
             }
-            return Err(VmError::type_error("cannot write symbol property"));
+            PropertyKey::String(key) => self.set_property_strict(object, key, value),
         }
-        let key = to_property_key(&key)?;
-        self.set_property_strict(object, key, value)
     }
 
     fn set_object_property(
@@ -4149,16 +4152,18 @@ fn value_references_live_heap(value: &JsValue, heap: &Heap) -> bool {
         | JsValue::Error(_) => true,
     }
 }
-pub fn to_property_key(value: &JsValue) -> Result<String, VmError> {
+pub fn to_property_key(value: &JsValue) -> Result<PropertyKey, VmError> {
     match value {
-        JsValue::String(value) => Ok(value.clone()),
-        JsValue::BigInt(value) => Ok(value.to_string()),
-        JsValue::Number(value) if value.fract() == 0.0 => Ok(format!("{value:.0}")),
-        JsValue::Number(value) => Ok(value.to_string()),
-        JsValue::Boolean(value) => Ok(value.to_string()),
-        JsValue::Null => Ok("null".into()),
-        JsValue::Undefined => Ok("undefined".into()),
-        JsValue::Symbol(_) => Err(VmError::type_error("Cannot convert a Symbol to a string")),
+        JsValue::Symbol(symbol) => Ok(PropertyKey::Symbol(*symbol)),
+        JsValue::String(value) => Ok(PropertyKey::String(value.clone())),
+        JsValue::BigInt(value) => Ok(PropertyKey::String(value.to_string())),
+        JsValue::Number(value) if value.fract() == 0.0 => {
+            Ok(PropertyKey::String(format!("{value:.0}")))
+        }
+        JsValue::Number(value) => Ok(PropertyKey::String(value.to_string())),
+        JsValue::Boolean(value) => Ok(PropertyKey::String(value.to_string())),
+        JsValue::Null => Ok(PropertyKey::String("null".into())),
+        JsValue::Undefined => Ok(PropertyKey::String("undefined".into())),
         JsValue::Object(_)
         | JsValue::Function(_)
         | JsValue::BuiltinFunction(_)
