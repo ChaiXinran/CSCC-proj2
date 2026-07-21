@@ -54,3 +54,6 @@ benchmarks/sunspider
 
 prompt.txt
 *.zip
+
+*.txt
+*.md
