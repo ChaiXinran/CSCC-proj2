@@ -170,7 +170,18 @@ fn instantiate_module_graph(
                 .set_environment(module.id, environment);
         }
         if context.module_registry().namespace(module.id).is_none() {
-            let namespace = context.create_object(std::iter::empty())?;
+            let namespace = context.ordinary_object_with_prototype(None)?;
+            let namespace_object = context.require_object(&namespace, "create module namespace")?;
+            context.define_symbol_own_property(
+                namespace_object,
+                context.well_known_symbols().to_string_tag,
+                PropertyDescriptor::data_with(
+                    JsValue::String("Module".into()),
+                    false,
+                    false,
+                    false,
+                ),
+            )?;
             context
                 .module_registry_mut()
                 .set_namespace(module.id, namespace);
@@ -388,11 +399,16 @@ fn evaluate_module_graph(
     context.push_existing_environment(environment)?;
     let execution = Vm::default().execute_with_context(&module.chunk, context);
     context.restore_environment_depth(depth)?;
-    // Keep the established V13 supported-subset boundary: parse/link failures
-    // reject the import, while an execution opcode that the native VM has not
-    // implemented yet leaves the namespace usable. The graph/state machinery
-    // still prevents duplicate and recursive evaluation.
-    let _unsupported_execution = execution.err();
+    if let Err(error) = execution {
+        context
+            .module_registry_mut()
+            .set_status(module.id, crate::runtime::ModuleStatus::Failed);
+        context.module_registry_mut().set_evaluation_state(
+            module.id,
+            crate::runtime::ModuleEvaluationState::Rejected(vm_error_to_value(error.clone())),
+        );
+        return Err(error);
+    }
 
     let namespace = context
         .module_registry()
@@ -411,10 +427,11 @@ fn evaluate_module_graph(
             context.define_own_property(
                 namespace_object,
                 binding.export_name.clone(),
-                PropertyDescriptor::data_with(value, false, true, false),
+                PropertyDescriptor::data_with(value, true, true, false),
             )?;
         }
     }
+    context.prevent_extensions(namespace_object)?;
     context
         .module_registry_mut()
         .set_status(module.id, crate::runtime::ModuleStatus::Evaluated);
@@ -2261,11 +2278,19 @@ impl Vm {
                                 context.fulfill_promise(promise, namespace)?;
                             }
                             Err(error) => {
-                                context.reject_promise(promise, vm_error_to_value(error))?;
+                                let reason = self
+                                    .pending_exception
+                                    .take()
+                                    .unwrap_or_else(|| vm_error_to_value(error));
+                                context.reject_promise(promise, reason)?;
                             }
                         },
                         Err(error) => {
-                            context.reject_promise(promise, vm_error_to_value(error))?;
+                            let reason = self
+                                .pending_exception
+                                .take()
+                                .unwrap_or_else(|| vm_error_to_value(error));
+                            context.reject_promise(promise, reason)?;
                         }
                     }
                     self.stack.push(value);
@@ -3092,12 +3117,28 @@ impl Vm {
             lexical_new_target,
             home_object,
         })?;
-        if is_generator
-            && !is_async
-            && let Some(generator_prototype) = context.function_prototype(id)
-            && let Some(iterator_prototype) = intrinsic_iterator_prototype(context)
-        {
-            context.set_prototype_of(generator_prototype, Some(iterator_prototype))?;
+        if is_generator && let Some(generator_prototype) = context.function_prototype(id) {
+            let iterator_prototype = if is_async {
+                intrinsic_async_iterator_prototype(context)
+            } else {
+                intrinsic_iterator_prototype(context)
+            };
+            if let Some(iterator_prototype) = iterator_prototype {
+                if is_async {
+                    let mut async_generator_prototype = JsObject::ordinary();
+                    async_generator_prototype.prototype = Some(iterator_prototype);
+                    let async_generator_prototype = context
+                        .heap_mut()
+                        .allocate_object(async_generator_prototype)
+                        .ok_or_else(|| {
+                            VmError::runtime_limit("async generator prototype arena exhausted")
+                        })?;
+                    context
+                        .set_prototype_of(generator_prototype, Some(async_generator_prototype))?;
+                } else {
+                    context.set_prototype_of(generator_prototype, Some(iterator_prototype))?;
+                }
+            }
         }
         if template.is_strict || context.strict() {
             context.mark_strict_function(id);
@@ -3135,13 +3176,9 @@ impl Vm {
             .function(function)
             .is_some_and(|function| function.is_async);
         let mut object = JsObject::ordinary();
-        object.prototype = if is_async {
-            context.object_prototype()
-        } else {
-            context
-                .function_prototype(function)
-                .or_else(|| context.object_prototype())
-        };
+        object.prototype = context
+            .function_prototype(function)
+            .or_else(|| context.object_prototype());
         object.kind = ObjectKind::Generator { record };
         let object = context
             .heap_mut()
@@ -3778,7 +3815,8 @@ impl Vm {
                                     VmErrorKind::Reference
                                     | VmErrorKind::Type
                                     | VmErrorKind::Syntax
-                                    | VmErrorKind::Range => {
+                                    | VmErrorKind::Range
+                                    | VmErrorKind::Test262 => {
                                         Ok(OperationResult::Throw(vm_error_to_value(error)))
                                     }
                                     _ => Err(error),
@@ -4192,6 +4230,17 @@ impl Vm {
                 "awaited Promise is still pending; async continuation is not available",
             )),
             None => Err(VmError::runtime("invalid Promise id")),
+        }
+    }
+
+    pub(crate) fn await_value_from_builtin(
+        &mut self,
+        value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match self.await_value_now(value, context)? {
+            OperationResult::Value(value) => Ok(value),
+            OperationResult::Throw(value) => Err(self.throw_value_from_builtin(value)),
         }
     }
 
@@ -4717,6 +4766,19 @@ impl Vm {
         original_throw: Option<JsValue>,
         context: &mut NativeContext,
     ) -> Result<(), VmError> {
+        let iterator = context
+            .value_object(&iterator)
+            .and_then(|object| context.heap().object(object))
+            .and_then(|object| match &object.kind {
+                ObjectKind::Iterator { record } => match &record.kind {
+                    IteratorKind::Js { iterator, .. } | IteratorKind::JsAsync { iterator } => {
+                        Some(iterator.clone())
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .unwrap_or(iterator);
         let return_method =
             match self.get_property_value_completion(iterator.clone(), "return", context)? {
                 OperationResult::Value(value) => value,
@@ -4769,6 +4831,36 @@ impl Vm {
             }
         };
         self.collect_iterator_values_from_builtin(iterator, context)
+    }
+
+    pub(crate) fn create_iterator_from_builtin(
+        &mut self,
+        iterable: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match self.create_iterator_object(iterable, context)? {
+            OperationResult::Value(iterator) => Ok(iterator),
+            OperationResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("GetIterator threw"))
+            }
+        }
+    }
+
+    pub(crate) fn iterator_step_from_builtin(
+        &mut self,
+        iterator: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<Option<JsValue>, VmError> {
+        context.consume_loop_iteration()?;
+        match self.step_iterator_object(iterator, context)? {
+            IteratorStepResult::Value { done: true, .. } => Ok(None),
+            IteratorStepResult::Value { value, done: false } => Ok(Some(value)),
+            IteratorStepResult::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("IteratorNext threw"))
+            }
+        }
     }
 
     pub(crate) fn collect_iterator_values_from_builtin(
@@ -5635,7 +5727,11 @@ impl Vm {
         }
         if matches!(
             error.kind,
-            VmErrorKind::Reference | VmErrorKind::Type | VmErrorKind::Syntax | VmErrorKind::Range
+            VmErrorKind::Reference
+                | VmErrorKind::Type
+                | VmErrorKind::Syntax
+                | VmErrorKind::Range
+                | VmErrorKind::Test262
         ) {
             Ok(OperationResult::Throw(vm_error_to_value(error)))
         } else {
@@ -5653,7 +5749,11 @@ impl Vm {
         }
         if matches!(
             error.kind,
-            VmErrorKind::Reference | VmErrorKind::Type | VmErrorKind::Syntax | VmErrorKind::Range
+            VmErrorKind::Reference
+                | VmErrorKind::Type
+                | VmErrorKind::Syntax
+                | VmErrorKind::Range
+                | VmErrorKind::Test262
         ) {
             Ok(OperationResult::Throw(vm_error_to_value_with_realm(
                 error,
@@ -6625,7 +6725,8 @@ impl Vm {
                                             VmErrorKind::Reference
                                             | VmErrorKind::Type
                                             | VmErrorKind::Syntax
-                                            | VmErrorKind::Range => {
+                                            | VmErrorKind::Range
+                                            | VmErrorKind::Test262 => {
                                                 Ok(OperationResult::Throw(vm_error_to_value(error)))
                                             }
                                             _ => Err(error),
@@ -6787,6 +6888,15 @@ fn intrinsic_iterator_prototype(context: &NativeContext) -> Option<ObjectId> {
     let constructor = context.value_object(&constructor)?;
     context
         .get_own_property_descriptor(constructor, "prototype")?
+        .value_cloned()
+        .and_then(|value| context.value_object(&value))
+}
+
+fn intrinsic_async_iterator_prototype(context: &NativeContext) -> Option<ObjectId> {
+    let constructor = context.get_global("Iterator")?;
+    let constructor = context.value_object(&constructor)?;
+    context
+        .get_own_property_descriptor(constructor, "__agentjs_async_iterator_prototype__")?
         .value_cloned()
         .and_then(|value| context.value_object(&value))
 }

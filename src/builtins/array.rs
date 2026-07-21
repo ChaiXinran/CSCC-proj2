@@ -50,6 +50,17 @@ pub fn install_array(context: &mut NativeContext) {
         )
         .expect("define Array.from");
 
+    let from_async = context
+        .register_builtin("fromAsync", 1, array_from_async, None)
+        .expect("install Array.fromAsync");
+    context
+        .define_own_property(
+            constructor_object,
+            "fromAsync".into(),
+            PropertyDescriptor::data_with(from_async, true, false, true),
+        )
+        .expect("define Array.fromAsync");
+
     let of = context
         .register_builtin("of", 0, array_of, None)
         .expect("install Array.of");
@@ -651,6 +662,161 @@ fn array_from(
     let length = array_like_length_from_value(vm, context, source_value.clone(), object)?;
 
     array_from_array_like(vm, context, this, source_value, length, map_fn, map_this)
+}
+
+fn array_from_async(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let promise = context.create_promise()?;
+    let prototype = context
+        .get_global("Promise")
+        .and_then(|constructor| context.value_object(&constructor))
+        .and_then(|constructor| {
+            context
+                .get_own_property_descriptor(constructor, "prototype")
+                .and_then(|descriptor| descriptor.value_cloned())
+                .and_then(|value| context.value_object(&value))
+        });
+    let promise_object = context.create_promise_object(promise, prototype)?;
+    match array_from_async_operation(vm, context, this, arguments) {
+        Ok(value) => crate::builtins::promise::resolve_promise_id(vm, context, promise, value)?,
+        Err(error) => {
+            let reason = vm.take_pending_exception_from_builtin().unwrap_or_else(|| {
+                JsValue::Error(crate::runtime::NativeErrorValue::new(
+                    crate::runtime::NativeErrorKind::Type,
+                    error.message,
+                ))
+            });
+            context.reject_promise(promise, reason)?;
+        }
+    }
+    Ok(promise_object)
+}
+
+fn array_from_async_operation(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    constructor: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let source = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let map_fn = match arguments.get(1).cloned().unwrap_or(JsValue::Undefined) {
+        JsValue::Undefined => None,
+        value if is_callable(&value) => Some(value),
+        _ => return Err(VmError::type_error("Array.fromAsync mapfn is not callable")),
+    };
+    let map_this = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
+    let source_object = vm.to_object(source.clone(), context)?;
+    let source_value = match source {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => source,
+        _ => context.object_value(source_object),
+    };
+    let async_method = vm.get_symbol_property_value_with_receiver_from_builtin(
+        source_value.clone(),
+        source_value.clone(),
+        context.well_known_symbols().async_iterator,
+        context,
+    )?;
+    let (values, await_inputs, constructor_length) =
+        if matches!(async_method, JsValue::Undefined | JsValue::Null) {
+            let sync_method = vm.get_symbol_property_value_with_receiver_from_builtin(
+                source_value.clone(),
+                source_value.clone(),
+                context.well_known_symbols().iterator,
+                context,
+            )?;
+            if matches!(sync_method, JsValue::Undefined | JsValue::Null) {
+                let length =
+                    array_like_length_from_value(vm, context, source_value.clone(), source_object)?;
+                let mut values = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
+                for index in 0..length.min(MAX_DENSE_ALLOC) {
+                    values.push(get_elem(vm, context, source_value.clone(), index)?);
+                }
+                (values, true, Some(length))
+            } else {
+                if !is_callable(&sync_method) {
+                    return Err(VmError::type_error(
+                        "Array.fromAsync @@iterator is not callable",
+                    ));
+                }
+                let iterator = call_callback(vm, context, sync_method, source_value, Vec::new())?;
+                (
+                    vm.collect_iterator_values_from_builtin(iterator, context)?,
+                    true,
+                    None,
+                )
+            }
+        } else {
+            if !is_callable(&async_method) {
+                return Err(VmError::type_error(
+                    "Array.fromAsync @@asyncIterator is not callable",
+                ));
+            }
+            let iterator = call_callback(vm, context, async_method, source_value, Vec::new())?;
+            context.require_object(&iterator, "Array.fromAsync async iterator")?;
+            let next = get_property_preserving_throw(vm, context, iterator.clone(), "next")?;
+            if !is_callable(&next) {
+                return Err(VmError::type_error("async iterator next is not callable"));
+            }
+            let mut values = Vec::new();
+            while values.len() < MAX_DENSE_ALLOC {
+                let result =
+                    call_callback(vm, context, next.clone(), iterator.clone(), Vec::new())?;
+                let result = vm.await_value_from_builtin(result, context)?;
+                context.require_object(&result, "async iterator result")?;
+                if get_property_preserving_throw(vm, context, result.clone(), "done")?.to_boolean()
+                {
+                    break;
+                }
+                values.push(get_property_preserving_throw(vm, context, result, "value")?);
+            }
+            (values, false, None)
+        };
+    let final_length = values.len();
+    let result = array_from_create_result(vm, context, constructor, constructor_length)?;
+    let result_object = context.require_object(&result, "Array.fromAsync result")?;
+    for (index, value) in values.into_iter().enumerate() {
+        let value = if await_inputs || map_fn.is_some() {
+            await_array_from_async_value(vm, context, value)?
+        } else {
+            value
+        };
+        let value = if let Some(mapper) = &map_fn {
+            let mapped = call_callback(
+                vm,
+                context,
+                mapper.clone(),
+                map_this.clone(),
+                vec![value, JsValue::Number(index as f64)],
+            )?;
+            await_array_from_async_value(vm, context, mapped)?
+        } else {
+            value
+        };
+        create_data_property_or_throw(context, result_object, index, value)?;
+    }
+    set_array_from_length(vm, context, result.clone(), final_length)?;
+    Ok(result)
+}
+
+fn await_array_from_async_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    mut value: JsValue,
+) -> Result<JsValue, VmError> {
+    for _ in 0..32 {
+        let was_promise = context.promise_id_from_value(&value).is_some();
+        value = vm.await_value_from_builtin(value, context)?;
+        if !was_promise || context.promise_id_from_value(&value).is_none() {
+            return Ok(value);
+        }
+    }
+    Err(VmError::runtime_limit(
+        "Array.fromAsync promise assimilation limit exceeded",
+    ))
 }
 
 fn array_from_array_like(

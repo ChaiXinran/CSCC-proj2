@@ -421,6 +421,19 @@ pub fn install_test262_harness(context: &mut NativeContext) {
             Some(test262_error_construct),
         )
         .expect("install Test262Error");
+    let thrower = context
+        .register_builtin("thrower", 1, test262_error_call, None)
+        .expect("install Test262Error.thrower");
+    let test262_error_object = context
+        .value_object(&test262_error)
+        .expect("Test262Error builtin object");
+    context
+        .define_own_property(
+            test262_error_object,
+            "thrower".into(),
+            PropertyDescriptor::data_with(thrower, true, false, true),
+        )
+        .expect("define Test262Error.thrower");
     context.declare_global("Test262Error", test262_error);
     let print = context
         .register_builtin("print", 1, test262_print, None)

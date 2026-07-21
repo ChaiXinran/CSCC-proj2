@@ -1864,7 +1864,8 @@ impl NativeContext {
         self.heap
             .environment_mut(environment)
             .ok_or_else(|| VmError::runtime("missing lexical environment"))?
-            .initialize_binding(name, value)
+            .initialize_binding(name, value.clone())?;
+        self.refresh_module_namespace_binding(environment, name, value)
     }
 
     #[must_use]
@@ -1967,7 +1968,8 @@ impl NativeContext {
                     .heap
                     .environment_mut(id)
                     .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
-                return environment.set_mutable_binding(name, value);
+                environment.set_mutable_binding(name, value.clone())?;
+                return self.refresh_module_namespace_binding(id, name, value);
             }
             current = outer;
         }
@@ -1977,6 +1979,26 @@ impl NativeContext {
             return self.declare_binding(self.global_environment, name, value, true);
         }
         Err(VmError::reference(format!("{name} is not defined")))
+    }
+
+    fn refresh_module_namespace_binding(
+        &mut self,
+        environment: EnvironmentId,
+        name: &str,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        let exports = self
+            .module_registry
+            .namespace_exports_for_binding(environment, name);
+        for (namespace, export_name) in exports {
+            let namespace = self.require_object(&namespace, "module namespace")?;
+            self.define_own_property(
+                namespace,
+                export_name,
+                PropertyDescriptor::data_with(value.clone(), true, true, false),
+            )?;
+        }
+        Ok(())
     }
 
     pub fn allocate_function(&mut self, function: JsFunction) -> Result<FunctionId, VmError> {

@@ -189,6 +189,39 @@ impl ModuleRegistry {
         self.namespaces.values()
     }
 
+    pub fn namespace_exports_for_binding(
+        &self,
+        environment: EnvironmentId,
+        local_name: &str,
+    ) -> Vec<(JsValue, String)> {
+        let Some(module_id) = self
+            .environments
+            .iter()
+            .find_map(|(module, candidate)| (*candidate == environment).then_some(*module))
+        else {
+            return Vec::new();
+        };
+        let Some(namespace) = self.namespaces.get(&module_id).cloned() else {
+            return Vec::new();
+        };
+        let Some(record) = self.records.values().find(|record| record.id == module_id) else {
+            return Vec::new();
+        };
+        record
+            .exports
+            .iter()
+            .filter(|binding| {
+                binding.source.is_none()
+                    && binding
+                        .local_name
+                        .as_deref()
+                        .unwrap_or(&binding.export_name)
+                        == local_name
+            })
+            .map(|binding| (namespace.clone(), binding.export_name.clone()))
+            .collect()
+    }
+
     pub fn set_metadata(
         &mut self,
         id: ModuleId,

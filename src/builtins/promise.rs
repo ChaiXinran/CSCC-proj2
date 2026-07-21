@@ -1,9 +1,10 @@
 //! Minimal JS-visible Promise builtins backed by the shared native job queue.
 
 use crate::{
+    builtins::proxy,
     runtime::{
-        Job, JsObject, JsValue, NativeCall, NativeContext, ObjectId, PromiseId, PromiseJob,
-        PromiseReaction, PromiseThenReaction, PropertyDescriptor,
+        Job, JsObject, JsValue, NativeCall, NativeContext, NativeErrorKind, ObjectId, PromiseId,
+        PromiseJob, PromiseReaction, PromiseThenReaction, PropertyDescriptor, PropertyKey,
     },
     vm::{Vm, VmError},
 };
@@ -17,6 +18,9 @@ const PROMISE_ALL_FULFILL: &str = "__AgentJSPromiseAllFulfill";
 const PROMISE_ALL_SETTLED_FULFILL: &str = "__AgentJSPromiseAllSettledFulfill";
 const PROMISE_ALL_SETTLED_REJECT: &str = "__AgentJSPromiseAllSettledReject";
 const PROMISE_ANY_REJECT: &str = "__AgentJSPromiseAnyReject";
+const PROMISE_ALL_KEYED_FULFILL: &str = "__AgentJSPromiseAllKeyedFulfill";
+const PROMISE_ALL_SETTLED_KEYED_FULFILL: &str = "__AgentJSPromiseAllSettledKeyedFulfill";
+const PROMISE_ALL_SETTLED_KEYED_REJECT: &str = "__AgentJSPromiseAllSettledKeyedReject";
 const PROMISE_AGGREGATE_FULFILL: &str = "__AgentJSPromiseAggregateFulfill";
 const PROMISE_AGGREGATE_REJECT: &str = "__AgentJSPromiseAggregateReject";
 
@@ -59,9 +63,23 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     define_method(
         context,
         constructor_object,
+        "allKeyed",
+        1,
+        promise_all_keyed,
+    )?;
+    define_method(
+        context,
+        constructor_object,
         "allSettled",
         1,
         promise_all_settled,
+    )?;
+    define_method(
+        context,
+        constructor_object,
+        "allSettledKeyed",
+        1,
+        promise_all_settled_keyed,
     )?;
     define_method(context, constructor_object, "any", 1, promise_any)?;
     define_method(context, constructor_object, "race", 1, promise_race)?;
@@ -119,6 +137,24 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
         None,
     )?;
     context.register_builtin(PROMISE_ANY_REJECT, 1, promise_any_reject, None)?;
+    context.register_builtin(
+        PROMISE_ALL_KEYED_FULFILL,
+        1,
+        promise_all_keyed_fulfill,
+        None,
+    )?;
+    context.register_builtin(
+        PROMISE_ALL_SETTLED_KEYED_FULFILL,
+        1,
+        promise_all_settled_keyed_fulfill,
+        None,
+    )?;
+    context.register_builtin(
+        PROMISE_ALL_SETTLED_KEYED_REJECT,
+        1,
+        promise_all_settled_keyed_reject,
+        None,
+    )?;
     context.register_builtin(
         PROMISE_AGGREGATE_FULFILL,
         1,
@@ -204,7 +240,7 @@ fn new_promise_capability(
     })?;
     let resolve = context.get(state.clone(), CAPABILITY_RESOLVE)?;
     let reject = context.get(state, CAPABILITY_REJECT)?;
-    if !is_callable(&resolve) || !is_callable(&reject) {
+    if !is_callable(context, &resolve) || !is_callable(context, &reject) {
         return Err(VmError::type_error(
             "Promise constructor did not provide resolving functions",
         ));
@@ -257,8 +293,8 @@ fn enqueue_settle(
     }))
 }
 
-fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
+fn is_callable(context: &NativeContext, value: &JsValue) -> bool {
+    context.is_callable_value(value)
 }
 
 fn promise_call(
@@ -279,7 +315,7 @@ fn promise_construct(
     new_target: JsValue,
 ) -> Result<JsValue, VmError> {
     let executor = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    if !is_callable(&executor) {
+    if !is_callable(context, &executor) {
         return Err(VmError::type_error("Promise resolver is not a function"));
     }
     let promise = context.create_promise()?;
@@ -307,6 +343,11 @@ fn promise_resolve(
     this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    if !context.is_constructable_value(&this) {
+        return Err(VmError::type_error(
+            "Promise.resolve receiver is not a constructor",
+        ));
+    }
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     if context.promise_id_from_value(&value).is_some() {
         let value_constructor =
@@ -348,6 +389,162 @@ fn promise_all_settled(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     promise_combinator(vm, context, this, arguments, PromiseCombinator::AllSettled)
+}
+
+fn promise_all_keyed(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    promise_keyed_combinator(vm, context, this, arguments, false)
+}
+
+fn promise_all_settled_keyed(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    promise_keyed_combinator(vm, context, this, arguments, true)
+}
+
+fn promise_keyed_combinator(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    constructor: JsValue,
+    arguments: &[JsValue],
+    settled: bool,
+) -> Result<JsValue, VmError> {
+    let capability = new_promise_capability(vm, context, constructor.clone())?;
+    let promise = capability.promise.clone();
+    let keyed = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let result = context.ordinary_object_with_prototype(None)?;
+    let state = context.create_object([
+        (AGGREGATE_RESOLVE.into(), capability.resolve.clone()),
+        (AGGREGATE_REJECT.into(), capability.reject.clone()),
+        (AGGREGATE_VALUES.into(), result.clone()),
+        (AGGREGATE_REMAINING.into(), JsValue::Number(1.0)),
+    ])?;
+
+    let operation = vm.with_root_from_builtin(state.clone(), |vm| {
+        if let Err(error) = context.require_object(&keyed, "Promise keyed input") {
+            return Ok(Err(type_error_value(&error.message)));
+        }
+        let resolve = match vm.get_property_value_catching_from_builtin(
+            constructor.clone(),
+            "resolve",
+            context,
+        )? {
+            Ok(resolve) if is_callable(context, &resolve) => resolve,
+            Ok(_) => return Ok(Err(type_error_value("Promise resolve is not callable"))),
+            Err(reason) => return Ok(Err(reason)),
+        };
+        let keys = match proxy::internal_own_property_keys(vm, context, keyed.clone()) {
+            Ok(keys) => keys,
+            Err(error) => {
+                return Ok(Err(vm
+                    .take_pending_exception_from_builtin()
+                    .unwrap_or_else(|| type_error_value(&error.message))));
+            }
+        };
+        let result_object = context.require_object(&result, "Promise keyed result")?;
+        let mut index = 0usize;
+        for key in keys {
+            let descriptor =
+                match proxy::internal_get_own_property(vm, context, keyed.clone(), &key) {
+                    Ok(descriptor) => descriptor,
+                    Err(error) => {
+                        return Ok(Err(vm
+                            .take_pending_exception_from_builtin()
+                            .unwrap_or_else(|| type_error_value(&error.message))));
+                    }
+                };
+            if !descriptor.is_some_and(|descriptor| descriptor.enumerable) {
+                continue;
+            }
+            let value = match proxy::internal_get(vm, context, keyed.clone(), &key, keyed.clone()) {
+                Ok(value) => value,
+                Err(error) => {
+                    return Ok(Err(vm
+                        .take_pending_exception_from_builtin()
+                        .unwrap_or_else(|| type_error_value(&error.message))));
+                }
+            };
+            define_keyed_result_property(context, result_object, &key, JsValue::Undefined)?;
+            increment_aggregate_remaining(context, state.clone())?;
+            let key_value = property_key_value(&key);
+            let (fulfilled, rejected) = if settled {
+                (
+                    bind_internal(
+                        context,
+                        PROMISE_ALL_SETTLED_KEYED_FULFILL,
+                        vec![
+                            state.clone(),
+                            key_value.clone(),
+                            JsValue::Number(index as f64),
+                        ],
+                    )?,
+                    bind_internal(
+                        context,
+                        PROMISE_ALL_SETTLED_KEYED_REJECT,
+                        vec![state.clone(), key_value, JsValue::Number(index as f64)],
+                    )?,
+                )
+            } else {
+                (
+                    bind_internal(
+                        context,
+                        PROMISE_ALL_KEYED_FULFILL,
+                        vec![state.clone(), key_value, JsValue::Number(index as f64)],
+                    )?,
+                    capability.reject.clone(),
+                )
+            };
+            let resolved = match vm.call_value_catching_from_builtin(
+                resolve.clone(),
+                constructor.clone(),
+                vec![value],
+                context,
+            )? {
+                Ok(value) => value,
+                Err(reason) => return Ok(Err(reason)),
+            };
+            let then = match vm.get_property_value_catching_from_builtin(
+                resolved.clone(),
+                "then",
+                context,
+            )? {
+                Ok(then) if is_callable(context, &then) => then,
+                Ok(_) => return Ok(Err(type_error_value("resolved value then is not callable"))),
+                Err(reason) => return Ok(Err(reason)),
+            };
+            if let Err(reason) = vm.call_value_catching_from_builtin(
+                then,
+                resolved,
+                vec![fulfilled, rejected],
+                context,
+            )? {
+                return Ok(Err(reason));
+            }
+            index += 1;
+        }
+        if decrement_aggregate_remaining(context, state.clone())? {
+            if let Err(reason) = vm.call_value_catching_from_builtin(
+                capability.resolve.clone(),
+                JsValue::Undefined,
+                vec![result],
+                context,
+            )? {
+                return Ok(Err(reason));
+            }
+        }
+        Ok(Ok(()))
+    })?;
+    if let Err(reason) = operation {
+        vm.call_value_from_builtin(capability.reject, JsValue::Undefined, vec![reason], context)?;
+    }
+    Ok(promise)
 }
 
 fn promise_any(
@@ -414,7 +611,7 @@ fn initialize_promise_combinator(
         "resolve",
         context,
     )? {
-        Ok(resolve) if is_callable(&resolve) => resolve,
+        Ok(resolve) if is_callable(context, &resolve) => resolve,
         Ok(_) => {
             vm.call_value_from_builtin(
                 capability_reject,
@@ -434,11 +631,12 @@ fn initialize_promise_combinator(
             return Ok(());
         }
     };
-    let values = match vm.collect_iterable_values_from_builtin(iterable, context) {
-        Ok(values) => values,
+    let iterator = match vm.create_iterator_from_builtin(iterable, context) {
+        Ok(iterator) => iterator,
         Err(error) => {
-            let Some(reason) = vm.take_pending_exception_from_builtin() else {
-                return Err(error);
+            let reason = match vm.take_pending_exception_from_builtin() {
+                Some(reason) => normalize_error_reason(vm, context, reason)?,
+                None => construct_error_value(vm, context, "TypeError", &error.message)?,
             };
             vm.call_value_from_builtin(
                 capability_reject,
@@ -449,44 +647,83 @@ fn initialize_promise_combinator(
             return Ok(());
         }
     };
-
-    if values.is_empty() {
-        match combinator {
-            PromiseCombinator::All | PromiseCombinator::AllSettled => {
-                let array = context.create_array(Vec::new())?;
-                vm.call_value_from_builtin(
-                    capability_resolve,
-                    JsValue::Undefined,
-                    vec![array],
-                    context,
-                )?;
-            }
-            PromiseCombinator::Any => {
-                vm.call_value_from_builtin(
-                    capability_reject,
-                    JsValue::Undefined,
-                    vec![aggregate_error()],
-                    context,
-                )?;
-            }
-            PromiseCombinator::Race => {}
-        }
-        return Ok(());
-    }
-
-    let result_values = context.create_array(vec![JsValue::Undefined; values.len()])?;
+    let result_values = context.create_array(Vec::new())?;
     let state = context.create_object([
         (AGGREGATE_RESOLVE.into(), capability_resolve.clone()),
         (AGGREGATE_REJECT.into(), capability_reject.clone()),
         (AGGREGATE_VALUES.into(), result_values),
-        (
-            AGGREGATE_REMAINING.into(),
-            JsValue::Number(values.len() as f64),
-        ),
+        (AGGREGATE_REMAINING.into(), JsValue::Number(1.0)),
     ])?;
 
     vm.with_root_from_builtin(state.clone(), |vm| {
-        for (index, value) in values.into_iter().enumerate() {
+        let mut index = 0usize;
+        loop {
+            let value = match vm.iterator_step_from_builtin(iterator.clone(), context) {
+                Ok(Some(value)) => value,
+                Ok(None) => {
+                    if decrement_aggregate_remaining(context, state.clone())? {
+                        match combinator {
+                            PromiseCombinator::All | PromiseCombinator::AllSettled => {
+                                let values = aggregate_values(context, state.clone())?;
+                                if let Err(reason) = vm.call_value_catching_from_builtin(
+                                    capability_resolve.clone(),
+                                    JsValue::Undefined,
+                                    vec![values],
+                                    context,
+                                )? {
+                                    vm.call_value_from_builtin(
+                                        capability_reject.clone(),
+                                        JsValue::Undefined,
+                                        vec![reason],
+                                        context,
+                                    )?;
+                                }
+                            }
+                            PromiseCombinator::Any => {
+                                let errors = aggregate_values(context, state.clone())?;
+                                let error = aggregate_error(vm, context, errors)?;
+                                vm.call_value_from_builtin(
+                                    capability_reject.clone(),
+                                    JsValue::Undefined,
+                                    vec![error],
+                                    context,
+                                )?;
+                            }
+                            PromiseCombinator::Race => {}
+                        }
+                    }
+                    return Ok(());
+                }
+                Err(error) => {
+                    let Some(reason) = vm.take_pending_exception_from_builtin() else {
+                        return Err(error);
+                    };
+                    vm.call_value_from_builtin(
+                        capability_reject.clone(),
+                        JsValue::Undefined,
+                        vec![reason],
+                        context,
+                    )?;
+                    return Ok(());
+                }
+            };
+            let values = aggregate_values(context, state.clone())?;
+            let values_object = context.require_object(&values, "Promise aggregate values")?;
+            context.define_own_property(
+                values_object,
+                index.to_string(),
+                PropertyDescriptor::data(JsValue::Undefined),
+            )?;
+            let JsValue::Number(remaining) = context.get(state.clone(), AGGREGATE_REMAINING)?
+            else {
+                return Err(VmError::runtime("invalid Promise aggregate counter"));
+            };
+            context.set(
+                state.clone(),
+                AGGREGATE_REMAINING,
+                JsValue::Number(remaining + 1.0),
+                true,
+            )?;
             let (on_fulfilled, on_rejected) =
                 aggregate_callbacks(context, combinator, &state, index)?;
             let resolved = match vm.call_value_catching_from_builtin(
@@ -497,6 +734,12 @@ fn initialize_promise_combinator(
             )? {
                 Ok(resolved) => resolved,
                 Err(reason) => {
+                    let _ = vm.close_iterator_preserving_throw_from_builtin(
+                        iterator.clone(),
+                        reason.clone(),
+                        context,
+                    );
+                    let reason = vm.take_pending_exception_from_builtin().unwrap_or(reason);
                     vm.call_value_from_builtin(
                         capability_reject.clone(),
                         JsValue::Undefined,
@@ -512,7 +755,7 @@ fn initialize_promise_combinator(
                     "then",
                     context,
                 )? {
-                    Ok(then) if is_callable(&then) => then,
+                    Ok(then) if is_callable(context, &then) => then,
                     Ok(_) => {
                         return Ok(Err(type_error_value("resolved value then is not callable")));
                     }
@@ -526,6 +769,12 @@ fn initialize_promise_combinator(
                 )
             })?;
             if let Err(reason) = registration {
+                let _ = vm.close_iterator_preserving_throw_from_builtin(
+                    iterator.clone(),
+                    reason.clone(),
+                    context,
+                );
+                let reason = vm.take_pending_exception_from_builtin().unwrap_or(reason);
                 vm.call_value_from_builtin(
                     capability_reject.clone(),
                     JsValue::Undefined,
@@ -534,8 +783,8 @@ fn initialize_promise_combinator(
                 )?;
                 return Ok(());
             }
+            index += 1;
         }
-        Ok(())
     })
 }
 
@@ -573,13 +822,7 @@ fn bind_internal(
     let target = context
         .find_builtin_by_name(name)
         .ok_or_else(|| VmError::runtime(format!("missing internal builtin {name}")))?;
-    context.register_bound_function(
-        target,
-        JsValue::Undefined,
-        arguments,
-        1.0,
-        format!("bound {name}"),
-    )
+    context.register_bound_function(target, JsValue::Undefined, arguments, 1.0, String::new())
 }
 
 fn aggregate_state(arguments: &[JsValue]) -> Result<JsValue, VmError> {
@@ -596,7 +839,7 @@ fn aggregate_function(
     key: &str,
 ) -> Result<JsValue, VmError> {
     let function = context.get(state, key)?;
-    if !is_callable(&function) {
+    if !is_callable(context, &function) {
         return Err(VmError::runtime("invalid Promise aggregate capability"));
     }
     Ok(function)
@@ -630,7 +873,12 @@ fn set_aggregate_value(
     value: JsValue,
 ) -> Result<(), VmError> {
     let values = aggregate_values(context, state)?;
-    context.set(values, &index.to_string(), value, true)?;
+    let values_object = context.require_object(&values, "Promise aggregate values")?;
+    context.define_own_property(
+        values_object,
+        index.to_string(),
+        PropertyDescriptor::data(value),
+    )?;
     Ok(())
 }
 
@@ -644,6 +892,119 @@ fn decrement_aggregate_remaining(
     let remaining = remaining - 1.0;
     context.set(state, AGGREGATE_REMAINING, JsValue::Number(remaining), true)?;
     Ok(remaining == 0.0)
+}
+
+fn increment_aggregate_remaining(
+    context: &mut NativeContext,
+    state: JsValue,
+) -> Result<(), VmError> {
+    let JsValue::Number(remaining) = context.get(state.clone(), AGGREGATE_REMAINING)? else {
+        return Err(VmError::runtime("invalid Promise aggregate counter"));
+    };
+    context.set(
+        state,
+        AGGREGATE_REMAINING,
+        JsValue::Number(remaining + 1.0),
+        true,
+    )?;
+    Ok(())
+}
+
+fn property_key_value(key: &PropertyKey) -> JsValue {
+    match key {
+        PropertyKey::String(value) => JsValue::String(value.clone()),
+        PropertyKey::Symbol(value) => JsValue::Symbol(*value),
+    }
+}
+
+fn keyed_callback_key(arguments: &[JsValue]) -> Result<PropertyKey, VmError> {
+    match arguments.get(1) {
+        Some(JsValue::String(value)) => Ok(PropertyKey::String(value.clone())),
+        Some(JsValue::Symbol(value)) => Ok(PropertyKey::Symbol(*value)),
+        _ => Err(VmError::runtime("invalid Promise keyed callback key")),
+    }
+}
+
+fn define_keyed_result_property(
+    context: &mut NativeContext,
+    object: ObjectId,
+    key: &PropertyKey,
+    value: JsValue,
+) -> Result<(), VmError> {
+    let descriptor = PropertyDescriptor::data(value);
+    match key {
+        PropertyKey::String(key) => {
+            context.define_own_property(object, key.clone(), descriptor)?;
+        }
+        PropertyKey::Symbol(symbol) => {
+            context.define_symbol_own_property(object, *symbol, descriptor)?;
+        }
+    }
+    Ok(())
+}
+
+fn settle_keyed_callback(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    settled: Option<bool>,
+) -> Result<JsValue, VmError> {
+    let state = aggregate_state(arguments)?;
+    let key = keyed_callback_key(arguments)?;
+    let index = match arguments.get(2) {
+        Some(JsValue::Number(index)) => *index as usize,
+        _ => return Err(VmError::runtime("invalid Promise keyed callback index")),
+    };
+    if !mark_aggregate_called(context, state.clone(), index)? {
+        return Ok(JsValue::Undefined);
+    }
+    let value = arguments.get(3).cloned().unwrap_or(JsValue::Undefined);
+    let value = match settled {
+        None => value,
+        Some(true) => context.create_object([
+            ("status".into(), JsValue::String("fulfilled".into())),
+            ("value".into(), value),
+        ])?,
+        Some(false) => context.create_object([
+            ("status".into(), JsValue::String("rejected".into())),
+            ("reason".into(), value),
+        ])?,
+    };
+    let result = aggregate_values(context, state.clone())?;
+    let result_object = context.require_object(&result, "Promise keyed result")?;
+    define_keyed_result_property(context, result_object, &key, value)?;
+    if decrement_aggregate_remaining(context, state.clone())? {
+        let resolve = aggregate_function(context, state, AGGREGATE_RESOLVE)?;
+        vm.call_value_from_builtin(resolve, JsValue::Undefined, vec![result], context)?;
+    }
+    Ok(JsValue::Undefined)
+}
+
+fn promise_all_keyed_fulfill(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    settle_keyed_callback(vm, context, arguments, None)
+}
+
+fn promise_all_settled_keyed_fulfill(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    settle_keyed_callback(vm, context, arguments, Some(true))
+}
+
+fn promise_all_settled_keyed_reject(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    settle_keyed_callback(vm, context, arguments, Some(false))
 }
 
 fn aggregate_index(arguments: &[JsValue]) -> Result<usize, VmError> {
@@ -746,8 +1107,10 @@ fn promise_any_reject(
         arguments.get(2).cloned().unwrap_or(JsValue::Undefined),
     )?;
     if decrement_aggregate_remaining(context, state.clone())? {
-        let reject = aggregate_function(context, state, AGGREGATE_REJECT)?;
-        vm.call_value_from_builtin(reject, JsValue::Undefined, vec![aggregate_error()], context)?;
+        let reject = aggregate_function(context, state.clone(), AGGREGATE_REJECT)?;
+        let errors = aggregate_values(context, state)?;
+        let error = aggregate_error(vm, context, errors)?;
+        vm.call_value_from_builtin(reject, JsValue::Undefined, vec![error], context)?;
     }
     Ok(JsValue::Undefined)
 }
@@ -786,11 +1149,15 @@ fn promise_aggregate_reject(
     Ok(JsValue::Undefined)
 }
 
-fn aggregate_error() -> JsValue {
-    JsValue::Error(crate::runtime::NativeErrorValue::new(
-        crate::runtime::NativeErrorKind::Error,
-        "AggregateError",
-    ))
+fn aggregate_error(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    errors: JsValue,
+) -> Result<JsValue, VmError> {
+    let constructor = context
+        .get_global("AggregateError")
+        .ok_or_else(|| VmError::runtime("AggregateError constructor missing"))?;
+    vm.construct_value_from_builtin(constructor, vec![errors], context)
 }
 
 fn type_error_value(message: &str) -> JsValue {
@@ -798,6 +1165,41 @@ fn type_error_value(message: &str) -> JsValue {
         crate::runtime::NativeErrorKind::Type,
         message,
     ))
+}
+
+fn construct_error_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    name: &str,
+    message: &str,
+) -> Result<JsValue, VmError> {
+    let constructor = context
+        .get_global(name)
+        .ok_or_else(|| VmError::runtime(format!("{name} constructor missing")))?;
+    vm.construct_value_from_builtin(
+        constructor,
+        vec![JsValue::String(message.to_string())],
+        context,
+    )
+}
+
+fn normalize_error_reason(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    reason: JsValue,
+) -> Result<JsValue, VmError> {
+    let JsValue::Error(error) = &reason else {
+        return Ok(reason);
+    };
+    let name = match error.kind {
+        NativeErrorKind::Error => "Error",
+        NativeErrorKind::Reference => "ReferenceError",
+        NativeErrorKind::Type => "TypeError",
+        NativeErrorKind::Syntax => "SyntaxError",
+        NativeErrorKind::Range => "RangeError",
+        NativeErrorKind::RuntimeLimit | NativeErrorKind::Test262 => return Ok(reason),
+    };
+    construct_error_value(vm, context, name, &error.message)
 }
 
 fn promise_try(
@@ -893,7 +1295,7 @@ fn promise_finally(
     let constructor = promise_species_constructor(vm, context, this.clone())?;
     let on_finally = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let then = vm.get_property_value(this.clone(), "then", context)?;
-    if !is_callable(&on_finally) {
+    if !is_callable(context, &on_finally) {
         return vm.call_value_from_builtin(
             then,
             this,
@@ -936,12 +1338,15 @@ fn promise_then_with_finally(
     })?;
     let on_fulfilled = arguments
         .first()
-        .filter(|value| is_callable(value))
+        .filter(|value| is_callable(context, value))
         .cloned();
     let on_rejected = if finally {
         on_fulfilled.clone()
     } else {
-        arguments.get(1).filter(|value| is_callable(value)).cloned()
+        arguments
+            .get(1)
+            .filter(|value| is_callable(context, value))
+            .cloned()
     };
     context.add_promise_reaction(
         source,
@@ -1089,7 +1494,7 @@ pub(crate) fn resolve_promise_value(
                     return enqueue_settle(context, promise, PromiseReaction::Reject, reason);
                 }
             };
-        if is_callable(&then) {
+        if is_callable(context, &then) {
             let (resolve, reject) = create_promise_resolving_functions(context, promise_object)?;
             if let Err(reason) =
                 vm.call_value_catching_from_builtin(then, value, vec![resolve, reject], context)?

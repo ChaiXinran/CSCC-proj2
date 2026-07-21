@@ -21,6 +21,7 @@ const ITERATOR_NEXT_INDEX: &str = "__agentjs_iterator_next_index__";
 const ITERATOR_DONE: &str = "__agentjs_iterator_done__";
 const ITERATOR_WRAP_PROTOTYPE: &str = "__agentjs_iterator_wrap_prototype__";
 const ITERATOR_HELPER_PROTOTYPE: &str = "__agentjs_iterator_helper_prototype__";
+const ASYNC_ITERATOR_PROTOTYPE: &str = "__agentjs_async_iterator_prototype__";
 const ITERATOR_HELPER_KIND: &str = "__agentjs_iterator_helper_kind__";
 const ITERATOR_HELPER_SOURCE: &str = "__agentjs_iterator_helper_source__";
 const ITERATOR_HELPER_NEXT: &str = "__agentjs_iterator_helper_next__";
@@ -438,6 +439,26 @@ fn install_iterator(context: &mut NativeContext) -> Result<IteratorIntrinsic, Vm
         ITERATOR_HELPER_PROTOTYPE.into(),
         hidden_slot_descriptor(JsValue::Object(helper_prototype)),
     )?;
+    let async_prototype = new_ordinary_object(context, context.object_prototype())?;
+    let async_iterator_fn =
+        context.register_builtin("[Symbol.asyncIterator]", 0, iterator_identity, None)?;
+    context.define_symbol_own_property(
+        async_prototype,
+        context.well_known_symbols().async_iterator,
+        method_descriptor(async_iterator_fn),
+    )?;
+    let async_dispose_fn =
+        context.register_builtin("[Symbol.asyncDispose]", 0, async_iterator_dispose, None)?;
+    context.define_symbol_own_property(
+        async_prototype,
+        context.well_known_symbols().async_dispose,
+        method_descriptor(async_dispose_fn),
+    )?;
+    context.define_own_property(
+        constructor_object,
+        ASYNC_ITERATOR_PROTOTYPE.into(),
+        hidden_slot_descriptor(JsValue::Object(async_prototype)),
+    )?;
     define_method(context, constructor_object, "from", 1, iterator_from)?;
     define_method(context, constructor_object, "concat", 0, iterator_concat)?;
     define_method(context, constructor_object, "zip", 1, iterator_zip)?;
@@ -513,12 +534,48 @@ fn iterator_constructor_call(
 }
 
 fn iterator_constructor_construct(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
+    vm: &mut Vm,
+    context: &mut NativeContext,
     _arguments: &[JsValue],
-    _new_target: JsValue,
+    new_target: JsValue,
 ) -> Result<JsValue, VmError> {
-    Err(VmError::type_error("Iterator constructor is abstract"))
+    let iterator = context
+        .get_global("Iterator")
+        .ok_or_else(|| VmError::runtime("Iterator constructor missing"))?;
+    if new_target == iterator {
+        return Err(VmError::type_error("Iterator constructor is abstract"));
+    }
+
+    let prototype_value = vm.get_property_value(new_target.clone(), "prototype", context)?;
+    let prototype = context
+        .value_object(&prototype_value)
+        .map_or_else(|| iterator_prototype_for_callable(context, &new_target), Ok)?;
+    Ok(JsValue::Object(new_ordinary_object(
+        context,
+        Some(prototype),
+    )?))
+}
+
+fn iterator_prototype_for_callable(
+    context: &NativeContext,
+    callable: &JsValue,
+) -> Result<ObjectId, VmError> {
+    let global = context.global_object_for_callable(callable);
+    let constructor = context
+        .find_property_descriptor(global, "Iterator")?
+        .and_then(|(_, descriptor)| descriptor.value_cloned())
+        .and_then(|value| context.value_object(&value))
+        .or_else(|| {
+            context
+                .get_global("Iterator")
+                .and_then(|value| context.value_object(&value))
+        })
+        .ok_or_else(|| VmError::runtime("Iterator constructor missing"))?;
+    context
+        .find_property_descriptor(constructor, "prototype")?
+        .and_then(|(_, descriptor)| descriptor.value_cloned())
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime("Iterator prototype missing"))
 }
 
 fn iterator_from(
@@ -1052,6 +1109,67 @@ fn iterator_dispose(
     }
     vm.call_value_from_builtin(return_method, this_value, Vec::new(), context)?;
     Ok(JsValue::Undefined)
+}
+
+fn async_iterator_dispose(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let promise = context.create_promise()?;
+    let prototype = context
+        .get_global("Promise")
+        .and_then(|constructor| context.value_object(&constructor))
+        .and_then(|constructor| {
+            context
+                .get_own_property_descriptor(constructor, "prototype")
+                .and_then(|descriptor| descriptor.value_cloned())
+                .and_then(|value| context.value_object(&value))
+        });
+    let promise_object = context.create_promise_object(promise, prototype)?;
+    let operation = (|| -> Result<(), VmError> {
+        let return_method = match vm.get_property_value_catching_from_builtin(
+            this_value.clone(),
+            "return",
+            context,
+        )? {
+            Ok(value) => value,
+            Err(reason) => return Err(vm.throw_value_from_builtin(reason)),
+        };
+        if matches!(return_method, JsValue::Undefined | JsValue::Null) {
+            return Ok(());
+        }
+        if !is_callable(&return_method) {
+            return Err(VmError::type_error("async iterator return is not callable"));
+        }
+        let result = match vm.call_value_catching_from_builtin(
+            return_method,
+            this_value,
+            vec![JsValue::Undefined],
+            context,
+        )? {
+            Ok(value) => value,
+            Err(reason) => return Err(vm.throw_value_from_builtin(reason)),
+        };
+        let _ = vm.await_value_from_builtin(result, context)?;
+        Ok(())
+    })();
+    match operation {
+        Ok(()) => {
+            crate::builtins::promise::resolve_promise_id(vm, context, promise, JsValue::Undefined)?
+        }
+        Err(error) => {
+            let reason = vm.take_pending_exception_from_builtin().unwrap_or_else(|| {
+                JsValue::Error(crate::runtime::NativeErrorValue::new(
+                    crate::runtime::NativeErrorKind::Type,
+                    error.message,
+                ))
+            });
+            context.reject_promise(promise, reason)?;
+        }
+    }
+    Ok(promise_object)
 }
 
 fn iterator_constructor_get(
@@ -2017,6 +2135,7 @@ fn iterator_to_array(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    context.require_object(&this_value, "Iterator.prototype.toArray")?;
     let next = iterator_next_method(vm, context, this_value.clone())?;
     let mut values = Vec::new();
     while values.len() < MAX_ITERATOR_STEPS {
@@ -2037,6 +2156,7 @@ fn iterator_for_each(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    context.require_object(&this_value, "Iterator.prototype.forEach")?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     if !is_callable(&callback) {
         vm.close_iterator_from_builtin(this_value, context)?;
@@ -2174,6 +2294,7 @@ fn iterator_reduce(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    context.require_object(&this_value, "Iterator.prototype.reduce")?;
     let callback = match require_callback(arguments, "Iterator.prototype.reduce") {
         Ok(callback) => callback,
         Err(error) => {
@@ -2282,6 +2403,7 @@ fn iterator_predicate(
     arguments: &[JsValue],
     mode: PredicateMode,
 ) -> Result<JsValue, VmError> {
+    context.require_object(&this_value, "Iterator predicate receiver")?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     if !is_callable(&callback) {
         vm.close_iterator_from_builtin(this_value, context)?;

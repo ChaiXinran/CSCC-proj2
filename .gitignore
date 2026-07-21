@@ -5,8 +5,15 @@
 # Generated benchmark runners and raw measurements
 /benchmarks/generated/
 /reports/
+!/reports/
+/reports/*
+!/reports/full-test262-summary.json
+!/reports/85-target/
+/reports/85-target/*.txt
 !/reports/.test262
 !/reports/.version-report
+/reports/.version-report/*
+!/reports/.version-report/v13-partB-report.md
 /reports/.native-test262-tmp
 # Local editor and agent state
 /.vscode/
