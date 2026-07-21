@@ -23,6 +23,7 @@ pub use buffer::{
     TypedArrayView, TypedArrayViewId,
 };
 pub use coercion::PreferredType;
+pub(crate) use context::DisposableStackEntry;
 pub use context::{
     ExecutionBudget, Intrinsics, NativeContext, checked_array_length, checked_string_repeat_len,
     checked_utf16_allocation, to_property_key,
