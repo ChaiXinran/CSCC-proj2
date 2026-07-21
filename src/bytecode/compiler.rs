@@ -4692,7 +4692,17 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        use crate::ast::VariableKind;
+
         const ITER: &str = "\u{0}forof_iter";
+
+        let is_const = matches!(
+            left,
+            crate::ast::ForBinding::Declaration {
+                kind: VariableKind::Const,
+                ..
+            }
+        );
 
         chunk.emit(Instruction::CreateLexicalEnvironment);
         context.environment_depth += 1;
@@ -4707,9 +4717,8 @@ impl Compiler {
         // mutable bindings to `undefined`.  This lets the loop body use `StoreName`
         // (set_mutable_binding) on every iteration instead of `InitializeBinding`, which
         // would throw "already initialized" on the second pass.
-        // `const` bindings are left uninitialized here and initialized inside the loop via
-        // `compile_binding_pattern` — but `const` in for-of is handled below by re-emitting
-        // `CreateImmutableBinding` + `InitializeBinding` per iteration with a per-iter scope.
+        // `const` bindings are NOT created here — each iteration gets its own fresh
+        // lexical scope with new immutable bindings (ECMAScript §13.7.5.13.b).
         let undefined_idx = chunk
             .add_constant(Constant::Undefined)
             .map_err(CompileError::from_chunk)?;
@@ -4721,8 +4730,7 @@ impl Compiler {
                     let idx = self.add_name(name, chunk)?;
                     match kind {
                         VariableKind::Const => {
-                            // Const loop variable: keep uninitialized; we'll initialize per-iter.
-                            chunk.emit(Instruction::CreateImmutableBinding(idx));
+                            // Const bindings are created per-iteration; nothing to do here.
                         }
                         _ => {
                             // Let / var: create AND pre-initialize to undefined so
@@ -4761,10 +4769,17 @@ impl Compiler {
         // if is_done (top), jump to exit.
         let exit_jump = chunk.emit(Instruction::JumpIfTrue(usize::MAX));
         chunk.emit(Instruction::Pop); // pop is_done=false
+
+        // Capture the outer scope depth before any per-iteration scope.  Loop/break
+        // contexts are anchored here so that `continue` and `break` unwind the
+        // per-iteration scope (if any) before jumping to their targets.
+        let outer_env_depth = context.environment_depth;
+
         // Assign the iteration value to the loop variable.
         // For let/var, the binding was pre-initialized before the loop; use StoreName
         // (write to existing binding) so every iteration re-assigns without "already
-        // initialized" errors.  For const, we need a fresh per-iteration scope.
+        // initialized" errors.  For const, push a fresh per-iteration lexical scope,
+        // create immutable bindings, and initialize them from the iterator value.
         match left {
             crate::ast::ForBinding::Declaration { kind, pattern } => {
                 match kind {
@@ -4773,12 +4788,16 @@ impl Compiler {
                         self.compile_binding_pattern_store(pattern, chunk, context)?;
                     }
                     VariableKind::Const => {
-                        // Const needs a fresh binding each iteration: push scope, create +
-                        // initialize immutable binding, then pop after the body.
-                        // We do that by calling compile_binding_pattern which emits
-                        // CreateImmutableBinding + InitializeBinding — but only inside a
-                        // per-iteration scope that we push/pop around the body.
-                        // Here we just do the initialization; the scope wrap is applied below.
+                        // ECMAScript §13.7.5.13.b: each iteration creates a new
+                        // lexical environment with fresh immutable bindings.
+                        chunk.emit(Instruction::CreateLexicalEnvironment);
+                        context.environment_depth += 1;
+                        let names = binding_pattern_names(pattern);
+                        for name in &names {
+                            let idx = self.add_name(name, chunk)?;
+                            chunk.emit(Instruction::CreateImmutableBinding(idx));
+                        }
+                        // Initialize from the value on the stack.
                         self.compile_binding_pattern(*kind, pattern, chunk, context)?;
                     }
                 }
@@ -4802,11 +4821,11 @@ impl Compiler {
         context.loops.push(LoopContext {
             continue_target: Some(loop_start),
             continue_jumps: Vec::new(),
-            environment_depth: context.environment_depth,
+            environment_depth: outer_env_depth,
         });
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
-            environment_depth: context.environment_depth,
+            environment_depth: outer_env_depth,
             label: None,
         });
 
@@ -4816,6 +4835,12 @@ impl Compiler {
             return Err(e);
         }
 
+        // For const, pop the per-iteration scope before jumping back to the loop
+        // header.  (break/continue already unwind this scope via their depth diff.)
+        if is_const {
+            context.environment_depth -= 1;
+            chunk.emit(Instruction::PopEnvironment);
+        }
         chunk.emit(Instruction::Jump(loop_start));
 
         let exit_target = chunk.current_offset();
