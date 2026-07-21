@@ -40,6 +40,22 @@ fn compound_assignment_updates_computed_member_once() {
 }
 
 #[test]
+fn computed_postfix_update_evaluates_object_key_getter_and_setter_once() {
+    assert_eq!(
+        native_eval(
+            "var calls = []; var value = 2; \
+             function object() { calls.push('object'); return { \
+               get x() { calls.push('get'); return value; }, \
+               set x(next) { calls.push('set'); value = next; } \
+             }; } \
+             function key() { calls.push('key'); return 'x'; } \
+             var old = object()[key()]++; calls.join('|') + ':' + old + ':' + value;"
+        ),
+        "object|key|get|set:2:3"
+    );
+}
+
+#[test]
 fn object_literal_computed_key_uses_runtime_key() {
     assert_eq!(
         native_eval("var key = 'ab'; var o = { [key + 'c']: 7 }; o.abc;"),
