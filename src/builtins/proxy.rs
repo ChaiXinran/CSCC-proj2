@@ -376,7 +376,7 @@ fn define_own_property(
     update: PropertyDescriptorUpdate,
 ) -> Result<bool, VmError> {
     let Some(record) = proxy_record(context, &target)? else {
-        return ordinary_define_own_property(context, target, key, update);
+        return ordinary_define_own_property(vm, context, target, key, update);
     };
     let Some(trap) = get_trap(vm, context, &record.handler, Trap::DefineProperty)? else {
         return define_own_property(vm, context, record.target, key, descriptor_arg, update);
@@ -889,12 +889,38 @@ fn get_trap(
 }
 
 fn ordinary_define_own_property(
+    vm: &mut Vm,
     context: &mut NativeContext,
     target: JsValue,
     key: &PropertyKey,
     update: PropertyDescriptorUpdate,
 ) -> Result<bool, VmError> {
     let object = context.require_object(&target, "define property")?;
+    if let Some((view, numeric_index)) = typed_array_numeric_index(context, object, key) {
+        let Some(index) = valid_typed_array_index(context, view, numeric_index) else {
+            return Ok(false);
+        };
+        if update.configurable == Some(false)
+            || update.enumerable == Some(false)
+            || update.writable == Some(false)
+            || update.get.is_some()
+            || update.set.is_some()
+        {
+            return Ok(false);
+        }
+        if let Some(value) = update.value {
+            let kind = context
+                .typed_array_view(view)
+                .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
+                .element_kind;
+            let value =
+                crate::builtins::binary_data::coerce_typed_array_element(vm, context, kind, value)?;
+            if valid_typed_array_index(context, view, numeric_index).is_some() {
+                context.typed_array_store_element(view, index, value)?;
+            }
+        }
+        return Ok(true);
+    }
     match key {
         PropertyKey::String(key) => {
             context.validate_and_apply_property_descriptor(object, key.clone(), update)
@@ -911,6 +937,9 @@ fn ordinary_delete_property(
     key: &PropertyKey,
 ) -> Result<bool, VmError> {
     let object = context.require_object(&target, "delete property")?;
+    if let Some((view, numeric_index)) = typed_array_numeric_index(context, object, key) {
+        return Ok(valid_typed_array_index(context, view, numeric_index).is_none());
+    }
     match key {
         PropertyKey::String(key) => context.delete_property(object, key, false),
         PropertyKey::Symbol(symbol) => context.delete_symbol_property(object, *symbol, false),
@@ -925,6 +954,12 @@ fn ordinary_get(
     receiver: JsValue,
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&target, "get property")?;
+    if let Some((view, numeric_index)) = typed_array_numeric_index(context, object, key) {
+        return valid_typed_array_index(context, view, numeric_index)
+            .map_or(Ok(JsValue::Undefined), |index| {
+                context.typed_array_load_element(view, index)
+            });
+    }
     if let Some(descriptor) = match key {
         PropertyKey::String(key) => context.get_own_property_descriptor(object, key),
         PropertyKey::Symbol(symbol) => context.get_own_symbol_property_descriptor(object, *symbol),
@@ -949,6 +984,16 @@ fn ordinary_get_own_property_descriptor(
     key: &PropertyKey,
 ) -> Result<Option<PropertyDescriptor>, VmError> {
     let object = context.require_object(&target, "get own property descriptor")?;
+    if let Some((view, numeric_index)) = typed_array_numeric_index(context, object, key) {
+        return valid_typed_array_index(context, view, numeric_index).map_or(Ok(None), |index| {
+            Ok(Some(PropertyDescriptor::data_with(
+                context.typed_array_load_element(view, index)?,
+                true,
+                true,
+                true,
+            )))
+        });
+    }
     Ok(match key {
         PropertyKey::String(key) => context.get_own_property_descriptor(object, key),
         PropertyKey::Symbol(symbol) => context.get_own_symbol_property_descriptor(object, *symbol),
@@ -962,6 +1007,9 @@ fn ordinary_has_property(
     key: &PropertyKey,
 ) -> Result<bool, VmError> {
     let object = context.require_object(&target, "test property")?;
+    if let Some((view, numeric_index)) = typed_array_numeric_index(context, object, key) {
+        return Ok(valid_typed_array_index(context, view, numeric_index).is_some());
+    }
     let has_own = match key {
         PropertyKey::String(key) => context.get_own_property_descriptor(object, key).is_some(),
         PropertyKey::Symbol(symbol) => context
@@ -986,11 +1034,14 @@ fn ordinary_own_property_keys(
         .heap()
         .object(object)
         .ok_or_else(|| VmError::runtime("missing object"))?;
-    let mut keys: Vec<PropertyKey> = heap_object
-        .own_property_keys()
-        .into_iter()
-        .map(PropertyKey::String)
-        .collect();
+    let mut string_keys = heap_object.own_property_keys();
+    if let Some((_, current_length)) = context.typed_array_indexed_view(object) {
+        string_keys.retain(|key| {
+            !key.starts_with("__agentjs_") && canonical_numeric_index_string(key).is_none()
+        });
+        string_keys.splice(0..0, (0..current_length).map(|index| index.to_string()));
+    }
+    let mut keys: Vec<PropertyKey> = string_keys.into_iter().map(PropertyKey::String).collect();
     keys.extend(
         heap_object
             .symbol_properties
@@ -1008,8 +1059,72 @@ fn ordinary_set(
     value: JsValue,
     receiver: JsValue,
 ) -> Result<bool, VmError> {
+    let object = context.require_object(&target, "set property")?;
+    if let Some((view, numeric_index)) = typed_array_numeric_index(context, object, key) {
+        if target.same_value(&receiver) {
+            let kind = context
+                .typed_array_view(view)
+                .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
+                .element_kind;
+            let value =
+                crate::builtins::binary_data::coerce_typed_array_element(vm, context, kind, value)?;
+            if let Some(index) = valid_typed_array_index(context, view, numeric_index) {
+                context.typed_array_store_element(view, index, value)?;
+            }
+            return Ok(true);
+        }
+        let Some(index) = valid_typed_array_index(context, view, numeric_index) else {
+            return Ok(true);
+        };
+        let own_desc = Some(PropertyDescriptor::data_with(
+            context.typed_array_load_element(view, index)?,
+            true,
+            true,
+            true,
+        ));
+        return ordinary_set_with_own_descriptor(
+            vm, context, target, key, value, receiver, own_desc,
+        );
+    }
     let own_desc = ordinary_get_own_property_descriptor(context, target.clone(), key)?;
     ordinary_set_with_own_descriptor(vm, context, target, key, value, receiver, own_desc)
+}
+
+fn typed_array_numeric_index(
+    context: &NativeContext,
+    object: ObjectId,
+    key: &PropertyKey,
+) -> Option<(crate::runtime::TypedArrayViewId, f64)> {
+    let (view, _) = context.typed_array_indexed_view(object)?;
+    let PropertyKey::String(key) = key else {
+        return None;
+    };
+    canonical_numeric_index_string(key).map(|index| (view, index))
+}
+
+fn canonical_numeric_index_string(key: &str) -> Option<f64> {
+    if key == "-0" {
+        return Some(-0.0);
+    }
+    let number = JsValue::String(key.into()).to_number()?;
+    (JsValue::Number(number).to_js_string().as_deref() == Some(key)).then_some(number)
+}
+
+fn valid_typed_array_index(
+    context: &NativeContext,
+    view: crate::runtime::TypedArrayViewId,
+    numeric_index: f64,
+) -> Option<usize> {
+    if !numeric_index.is_finite()
+        || numeric_index.fract() != 0.0
+        || numeric_index < 0.0
+        || (numeric_index == 0.0 && numeric_index.is_sign_negative())
+        || numeric_index > usize::MAX as f64
+    {
+        return None;
+    }
+    let index = numeric_index as usize;
+    (index < context.validate_typed_array_view(view).ok()?).then_some(index)
 }
 
 fn ordinary_set_with_own_descriptor(

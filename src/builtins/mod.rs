@@ -14,7 +14,7 @@ pub(crate) mod proxy;
 /// RegExp prototype refinements + ECMAScript Annex B legacy methods.
 mod annex_b;
 /// ArrayBuffer / DataView / TypedArray constructors + Intl skeleton.
-mod binary_data;
+pub(crate) mod binary_data;
 mod boolean;
 /// Map / Set / WeakMap / WeakSet + iterator infrastructure.
 mod collections;

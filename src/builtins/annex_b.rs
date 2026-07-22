@@ -669,11 +669,83 @@ fn regexp_exec_value(
         PropertyDescriptor::data_with(JsValue::Number(match_index as f64), true, true, true),
     )?;
     let groups = create_regexp_groups_object(context, &re, &captures)?;
+    if flags.contains('d') {
+        let indices = create_regexp_indices_object(context, &re, &captures, &string, byte_start)?;
+        context.define_own_property(
+            array,
+            "indices".into(),
+            PropertyDescriptor::data_with(indices, true, true, true),
+        )?;
+    }
     context.define_own_property(
         array,
         "input".into(),
         PropertyDescriptor::data_with(JsValue::String(string), true, true, true),
     )?;
+    context.define_own_property(
+        array,
+        "groups".into(),
+        PropertyDescriptor::data_with(groups, true, true, true),
+    )?;
+    Ok(JsValue::Object(array))
+}
+
+fn create_regexp_indices_object(
+    context: &mut NativeContext,
+    regex: &regex::Regex,
+    captures: &regex::Captures<'_>,
+    input: &str,
+    byte_start: usize,
+) -> Result<JsValue, VmError> {
+    let mut elements = Vec::with_capacity(captures.len());
+    for index in 0..captures.len() {
+        let value = if let Some(capture) = captures.get(index) {
+            let start = input[..byte_start + capture.start()].encode_utf16().count();
+            let end = input[..byte_start + capture.end()].encode_utf16().count();
+            context.create_array(vec![
+                JsValue::Number(start as f64),
+                JsValue::Number(end as f64),
+            ])?
+        } else {
+            JsValue::Undefined
+        };
+        elements.push(value);
+    }
+    let result = context.create_array(elements)?;
+    let JsValue::Object(array) = result else {
+        return Ok(result);
+    };
+    let names: Vec<(usize, String)> = regex
+        .capture_names()
+        .enumerate()
+        .filter_map(|(index, name)| name.map(|name| (index, name.to_string())))
+        .collect();
+    let groups = if names.is_empty() {
+        JsValue::Undefined
+    } else {
+        let object = context
+            .heap_mut()
+            .allocate_object(JsObject::ordinary())
+            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+        for (index, name) in names {
+            let value = captures
+                .get(index)
+                .map_or(Ok(JsValue::Undefined), |capture| {
+                    let start = input[..byte_start + capture.start()].encode_utf16().count();
+                    let end = input[..byte_start + capture.end()].encode_utf16().count();
+                    context.create_array(vec![
+                        JsValue::Number(start as f64),
+                        JsValue::Number(end as f64),
+                    ])
+                })?;
+            context.define_own_property(
+                object,
+                name,
+                PropertyDescriptor::data_with(value, true, true, true),
+            )?;
+        }
+        JsValue::Object(object)
+    };
     context.define_own_property(
         array,
         "groups".into(),
@@ -715,8 +787,8 @@ fn create_regexp_groups_object(
 fn to_length(value: f64) -> usize {
     if value.is_nan() || value <= 0.0 {
         0
-    } else if !value.is_finite() || value >= usize::MAX as f64 {
-        usize::MAX
+    } else if !value.is_finite() || value >= 9_007_199_254_740_991.0 {
+        9_007_199_254_740_991usize
     } else {
         value.trunc() as usize
     }
@@ -1090,12 +1162,12 @@ fn regexp_symbol_replace(
         let length = to_length(vm.to_number(length_value, context)?);
         let mut captures = Vec::new();
         for index in 1..length {
-            captures.push(get_property(
-                vm,
-                context,
-                result_value.clone(),
-                &index.to_string(),
-            )?);
+            let capture = get_property(vm, context, result_value.clone(), &index.to_string())?;
+            captures.push(if matches!(capture, JsValue::Undefined) {
+                JsValue::Undefined
+            } else {
+                JsValue::String(vm.to_string_coerce(capture, context)?)
+            });
         }
         let groups = get_property(vm, context, result_value.clone(), "groups")?;
         results.push(ReplaceMatch {
@@ -1128,20 +1200,29 @@ fn regexp_symbol_replace(
             .position
             .saturating_add(item.matched.encode_utf16().count());
         let byte_match_end = byte_index_from_utf16(&string, match_end).unwrap_or(string.len());
+        if byte_position < next_source_position {
+            continue;
+        }
         if byte_position > next_source_position {
             push_str_replacement(
                 &mut accumulated,
                 &string[next_source_position..byte_position],
             )?;
         }
+        let groups = if !functional_replace && !matches!(item.groups, JsValue::Undefined) {
+            let object = vm.to_object(item.groups.clone(), context)?;
+            context.object_value(object)
+        } else {
+            item.groups.clone()
+        };
         let replacement_text = if functional_replace {
             let mut args = Vec::with_capacity(item.captures.len() + 4);
             args.push(JsValue::String(item.matched.clone()));
             args.extend(item.captures.clone());
             args.push(JsValue::Number(item.position as f64));
             args.push(JsValue::String(string.clone()));
-            if !matches!(item.groups, JsValue::Undefined) {
-                args.push(item.groups.clone());
+            if !matches!(groups, JsValue::Undefined) {
+                args.push(groups);
             }
             let value = vm.call_value_from_builtin(
                 replace_value.clone(),
@@ -1157,7 +1238,7 @@ fn regexp_symbol_replace(
                 &string[..byte_position],
                 &string[byte_match_end..],
                 &item.captures,
-                item.groups.clone(),
+                groups,
                 vm,
                 context,
             )?
