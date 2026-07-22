@@ -12,6 +12,7 @@ pub struct ArrayBufferRecord {
     pub max_byte_length: usize,
     pub resizable: bool,
     pub immutable: bool,
+    pub shared: bool,
 }
 
 impl ArrayBufferRecord {
@@ -27,12 +28,24 @@ impl ArrayBufferRecord {
         resizable: bool,
         immutable: bool,
     ) -> Self {
+        Self::with_options_and_shared(byte_length, max_byte_length, resizable, immutable, false)
+    }
+
+    #[must_use]
+    pub fn with_options_and_shared(
+        byte_length: usize,
+        max_byte_length: usize,
+        resizable: bool,
+        immutable: bool,
+        shared: bool,
+    ) -> Self {
         Self {
             bytes: vec![0; byte_length],
             detached: false,
             max_byte_length,
             resizable,
             immutable,
+            shared,
         }
     }
 

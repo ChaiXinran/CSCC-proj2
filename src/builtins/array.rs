@@ -458,6 +458,7 @@ fn array_object_target(
 }
 
 fn normalize_index(raw: f64, length: usize) -> usize {
+    let raw = to_integer_or_infinity(raw);
     if raw < 0.0 {
         let from_end = (-raw) as usize;
         length.saturating_sub(from_end)
@@ -1123,7 +1124,20 @@ fn array_to_string(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    array_join(vm, context, this_value, &[])
+    let object = vm.to_object(this_value, context)?;
+    let receiver = context.object_value(object);
+    let join = vm.get_property_value(receiver.clone(), "join", context)?;
+    if context.is_callable_value(&join) {
+        return vm.call_value_from_builtin(join, receiver, Vec::new(), context);
+    }
+    let object_prototype = context
+        .object_prototype()
+        .ok_or_else(|| VmError::runtime("Object.prototype missing"))?;
+    let fallback = context
+        .get_own_property_descriptor(object_prototype, "toString")
+        .and_then(|descriptor| descriptor.value_cloned())
+        .ok_or_else(|| VmError::runtime("Object.prototype.toString missing"))?;
+    vm.call_value_from_builtin(fallback, receiver, Vec::new(), context)
 }
 
 fn array_join(

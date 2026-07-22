@@ -3715,15 +3715,43 @@ impl NativeContext {
         resizable: bool,
         immutable: bool,
     ) -> Result<ArrayBufferId, VmError> {
+        self.create_array_buffer_with_options_and_shared(
+            byte_length,
+            max_byte_length,
+            resizable,
+            immutable,
+            false,
+        )
+    }
+
+    pub fn create_shared_array_buffer_with_options(
+        &mut self,
+        byte_length: usize,
+        max_byte_length: usize,
+        growable: bool,
+    ) -> Result<ArrayBufferId, VmError> {
+        self.create_array_buffer_with_options_and_shared(
+            byte_length,
+            max_byte_length,
+            growable,
+            false,
+            true,
+        )
+    }
+
+    fn create_array_buffer_with_options_and_shared(
+        &mut self,
+        byte_length: usize,
+        max_byte_length: usize,
+        resizable: bool,
+        immutable: bool,
+        shared: bool,
+    ) -> Result<ArrayBufferId, VmError> {
         if byte_length > MAX_ARRAY_BUFFER_BYTE_LENGTH {
-            return Err(VmError::runtime_limit(
-                "ArrayBuffer allocation limit exceeded",
-            ));
+            return Err(VmError::range("ArrayBuffer allocation limit exceeded"));
         }
         if max_byte_length > MAX_ARRAY_BUFFER_BYTE_LENGTH {
-            return Err(VmError::runtime_limit(
-                "ArrayBuffer maxByteLength limit exceeded",
-            ));
+            return Err(VmError::range("ArrayBuffer maxByteLength limit exceeded"));
         }
         if byte_length > max_byte_length {
             return Err(VmError::range(
@@ -3733,12 +3761,14 @@ impl NativeContext {
         self.ensure_heap_capacity(byte_length)?;
         let index = u32::try_from(self.array_buffers.len())
             .map_err(|_| VmError::runtime("ArrayBuffer registry full"))?;
-        self.array_buffers.push(ArrayBufferRecord::with_options(
-            byte_length,
-            max_byte_length,
-            resizable,
-            immutable,
-        ));
+        self.array_buffers
+            .push(ArrayBufferRecord::with_options_and_shared(
+                byte_length,
+                max_byte_length,
+                resizable,
+                immutable,
+                shared,
+            ));
         Ok(ArrayBufferId(index))
     }
 
@@ -3767,6 +3797,13 @@ impl NativeContext {
             .immutable)
     }
 
+    pub fn is_shared_array_buffer(&self, buffer: ArrayBufferId) -> Result<bool, VmError> {
+        Ok(self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?
+            .shared)
+    }
+
     pub fn array_buffer_max_byte_length(&self, buffer: ArrayBufferId) -> Result<usize, VmError> {
         let record = self
             .array_buffer_record(buffer)
@@ -3782,7 +3819,7 @@ impl NativeContext {
         let record = self
             .array_buffer_record(buffer)
             .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
-        Ok(!record.detached && record.resizable)
+        Ok(record.resizable)
     }
 
     pub fn detach_array_buffer(&mut self, buffer: ArrayBufferId) -> Result<(), VmError> {
@@ -3817,9 +3854,7 @@ impl NativeContext {
             return Err(VmError::range("ArrayBuffer resize exceeds maxByteLength"));
         }
         if new_byte_length > MAX_ARRAY_BUFFER_BYTE_LENGTH {
-            return Err(VmError::runtime_limit(
-                "ArrayBuffer allocation limit exceeded",
-            ));
+            return Err(VmError::range("ArrayBuffer allocation limit exceeded"));
         }
         record.bytes.resize(new_byte_length, 0);
         Ok(())
@@ -3865,11 +3900,31 @@ impl NativeContext {
         Ok(target)
     }
 
+    pub fn clone_shared_array_buffer_range(
+        &mut self,
+        buffer: ArrayBufferId,
+        start: usize,
+        end: usize,
+    ) -> Result<ArrayBufferId, VmError> {
+        let record = self
+            .array_buffer_record(buffer)
+            .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
+        if !record.shared {
+            return Err(VmError::type_error("receiver is not a SharedArrayBuffer"));
+        }
+        let bytes = self.read_buffer_bytes(buffer, start, end.saturating_sub(start))?;
+        let copy = bytes.to_vec();
+        let target = self.create_shared_array_buffer_with_options(copy.len(), copy.len(), false)?;
+        self.write_buffer_bytes(target, 0, &copy)?;
+        Ok(target)
+    }
+
     pub fn transfer_array_buffer(
         &mut self,
         buffer: ArrayBufferId,
         new_byte_length: Option<usize>,
         immutable: bool,
+        preserve_resizable: bool,
     ) -> Result<ArrayBufferId, VmError> {
         let record = self
             .array_buffer_record(buffer)
@@ -3878,15 +3933,24 @@ impl NativeContext {
             return Err(VmError::type_error("ArrayBuffer is detached"));
         }
         let new_len = new_byte_length.unwrap_or(record.bytes.len());
+        let target_resizable = preserve_resizable && record.resizable && !immutable;
+        let target_max_byte_length = if target_resizable {
+            record.max_byte_length.max(new_len)
+        } else {
+            new_len
+        };
         if new_len > MAX_ARRAY_BUFFER_BYTE_LENGTH {
-            return Err(VmError::runtime_limit(
-                "ArrayBuffer allocation limit exceeded",
-            ));
+            return Err(VmError::range("ArrayBuffer allocation limit exceeded"));
         }
         let mut copy = vec![0; new_len];
         let copy_len = copy.len().min(record.bytes.len());
         copy[..copy_len].copy_from_slice(&record.bytes[..copy_len]);
-        let target = self.create_array_buffer(new_len)?;
+        let target = self.create_array_buffer_with_options(
+            new_len,
+            target_max_byte_length,
+            target_resizable,
+            false,
+        )?;
         self.write_buffer_bytes(target, 0, &copy)?;
         if immutable {
             self.mark_array_buffer_immutable(target)?;
@@ -3964,13 +4028,14 @@ impl NativeContext {
         view: TypedArrayViewId,
         index: usize,
     ) -> Result<JsValue, VmError> {
-        let view_id = view;
         let view = self
-            .typed_array_view(view_id)
+            .typed_array_view(view)
             .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?;
-        let length = self.validate_typed_array_view(view_id)?;
+        let Some(length) = self.typed_array_current_length(view) else {
+            return Ok(JsValue::Undefined);
+        };
         if index >= length {
-            return Err(VmError::range("TypedArray index is out of range"));
+            return Ok(JsValue::Undefined);
         }
         let byte_offset = typed_array_element_offset(view, index)?;
         let bytes = self.read_buffer_bytes(
@@ -3987,17 +4052,18 @@ impl NativeContext {
         index: usize,
         value: JsValue,
     ) -> Result<(), VmError> {
-        let view_id = view;
         let view = self
-            .typed_array_view(view_id)
+            .typed_array_view(view)
             .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
             .clone();
-        let length = self.validate_typed_array_view(view_id)?;
+        let bytes = encode_typed_array_value(self, view.element_kind, value)?;
+        let Some(length) = self.typed_array_current_length(&view) else {
+            return Ok(());
+        };
         if index >= length {
-            return Err(VmError::range("TypedArray index is out of range"));
+            return Ok(());
         }
         let byte_offset = typed_array_element_offset(&view, index)?;
-        let bytes = encode_typed_array_value(self, view.element_kind, value)?;
         self.write_buffer_bytes(view.buffer, byte_offset, &bytes)
     }
 
@@ -4177,7 +4243,7 @@ impl NativeContext {
         Ok(())
     }
 
-    fn read_buffer_bytes(
+    pub(crate) fn read_buffer_bytes(
         &self,
         buffer: ArrayBufferId,
         byte_offset: usize,
@@ -4198,7 +4264,7 @@ impl NativeContext {
             .ok_or_else(|| VmError::range("ArrayBuffer byte range is out of range"))
     }
 
-    fn write_buffer_bytes(
+    pub(crate) fn write_buffer_bytes(
         &mut self,
         buffer: ArrayBufferId,
         byte_offset: usize,
