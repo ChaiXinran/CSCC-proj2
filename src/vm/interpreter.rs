@@ -932,6 +932,16 @@ impl Vm {
                         },
                     }
                 }
+                Instruction::ToString => {
+                    let value = self.pop_value()?;
+                    match self.to_string_coerce(value, context) {
+                        Ok(value) => self.stack.push(JsValue::String(value)),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(self.throw_value_from_error(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
                 Instruction::ToNumeric => {
                     let value = self.pop_value()?;
                     match value {
@@ -5172,12 +5182,7 @@ impl Vm {
         if should_set && let Some(obj) = context.heap_mut().object_mut(obj_id) {
             obj.define_property(
                 "name",
-                PropertyDescriptor::data_with(
-                    JsValue::String(inferred_name),
-                    false,
-                    false,
-                    true,
-                ),
+                PropertyDescriptor::data_with(JsValue::String(inferred_name), false, false, true),
             );
         }
     }

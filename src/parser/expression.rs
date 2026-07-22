@@ -1582,25 +1582,24 @@ impl Parser {
                 continue;
             }
 
-            let is_auto_accessor_field =
-                if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "accessor")
-                    && !self.peek().has_identifier_escape
-                {
-                    let next = self.tokens.get(self.cursor + 1);
-                    let next_is_key = next.is_some_and(|t| {
-                        !t.line_terminator_before
-                            && !matches!(t.kind, TokenKind::Punctuator(';' | '(' | '}'))
-                            && !matches!(&t.kind, TokenKind::Operator(op) if *op == "=")
-                    });
-                    if next_is_key {
-                        self.advance();
-                        true
-                    } else {
-                        false
-                    }
+            let is_auto_accessor_field = if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "accessor")
+                && !self.peek().has_identifier_escape
+            {
+                let next = self.tokens.get(self.cursor + 1);
+                let next_is_key = next.is_some_and(|t| {
+                    !t.line_terminator_before
+                        && !matches!(t.kind, TokenKind::Punctuator(';' | '(' | '}'))
+                        && !matches!(&t.kind, TokenKind::Operator(op) if *op == "=")
+                });
+                if next_is_key {
+                    self.advance();
+                    true
                 } else {
                     false
-                };
+                }
+            } else {
+                false
+            };
 
             // Check for `async` contextual keyword (method modifier).
             // Only treat it as a modifier when the token after `async` on the SAME LINE
@@ -2977,7 +2976,10 @@ impl Parser {
                 }
                 self.validate_private_names_in_statement(body, available)
             }
-            Statement::ForIn { left, right, body } | Statement::ForOf { left, right, body, .. } => {
+            Statement::ForIn { left, right, body }
+            | Statement::ForOf {
+                left, right, body, ..
+            } => {
                 self.validate_private_names_in_for_binding(left, available)?;
                 self.validate_private_names_in_expr(right, available)?;
                 self.validate_private_names_in_statement(body, available)
@@ -3042,9 +3044,7 @@ impl Parser {
         for element in elements {
             match element {
                 ClassElement::Constructor(function) => {
-                    if super_class.is_none()
-                        && self.function_body_has_super_call(&function.body)?
-                    {
+                    if super_class.is_none() && self.function_body_has_super_call(&function.body)? {
                         return Err(ParseError {
                             span: self.peek().span,
                             message: "`super()` is not allowed in a base class constructor".into(),
@@ -3083,9 +3083,9 @@ impl Parser {
 
     fn statement_has_super_call(&self, statement: &Statement) -> Result<bool, ParseError> {
         Ok(match statement {
-            Statement::Expression(expr) | Statement::Return(Some(expr)) | Statement::Throw(expr) => {
-                self.expr_has_super_call(expr)?
-            }
+            Statement::Expression(expr)
+            | Statement::Return(Some(expr))
+            | Statement::Throw(expr) => self.expr_has_super_call(expr)?,
             Statement::Block(statements) => {
                 for statement in statements {
                     if self.statement_has_super_call(statement)? {
@@ -3101,11 +3101,9 @@ impl Parser {
             } => {
                 self.expr_has_super_call(test)?
                     || self.statement_has_super_call(consequent)?
-                    || alternate
-                        .as_deref()
-                        .is_some_and(|statement| {
-                            self.statement_has_super_call(statement).unwrap_or(false)
-                        })
+                    || alternate.as_deref().is_some_and(|statement| {
+                        self.statement_has_super_call(statement).unwrap_or(false)
+                    })
             }
             Statement::While { test, body } | Statement::DoWhile { test, body } => {
                 self.expr_has_super_call(test)? || self.statement_has_super_call(body)?
@@ -3116,13 +3114,11 @@ impl Parser {
                 update,
                 body,
             } => {
-                init.as_deref()
-                    .is_some_and(|statement| {
-                        self.statement_has_super_call(statement).unwrap_or(false)
-                    })
-                    || test
-                        .as_ref()
-                        .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
+                init.as_deref().is_some_and(|statement| {
+                    self.statement_has_super_call(statement).unwrap_or(false)
+                }) || test
+                    .as_ref()
+                    .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
                     || update
                         .as_ref()
                         .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
@@ -3140,14 +3136,14 @@ impl Parser {
                     .iter()
                     .any(|statement| self.statement_has_super_call(statement).unwrap_or(false))
                     || handler.as_ref().is_some_and(|handler| {
-                        handler
-                            .body
-                            .iter()
-                            .any(|statement| self.statement_has_super_call(statement).unwrap_or(false))
+                        handler.body.iter().any(|statement| {
+                            self.statement_has_super_call(statement).unwrap_or(false)
+                        })
                     })
                     || finalizer.as_ref().is_some_and(|body| {
-                        body.iter()
-                            .any(|statement| self.statement_has_super_call(statement).unwrap_or(false))
+                        body.iter().any(|statement| {
+                            self.statement_has_super_call(statement).unwrap_or(false)
+                        })
                     })
             }
             Statement::Switch {
@@ -3164,14 +3160,14 @@ impl Parser {
                             })
                     })
             }
-            Statement::VariableDeclaration { declarations, .. } => declarations.iter().any(
-                |declaration| {
+            Statement::VariableDeclaration { declarations, .. } => {
+                declarations.iter().any(|declaration| {
                     declaration
                         .initializer
                         .as_ref()
                         .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
-                },
-            ),
+                })
+            }
             Statement::DestructuringDeclaration { initializer, .. } => {
                 self.expr_has_super_call(initializer)?
             }
@@ -3426,9 +3422,7 @@ impl Parser {
                 property,
                 computed,
             } => {
-                if !computed
-                    && let Expression::PrivateName(name) = property.as_ref()
-                {
+                if !computed && let Expression::PrivateName(name) = property.as_ref() {
                     if matches!(object.as_ref(), Expression::Super) {
                         return Err(ParseError {
                             span: self.peek().span,
@@ -3482,7 +3476,8 @@ impl Parser {
                 self.validate_private_names_in_expr(left, available)?;
                 self.validate_private_names_in_expr(right, available)
             }
-            Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
+            Expression::Call { callee, arguments }
+            | Expression::Construct { callee, arguments } => {
                 self.validate_private_names_in_expr(callee, available)?;
                 for arg in arguments {
                     match arg {
@@ -3579,7 +3574,9 @@ impl Parser {
                 self.validate_private_names_in_expr(base, available)?;
                 for step in steps {
                     match step {
-                        OptionalChainStep::Member { property, computed, .. } => {
+                        OptionalChainStep::Member {
+                            property, computed, ..
+                        } => {
                             if !computed
                                 && let Expression::PrivateName(name) = property.as_ref()
                                 && !available.contains(name)
@@ -3596,8 +3593,7 @@ impl Parser {
                         OptionalChainStep::Call { arguments, .. } => {
                             for arg in arguments {
                                 match arg {
-                                    CallArgument::Expression(expr)
-                                    | CallArgument::Spread(expr) => {
+                                    CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
                                         self.validate_private_names_in_expr(expr, available)?;
                                     }
                                 }
@@ -3716,13 +3712,13 @@ fn expr_contains_arrow_function(expr: &Expression) -> bool {
                     OptionalChainStep::Member { property, .. } => {
                         expr_contains_arrow_function(property)
                     }
-                    OptionalChainStep::Call { arguments, .. } => arguments.iter().any(|arg| {
-                        match arg {
+                    OptionalChainStep::Call { arguments, .. } => {
+                        arguments.iter().any(|arg| match arg {
                             CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
                                 expr_contains_arrow_function(expr)
                             }
-                        }
-                    }),
+                        })
+                    }
                 })
         }
         Expression::Class(_)

@@ -1750,16 +1750,12 @@ impl NativeContext {
     pub fn get_private_slot(&self, object: ObjectId, name: &str) -> Result<JsValue, VmError> {
         let mut current = Some(object);
         while let Some(id) = current {
-            if let Some(value) = self
-                .private_slots
-                .get(&id)
-                .and_then(|slots| {
-                    slots
-                        .iter()
-                        .find(|((slot_name, _), _)| slot_name == name)
-                        .map(|(_, slot)| slot.value.clone())
-                })
-            {
+            if let Some(value) = self.private_slots.get(&id).and_then(|slots| {
+                slots
+                    .iter()
+                    .find(|((slot_name, _), _)| slot_name == name)
+                    .map(|(_, slot)| slot.value.clone())
+            }) {
                 return Ok(value);
             }
             current = self.heap.object(id).and_then(|object| object.prototype);
@@ -2729,10 +2725,9 @@ impl NativeContext {
     #[must_use]
     pub fn is_constructable_value(&self, value: &JsValue) -> bool {
         match value {
-            JsValue::Function(function) => {
-                self.function(*function)
-                    .is_some_and(|function| function.is_constructable)
-            }
+            JsValue::Function(function) => self
+                .function(*function)
+                .is_some_and(|function| function.is_constructable),
             JsValue::BuiltinFunction(id) => self.builtin(*id).is_some_and(|builtin| {
                 if let Some(bound) = &builtin.bound {
                     self.is_constructable_value(&bound.target)

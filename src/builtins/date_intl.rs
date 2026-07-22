@@ -322,6 +322,124 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
+fn calendar_iso_year(calendar: &str, year: i32) -> i32 {
+    match calendar {
+        "buddhist" => year.saturating_sub(543),
+        "roc" => year.saturating_add(1911),
+        _ => year,
+    }
+}
+
+fn calendar_year_from_iso(calendar: &str, year: i32) -> i32 {
+    match calendar {
+        "buddhist" => year.saturating_add(543),
+        "roc" => year.saturating_sub(1911),
+        _ => year,
+    }
+}
+
+fn calendar_days_from_civil(calendar: &str, year: i32, month: u32, day: u32) -> i64 {
+    days_from_civil(calendar_iso_year(calendar, year), month, day)
+}
+
+fn calendar_civil_from_days(calendar: &str, days: i64) -> (i32, u32, u32) {
+    let (year, month, day) = civil_from_days(days);
+    (calendar_year_from_iso(calendar, year), month, day)
+}
+
+fn calendar_month_day_count(calendar: &str, year: i32, month: u32) -> u32 {
+    let leap = calendar_is_leap_year(calendar, year);
+    match calendar {
+        "coptic" | "ethiopic" | "ethioaa" => match month {
+            1..=12 => 30,
+            13 => {
+                if leap {
+                    6
+                } else {
+                    5
+                }
+            }
+            _ => 0,
+        },
+        "islamic" | "islamic-civil" | "islamic-rgsa" | "islamic-tbla" | "islamic-umalqura" => {
+            match month {
+                1..=11 => {
+                    if month % 2 == 1 {
+                        30
+                    } else {
+                        29
+                    }
+                }
+                12 => {
+                    if leap {
+                        30
+                    } else {
+                        29
+                    }
+                }
+                _ => 0,
+            }
+        }
+        "persian" => match month {
+            1..=6 => 31,
+            7..=11 => 30,
+            12 => {
+                if leap {
+                    30
+                } else {
+                    29
+                }
+            }
+            _ => 0,
+        },
+        "indian" => match month {
+            1 => {
+                if leap {
+                    31
+                } else {
+                    30
+                }
+            }
+            2..=6 => 31,
+            7..=12 => 30,
+            _ => 0,
+        },
+        _ => month_day_count(calendar_iso_year(calendar, year), month),
+    }
+}
+
+fn calendar_is_leap_year(calendar: &str, year: i32) -> bool {
+    match calendar {
+        "coptic" | "ethiopic" | "ethioaa" => year.rem_euclid(4) == 3,
+        "hebrew" => (7 * year + 1).rem_euclid(19) < 7,
+        "islamic" | "islamic-civil" | "islamic-rgsa" | "islamic-tbla" | "islamic-umalqura" => {
+            (11 * year + 14).rem_euclid(30) < 11
+        }
+        "persian" => {
+            let ep_base = year - if year >= 0 { 474 } else { 473 };
+            let ep_year = 474 + ep_base.rem_euclid(2820);
+            (ep_year * 682).rem_euclid(2816) < 682
+        }
+        "indian" => is_leap_year(year.saturating_add(78)),
+        _ => is_leap_year(calendar_iso_year(calendar, year)),
+    }
+}
+
+fn calendar_months_in_year(calendar: &str, year: i32) -> u32 {
+    match calendar {
+        "coptic" | "ethiopic" | "ethioaa" => 13,
+        "hebrew" if calendar_is_leap_year(calendar, year) => 13,
+        _ => 12,
+    }
+}
+
+fn calendar_days_in_year(calendar: &str, year: i32) -> u32 {
+    let months = calendar_months_in_year(calendar, year);
+    (1..=months)
+        .map(|month| calendar_month_day_count(calendar, year, month))
+        .sum()
+}
+
 fn temporal_day_of_week_from_day_number(day_number: i64) -> u32 {
     let sunday_zero = (day_number + 4).rem_euclid(7) as u32;
     if sunday_zero == 0 { 7 } else { sunday_zero }
@@ -366,18 +484,20 @@ fn temporal_date_slots(
     calendar_id: String,
 ) -> Vec<(&'static str, JsValue)> {
     let year_i = year.trunc() as i32;
+    let iso_year_i = calendar_iso_year(&calendar_id, year_i);
     let month_u = month.trunc() as u32;
     let day_u = day.trunc() as u32;
-    let day_number = days_from_civil(year_i, month_u, day_u);
-    let day_of_year = temporal_day_of_year(year_i, month_u, day_u);
-    let (week_of_year, year_of_week) = temporal_week_fields(year_i, month_u, day_u);
-    let leap = is_leap_year(year_i);
+    let day_number = days_from_civil(iso_year_i, month_u, day_u);
+    let day_of_year = temporal_day_of_year(iso_year_i, month_u, day_u);
+    let (week_of_year, iso_year_of_week) = temporal_week_fields(iso_year_i, month_u, day_u);
+    let year_of_week = calendar_year_from_iso(&calendar_id, iso_year_of_week);
+    let leap = calendar_is_leap_year(&calendar_id, year_i);
     vec![
         ("year", JsValue::Number(year.trunc())),
         ("month", JsValue::Number(month.trunc())),
         ("monthCode", JsValue::String(month_code(month))),
         ("day", JsValue::Number(day.trunc())),
-        ("calendarId", JsValue::String(calendar_id)),
+        ("calendarId", JsValue::String(calendar_id.clone())),
         (
             "dayOfWeek",
             JsValue::Number(temporal_day_of_week_from_day_number(day_number) as f64),
@@ -388,13 +508,16 @@ fn temporal_date_slots(
         ("daysInWeek", JsValue::Number(7.0)),
         (
             "daysInMonth",
-            JsValue::Number(month_day_count(year_i, month_u) as f64),
+            JsValue::Number(calendar_month_day_count(&calendar_id, year_i, month_u) as f64),
         ),
         (
             "daysInYear",
-            JsValue::Number(if leap { 366.0 } else { 365.0 }),
+            JsValue::Number(calendar_days_in_year(&calendar_id, year_i) as f64),
         ),
-        ("monthsInYear", JsValue::Number(12.0)),
+        (
+            "monthsInYear",
+            JsValue::Number(calendar_months_in_year(&calendar_id, year_i) as f64),
+        ),
         ("inLeapYear", JsValue::Boolean(leap)),
     ]
 }
@@ -3127,14 +3250,14 @@ fn define_temporal_bool_slot_getter(
     Ok(())
 }
 
-fn define_temporal_undefined_getter(
+fn define_temporal_calendar_getter(
     context: &mut NativeContext,
     prototype: ObjectId,
     name: &'static str,
     getter_name: &'static str,
     kind: &'static str,
 ) -> Result<(), VmError> {
-    let getter = context.register_builtin(getter_name, 0, temporal_undefined_get, None)?;
+    let getter = context.register_builtin(getter_name, 0, temporal_calendar_field_get, None)?;
     let getter_object = context
         .value_object(&getter)
         .ok_or_else(|| VmError::runtime("Temporal getter object missing"))?;
@@ -3143,6 +3266,12 @@ fn define_temporal_undefined_getter(
         getter_object,
         TEMPORAL_KIND,
         JsValue::String(kind.into()),
+    )?;
+    define_hidden(
+        context,
+        getter_object,
+        "calendarField",
+        JsValue::String(name.into()),
     )?;
     context.define_own_property(
         prototype,
@@ -3215,18 +3344,84 @@ fn temporal_bool_slot_get(
         .unwrap_or(JsValue::Boolean(false)))
 }
 
-fn temporal_undefined_get(
+fn temporal_calendar_era(
+    calendar: &str,
+    year: f64,
+    month: f64,
+    day: f64,
+) -> Option<(&'static str, f64)> {
+    let positive_era = |name| Some((name, year));
+    let two_era = |positive, negative| {
+        if year > 0.0 {
+            Some((positive, year))
+        } else {
+            Some((negative, 1.0 - year))
+        }
+    };
+    match calendar {
+        "buddhist" => positive_era("be"),
+        "coptic" => positive_era("am"),
+        "ethioaa" => positive_era("aa"),
+        "ethiopic" => two_era("am", "aa"),
+        "gregory" => two_era("ce", "bce"),
+        "hebrew" => positive_era("am"),
+        "indian" => positive_era("shaka"),
+        "islamic" | "islamic-civil" | "islamic-rgsa" | "islamic-tbla" | "islamic-umalqura" => {
+            two_era("ah", "bh")
+        }
+        "persian" => positive_era("ap"),
+        "roc" => two_era("roc", "broc"),
+        "japanese" => {
+            let date = (year as i32, month as u32, day as u32);
+            if date >= (2019, 5, 1) {
+                Some(("reiwa", year - 2018.0))
+            } else if date >= (1989, 1, 8) {
+                Some(("heisei", year - 1988.0))
+            } else if date >= (1926, 12, 25) {
+                Some(("showa", year - 1925.0))
+            } else if date >= (1912, 7, 30) {
+                Some(("taisho", year - 1911.0))
+            } else if date >= (1868, 9, 8) {
+                Some(("meiji", year - 1867.0))
+            } else {
+                two_era("ce", "bce")
+            }
+        }
+        // ISO 8601 and the Chinese/Dangi calendars have no eras in Temporal.
+        _ => None,
+    }
+}
+
+fn temporal_calendar_field_get(
     _vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let kind = context
+    let (kind, field) = context
         .current_builtin_object()
-        .and_then(|object| own_string(context, object, TEMPORAL_KIND))
-        .unwrap_or_default();
-    require_temporal_kind(context, &this_value, Box::leak(kind.into_boxed_str()))?;
-    Ok(JsValue::Undefined)
+        .and_then(|object| {
+            Some((
+                own_string(context, object, TEMPORAL_KIND)?,
+                own_string(context, object, "calendarField")?,
+            ))
+        })
+        .unwrap_or_else(|| (String::new(), String::new()));
+    let object = require_temporal_kind(context, &this_value, Box::leak(kind.into_boxed_str()))?;
+    let calendar = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let year = temporal_number_slot(context, object, "year");
+    let month = temporal_number_slot(context, object, "month");
+    let day = own_number(context, object, "day")
+        .or_else(|| own_number(context, object, "referenceISODay"))
+        .unwrap_or(1.0);
+    let Some((era, era_year)) = temporal_calendar_era(&calendar, year, month, day) else {
+        return Ok(JsValue::Undefined);
+    };
+    match field.as_str() {
+        "era" => Ok(JsValue::String(era.into())),
+        "eraYear" => Ok(JsValue::Number(era_year)),
+        _ => Ok(JsValue::Undefined),
+    }
 }
 
 fn temporal_duration_construct(
@@ -3996,6 +4191,88 @@ fn temporal_required_object_number(
     } else {
         vm.to_number(value, context)
     }
+}
+
+fn temporal_calendar_year_from_object(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    calendar: &str,
+) -> Result<f64, VmError> {
+    let era_value = temporal_get_property(vm, context, object, "era")?;
+    let era_year_value = temporal_get_property(vm, context, object, "eraYear")?;
+    let year_value = temporal_get_property(vm, context, object, "year")?;
+    if !matches!(year_value, JsValue::Undefined) {
+        return vm.to_number(year_value, context);
+    }
+    if matches!(era_value, JsValue::Undefined) || matches!(era_year_value, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal property `year` or `era` and `eraYear` is required",
+        ));
+    }
+    let era = vm
+        .to_string_coerce(era_value, context)?
+        .to_ascii_lowercase();
+    let era_year = vm.to_number(era_year_value, context)?;
+    if !era_year.is_finite() || era_year.fract() != 0.0 || era_year <= 0.0 {
+        return Err(VmError::range("invalid Temporal eraYear"));
+    }
+    let year = match (calendar, era.as_str()) {
+        ("gregory" | "japanese", "ce" | "ad") => era_year,
+        ("gregory" | "japanese", "bce" | "bc") => 1.0 - era_year,
+        ("roc", "roc") => era_year,
+        ("roc", "broc") => 1.0 - era_year,
+        (
+            "islamic" | "islamic-civil" | "islamic-rgsa" | "islamic-tbla" | "islamic-umalqura",
+            "ah",
+        ) => era_year,
+        (
+            "islamic" | "islamic-civil" | "islamic-rgsa" | "islamic-tbla" | "islamic-umalqura",
+            "bh",
+        ) => 1.0 - era_year,
+        ("japanese", "meiji") => era_year + 1867.0,
+        ("japanese", "taisho") => era_year + 1911.0,
+        ("japanese", "showa") => era_year + 1925.0,
+        ("japanese", "heisei") => era_year + 1988.0,
+        ("japanese", "reiwa") => era_year + 2018.0,
+        ("buddhist", "be")
+        | ("coptic", "am")
+        | ("ethioaa", "aa")
+        | ("ethiopic", "am")
+        | ("hebrew", "am")
+        | ("indian", "shaka")
+        | ("persian", "ap") => era_year,
+        ("ethiopic", "aa") => 1.0 - era_year,
+        _ => return Err(VmError::range("invalid Temporal era for calendar")),
+    };
+    Ok(year)
+}
+
+fn temporal_calendar_year_replacement(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    calendar: &str,
+    current: f64,
+) -> Result<f64, VmError> {
+    let era = temporal_get_property(vm, context, object, "era")?;
+    let era_year = temporal_get_property(vm, context, object, "eraYear")?;
+    let year = temporal_get_property(vm, context, object, "year")?;
+    if !matches!(year, JsValue::Undefined) {
+        return vm.to_number(year, context);
+    }
+    if matches!(era, JsValue::Undefined) && matches!(era_year, JsValue::Undefined) {
+        return Ok(current);
+    }
+    if matches!(era, JsValue::Undefined) || matches!(era_year, JsValue::Undefined) {
+        return Err(VmError::type_error(
+            "Temporal era and eraYear must be provided together",
+        ));
+    }
+    let holder = new_ordinary_object(context, context.object_prototype())?;
+    context.define_own_property(holder, "era".into(), PropertyDescriptor::data(era))?;
+    context.define_own_property(holder, "eraYear".into(), PropertyDescriptor::data(era_year))?;
+    temporal_calendar_year_from_object(vm, context, holder, calendar)
 }
 
 fn temporal_required_month_from_object(
@@ -5302,8 +5579,8 @@ fn install_temporal_plain_date(
         "PlainDate",
         "inLeapYear",
     )?;
-    define_temporal_undefined_getter(context, prototype, "era", "get era", "PlainDate")?;
-    define_temporal_undefined_getter(context, prototype, "eraYear", "get eraYear", "PlainDate")?;
+    define_temporal_calendar_getter(context, prototype, "era", "get era", "PlainDate")?;
+    define_temporal_calendar_getter(context, prototype, "eraYear", "get eraYear", "PlainDate")?;
     Ok(())
 }
 
@@ -5373,6 +5650,28 @@ fn validate_plain_date(year: f64, month: f64, day: f64) -> Result<(), VmError> {
     }
 }
 
+fn validate_plain_date_for_calendar(
+    calendar: &str,
+    year: f64,
+    month: f64,
+    day: f64,
+) -> Result<(), VmError> {
+    if !year.is_finite() || !month.is_finite() || !day.is_finite() {
+        return Err(VmError::range("invalid Temporal.PlainDate"));
+    }
+    let year = year.trunc() as i32;
+    let month = month.trunc() as u32;
+    let day = day.trunc() as u32;
+    let months = calendar_months_in_year(calendar, year);
+    if !(1..=months).contains(&month)
+        || !(1..=calendar_month_day_count(calendar, year, month)).contains(&day)
+    {
+        Err(VmError::range("invalid Temporal.PlainDate"))
+    } else {
+        Ok(())
+    }
+}
+
 fn temporal_constructor_prototype(
     context: &NativeContext,
     name: &str,
@@ -5436,12 +5735,13 @@ fn temporal_plain_date_from(
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
             } else {
+                let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
                 let month = temporal_required_month_from_object(vm, context, object)?;
                 (
-                    temporal_required_object_number(vm, context, object, "year")?,
+                    temporal_calendar_year_from_object(vm, context, object, &calendar_id)?,
                     month,
                     temporal_required_object_number(vm, context, object, "day")?,
-                    temporal_calendar_id_from_object(vm, context, object)?,
+                    calendar_id,
                 )
             }
         }
@@ -5450,12 +5750,16 @@ fn temporal_plain_date_from(
         if ![year, month, day].into_iter().all(f64::is_finite) {
             return Err(VmError::range("invalid Temporal.PlainDate fields"));
         }
-        month = month.trunc().clamp(1.0, 12.0);
-        day = day
-            .trunc()
-            .clamp(1.0, month_day_count(year as i32, month as u32) as f64);
+        month = month.trunc().clamp(
+            1.0,
+            calendar_months_in_year(&calendar_id, year as i32) as f64,
+        );
+        day = day.trunc().clamp(
+            1.0,
+            calendar_month_day_count(&calendar_id, year as i32, month as u32).max(1) as f64,
+        );
     }
-    validate_plain_date(year, month, day)?;
+    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
     create_plain_date_with_calendar(context, prototype, year, month, day, calendar_id)
 }
 
@@ -5463,7 +5767,8 @@ fn plain_date_order_key(context: &NativeContext, object: ObjectId) -> i64 {
     let year = temporal_number_slot(context, object, "year") as i32;
     let month = temporal_number_slot(context, object, "month") as u32;
     let day = temporal_number_slot(context, object, "day") as u32;
-    days_from_civil(year, month, day)
+    let calendar = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    calendar_days_from_civil(&calendar, year, month, day)
 }
 
 fn temporal_plain_date_compare(
@@ -5518,13 +5823,23 @@ fn temporal_calendar_from_argument(
     match value.cloned().unwrap_or(JsValue::Undefined) {
         JsValue::Undefined => Ok("iso8601".into()),
         value => {
-            let calendar = vm.to_string_coerce(value, context)?.to_ascii_lowercase();
+            let calendar = canonicalize_temporal_calendar_id(
+                &vm.to_string_coerce(value, context)?.to_ascii_lowercase(),
+            );
             if calendar.is_empty() {
                 Err(VmError::range("invalid Temporal calendar"))
             } else {
                 Ok(calendar)
             }
         }
+    }
+}
+
+fn canonicalize_temporal_calendar_id(calendar: &str) -> String {
+    match calendar {
+        "islamicc" => "islamic-civil".into(),
+        "ethiopic-amete-alem" => "ethioaa".into(),
+        _ => calendar.into(),
     }
 }
 
@@ -5587,6 +5902,7 @@ fn apply_duration_to_date(
     year: f64,
     month: f64,
     day: f64,
+    calendar: &str,
     duration: DurationValues,
     sign: f64,
     reject_overflow: bool,
@@ -5601,16 +5917,16 @@ fn apply_duration_to_date(
         .map_err(|_| VmError::range("Temporal date is out of range"))?;
     let new_month = month_index.rem_euclid(12) as u32 + 1;
     let requested_day = day.trunc() as u32;
-    let maximum_day = month_day_count(new_year, new_month);
+    let maximum_day = calendar_month_day_count(calendar, new_year, new_month);
     if reject_overflow && requested_day > maximum_day {
         return Err(VmError::range("Temporal date overflows the target month"));
     }
     let clamped_day = requested_day.min(maximum_day);
     let extra_days = (sign * (duration.weeks * 7.0 + duration.days)).trunc() as i64;
-    let day_number = days_from_civil(new_year, new_month, clamped_day)
+    let day_number = calendar_days_from_civil(calendar, new_year, new_month, clamped_day)
         .checked_add(extra_days)
         .ok_or_else(|| VmError::range("Temporal date is out of range"))?;
-    let (year, month, day) = civil_from_days(day_number);
+    let (year, month, day) = calendar_civil_from_days(calendar, day_number);
     Ok((year as f64, month as f64, day as f64))
 }
 
@@ -5750,11 +6066,21 @@ fn date_parts(context: &NativeContext, object: ObjectId) -> (i32, u32, u32) {
     )
 }
 
-fn add_iso_months(year: i32, month: u32, day: u32, delta: i64) -> (i32, u32, u32) {
+fn add_calendar_months(
+    calendar: &str,
+    year: i32,
+    month: u32,
+    day: u32,
+    delta: i64,
+) -> (i32, u32, u32) {
     let index = year as i64 * 12 + month as i64 - 1 + delta;
     let result_year = index.div_euclid(12) as i32;
     let result_month = index.rem_euclid(12) as u32 + 1;
-    let result_day = day.min(month_day_count(result_year, result_month));
+    let result_day = day.min(calendar_month_day_count(
+        calendar,
+        result_year,
+        result_month,
+    ));
     (result_year, result_month, result_day)
 }
 
@@ -5766,8 +6092,9 @@ fn iso_date_difference_values(
 ) -> DurationValues {
     let (start_year, start_month, start_day) = date_parts(context, start);
     let (end_year, end_month, end_day) = date_parts(context, end);
-    let start_number = days_from_civil(start_year, start_month, start_day);
-    let end_number = days_from_civil(end_year, end_month, end_day);
+    let calendar = own_string(context, start, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let start_number = calendar_days_from_civil(&calendar, start_year, start_month, start_day);
+    let end_number = calendar_days_from_civil(&calendar, end_year, end_month, end_day);
     let total_days = end_number - start_number;
     if largest_unit == "day" {
         return DurationValues {
@@ -5785,16 +6112,19 @@ fn iso_date_difference_values(
     let mut months =
         (end_year as i64 * 12 + end_month as i64) - (start_year as i64 * 12 + start_month as i64);
     let direction = total_days.signum();
-    let mut candidate = add_iso_months(start_year, start_month, start_day, months);
-    let mut candidate_number = days_from_civil(candidate.0, candidate.1, candidate.2);
+    let mut candidate = add_calendar_months(&calendar, start_year, start_month, start_day, months);
+    let mut candidate_number =
+        calendar_days_from_civil(&calendar, candidate.0, candidate.1, candidate.2);
     if direction > 0 && candidate_number > end_number {
         months -= 1;
-        candidate = add_iso_months(start_year, start_month, start_day, months);
-        candidate_number = days_from_civil(candidate.0, candidate.1, candidate.2);
+        candidate = add_calendar_months(&calendar, start_year, start_month, start_day, months);
+        candidate_number =
+            calendar_days_from_civil(&calendar, candidate.0, candidate.1, candidate.2);
     } else if direction < 0 && candidate_number < end_number {
         months += 1;
-        candidate = add_iso_months(start_year, start_month, start_day, months);
-        candidate_number = days_from_civil(candidate.0, candidate.1, candidate.2);
+        candidate = add_calendar_months(&calendar, start_year, start_month, start_day, months);
+        candidate_number =
+            calendar_days_from_civil(&calendar, candidate.0, candidate.1, candidate.2);
     }
     let days = end_number - candidate_number;
     if largest_unit == "year" {
@@ -5831,34 +6161,30 @@ fn temporal_plain_date_additive(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
     let (mut year, mut month, mut day) = apply_duration_to_date(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
+        &calendar_id,
         duration,
         sign,
         reject_overflow,
     )?;
     let time_days = plain_time_from_nanoseconds(sign * duration_time_nanoseconds(duration)).0;
     if time_days != 0 {
-        let day_number = days_from_civil(year as i32, month as u32, day as u32)
-            .checked_add(time_days)
-            .filter(|value| value.unsigned_abs() <= 100_000_000)
-            .ok_or_else(|| VmError::range("Temporal.PlainDate is out of range"))?;
+        let day_number =
+            calendar_days_from_civil(&calendar_id, year as i32, month as u32, day as u32)
+                .checked_add(time_days)
+                .filter(|value| value.unsigned_abs() <= 100_000_000)
+                .ok_or_else(|| VmError::range("Temporal.PlainDate is out of range"))?;
         (year, month, day) = {
-            let fields = civil_from_days(day_number);
+            let fields = calendar_civil_from_days(&calendar_id, day_number);
             (fields.0 as f64, fields.1 as f64, fields.2 as f64)
         };
     }
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
-    create_plain_date_with_calendar(
-        context,
-        prototype,
-        year,
-        month,
-        day,
-        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
-    )
+    create_plain_date_with_calendar(context, prototype, year, month, day, calendar_id)
 }
 
 fn temporal_plain_date_add(
@@ -5891,11 +6217,13 @@ fn temporal_plain_date_with(
         "Temporal.PlainDate.prototype.with",
     )?;
     reject_temporal_with_metadata(vm, context, replacement)?;
-    let year = temporal_date_replacement(
+    let calendar_id =
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let year = temporal_calendar_year_replacement(
         vm,
         context,
         replacement,
-        "year",
+        &calendar_id,
         temporal_number_slot(context, this_object, "year"),
     )?;
     let month = temporal_month_from_object(
@@ -5915,7 +6243,7 @@ fn temporal_plain_date_with(
         vm,
         context,
         replacement,
-        &["day", "month", "monthCode", "year"],
+        &["day", "era", "eraYear", "month", "monthCode", "year"],
     )?;
     let reject_overflow = temporal_overflow_reject(
         vm,
@@ -5925,23 +6253,22 @@ fn temporal_plain_date_with(
     let month = if reject_overflow {
         month
     } else {
-        month.clamp(1.0, 12.0)
+        month.clamp(
+            1.0,
+            calendar_months_in_year(&calendar_id, year as i32) as f64,
+        )
     };
     let day = if reject_overflow {
         day
     } else {
-        day.clamp(1.0, month_day_count(year as i32, month as u32) as f64)
+        day.clamp(
+            1.0,
+            calendar_month_day_count(&calendar_id, year as i32, month as u32).max(1) as f64,
+        )
     };
-    validate_plain_date(year, month, day)?;
+    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
-    create_plain_date_with_calendar(
-        context,
-        prototype,
-        year,
-        month,
-        day,
-        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
-    )
+    create_plain_date_with_calendar(context, prototype, year, month, day, calendar_id)
 }
 
 fn temporal_plain_date_with_calendar(
@@ -7049,8 +7376,8 @@ fn install_temporal_plain_date_time(
         "PlainDateTime",
         "inLeapYear",
     )?;
-    define_temporal_undefined_getter(context, prototype, "era", "get era", "PlainDateTime")?;
-    define_temporal_undefined_getter(
+    define_temporal_calendar_getter(context, prototype, "era", "get era", "PlainDateTime")?;
+    define_temporal_calendar_getter(
         context,
         prototype,
         "eraYear",
@@ -7180,9 +7507,10 @@ fn temporal_plain_date_time_from(
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
             } else {
+                let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
                 let month = temporal_required_month_from_object(vm, context, object)?;
                 (
-                    temporal_required_object_number(vm, context, object, "year")?,
+                    temporal_calendar_year_from_object(vm, context, object, &calendar_id)?,
                     month,
                     temporal_required_object_number(vm, context, object, "day")?,
                     PlainTimeValues {
@@ -7193,7 +7521,7 @@ fn temporal_plain_date_time_from(
                         microsecond: temporal_object_number(vm, context, object, "microsecond")?,
                         nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
                     },
-                    temporal_calendar_id_from_object(vm, context, object)?,
+                    calendar_id,
                 )
             }
         }
@@ -7215,10 +7543,14 @@ fn temporal_plain_date_time_from(
         {
             return Err(VmError::range("invalid Temporal.PlainDateTime fields"));
         }
-        month = month.trunc().clamp(1.0, 12.0);
-        day = day
-            .trunc()
-            .clamp(1.0, month_day_count(year as i32, month as u32) as f64);
+        month = month.trunc().clamp(
+            1.0,
+            calendar_months_in_year(&calendar_id, year as i32) as f64,
+        );
+        day = day.trunc().clamp(
+            1.0,
+            calendar_month_day_count(&calendar_id, year as i32, month as u32).max(1) as f64,
+        );
         time.hour = time.hour.trunc().clamp(0.0, 23.0);
         time.minute = time.minute.trunc().clamp(0.0, 59.0);
         time.second = time.second.trunc().clamp(0.0, 59.0);
@@ -7226,7 +7558,7 @@ fn temporal_plain_date_time_from(
         time.microsecond = time.microsecond.trunc().clamp(0.0, 999.0);
         time.nanosecond = time.nanosecond.trunc().clamp(0.0, 999.0);
     }
-    validate_plain_date(year, month, day)?;
+    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
     validate_plain_time(time)?;
     create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
 }
@@ -7364,10 +7696,12 @@ fn temporal_plain_date_time_additive(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
     let (mut year, mut month, mut day) = apply_duration_to_date(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
+        &calendar_id,
         duration,
         sign,
         reject_overflow,
@@ -7376,25 +7710,18 @@ fn temporal_plain_date_time_additive(
         + sign * duration_time_nanoseconds(duration);
     let (extra_days, time) = plain_time_from_nanoseconds(time_ns);
     if extra_days != 0 {
-        let day_number = days_from_civil(year as i32, month as u32, day as u32)
-            .checked_add(extra_days)
-            .filter(|value| value.unsigned_abs() <= 100_000_000)
-            .ok_or_else(|| VmError::range("Temporal.PlainDateTime is out of range"))?;
-        let fields = civil_from_days(day_number);
+        let day_number =
+            calendar_days_from_civil(&calendar_id, year as i32, month as u32, day as u32)
+                .checked_add(extra_days)
+                .filter(|value| value.unsigned_abs() <= 100_000_000)
+                .ok_or_else(|| VmError::range("Temporal.PlainDateTime is out of range"))?;
+        let fields = calendar_civil_from_days(&calendar_id, day_number);
         year = fields.0 as f64;
         month = fields.1 as f64;
         day = fields.2 as f64;
     }
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
-    create_plain_date_time_with_calendar(
-        context,
-        prototype,
-        year,
-        month,
-        day,
-        time,
-        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
-    )
+    create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
 }
 
 fn temporal_plain_date_time_add(
@@ -7427,11 +7754,13 @@ fn temporal_plain_date_time_with(
         "Temporal.PlainDateTime.prototype.with",
     )?;
     reject_temporal_with_metadata(vm, context, replacement)?;
-    let year = temporal_date_replacement(
+    let calendar_id =
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let year = temporal_calendar_year_replacement(
         vm,
         context,
         replacement,
-        "year",
+        &calendar_id,
         temporal_number_slot(context, this_object, "year"),
     )?;
     let month = temporal_month_from_object(
@@ -7497,6 +7826,8 @@ fn temporal_plain_date_time_with(
         replacement,
         &[
             "day",
+            "era",
+            "eraYear",
             "hour",
             "microsecond",
             "millisecond",
@@ -7516,12 +7847,18 @@ fn temporal_plain_date_time_with(
     let month = if reject_overflow {
         month
     } else {
-        month.clamp(1.0, 12.0)
+        month.clamp(
+            1.0,
+            calendar_months_in_year(&calendar_id, year as i32) as f64,
+        )
     };
     let day = if reject_overflow {
         day
     } else {
-        day.clamp(1.0, month_day_count(year as i32, month as u32) as f64)
+        day.clamp(
+            1.0,
+            calendar_month_day_count(&calendar_id, year as i32, month as u32).max(1) as f64,
+        )
     };
     if !reject_overflow {
         time.hour = time.hour.clamp(0.0, 23.0);
@@ -7531,18 +7868,10 @@ fn temporal_plain_date_time_with(
         time.microsecond = time.microsecond.clamp(0.0, 999.0);
         time.nanosecond = time.nanosecond.clamp(0.0, 999.0);
     }
-    validate_plain_date(year, month, day)?;
+    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
     validate_plain_time(time)?;
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
-    create_plain_date_time_with_calendar(
-        context,
-        prototype,
-        year,
-        month,
-        day,
-        time,
-        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
-    )
+    create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
 }
 
 fn temporal_plain_date_time_with_calendar(
@@ -7945,7 +8274,9 @@ fn month_code(month: f64) -> String {
 fn parse_month_code(value: &str) -> Option<f64> {
     let month = value.strip_prefix('M')?;
     let month = parse_fixed_digits(month, 2)?;
-    (1..=12).contains(&month).then_some(month as f64)
+    // M13 is used by the Coptic and Ethiopic calendar families. ISO callers
+    // still reject it in their calendar-aware date validation step.
+    (1..=13).contains(&month).then_some(month as f64)
 }
 
 fn temporal_calendar_id_from_object(
@@ -7997,7 +8328,7 @@ fn temporal_calendar_id_from_object(
             } else if text.starts_with(|ch: char| ch.is_ascii_digit() || matches!(ch, '+' | '-')) {
                 Err(VmError::range("invalid Temporal calendar ISO string"))
             } else {
-                Ok(text)
+                Ok(canonicalize_temporal_calendar_id(&text))
             }
         }
     }
@@ -8110,8 +8441,8 @@ fn install_temporal_plain_year_month(
         "PlainYearMonth",
         "inLeapYear",
     )?;
-    define_temporal_undefined_getter(context, prototype, "era", "get era", "PlainYearMonth")?;
-    define_temporal_undefined_getter(
+    define_temporal_calendar_getter(context, prototype, "era", "get era", "PlainYearMonth")?;
+    define_temporal_calendar_getter(
         context,
         prototype,
         "eraYear",
@@ -8141,17 +8472,23 @@ fn create_plain_year_month(
             ("month", JsValue::Number(month.trunc())),
             ("referenceISODay", JsValue::Number(reference_day.trunc())),
             ("monthCode", JsValue::String(month_code(month))),
-            ("calendarId", JsValue::String(calendar_id)),
+            ("calendarId", JsValue::String(calendar_id.clone())),
             (
                 "daysInMonth",
-                JsValue::Number(month_day_count(year_i, month_u) as f64),
+                JsValue::Number(calendar_month_day_count(&calendar_id, year_i, month_u) as f64),
             ),
             (
                 "daysInYear",
-                JsValue::Number(if is_leap_year(year_i) { 366.0 } else { 365.0 }),
+                JsValue::Number(calendar_days_in_year(&calendar_id, year_i) as f64),
             ),
-            ("monthsInYear", JsValue::Number(12.0)),
-            ("inLeapYear", JsValue::Boolean(is_leap_year(year_i))),
+            (
+                "monthsInYear",
+                JsValue::Number(calendar_months_in_year(&calendar_id, year_i) as f64),
+            ),
+            (
+                "inLeapYear",
+                JsValue::Boolean(calendar_is_leap_year(&calendar_id, year_i)),
+            ),
         ],
     )
 }
@@ -8245,15 +8582,11 @@ fn temporal_plain_year_month_from(
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
             } else {
-                let year = temporal_required_object_number(vm, context, object, "year")?;
+                let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
+                let year = temporal_calendar_year_from_object(vm, context, object, &calendar_id)?;
                 let month = temporal_required_month_from_object(vm, context, object)?;
                 let _day = temporal_get_property(vm, context, object, "day")?;
-                (
-                    year,
-                    month,
-                    1.0,
-                    temporal_calendar_id_from_object(vm, context, object)?,
-                )
+                (year, month, 1.0, calendar_id)
             }
         }
     };
@@ -8261,7 +8594,10 @@ fn temporal_plain_year_month_from(
         if !year.is_finite() || !month.is_finite() {
             return Err(VmError::range("invalid Temporal.PlainYearMonth fields"));
         }
-        month = month.trunc().clamp(1.0, 12.0);
+        month = month.trunc().clamp(
+            1.0,
+            calendar_months_in_year(&calendar_id, year as i32) as f64,
+        );
     }
     create_plain_year_month(context, prototype, year, month, reference_day, calendar_id)
 }
@@ -8440,11 +8776,14 @@ fn temporal_plain_year_month_with(
         &arguments.first().cloned().unwrap_or(JsValue::Undefined),
         "Temporal.PlainYearMonth.prototype.with",
     )?;
-    let year = temporal_date_replacement(
+    reject_temporal_with_metadata(vm, context, replacement)?;
+    let calendar_id =
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let year = temporal_calendar_year_replacement(
         vm,
         context,
         replacement,
-        "year",
+        &calendar_id,
         temporal_number_slot(context, this_object, "year"),
     )?;
     let month = temporal_month_from_object(
@@ -8460,15 +8799,14 @@ fn temporal_plain_year_month_with(
         "day",
         temporal_number_slot(context, this_object, "referenceISODay").max(1.0),
     )?;
-    let prototype = temporal_constructor_prototype(context, "PlainYearMonth")?;
-    create_plain_year_month(
+    require_temporal_with_field(
+        vm,
         context,
-        prototype,
-        year,
-        month,
-        day,
-        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
-    )
+        replacement,
+        &["day", "era", "eraYear", "month", "monthCode", "year"],
+    )?;
+    let prototype = temporal_constructor_prototype(context, "PlainYearMonth")?;
+    create_plain_year_month(context, prototype, year, month, day, calendar_id)
 }
 
 fn temporal_plain_year_month_difference(
@@ -9132,8 +9470,8 @@ fn install_temporal_zoned_date_time(
         "ZonedDateTime",
         "inLeapYear",
     )?;
-    define_temporal_undefined_getter(context, prototype, "era", "get era", "ZonedDateTime")?;
-    define_temporal_undefined_getter(
+    define_temporal_calendar_getter(context, prototype, "era", "get era", "ZonedDateTime")?;
+    define_temporal_calendar_getter(
         context,
         prototype,
         "eraYear",
@@ -9808,10 +10146,12 @@ fn temporal_zoned_date_time_additive(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
     let (mut year, mut month, mut day) = apply_duration_to_date(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
         temporal_number_slot(context, object, "day"),
+        &calendar_id,
         duration,
         sign,
         reject_overflow,
@@ -9820,11 +10160,12 @@ fn temporal_zoned_date_time_additive(
         + sign * duration_time_nanoseconds(duration);
     let (extra_days, time) = plain_time_from_nanoseconds(time_ns);
     if extra_days != 0 {
-        let day_number = days_from_civil(year as i32, month as u32, day as u32)
-            .checked_add(extra_days)
-            .filter(|value| value.unsigned_abs() <= 100_000_000)
-            .ok_or_else(|| VmError::range("Temporal.ZonedDateTime is out of range"))?;
-        let fields = civil_from_days(day_number);
+        let day_number =
+            calendar_days_from_civil(&calendar_id, year as i32, month as u32, day as u32)
+                .checked_add(extra_days)
+                .filter(|value| value.unsigned_abs() <= 100_000_000)
+                .ok_or_else(|| VmError::range("Temporal.ZonedDateTime is out of range"))?;
+        let fields = calendar_civil_from_days(&calendar_id, day_number);
         year = fields.0 as f64;
         month = fields.1 as f64;
         day = fields.2 as f64;
@@ -9838,7 +10179,7 @@ fn temporal_zoned_date_time_additive(
         day,
         time,
         own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
-        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+        calendar_id,
     )
 }
 

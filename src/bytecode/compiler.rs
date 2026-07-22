@@ -3680,14 +3680,16 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         // quasis.len() == expressions.len() + 1.
-        // Compile as: quasis[0] + toString(expr[0]) + quasis[1] + ...
-        // The initial string quasi makes Add treat subsequent values as strings.
+        // Each substitution uses ToString directly. Lowering to string `+` would
+        // use ToPrimitive(default), which is observably different for objects
+        // such as Temporal values whose valueOf method intentionally throws.
         let first_idx = chunk
             .add_constant(Constant::String(tl.quasis[0].clone()))
             .map_err(CompileError::from_chunk)?;
         chunk.emit(Instruction::Constant(first_idx));
         for (expr, quasi) in tl.expressions.iter().zip(tl.quasis[1..].iter()) {
             self.compile_expression(expr, chunk, context)?;
+            chunk.emit(Instruction::ToString);
             chunk.emit(Instruction::Add); // string + expr → string (coerces expr)
             let q_idx = chunk
                 .add_constant(Constant::String(quasi.clone()))
@@ -3826,9 +3828,7 @@ impl Compiler {
                     if matches!(callee.as_ref(), Expression::Super)
             );
             output.push(statement);
-            if is_super_statement
-                && let Some(mut initializers) = pending_initializers.take()
-            {
+            if is_super_statement && let Some(mut initializers) = pending_initializers.take() {
                 output.append(&mut initializers);
             }
         }
@@ -5529,6 +5529,12 @@ mod tests {
             [Instruction::Constant(0), Instruction::Return]
         );
         assert_eq!(chunk.constants[0], num_const(42.0));
+    }
+
+    #[test]
+    fn template_substitution_uses_string_hint_conversion() {
+        let chunk = compile("`${value}`");
+        assert!(chunk.instructions.contains(&Instruction::ToString));
     }
 
     #[test]

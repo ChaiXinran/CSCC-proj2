@@ -57,6 +57,8 @@ pub enum Instruction {
     StoreGlobal(u16),
 
     UnaryPlus,
+    /// Converts the top value using the ECMAScript ToString abstract operation.
+    ToString,
     /// ToNumeric: converts the top value to a Number (or keeps BigInt). Used for
     /// postfix `++`/`--` to coerce the old value before it becomes the result.
     ToNumeric,
@@ -417,6 +419,7 @@ impl Instruction {
             Self::StoreGlobal(_)
             | Self::StoreName(_)
             | Self::UnaryPlus
+            | Self::ToString
             | Self::ToNumeric
             | Self::Increment
             | Self::Decrement
