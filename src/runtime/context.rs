@@ -173,7 +173,7 @@ pub struct NativeContext {
     pending_module_import_links: HashMap<String, (EnvironmentId, String)>,
     module_import_links: HashMap<(EnvironmentId, String), (EnvironmentId, String)>,
     next_private_brand: u32,
-    private_slots: HashMap<ObjectId, HashMap<String, PrivateSlot>>,
+    private_slots: HashMap<ObjectId, HashMap<(String, PrivateBrandId), PrivateSlot>>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
     function_objects: HashMap<FunctionId, ObjectId>,
     function_realm_globals: HashMap<FunctionId, ObjectId>,
@@ -1005,6 +1005,11 @@ impl NativeContext {
         JsValue::Symbol(self.symbol_registry.create(description))
     }
 
+    #[must_use]
+    pub fn symbol_description(&self, id: SymbolId) -> Option<&str> {
+        self.symbol_registry.description(id)
+    }
+
     /// `Symbol.for(key)` — return the same symbol for the same key string.
     pub fn symbol_for(&mut self, key: String) -> JsValue {
         if let Some(&id) = self.symbol_for_registry.get(&key) {
@@ -1732,12 +1737,13 @@ impl NativeContext {
         value: JsValue,
     ) -> Result<(), VmError> {
         let slots = self.private_slots.entry(object).or_default();
-        if slots.contains_key(&name) {
+        let key = (name.clone(), brand);
+        if slots.contains_key(&key) {
             return Err(VmError::type_error(format!(
                 "duplicate private field #{name}"
             )));
         }
-        slots.insert(name, PrivateSlot { brand, value });
+        slots.insert(key, PrivateSlot { brand, value });
         Ok(())
     }
 
@@ -1747,8 +1753,12 @@ impl NativeContext {
             if let Some(value) = self
                 .private_slots
                 .get(&id)
-                .and_then(|slots| slots.get(name))
-                .map(|slot| slot.value.clone())
+                .and_then(|slots| {
+                    slots
+                        .iter()
+                        .find(|((slot_name, _), _)| slot_name == name)
+                        .map(|(_, slot)| slot.value.clone())
+                })
             {
                 return Ok(value);
             }
@@ -1767,7 +1777,7 @@ impl NativeContext {
     ) -> Result<JsValue, VmError> {
         self.private_slots
             .get(&object)
-            .and_then(|slots| slots.get(name))
+            .and_then(|slots| slots.get(&(name.to_string(), brand)))
             .filter(|slot| slot.brand == brand)
             .map(|slot| slot.value.clone())
             .ok_or_else(|| {
@@ -1787,7 +1797,7 @@ impl NativeContext {
         let slot = self
             .private_slots
             .get_mut(&object)
-            .and_then(|slots| slots.get_mut(name))
+            .and_then(|slots| slots.get_mut(&(name.to_string(), brand)))
             .filter(|slot| slot.brand == brand)
             .ok_or_else(|| {
                 VmError::type_error(format!(
@@ -1807,7 +1817,12 @@ impl NativeContext {
         let slot = self
             .private_slots
             .get_mut(&object)
-            .and_then(|slots| slots.get_mut(name))
+            .and_then(|slots| {
+                slots
+                    .iter_mut()
+                    .find(|((slot_name, _), _)| slot_name == name)
+                    .map(|(_, slot)| slot)
+            })
             .ok_or_else(|| {
                 VmError::type_error(format!("object does not have private field #{name}"))
             })?;
@@ -1824,7 +1839,7 @@ impl NativeContext {
         if self
             .private_slots
             .get(&object)
-            .is_some_and(|slots| slots.contains_key(name))
+            .is_some_and(|slots| slots.keys().any(|(slot_name, _)| slot_name == name))
         {
             return self.set_private_slot(object, name, value);
         }
@@ -2007,6 +2022,8 @@ impl NativeContext {
             .length_override
             .map(|n| n as usize)
             .unwrap_or(function.params.len());
+        let has_own_prototype_property = function.has_own_prototype_property;
+        let prototype_writable = function.prototype_writable;
         let mut function_object = JsObject::ordinary();
         function_object.prototype = self.function_prototype_object();
         let function_object_id = self
@@ -2021,17 +2038,22 @@ impl NativeContext {
         self.register_function_object(id, function_object_id);
         self.function_realm_globals.insert(id, self.global_object);
 
-        let mut prototype = JsObject::ordinary();
-        prototype.prototype = self.object_prototype();
-        prototype.define_property(
-            "constructor",
-            PropertyDescriptor::data_with(JsValue::Function(id), true, false, true),
-        );
-        let prototype_id = self
-            .heap
-            .allocate_object(prototype)
-            .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
-        self.function_prototypes.insert(id, prototype_id);
+        let prototype_id = if has_own_prototype_property {
+            let mut prototype = JsObject::ordinary();
+            prototype.prototype = self.object_prototype();
+            prototype.define_property(
+                "constructor",
+                PropertyDescriptor::data_with(JsValue::Function(id), true, false, true),
+            );
+            let prototype_id = self
+                .heap
+                .allocate_object(prototype)
+                .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+            self.function_prototypes.insert(id, prototype_id);
+            Some(prototype_id)
+        } else {
+            None
+        };
 
         let legacy_caller_descriptor = self.legacy_function_caller_descriptor();
         let legacy_arguments_descriptor = self.legacy_function_arguments_descriptor();
@@ -2052,10 +2074,17 @@ impl NativeContext {
             "name",
             PropertyDescriptor::data_with(JsValue::String(function_name), false, false, true),
         );
-        function_object.define_property(
-            "prototype",
-            PropertyDescriptor::data_with(JsValue::Object(prototype_id), true, false, false),
-        );
+        if let Some(prototype_id) = prototype_id {
+            function_object.define_property(
+                "prototype",
+                PropertyDescriptor::data_with(
+                    JsValue::Object(prototype_id),
+                    prototype_writable,
+                    false,
+                    false,
+                ),
+            );
+        }
         if let Some(descriptor) = legacy_caller_descriptor {
             function_object.define_property("caller", descriptor);
         }
@@ -2700,9 +2729,10 @@ impl NativeContext {
     #[must_use]
     pub fn is_constructable_value(&self, value: &JsValue) -> bool {
         match value {
-            JsValue::Function(function) => self.function(*function).is_some_and(|function| {
-                !function.is_generator && !function.is_async && !function.is_arrow
-            }),
+            JsValue::Function(function) => {
+                self.function(*function)
+                    .is_some_and(|function| function.is_constructable)
+            }
             JsValue::BuiltinFunction(id) => self.builtin(*id).is_some_and(|builtin| {
                 if let Some(bound) = &builtin.bound {
                     self.is_constructable_value(&bound.target)

@@ -17,12 +17,14 @@
 //! primary
 //! ```
 
+use std::collections::{HashMap, HashSet};
+
 use crate::{
     ast::{
         ArrayElement, AssignmentOperator, BinaryOperator, CallArgument, ClassElement,
-        ClassExpression, Expression, FunctionLiteral, FunctionParam, Literal, LogicalOperator,
-        ObjectProperty, OptionalChainStep, PropertyName, Statement, TemplateLiteral, UnaryOperator,
-        UpdateOperator,
+        ClassExpression, Expression, FunctionBody, FunctionLiteral, FunctionParam, Literal,
+        LogicalOperator, ObjectBindingKey, ObjectProperty, OptionalChainStep, PropertyName,
+        Statement, TemplateLiteral, UnaryOperator, UpdateOperator,
     },
     lexer::{Keyword, TokenKind},
     parser::{
@@ -1525,10 +1527,8 @@ impl Parser {
         // Getters and setters with the same name form a valid accessor pair.
         let mut seen_private_names: std::collections::HashSet<String> =
             std::collections::HashSet::new();
-        let mut seen_private_getters: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
-        let mut seen_private_setters: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut seen_private_getters: HashMap<String, bool> = HashMap::new();
+        let mut seen_private_setters: HashMap<String, bool> = HashMap::new();
 
         while !self.check_punctuator('}') && !self.at_eof() {
             // Skip empty class elements (bare semicolons).
@@ -1582,10 +1582,31 @@ impl Parser {
                 continue;
             }
 
+            let is_auto_accessor_field =
+                if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "accessor")
+                    && !self.peek().has_identifier_escape
+                {
+                    let next = self.tokens.get(self.cursor + 1);
+                    let next_is_key = next.is_some_and(|t| {
+                        !t.line_terminator_before
+                            && !matches!(t.kind, TokenKind::Punctuator(';' | '(' | '}'))
+                            && !matches!(&t.kind, TokenKind::Operator(op) if *op == "=")
+                    });
+                    if next_is_key {
+                        self.advance();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
             // Check for `async` contextual keyword (method modifier).
             // Only treat it as a modifier when the token after `async` on the SAME LINE
             // looks like the start of a method key, AND the `async` token has no escape seqs.
-            let is_async = if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "async")
+            let is_async = if !is_auto_accessor_field
+                && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "async")
                 && !self.peek().has_identifier_escape
             {
                 let next = self.tokens.get(self.cursor + 1);
@@ -1637,16 +1658,28 @@ impl Parser {
                 // environment. Only one getter/setter pair may share a name.
                 let key = pn.clone();
                 if is_accessor && is_getter {
-                    if seen_private_names.contains(&key) || !seen_private_getters.insert(key) {
+                    if seen_private_names.contains(&key)
+                        || seen_private_getters.contains_key(&key)
+                        || seen_private_setters
+                            .get(&key)
+                            .is_some_and(|setter_static| *setter_static != is_static)
+                    {
                         return Err(self.error(format!("duplicate private getter `#{pn}`")));
                     }
+                    seen_private_getters.insert(key, is_static);
                 } else if is_accessor && is_setter {
-                    if seen_private_names.contains(&key) || !seen_private_setters.insert(key) {
+                    if seen_private_names.contains(&key)
+                        || seen_private_setters.contains_key(&key)
+                        || seen_private_getters
+                            .get(&key)
+                            .is_some_and(|getter_static| *getter_static != is_static)
+                    {
                         return Err(self.error(format!("duplicate private setter `#{pn}`")));
                     }
+                    seen_private_setters.insert(key, is_static);
                 } else {
-                    if seen_private_getters.contains(&key)
-                        || seen_private_setters.contains(&key)
+                    if seen_private_getters.contains_key(&key)
+                        || seen_private_setters.contains_key(&key)
                         || !seen_private_names.insert(key)
                     {
                         return Err(self.error(format!("duplicate private name `#{pn}`")));
@@ -1819,6 +1852,9 @@ impl Parser {
                 if is_generator_method {
                     Self::check_generator_params_no_yield(&params)?;
                 }
+                if !is_ctor {
+                    self.check_non_ctor_super_call_params(&params)?;
+                }
 
                 // Strict mode: duplicate simple param names are a SyntaxError.
                 // (All class methods are strict since the class body is strict.)
@@ -1961,6 +1997,29 @@ impl Parser {
     fn check_non_ctor_super_call(&self, body: &crate::ast::FunctionBody) -> Result<(), ParseError> {
         for stmt in &body.statements {
             self.check_super_call_stmt(stmt)?;
+        }
+        Ok(())
+    }
+
+    fn check_non_ctor_super_call_params(
+        &self,
+        params: &[crate::ast::FunctionParam],
+    ) -> Result<(), ParseError> {
+        for param in params {
+            match param {
+                crate::ast::FunctionParam::Default(_, expr) => {
+                    self.check_super_call_expr(expr)?;
+                }
+                crate::ast::FunctionParam::Pattern(_, default) => {
+                    if let Some(default) = default {
+                        self.check_super_call_expr(default)?;
+                    }
+                }
+                crate::ast::FunctionParam::RestPattern(pattern) => {
+                    let _ = pattern;
+                }
+                crate::ast::FunctionParam::Simple(_) | crate::ast::FunctionParam::Rest(_) => {}
+            }
         }
         Ok(())
     }
@@ -2801,6 +2860,879 @@ impl Parser {
                 Ok(())
             }
         }
+    }
+
+    pub(super) fn validate_private_names(
+        &self,
+        statements: &[Statement],
+    ) -> Result<(), ParseError> {
+        self.validate_private_names_in_statements(statements, &HashSet::new())
+    }
+
+    fn validate_private_names_in_statements(
+        &self,
+        statements: &[Statement],
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        for statement in statements {
+            self.validate_private_names_in_statement(statement, available)?;
+        }
+        Ok(())
+    }
+
+    fn validate_private_names_in_statement(
+        &self,
+        statement: &Statement,
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        match statement {
+            Statement::Empty | Statement::Break(_) | Statement::Continue(_) => Ok(()),
+            Statement::Expression(expr) | Statement::Throw(expr) => {
+                self.validate_private_names_in_expr(expr, available)
+            }
+            Statement::Block(statements) => {
+                self.validate_private_names_in_statements(statements, available)
+            }
+            Statement::VariableDeclaration { declarations, .. } => {
+                for declaration in declarations {
+                    if let Some(pattern) = &declaration.pattern {
+                        self.validate_private_names_in_binding_pattern(pattern, available)?;
+                    }
+                    if let Some(initializer) = &declaration.initializer {
+                        self.validate_private_names_in_expr(initializer, available)?;
+                    }
+                }
+                Ok(())
+            }
+            Statement::FunctionDeclaration { params, body, .. } => {
+                self.validate_private_names_in_params(params, available)?;
+                self.validate_private_names_in_function_body(body, available)
+            }
+            Statement::Return(value) => {
+                if let Some(value) = value {
+                    self.validate_private_names_in_expr(value, available)?;
+                }
+                Ok(())
+            }
+            Statement::If {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.validate_private_names_in_expr(test, available)?;
+                self.validate_private_names_in_statement(consequent, available)?;
+                if let Some(alternate) = alternate {
+                    self.validate_private_names_in_statement(alternate, available)?;
+                }
+                Ok(())
+            }
+            Statement::While { test, body } | Statement::DoWhile { test, body } => {
+                self.validate_private_names_in_expr(test, available)?;
+                self.validate_private_names_in_statement(body, available)
+            }
+            Statement::Labelled { body, .. } | Statement::With { body, .. } => {
+                self.validate_private_names_in_statement(body, available)
+            }
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => {
+                self.validate_private_names_in_statements(block, available)?;
+                if let Some(handler) = handler {
+                    self.validate_private_names_in_statements(&handler.body, available)?;
+                }
+                if let Some(finalizer) = finalizer {
+                    self.validate_private_names_in_statements(finalizer, available)?;
+                }
+                Ok(())
+            }
+            Statement::Switch {
+                discriminant,
+                cases,
+            } => {
+                self.validate_private_names_in_expr(discriminant, available)?;
+                for case in cases {
+                    if let Some(test) = &case.test {
+                        self.validate_private_names_in_expr(test, available)?;
+                    }
+                    self.validate_private_names_in_statements(&case.consequent, available)?;
+                }
+                Ok(())
+            }
+            Statement::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                if let Some(init) = init {
+                    self.validate_private_names_in_statement(init, available)?;
+                }
+                if let Some(test) = test {
+                    self.validate_private_names_in_expr(test, available)?;
+                }
+                if let Some(update) = update {
+                    self.validate_private_names_in_expr(update, available)?;
+                }
+                self.validate_private_names_in_statement(body, available)
+            }
+            Statement::ForIn { left, right, body } | Statement::ForOf { left, right, body, .. } => {
+                self.validate_private_names_in_for_binding(left, available)?;
+                self.validate_private_names_in_expr(right, available)?;
+                self.validate_private_names_in_statement(body, available)
+            }
+            Statement::ClassDeclaration(class) => self.validate_private_names_in_class(
+                class.super_class.as_ref(),
+                &class.elements,
+                available,
+            ),
+            Statement::DestructuringDeclaration {
+                pattern,
+                initializer,
+                ..
+            } => {
+                self.validate_private_names_in_binding_pattern(pattern, available)?;
+                self.validate_private_names_in_expr(initializer, available)
+            }
+            Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Import(_)) => Ok(()),
+            Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Export(decl)) => {
+                if let Some(statement) = decl.declaration.as_deref() {
+                    self.validate_private_names_in_statement(statement, available)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn validate_private_names_in_class(
+        &self,
+        super_class: Option<&Expression>,
+        elements: &[ClassElement],
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        if let Some(super_class) = super_class {
+            if expr_contains_arrow_function(super_class) {
+                return Err(ParseError {
+                    span: self.peek().span,
+                    message: "class heritage may not be an arrow function".into(),
+                });
+            }
+            self.validate_private_names_in_expr(super_class, available)?;
+        }
+
+        let constructor_count = elements
+            .iter()
+            .filter(|element| matches!(element, ClassElement::Constructor(_)))
+            .count();
+        if constructor_count > 1 {
+            return Err(ParseError {
+                span: self.peek().span,
+                message: "class body may not contain more than one constructor".into(),
+            });
+        }
+
+        let mut class_names = available.clone();
+        for element in elements {
+            if let Some(name) = private_bound_name(element) {
+                class_names.insert(name.to_string());
+            }
+        }
+
+        for element in elements {
+            match element {
+                ClassElement::Constructor(function) => {
+                    if super_class.is_none()
+                        && self.function_body_has_super_call(&function.body)?
+                    {
+                        return Err(ParseError {
+                            span: self.peek().span,
+                            message: "`super()` is not allowed in a base class constructor".into(),
+                        });
+                    }
+                    self.validate_private_names_in_function(function, &class_names)?;
+                }
+                ClassElement::Method { name, function, .. } => {
+                    self.validate_private_names_in_property_name(name, &class_names)?;
+                    self.validate_private_names_in_function(function, &class_names)?;
+                }
+                ClassElement::Field {
+                    name, initializer, ..
+                } => {
+                    self.validate_private_names_in_property_name(name, &class_names)?;
+                    if let Some(initializer) = initializer {
+                        self.validate_private_names_in_expr(initializer, &class_names)?;
+                    }
+                }
+                ClassElement::StaticBlock(body) => {
+                    self.validate_private_names_in_statements(body, &class_names)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn function_body_has_super_call(&self, body: &FunctionBody) -> Result<bool, ParseError> {
+        for statement in &body.statements {
+            if self.statement_has_super_call(statement)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn statement_has_super_call(&self, statement: &Statement) -> Result<bool, ParseError> {
+        Ok(match statement {
+            Statement::Expression(expr) | Statement::Return(Some(expr)) | Statement::Throw(expr) => {
+                self.expr_has_super_call(expr)?
+            }
+            Statement::Block(statements) => {
+                for statement in statements {
+                    if self.statement_has_super_call(statement)? {
+                        return Ok(true);
+                    }
+                }
+                false
+            }
+            Statement::If {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.expr_has_super_call(test)?
+                    || self.statement_has_super_call(consequent)?
+                    || alternate
+                        .as_deref()
+                        .is_some_and(|statement| {
+                            self.statement_has_super_call(statement).unwrap_or(false)
+                        })
+            }
+            Statement::While { test, body } | Statement::DoWhile { test, body } => {
+                self.expr_has_super_call(test)? || self.statement_has_super_call(body)?
+            }
+            Statement::For {
+                init,
+                test,
+                update,
+                body,
+            } => {
+                init.as_deref()
+                    .is_some_and(|statement| {
+                        self.statement_has_super_call(statement).unwrap_or(false)
+                    })
+                    || test
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
+                    || update
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
+                    || self.statement_has_super_call(body)?
+            }
+            Statement::ForIn { right, body, .. } | Statement::ForOf { right, body, .. } => {
+                self.expr_has_super_call(right)? || self.statement_has_super_call(body)?
+            }
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+            } => {
+                block
+                    .iter()
+                    .any(|statement| self.statement_has_super_call(statement).unwrap_or(false))
+                    || handler.as_ref().is_some_and(|handler| {
+                        handler
+                            .body
+                            .iter()
+                            .any(|statement| self.statement_has_super_call(statement).unwrap_or(false))
+                    })
+                    || finalizer.as_ref().is_some_and(|body| {
+                        body.iter()
+                            .any(|statement| self.statement_has_super_call(statement).unwrap_or(false))
+                    })
+            }
+            Statement::Switch {
+                discriminant,
+                cases,
+            } => {
+                self.expr_has_super_call(discriminant)?
+                    || cases.iter().any(|case| {
+                        case.test
+                            .as_ref()
+                            .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
+                            || case.consequent.iter().any(|statement| {
+                                self.statement_has_super_call(statement).unwrap_or(false)
+                            })
+                    })
+            }
+            Statement::VariableDeclaration { declarations, .. } => declarations.iter().any(
+                |declaration| {
+                    declaration
+                        .initializer
+                        .as_ref()
+                        .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
+                },
+            ),
+            Statement::DestructuringDeclaration { initializer, .. } => {
+                self.expr_has_super_call(initializer)?
+            }
+            Statement::Labelled { body, .. } | Statement::With { body, .. } => {
+                self.statement_has_super_call(body)?
+            }
+            Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Export(decl)) => decl
+                .declaration
+                .as_deref()
+                .is_some_and(|statement| self.statement_has_super_call(statement).unwrap_or(false)),
+            Statement::Empty
+            | Statement::Break(_)
+            | Statement::Continue(_)
+            | Statement::Return(None)
+            | Statement::FunctionDeclaration { .. }
+            | Statement::ClassDeclaration(_)
+            | Statement::ModuleDeclaration(crate::ast::ModuleDeclaration::Import(_)) => false,
+        })
+    }
+
+    fn expr_has_super_call(&self, expr: &Expression) -> Result<bool, ParseError> {
+        Ok(match expr {
+            Expression::Call { callee, arguments } => {
+                matches!(callee.as_ref(), Expression::Super)
+                    || self.expr_has_super_call(callee)?
+                    || arguments
+                        .iter()
+                        .any(|arg| self.call_arg_has_super_call(arg).unwrap_or(false))
+            }
+            Expression::Function(function) if function.is_arrow => {
+                self.function_body_has_super_call(&function.body)?
+            }
+            Expression::Function(_) | Expression::Class(_) => false,
+            Expression::Unary { argument, .. }
+            | Expression::Update { argument, .. }
+            | Expression::Parenthesized(argument)
+            | Expression::Spread(argument)
+            | Expression::Await(argument) => self.expr_has_super_call(argument)?,
+            Expression::Binary { left, right, .. }
+            | Expression::Logical { left, right, .. }
+            | Expression::Assignment {
+                target: left,
+                value: right,
+            }
+            | Expression::CompoundAssignment {
+                target: left,
+                value: right,
+                ..
+            }
+            | Expression::Member {
+                object: left,
+                property: right,
+                ..
+            } => self.expr_has_super_call(left)? || self.expr_has_super_call(right)?,
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.expr_has_super_call(test)?
+                    || self.expr_has_super_call(consequent)?
+                    || self.expr_has_super_call(alternate)?
+            }
+            Expression::Construct { callee, arguments } => {
+                self.expr_has_super_call(callee)?
+                    || arguments
+                        .iter()
+                        .any(|arg| self.call_arg_has_super_call(arg).unwrap_or(false))
+            }
+            Expression::Array(elements) => elements.iter().any(|element| match element {
+                ArrayElement::Expression(expr) | ArrayElement::Spread(expr) => {
+                    self.expr_has_super_call(expr).unwrap_or(false)
+                }
+                ArrayElement::Hole => false,
+            }),
+            Expression::Object(properties) => properties.iter().any(|property| match property {
+                ObjectProperty::Data { value, .. } | ObjectProperty::PrototypeSetter { value } => {
+                    self.expr_has_super_call(value).unwrap_or(false)
+                }
+                ObjectProperty::ComputedData { key, value } => {
+                    self.expr_has_super_call(key).unwrap_or(false)
+                        || self.expr_has_super_call(value).unwrap_or(false)
+                }
+                ObjectProperty::Spread(expr) => self.expr_has_super_call(expr).unwrap_or(false),
+                ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
+            }),
+            Expression::TemplateLiteral(template) => template
+                .expressions
+                .iter()
+                .any(|expr| self.expr_has_super_call(expr).unwrap_or(false)),
+            Expression::TaggedTemplate { tag, template } => {
+                self.expr_has_super_call(tag)?
+                    || template
+                        .expressions
+                        .iter()
+                        .any(|expr| self.expr_has_super_call(expr).unwrap_or(false))
+            }
+            Expression::Yield { argument, .. } => argument
+                .as_deref()
+                .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false)),
+            Expression::DynamicImport { specifier, options } => {
+                self.expr_has_super_call(specifier)?
+                    || options
+                        .as_deref()
+                        .is_some_and(|expr| self.expr_has_super_call(expr).unwrap_or(false))
+            }
+            Expression::Sequence(expressions) => expressions
+                .iter()
+                .any(|expr| self.expr_has_super_call(expr).unwrap_or(false)),
+            Expression::OptionalChain { base, steps } => {
+                self.expr_has_super_call(base)?
+                    || steps.iter().any(|step| match step {
+                        OptionalChainStep::Member { property, .. } => {
+                            self.expr_has_super_call(property).unwrap_or(false)
+                        }
+                        OptionalChainStep::Call { arguments, .. } => arguments
+                            .iter()
+                            .any(|arg| self.call_arg_has_super_call(arg).unwrap_or(false)),
+                    })
+            }
+            Expression::Literal(_)
+            | Expression::Identifier(_)
+            | Expression::This
+            | Expression::Super
+            | Expression::NewTarget
+            | Expression::ImportMeta
+            | Expression::PrivateName(_) => false,
+        })
+    }
+
+    fn call_arg_has_super_call(&self, arg: &CallArgument) -> Result<bool, ParseError> {
+        match arg {
+            CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
+                self.expr_has_super_call(expr)
+            }
+        }
+    }
+
+    fn validate_private_names_in_function(
+        &self,
+        function: &FunctionLiteral,
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        self.validate_private_names_in_params(&function.params, available)?;
+        self.validate_private_names_in_function_body(&function.body, available)
+    }
+
+    fn validate_private_names_in_function_body(
+        &self,
+        body: &FunctionBody,
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        self.validate_private_names_in_statements(&body.statements, available)
+    }
+
+    fn validate_private_names_in_params(
+        &self,
+        params: &[FunctionParam],
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        for param in params {
+            match param {
+                FunctionParam::Default(_, expr) => {
+                    self.validate_private_names_in_expr(expr, available)?
+                }
+                FunctionParam::Pattern(pattern, default) => {
+                    self.validate_private_names_in_binding_pattern(pattern, available)?;
+                    if let Some(default) = default {
+                        self.validate_private_names_in_expr(default, available)?;
+                    }
+                }
+                FunctionParam::RestPattern(pattern) => {
+                    self.validate_private_names_in_binding_pattern(pattern, available)?
+                }
+                FunctionParam::Simple(_) | FunctionParam::Rest(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_private_names_in_for_binding(
+        &self,
+        binding: &crate::ast::ForBinding,
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        match binding {
+            crate::ast::ForBinding::Target(expr) => {
+                self.validate_private_names_in_expr(expr, available)
+            }
+            crate::ast::ForBinding::Declaration { pattern, .. } => {
+                self.validate_private_names_in_binding_pattern(pattern, available)
+            }
+        }
+    }
+
+    fn validate_private_names_in_binding_pattern(
+        &self,
+        pattern: &crate::ast::BindingPattern,
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        match pattern {
+            crate::ast::BindingPattern::Identifier(_) => Ok(()),
+            crate::ast::BindingPattern::Array { elements, rest } => {
+                for element in elements.iter().flatten() {
+                    self.validate_private_names_in_binding_pattern(&element.pattern, available)?;
+                    if let Some(default) = &element.default {
+                        self.validate_private_names_in_expr(default, available)?;
+                    }
+                }
+                if let Some(rest) = rest {
+                    self.validate_private_names_in_binding_pattern(rest, available)?;
+                }
+                Ok(())
+            }
+            crate::ast::BindingPattern::Object { props, rest } => {
+                for prop in props {
+                    if let ObjectBindingKey::Computed(key) = &prop.key {
+                        self.validate_private_names_in_expr(key, available)?;
+                    }
+                    self.validate_private_names_in_binding_pattern(&prop.value, available)?;
+                    if let Some(default) = &prop.default {
+                        self.validate_private_names_in_expr(default, available)?;
+                    }
+                }
+                if let Some(rest) = rest {
+                    self.validate_private_names_in_binding_pattern(rest, available)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn validate_private_names_in_property_name(
+        &self,
+        name: &PropertyName,
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        if let PropertyName::Computed(expr) = name {
+            self.validate_private_names_in_expr(expr, available)?;
+        }
+        Ok(())
+    }
+
+    fn validate_private_names_in_expr(
+        &self,
+        expr: &Expression,
+        available: &HashSet<String>,
+    ) -> Result<(), ParseError> {
+        match expr {
+            Expression::Member {
+                object,
+                property,
+                computed,
+            } => {
+                if !computed
+                    && let Expression::PrivateName(name) = property.as_ref()
+                {
+                    if matches!(object.as_ref(), Expression::Super) {
+                        return Err(ParseError {
+                            span: self.peek().span,
+                            message: "`super.#name` is not valid syntax".into(),
+                        });
+                    }
+                    if !available.contains(name) {
+                        return Err(ParseError {
+                            span: self.peek().span,
+                            message: format!("undeclared private name `#{name}`"),
+                        });
+                    }
+                }
+                self.validate_private_names_in_expr(object, available)?;
+                if matches!(property.as_ref(), Expression::PrivateName(_)) {
+                    Ok(())
+                } else {
+                    self.validate_private_names_in_expr(property, available)
+                }
+            }
+            Expression::PrivateName(name) => Err(ParseError {
+                span: self.peek().span,
+                message: format!("undeclared private name `#{name}`"),
+            }),
+            Expression::Class(class) => self.validate_private_names_in_class(
+                class.super_class.as_deref(),
+                &class.elements,
+                available,
+            ),
+            Expression::Function(function) => {
+                self.validate_private_names_in_function(function, available)
+            }
+            Expression::Unary { argument, .. }
+            | Expression::Update { argument, .. }
+            | Expression::Parenthesized(argument)
+            | Expression::Spread(argument)
+            | Expression::Await(argument) => {
+                self.validate_private_names_in_expr(argument, available)
+            }
+            Expression::Binary { left, right, .. }
+            | Expression::Logical { left, right, .. }
+            | Expression::Assignment {
+                target: left,
+                value: right,
+            }
+            | Expression::CompoundAssignment {
+                target: left,
+                value: right,
+                ..
+            } => {
+                self.validate_private_names_in_expr(left, available)?;
+                self.validate_private_names_in_expr(right, available)
+            }
+            Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
+                self.validate_private_names_in_expr(callee, available)?;
+                for arg in arguments {
+                    match arg {
+                        CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
+                            self.validate_private_names_in_expr(expr, available)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Expression::Conditional {
+                test,
+                consequent,
+                alternate,
+            } => {
+                self.validate_private_names_in_expr(test, available)?;
+                self.validate_private_names_in_expr(consequent, available)?;
+                self.validate_private_names_in_expr(alternate, available)
+            }
+            Expression::Array(elements) => {
+                for element in elements {
+                    match element {
+                        ArrayElement::Expression(expr) | ArrayElement::Spread(expr) => {
+                            self.validate_private_names_in_expr(expr, available)?;
+                        }
+                        ArrayElement::Hole => {}
+                    }
+                }
+                Ok(())
+            }
+            Expression::Object(properties) => {
+                for property in properties {
+                    match property {
+                        ObjectProperty::Data { value, .. }
+                        | ObjectProperty::PrototypeSetter { value } => {
+                            self.validate_private_names_in_expr(value, available)?;
+                        }
+                        ObjectProperty::ComputedData { key, value } => {
+                            self.validate_private_names_in_expr(key, available)?;
+                            self.validate_private_names_in_expr(value, available)?;
+                        }
+                        ObjectProperty::Spread(expr) => {
+                            self.validate_private_names_in_expr(expr, available)?;
+                        }
+                        ObjectProperty::Getter { body, .. } => {
+                            self.validate_private_names_in_function_body(body, available)?;
+                        }
+                        ObjectProperty::Setter {
+                            parameter, body, ..
+                        } => {
+                            self.validate_private_names_in_params(
+                                std::slice::from_ref(parameter),
+                                available,
+                            )?;
+                            self.validate_private_names_in_function_body(body, available)?;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Expression::TemplateLiteral(template) => {
+                for expr in &template.expressions {
+                    self.validate_private_names_in_expr(expr, available)?;
+                }
+                Ok(())
+            }
+            Expression::TaggedTemplate { tag, template } => {
+                self.validate_private_names_in_expr(tag, available)?;
+                for expr in &template.expressions {
+                    self.validate_private_names_in_expr(expr, available)?;
+                }
+                Ok(())
+            }
+            Expression::Yield { argument, .. } => {
+                if let Some(argument) = argument {
+                    self.validate_private_names_in_expr(argument, available)?;
+                }
+                Ok(())
+            }
+            Expression::DynamicImport { specifier, options } => {
+                self.validate_private_names_in_expr(specifier, available)?;
+                if let Some(options) = options {
+                    self.validate_private_names_in_expr(options, available)?;
+                }
+                Ok(())
+            }
+            Expression::Sequence(expressions) => {
+                for expr in expressions {
+                    self.validate_private_names_in_expr(expr, available)?;
+                }
+                Ok(())
+            }
+            Expression::OptionalChain { base, steps } => {
+                self.validate_private_names_in_expr(base, available)?;
+                for step in steps {
+                    match step {
+                        OptionalChainStep::Member { property, computed, .. } => {
+                            if !computed
+                                && let Expression::PrivateName(name) = property.as_ref()
+                                && !available.contains(name)
+                            {
+                                return Err(ParseError {
+                                    span: self.peek().span,
+                                    message: format!("undeclared private name `#{name}`"),
+                                });
+                            }
+                            if !matches!(property.as_ref(), Expression::PrivateName(_)) {
+                                self.validate_private_names_in_expr(property, available)?;
+                            }
+                        }
+                        OptionalChainStep::Call { arguments, .. } => {
+                            for arg in arguments {
+                                match arg {
+                                    CallArgument::Expression(expr)
+                                    | CallArgument::Spread(expr) => {
+                                        self.validate_private_names_in_expr(expr, available)?;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Expression::Literal(_)
+            | Expression::Identifier(_)
+            | Expression::This
+            | Expression::Super
+            | Expression::NewTarget
+            | Expression::ImportMeta => Ok(()),
+        }
+    }
+}
+
+fn private_bound_name(element: &ClassElement) -> Option<&str> {
+    match element {
+        ClassElement::Method { name, .. } | ClassElement::Field { name, .. } => {
+            if let PropertyName::PrivateName(name) = name {
+                Some(name.as_str())
+            } else {
+                None
+            }
+        }
+        ClassElement::Constructor(_) | ClassElement::StaticBlock(_) => None,
+    }
+}
+
+fn expr_contains_arrow_function(expr: &Expression) -> bool {
+    match expr {
+        Expression::Function(function) => function.is_arrow,
+        Expression::Parenthesized(inner)
+        | Expression::Spread(inner)
+        | Expression::Await(inner)
+        | Expression::Unary {
+            argument: inner, ..
+        }
+        | Expression::Update {
+            argument: inner, ..
+        } => expr_contains_arrow_function(inner),
+        Expression::Binary { left, right, .. }
+        | Expression::Logical { left, right, .. }
+        | Expression::Assignment {
+            target: left,
+            value: right,
+        }
+        | Expression::CompoundAssignment {
+            target: left,
+            value: right,
+            ..
+        }
+        | Expression::Member {
+            object: left,
+            property: right,
+            ..
+        } => expr_contains_arrow_function(left) || expr_contains_arrow_function(right),
+        Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
+            expr_contains_arrow_function(callee)
+                || arguments.iter().any(|arg| match arg {
+                    CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
+                        expr_contains_arrow_function(expr)
+                    }
+                })
+        }
+        Expression::Conditional {
+            test,
+            consequent,
+            alternate,
+        } => {
+            expr_contains_arrow_function(test)
+                || expr_contains_arrow_function(consequent)
+                || expr_contains_arrow_function(alternate)
+        }
+        Expression::Array(elements) => elements.iter().any(|element| match element {
+            ArrayElement::Expression(expr) | ArrayElement::Spread(expr) => {
+                expr_contains_arrow_function(expr)
+            }
+            ArrayElement::Hole => false,
+        }),
+        Expression::Object(properties) => properties.iter().any(|property| match property {
+            ObjectProperty::Data { value, .. } | ObjectProperty::PrototypeSetter { value } => {
+                expr_contains_arrow_function(value)
+            }
+            ObjectProperty::ComputedData { key, value } => {
+                expr_contains_arrow_function(key) || expr_contains_arrow_function(value)
+            }
+            ObjectProperty::Spread(expr) => expr_contains_arrow_function(expr),
+            ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
+        }),
+        Expression::TemplateLiteral(template) => template
+            .expressions
+            .iter()
+            .any(expr_contains_arrow_function),
+        Expression::TaggedTemplate { tag, template } => {
+            expr_contains_arrow_function(tag)
+                || template
+                    .expressions
+                    .iter()
+                    .any(expr_contains_arrow_function)
+        }
+        Expression::Yield { argument, .. } => argument
+            .as_deref()
+            .is_some_and(expr_contains_arrow_function),
+        Expression::DynamicImport { specifier, options } => {
+            expr_contains_arrow_function(specifier)
+                || options.as_deref().is_some_and(expr_contains_arrow_function)
+        }
+        Expression::Sequence(expressions) => expressions.iter().any(expr_contains_arrow_function),
+        Expression::OptionalChain { base, steps } => {
+            expr_contains_arrow_function(base)
+                || steps.iter().any(|step| match step {
+                    OptionalChainStep::Member { property, .. } => {
+                        expr_contains_arrow_function(property)
+                    }
+                    OptionalChainStep::Call { arguments, .. } => arguments.iter().any(|arg| {
+                        match arg {
+                            CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
+                                expr_contains_arrow_function(expr)
+                            }
+                        }
+                    }),
+                })
+        }
+        Expression::Class(_)
+        | Expression::Literal(_)
+        | Expression::Identifier(_)
+        | Expression::This
+        | Expression::Super
+        | Expression::NewTarget
+        | Expression::ImportMeta
+        | Expression::PrivateName(_) => false,
     }
 }
 

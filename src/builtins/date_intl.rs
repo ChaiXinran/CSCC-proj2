@@ -545,6 +545,13 @@ fn parse_iso_date_part(input: &str) -> Option<(i32, u32, u32)> {
     if rest.is_empty() {
         return Some((year, 1, 1));
     }
+    if rest.len() == 4 && rest.chars().all(|ch| ch.is_ascii_digit()) {
+        return Some((
+            year,
+            parse_fixed_digits(&rest[..2], 2)?,
+            parse_fixed_digits(&rest[2..], 2)?,
+        ));
+    }
     let rest = rest.strip_prefix('-')?;
     if rest.len() < 2 {
         return None;
@@ -631,23 +638,37 @@ fn validate_temporal_annotations(input: &str) -> Option<&str> {
     let mut body_end = input.len();
     let mut saw_annotation = false;
     let mut seen_time_zone = false;
+    let mut calendar_critical = None;
     let mut rest = input;
     while let Some(start) = rest.find('[') {
         saw_annotation = true;
         body_end = body_end.min(input.len() - rest.len() + start);
         let after_start = &rest[start + 1..];
         let end = after_start.find(']')?;
-        let annotation = &after_start[..end];
-        if annotation.is_empty() {
+        let raw_annotation = &after_start[..end];
+        if raw_annotation.is_empty() {
             return None;
         }
-        let annotation = annotation.strip_prefix('!').unwrap_or(annotation);
+        let critical = raw_annotation.starts_with('!');
+        let annotation = raw_annotation.strip_prefix('!').unwrap_or(raw_annotation);
         if let Some((key, _value)) = annotation.split_once('=') {
-            if key.chars().any(|ch| ch.is_ascii_uppercase()) {
+            if key.chars().any(|ch| ch.is_ascii_uppercase()) || (critical && key != "u-ca") {
                 return None;
+            }
+            if key == "u-ca" {
+                if let Some(previous_critical) = calendar_critical {
+                    if critical || previous_critical {
+                        return None;
+                    }
+                } else {
+                    calendar_critical = Some(critical);
+                }
             }
         } else {
             if seen_time_zone {
+                return None;
+            }
+            if offset_annotation_has_subminute_syntax(annotation) {
                 return None;
             }
             seen_time_zone = true;
@@ -663,9 +684,22 @@ fn validate_temporal_annotations(input: &str) -> Option<&str> {
     Some(&input[..body_end])
 }
 
+fn offset_annotation_has_subminute_syntax(annotation: &str) -> bool {
+    let Some(body) = annotation
+        .strip_prefix('+')
+        .or_else(|| annotation.strip_prefix('-'))
+    else {
+        return false;
+    };
+    let head = body.split(['.', ',']).next().unwrap_or(body);
+    head.chars().filter(|ch| ch.is_ascii_digit()).count() > 4
+}
+
 fn validate_iso_calendar_annotations(input: &str) -> Option<&str> {
     let mut body_end = input.len();
     let mut saw_annotation = false;
+    let mut seen_time_zone = false;
+    let mut calendar_critical = None;
     let mut rest = input;
     while let Some(start) = rest.find('[') {
         saw_annotation = true;
@@ -683,14 +717,26 @@ fn validate_iso_calendar_annotations(input: &str) -> Option<&str> {
                 return None;
             }
             if key == "u-ca" {
-                if value.to_ascii_lowercase() != "iso8601" {
-                    return None;
+                if let Some(previous_critical) = calendar_critical {
+                    if critical || previous_critical {
+                        return None;
+                    }
+                    // A later non-critical calendar annotation is ignored by
+                    // Temporal parsing; the first annotation wins.
+                } else {
+                    calendar_critical = Some(critical);
+                    if value.to_ascii_lowercase() != "iso8601" {
+                        return None;
+                    }
                 }
             } else if critical {
                 return None;
             }
-        } else if critical {
-            return None;
+        } else {
+            if seen_time_zone {
+                return None;
+            }
+            seen_time_zone = true;
         }
         rest = &after_start[end + 1..];
     }
@@ -762,12 +808,12 @@ fn validate_plain_date_time_tail(input: &str) -> Option<()> {
             .and_then(|rest| rest.rfind('-').map(|index| index + 1))
     });
     let time = if let Some(offset_start) = offset_start {
-        parse_time_zone_offset_ns(&input[offset_start..])?;
+        parse_iso_time_zone_offset_ns(&input[offset_start..])?;
         &input[..offset_start]
     } else {
         input
     };
-    let compact = time.replace(':', "");
+    let compact = time.replace(':', "").replace(',', ".");
     let (head, fraction) = compact
         .split_once('.')
         .map_or((compact.as_str(), ""), |(head, fraction)| (head, fraction));
@@ -791,7 +837,7 @@ fn validate_plain_date_time_tail(input: &str) -> Option<()> {
     } else {
         0
     };
-    (hour <= 23 && minute <= 59 && second <= 59).then_some(())
+    (hour <= 23 && minute <= 59 && second <= 60).then_some(())
 }
 
 fn parse_temporal_plain_date_string(input: &str) -> Option<(f64, f64, f64)> {
@@ -832,27 +878,51 @@ fn parse_iso_time_and_offset_ns(input: &str) -> Option<(u32, u32, u32, i128, i12
         if let Some(stripped) = input.strip_suffix('Z').or_else(|| input.strip_suffix('z')) {
             (stripped, 0)
         } else if let Some(index) = input.rfind('+') {
-            (&input[..index], parse_time_zone_offset_ns(&input[index..])?)
+            (
+                &input[..index],
+                parse_iso_time_zone_offset_ns(&input[index..])?,
+            )
         } else if let Some(index) = input.get(1..).and_then(|rest| rest.rfind('-')) {
             let split = index + 1;
-            (&input[..split], parse_time_zone_offset_ns(&input[split..])?)
+            (
+                &input[..split],
+                parse_iso_time_zone_offset_ns(&input[split..])?,
+            )
         } else {
             return None;
         };
     if time.is_empty() {
         return None;
     }
-    let mut pieces = time.split(':');
-    let hour = parse_fixed_digits(pieces.next()?, 2)?;
-    let minute = parse_fixed_digits(pieces.next().unwrap_or("00"), 2)?;
-    let seconds_piece = pieces.next().unwrap_or("00");
-    if pieces.next().is_some() || hour > 23 || minute > 59 {
+    let normalized = time.replace(',', ".");
+    let (head, fraction_text) = normalized
+        .split_once('.')
+        .map_or((normalized.as_str(), ""), |(head, fraction)| {
+            (head, fraction)
+        });
+    let colon_count = head.matches(':').count();
+    let compact = head.replace(':', "");
+    if (colon_count > 0 && !matches!(colon_count, 1 | 2))
+        || !matches!(compact.len(), 2 | 4 | 6)
+        || (colon_count > 0 && compact.len() != (colon_count + 1) * 2)
+        || !compact.chars().all(|ch| ch.is_ascii_digit())
+    {
         return None;
     }
-    let (second_text, fraction_text) = seconds_piece
-        .split_once('.')
-        .map_or((seconds_piece, ""), |(second, fraction)| (second, fraction));
-    let mut second = parse_fixed_digits(second_text, 2)?;
+    let hour = parse_fixed_digits(&compact[..2], 2)?;
+    let minute = if compact.len() >= 4 {
+        parse_fixed_digits(&compact[2..4], 2)?
+    } else {
+        0
+    };
+    let mut second = if compact.len() == 6 {
+        parse_fixed_digits(&compact[4..6], 2)?
+    } else {
+        0
+    };
+    if hour > 23 || minute > 59 {
+        return None;
+    }
     if second > 60 {
         return None;
     }
@@ -868,6 +938,14 @@ fn parse_iso_time_and_offset_ns(input: &str) -> Option<(u32, u32, u32, i128, i12
 }
 
 fn parse_time_zone_offset_ns(input: &str) -> Option<i128> {
+    parse_time_zone_offset_ns_impl(input, false)
+}
+
+fn parse_iso_time_zone_offset_ns(input: &str) -> Option<i128> {
+    parse_time_zone_offset_ns_impl(input, true)
+}
+
+fn parse_time_zone_offset_ns_impl(input: &str, allow_subminute: bool) -> Option<i128> {
     let sign = if input.starts_with('+') {
         1
     } else if input.starts_with('-') {
@@ -875,42 +953,50 @@ fn parse_time_zone_offset_ns(input: &str) -> Option<i128> {
     } else {
         return None;
     };
-    let body = &input[1..];
-    if body.len() == 4 && body.chars().all(|ch| ch.is_ascii_digit()) {
-        let hour = parse_fixed_digits(&body[..2], 2)?;
-        let minute = parse_fixed_digits(&body[2..], 2)?;
-        if hour > 23 || minute > 59 {
-            return None;
-        }
-        return Some(
-            sign * (hour as i128 * NS_PER_HOUR_I128 + minute as i128 * NS_PER_MINUTE_I128),
-        );
-    }
-    let mut pieces = body.split(':');
-    let hour = parse_fixed_digits(pieces.next()?, 2)?;
-    let minute = parse_fixed_digits(pieces.next().unwrap_or("00"), 2)?;
-    let seconds_piece = pieces.next();
-    if pieces.next().is_some() || hour > 23 || minute > 59 {
+    let normalized = input[1..].replace(',', ".");
+    let (body, fraction_text) = normalized
+        .split_once('.')
+        .map_or((normalized.as_str(), ""), |(body, fraction)| {
+            (body, fraction)
+        });
+    let colon_count = body.matches(':').count();
+    let compact = body.replace(':', "");
+    if (colon_count > 0 && !matches!(colon_count, 1 | 2))
+        || !matches!(compact.len(), 2 | 4 | 6)
+        || (colon_count > 0 && compact.len() != (colon_count + 1) * 2)
+        || !compact.chars().all(|ch| ch.is_ascii_digit())
+    {
         return None;
     }
-    if let Some(seconds_piece) = seconds_piece {
-        let (second_text, fraction_text) = seconds_piece
-            .split_once('.')
-            .map_or((seconds_piece, ""), |(second, fraction)| (second, fraction));
-        let second = parse_fixed_digits(second_text, 2)?;
-        if second > 59 {
-            return None;
-        }
-        let fraction_ns = if fraction_text.is_empty() {
-            0
-        } else {
-            parse_fraction_to_ns(fraction_text)?
-        };
-        if second != 0 || fraction_ns != 0 {
-            return None;
-        }
+    let hour = parse_fixed_digits(&compact[..2], 2)?;
+    let minute = if compact.len() >= 4 {
+        parse_fixed_digits(&compact[2..4], 2)?
+    } else {
+        0
+    };
+    let second = if compact.len() == 6 {
+        parse_fixed_digits(&compact[4..6], 2)?
+    } else {
+        0
+    };
+    let fraction_ns = if fraction_text.is_empty() {
+        0
+    } else {
+        parse_fraction_to_ns(fraction_text)?
+    };
+    if hour > 23
+        || minute > 59
+        || second > 59
+        || (!allow_subminute && (second != 0 || fraction_ns != 0))
+    {
+        return None;
     }
-    Some(sign * (hour as i128 * NS_PER_HOUR_I128 + minute as i128 * NS_PER_MINUTE_I128))
+    Some(
+        sign * (hour as i128 * NS_PER_HOUR_I128
+            + minute as i128 * NS_PER_MINUTE_I128
+            + second as i128 * NS_PER_SECOND_I128
+            + fraction_ns),
+    )
 }
 
 fn parse_instant_string(input: &str) -> Option<i128> {
@@ -919,7 +1005,10 @@ fn parse_instant_string(input: &str) -> Option<i128> {
         return None;
     }
     let body = validate_temporal_annotations(input)?;
-    let separator = body.find('T').or_else(|| body.find('t'))?;
+    let separator = body
+        .find('T')
+        .or_else(|| body.find('t'))
+        .or_else(|| body.find(' '))?;
     let (date_part, time_part) = (&body[..separator], &body[separator + 1..]);
     let (year, month, day) = parse_iso_date_part(date_part)?;
     if !(1..=12).contains(&month) || !(1..=month_day_count(year, month)).contains(&day) {
@@ -2290,6 +2379,46 @@ fn date_time_format_ms(
     {
         return Ok(own_number(context, object, DATE_VALUE).unwrap_or(f64::NAN));
     }
+    if let Some(object) = context.value_object(&value)
+        && let Some(kind) = own_string(context, object, TEMPORAL_KIND)
+    {
+        let day_ms = |year: f64, month: f64, day: f64| {
+            days_from_civil(year as i32, month as u32, day as u32) as f64 * MS_PER_DAY
+        };
+        return Ok(match kind.as_str() {
+            "Instant" | "ZonedDateTime" => {
+                temporal_number_slot(context, object, "epochNanosecondsNumber") / 1_000_000.0
+            }
+            "PlainDate" => day_ms(
+                temporal_number_slot(context, object, "year"),
+                temporal_number_slot(context, object, "month"),
+                temporal_number_slot(context, object, "day"),
+            ),
+            "PlainDateTime" => {
+                day_ms(
+                    temporal_number_slot(context, object, "year"),
+                    temporal_number_slot(context, object, "month"),
+                    temporal_number_slot(context, object, "day"),
+                ) + plain_time_nanoseconds_i128(plain_date_time_values(context, object)) as f64
+                    / 1_000_000.0
+            }
+            "PlainYearMonth" => day_ms(
+                temporal_number_slot(context, object, "year"),
+                temporal_number_slot(context, object, "month"),
+                temporal_number_slot(context, object, "referenceISODay"),
+            ),
+            "PlainMonthDay" => day_ms(
+                temporal_number_slot(context, object, "referenceISOYear"),
+                temporal_number_slot(context, object, "month"),
+                temporal_number_slot(context, object, "day"),
+            ),
+            "PlainTime" => {
+                plain_time_nanoseconds_i128(plain_time_values_from_temporal(context, object)) as f64
+                    / 1_000_000.0
+            }
+            _ => return vm.to_number(value, context),
+        });
+    }
     vm.to_number(value, context)
 }
 
@@ -2436,16 +2565,20 @@ fn intl_number_format_format_to_parts(
     } else if value.is_nan() {
         "NaN".into()
     } else if value.is_sign_negative() {
-        "-Infinity".into()
+        "-∞".into()
     } else {
-        "Infinity".into()
+        "∞".into()
     };
     let mut parts = Vec::new();
     let unsigned = text.strip_prefix('-').unwrap_or(&text);
     if text.starts_with('-') {
         parts.push(part(context, "minusSign", "-".into())?);
     }
-    if let Some((integer, fraction)) = unsigned.split_once('.') {
+    if unsigned == "∞" {
+        parts.push(part(context, "infinity", unsigned.into())?);
+    } else if unsigned == "NaN" {
+        parts.push(part(context, "nan", unsigned.into())?);
+    } else if let Some((integer, fraction)) = unsigned.split_once('.') {
         parts.push(part(context, "integer", integer.into())?);
         parts.push(part(context, "decimal", ".".into())?);
         parts.push(part(context, "fraction", fraction.into())?);
@@ -3207,41 +3340,11 @@ fn temporal_duration_from(
     let prototype = context
         .constructor_prototype(&constructor)?
         .ok_or_else(|| VmError::runtime("Temporal.Duration prototype missing"))?;
-    let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let values = match item {
-        JsValue::String(text) => parse_duration(&text)
-            .ok_or_else(|| VmError::range("invalid Temporal.Duration string"))?,
-        value => {
-            let object = context.require_object(&value, "Temporal.Duration.from")?;
-            if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("Duration") {
-                DurationValues {
-                    years: temporal_number_slot(context, object, "years"),
-                    months: temporal_number_slot(context, object, "months"),
-                    weeks: temporal_number_slot(context, object, "weeks"),
-                    days: temporal_number_slot(context, object, "days"),
-                    hours: temporal_number_slot(context, object, "hours"),
-                    minutes: temporal_number_slot(context, object, "minutes"),
-                    seconds: temporal_number_slot(context, object, "seconds"),
-                    milliseconds: temporal_number_slot(context, object, "milliseconds"),
-                    microseconds: temporal_number_slot(context, object, "microseconds"),
-                    nanoseconds: temporal_number_slot(context, object, "nanoseconds"),
-                }
-            } else {
-                DurationValues {
-                    years: temporal_object_number(vm, context, object, "years")?,
-                    months: temporal_object_number(vm, context, object, "months")?,
-                    weeks: temporal_object_number(vm, context, object, "weeks")?,
-                    days: temporal_object_number(vm, context, object, "days")?,
-                    hours: temporal_object_number(vm, context, object, "hours")?,
-                    minutes: temporal_object_number(vm, context, object, "minutes")?,
-                    seconds: temporal_object_number(vm, context, object, "seconds")?,
-                    milliseconds: temporal_object_number(vm, context, object, "milliseconds")?,
-                    microseconds: temporal_object_number(vm, context, object, "microseconds")?,
-                    nanoseconds: temporal_object_number(vm, context, object, "nanoseconds")?,
-                }
-            }
-        }
-    };
+    let values = duration_values_from_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
     create_duration(context, prototype, values)
 }
 
@@ -3494,11 +3597,16 @@ fn duration_round_options(
         } else {
             largest
         };
+        if duration_round_requires_relative_to(values, &largest, &smallest) {
+            return Err(VmError::range(
+                "Temporal.Duration round requires relativeTo for calendar units",
+            ));
+        }
         return Ok((largest, smallest, 1, TemporalRoundMode::HalfExpand));
     }
     let object = context.require_object(&value, "Temporal.Duration.prototype.round options")?;
     let largest = option_string(vm, context, object, "largestUnit")?;
-    let _relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
+    let relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
     let increment = option_rounding_increment(vm, context, object)?;
     let mode = temporal_round_mode(
         option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
@@ -3529,7 +3637,32 @@ fn duration_round_options(
     if increment == 0 {
         return Err(VmError::range("invalid Temporal rounding increment"));
     }
+    if matches!(
+        smallest_unit.as_str(),
+        "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+    ) {
+        validate_rounding_increment(&smallest_unit, increment)?;
+    }
+    if matches!(relative_to, JsValue::Undefined)
+        && duration_round_requires_relative_to(values, &largest_unit, &smallest_unit)
+    {
+        return Err(VmError::range(
+            "Temporal.Duration round requires relativeTo for calendar units",
+        ));
+    }
     Ok((largest_unit, smallest_unit, increment, mode))
+}
+
+fn duration_round_requires_relative_to(
+    values: DurationValues,
+    largest_unit: &str,
+    smallest_unit: &str,
+) -> bool {
+    values.years != 0.0
+        || values.months != 0.0
+        || values.weeks != 0.0
+        || matches!(largest_unit, "year" | "month" | "week")
+        || matches!(smallest_unit, "year" | "month" | "week")
 }
 
 fn temporal_duration_total(
@@ -3539,7 +3672,17 @@ fn temporal_duration_total(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let values = duration_this_values(context, &this_value)?;
-    let unit = duration_total_unit(vm, context, arguments.first().cloned())?;
+    let (unit, has_relative_to) = duration_total_unit(vm, context, arguments.first().cloned())?;
+    if !has_relative_to
+        && (values.years != 0.0
+            || values.months != 0.0
+            || values.weeks != 0.0
+            || matches!(unit.as_str(), "year" | "month" | "week"))
+    {
+        return Err(VmError::range(
+            "Temporal.Duration total requires relativeTo for calendar units",
+        ));
+    }
     let total_ns = duration_order_total(values);
     let value = match unit.as_str() {
         "year" => total_ns / (365.0 * NS_PER_DAY),
@@ -3561,16 +3704,19 @@ fn duration_total_unit(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: Option<JsValue>,
-) -> Result<String, VmError> {
+) -> Result<(String, bool), VmError> {
     match value.unwrap_or(JsValue::Undefined) {
-        JsValue::String(unit) => normalize_temporal_unit(unit),
+        JsValue::String(unit) => Ok((normalize_temporal_unit(unit)?, false)),
         JsValue::Object(object) => {
-            let _relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
+            let relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
             let unit = temporal_get_property(vm, context, object, "unit")?;
             if matches!(unit, JsValue::Undefined) {
                 return Err(VmError::range("Temporal.Duration total requires a unit"));
             }
-            normalize_temporal_unit(vm.to_string_coerce(unit, context)?)
+            Ok((
+                normalize_temporal_unit(vm.to_string_coerce(unit, context)?)?,
+                !matches!(relative_to, JsValue::Undefined),
+            ))
         }
         JsValue::Undefined => Err(VmError::range("Temporal.Duration total requires a unit")),
         _ => Err(VmError::type_error(
@@ -3637,6 +3783,27 @@ fn temporal_duration_compare(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let relative_to = match arguments.get(2).cloned().unwrap_or(JsValue::Undefined) {
+        JsValue::Undefined => JsValue::Undefined,
+        JsValue::Object(options) => temporal_get_property(vm, context, options, "relativeTo")?,
+        _ => {
+            return Err(VmError::type_error(
+                "Temporal.Duration.compare options must be an object",
+            ));
+        }
+    };
+    if matches!(relative_to, JsValue::Undefined)
+        && (left.years != 0.0
+            || left.months != 0.0
+            || left.weeks != 0.0
+            || right.years != 0.0
+            || right.months != 0.0
+            || right.weeks != 0.0)
+    {
+        return Err(VmError::range(
+            "Temporal.Duration.compare requires relativeTo for calendar units",
+        ));
+    }
     let left_total = duration_order_total(left);
     let right_total = duration_order_total(right);
     Ok(JsValue::Number(if left_total < right_total {
@@ -3787,17 +3954,30 @@ fn temporal_required_month_from_object(
     object: ObjectId,
 ) -> Result<f64, VmError> {
     let month_value = temporal_get_property(vm, context, object, "month")?;
-    if !matches!(month_value, JsValue::Undefined) {
-        return Ok(vm.to_number(month_value, context)?.trunc());
-    }
     let month_code_value = temporal_get_property(vm, context, object, "monthCode")?;
-    if matches!(month_code_value, JsValue::Undefined) {
+    let month = if matches!(month_value, JsValue::Undefined) {
+        None
+    } else {
+        Some(vm.to_number(month_value, context)?.trunc())
+    };
+    let month_code = if matches!(month_code_value, JsValue::Undefined) {
+        None
+    } else {
+        let text = vm.to_string_coerce(month_code_value, context)?;
+        Some(parse_month_code(&text).ok_or_else(|| VmError::range("invalid Temporal monthCode"))?)
+    };
+    if let (Some(month), Some(month_code)) = (month, month_code)
+        && month != month_code
+    {
+        return Err(VmError::range("Temporal month and monthCode conflict"));
+    }
+    if let Some(month) = month.or(month_code) {
+        Ok(month)
+    } else {
         return Err(VmError::type_error(
             "Temporal property `month` or `monthCode` is required",
         ));
     }
-    let month_code = vm.to_string_coerce(month_code_value, context)?;
-    parse_month_code(&month_code).ok_or_else(|| VmError::range("invalid Temporal monthCode"))
 }
 
 fn parse_duration(text: &str) -> Option<DurationValues> {
@@ -3809,7 +3989,8 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
     } else {
         (1.0, text)
     };
-    let mut chars = body.strip_prefix('P')?.chars().peekable();
+    let normalized_body = body.to_ascii_uppercase().replace(',', ".");
+    let mut chars = normalized_body.strip_prefix('P')?.chars().peekable();
     let mut values = DurationValues::default();
     let mut in_time = false;
     let mut saw_part = false;
@@ -3840,6 +4021,10 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
             return None;
         }
         let designator = chars.next()?;
+        let fractional = amount.fract() != 0.0;
+        if fractional && chars.peek().is_some() {
+            return None;
+        }
         let key = if in_time && designator == 'M' {
             "time-minute"
         } else {
@@ -3859,17 +4044,17 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
         saw_part = true;
         let signed = duration_sign * amount;
         match (designator, in_time) {
-            ('Y', false) => values.years = signed,
-            ('M', false) => values.months = signed,
-            ('W', false) => values.weeks = signed,
-            ('D', false) => values.days = signed,
+            ('Y', false) if !fractional => values.years = signed,
+            ('M', false) if !fractional => values.months = signed,
+            ('W', false) if !fractional => values.weeks = signed,
+            ('D', false) if !fractional => values.days = signed,
             ('H', true) => {
-                let total = (signed * NS_PER_HOUR).round();
+                values.hours += duration_sign as f64 * amount.trunc();
+                let total = (duration_sign * amount.fract() * NS_PER_HOUR).round();
                 let balanced = balance_duration(DurationValues {
                     nanoseconds: total,
                     ..DurationValues::default()
                 });
-                values.hours += balanced.hours;
                 values.minutes += balanced.minutes;
                 values.seconds += balanced.seconds;
                 values.milliseconds += balanced.milliseconds;
@@ -3877,24 +4062,24 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
                 values.nanoseconds += balanced.nanoseconds;
             }
             ('M', true) => {
-                let total = (signed * NS_PER_MINUTE).round();
+                values.minutes += duration_sign as f64 * amount.trunc();
+                let total = (duration_sign * amount.fract() * NS_PER_MINUTE).round();
                 let balanced = balance_duration(DurationValues {
                     nanoseconds: total,
                     ..DurationValues::default()
                 });
-                values.minutes += balanced.minutes;
                 values.seconds += balanced.seconds;
                 values.milliseconds += balanced.milliseconds;
                 values.microseconds += balanced.microseconds;
                 values.nanoseconds += balanced.nanoseconds;
             }
             ('S', true) => {
-                let total = (signed * NS_PER_SECOND).round();
+                values.seconds += duration_sign as f64 * amount.trunc();
+                let total = (duration_sign * amount.fract() * NS_PER_SECOND).round();
                 let balanced = balance_duration(DurationValues {
                     nanoseconds: total,
                     ..DurationValues::default()
                 });
-                values.seconds += balanced.seconds;
                 values.milliseconds += balanced.milliseconds;
                 values.microseconds += balanced.microseconds;
                 values.nanoseconds += balanced.nanoseconds;
@@ -3906,13 +4091,27 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
 }
 
 fn temporal_duration_to_string(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "Duration")?;
-    let values = DurationValues {
+    // Duration uses the same ToSecondsStringPrecision option grammar as the
+    // other Temporal stringifiers. Parse it even while the calendar-unit
+    // formatter below remains intentionally compact so invalid options and
+    // observable getter failures occur at the specification-required point.
+    let options = temporal_string_options(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    if options.minute_only {
+        return Err(VmError::range(
+            "minute is not a valid Duration string smallestUnit",
+        ));
+    }
+    let mut values = DurationValues {
         years: temporal_number_slot(context, object, "years"),
         months: temporal_number_slot(context, object, "months"),
         weeks: temporal_number_slot(context, object, "weeks"),
@@ -3924,7 +4123,33 @@ fn temporal_duration_to_string(
         microseconds: temporal_number_slot(context, object, "microseconds"),
         nanoseconds: temporal_number_slot(context, object, "nanoseconds"),
     };
-    Ok(JsValue::String(format_duration(values)))
+    let total_ns = values.hours as i128 * NS_PER_HOUR_I128
+        + values.minutes as i128 * NS_PER_MINUTE_I128
+        + values.seconds as i128 * NS_PER_SECOND_I128
+        + values.milliseconds as i128 * NS_PER_MILLISECOND_I128
+        + values.microseconds as i128 * 1_000
+        + values.nanoseconds as i128;
+    let rounded = round_signed_i128(total_ns, options.quantum, options.mode);
+    let negative = rounded < 0;
+    let mut remainder = rounded.unsigned_abs();
+    let hours = remainder / NS_PER_HOUR_I128 as u128;
+    remainder %= NS_PER_HOUR_I128 as u128;
+    let minutes = remainder / NS_PER_MINUTE_I128 as u128;
+    remainder %= NS_PER_MINUTE_I128 as u128;
+    let seconds = remainder / NS_PER_SECOND_I128 as u128;
+    remainder %= NS_PER_SECOND_I128 as u128;
+    let milliseconds = remainder / NS_PER_MILLISECOND_I128 as u128;
+    remainder %= NS_PER_MILLISECOND_I128 as u128;
+    let microseconds = remainder / 1_000;
+    let nanoseconds = remainder % 1_000;
+    let sign = if negative { -1.0 } else { 1.0 };
+    values.hours = sign * hours as f64;
+    values.minutes = sign * minutes as f64;
+    values.seconds = sign * seconds as f64;
+    values.milliseconds = sign * milliseconds as f64;
+    values.microseconds = sign * microseconds as f64;
+    values.nanoseconds = sign * nanoseconds as f64;
+    Ok(JsValue::String(format_duration(values, options.precision)))
 }
 
 fn push_duration_part(text: &mut String, value: f64, suffix: &str) {
@@ -3934,7 +4159,7 @@ fn push_duration_part(text: &mut String, value: f64, suffix: &str) {
     }
 }
 
-fn format_duration(values: DurationValues) -> String {
+fn format_duration(values: DurationValues, precision: Option<usize>) -> String {
     let negative = duration_sign(values) < 0;
     let values = values.map(f64::abs);
     let mut text = if negative {
@@ -3953,19 +4178,25 @@ fn format_duration(values: DurationValues) -> String {
         .saturating_mul(1_000_000)
         .saturating_add((values.microseconds as u128).saturating_mul(1_000))
         .saturating_add(values.nanoseconds as u128);
-    if values.seconds != 0.0 || subsecond_ns != 0 {
+    if values.seconds != 0.0 || subsecond_ns != 0 || precision.is_some() {
         time.push_str(
             &JsValue::Number(values.seconds)
                 .to_js_string()
                 .unwrap_or_default(),
         );
-        if subsecond_ns != 0 {
+        if subsecond_ns != 0 || precision.unwrap_or(0) != 0 {
             let mut fraction = format!("{subsecond_ns:09}");
-            while fraction.ends_with('0') {
-                fraction.pop();
+            if let Some(precision) = precision {
+                fraction.truncate(precision);
+            } else {
+                while fraction.ends_with('0') {
+                    fraction.pop();
+                }
             }
-            time.push('.');
-            time.push_str(&fraction);
+            if !fraction.is_empty() {
+                time.push('.');
+                time.push_str(&fraction);
+            }
         }
         time.push('S');
     }
@@ -4194,6 +4425,11 @@ fn temporal_instant_from(
             {
                 zoned_date_time_epoch_ns(context, object)
             } else {
+                if context.value_object(&value).is_none() {
+                    return Err(VmError::type_error(
+                        "Temporal.Instant.from requires a string or Temporal object",
+                    ));
+                }
                 let text = vm.to_string_coerce(value, context)?;
                 parse_instant_string(&text)
                     .ok_or_else(|| VmError::range("invalid Temporal.Instant"))?
@@ -4661,10 +4897,14 @@ fn option_rounding_increment(
         return Ok(1);
     }
     let number = vm.to_number(value, context)?;
-    if !number.is_finite() || number < 1.0 {
+    if !number.is_finite() {
         return Err(VmError::range("invalid Temporal rounding increment"));
     }
-    Ok(number.trunc() as u64)
+    let integer = number.trunc();
+    if !(1.0..=1_000_000_000.0).contains(&integer) {
+        return Err(VmError::range("invalid Temporal rounding increment"));
+    }
+    Ok(integer as u64)
 }
 
 fn validate_rounding_increment(unit: &str, increment: u64) -> Result<(), VmError> {
@@ -4677,7 +4917,7 @@ fn validate_rounding_increment(unit: &str, increment: u64) -> Result<(), VmError
         "nanosecond" => 24 * 60 * 60 * 1_000_000_000,
         _ => 1,
     };
-    if increment == 0 || increment > maximum || maximum % increment != 0 {
+    if increment == 0 || increment >= maximum || maximum % increment != 0 {
         Err(VmError::range("invalid Temporal rounding increment"))
     } else {
         Ok(())
@@ -4885,7 +5125,7 @@ fn temporal_instant_to_zoned_date_time_iso(
             "Temporal.Instant.prototype.toZonedDateTimeISO requires a time zone",
         ));
     }
-    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let time_zone_id = temporal_time_zone_string(vm, context, time_zone_value)?;
     let epoch_ns = instant_epoch_ns(context, object);
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time(
@@ -5401,8 +5641,17 @@ fn date_difference_options(
         Some(object) => option_string(vm, context, object, "smallestUnit")?,
         None => None,
     };
-    let largest_unit = normalize_temporal_unit(largest.unwrap_or_else(|| "day".into()))?;
     let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "day".into()))?;
+    let largest_unit = match largest.as_deref() {
+        None | Some("auto") => {
+            if temporal_unit_nanoseconds(&smallest_unit) > NS_PER_DAY_I128 {
+                smallest_unit.clone()
+            } else {
+                "day".into()
+            }
+        }
+        Some(unit) => normalize_temporal_unit(unit.to_string())?,
+    };
     let valid = |unit: &str| matches!(unit, "year" | "month" | "week" | "day");
     if !valid(&largest_unit) || !valid(&smallest_unit) {
         return Err(VmError::range("invalid PlainDate difference unit"));
@@ -5840,7 +6089,7 @@ fn temporal_plain_date_to_zoned_date_time(
             "Temporal.PlainDate.prototype.toZonedDateTime requires a time zone",
         ));
     }
-    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let time_zone_id = temporal_time_zone_string(vm, context, time_zone_value)?;
     let exact_epoch_nanoseconds = epoch_nanoseconds_i128_from_plain_parts(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
@@ -6034,15 +6283,21 @@ fn temporal_plain_time_construct(
 
 fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
     let body = validate_iso_calendar_annotations(text.trim())?;
-    let time = body
+    let separator = body
         .rfind('T')
         .or_else(|| body.rfind('t'))
-        .map(|index| &body[index + 1..])
-        .unwrap_or_else(|| {
-            body.strip_prefix('T')
-                .or_else(|| body.strip_prefix('t'))
-                .unwrap_or(body)
-        });
+        .or_else(|| body.rfind(' '));
+    let time = if let Some(index) = separator {
+        let date = &body[..index];
+        if !date.is_empty() && parse_temporal_date_part(date).is_none() {
+            return None;
+        }
+        &body[index + 1..]
+    } else {
+        body.strip_prefix('T')
+            .or_else(|| body.strip_prefix('t'))
+            .unwrap_or(body)
+    };
     if time.is_empty()
         || time.contains('\u{2212}')
         || time.ends_with(['Z', 'z'])
@@ -6056,7 +6311,7 @@ fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
             .and_then(|rest| rest.rfind('-').map(|index| index + 1))
     });
     let time = if let Some(offset_start) = offset_start {
-        parse_time_zone_offset_ns(&time[offset_start..])?;
+        parse_iso_time_zone_offset_ns(&time[offset_start..])?;
         &time[..offset_start]
     } else {
         time
@@ -6074,6 +6329,7 @@ fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
     }
     if (colon_count > 0 && compact.len() != (colon_count + 1) * 2)
         || (colon_count == 0 && !matches!(compact.len(), 2 | 4 | 6))
+        || (!fraction_text.is_empty() && compact.len() != 6)
     {
         return None;
     }
@@ -6107,6 +6363,15 @@ fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
         microsecond: ((fraction / 1_000) % 1_000) as f64,
         nanosecond: (fraction % 1_000) as f64,
     })
+}
+
+fn parse_plain_date_time(text: &str) -> Option<(f64, f64, f64, PlainTimeValues)> {
+    let body = validate_iso_calendar_annotations(text.trim())?;
+    let index = body.find(['T', 't', ' '])?;
+    let (date, time) = (&body[..index], &body[index + 1..]);
+    let (year, month, day) = parse_temporal_date_part(date)?;
+    let time = parse_plain_time(time)?;
+    Some((year as f64, month as f64, day as f64, time))
 }
 
 fn temporal_plain_time_from(
@@ -6771,14 +7036,8 @@ fn temporal_plain_date_time_from(
     let item = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let (year, month, day, time, calendar_id) = match item {
         JsValue::String(text) => {
-            let (year, month, day) = parse_plain_date(&text)
+            let (year, month, day, time) = parse_plain_date_time(&text)
                 .ok_or_else(|| VmError::range("invalid Temporal.PlainDateTime"))?;
-            let time = if text.contains('T') {
-                parse_plain_time(text.split_once('T').map(|(_, time)| time).unwrap_or(""))
-                    .ok_or_else(|| VmError::range("invalid Temporal.PlainDateTime"))?
-            } else {
-                PlainTimeValues::default()
-            };
             (year, month, day, time, "iso8601".into())
         }
         value => {
@@ -7415,19 +7674,28 @@ fn plain_date_time_difference_options(
         Some(object) => option_string(vm, context, object, "smallestUnit")?,
         None => None,
     };
-    let largest_unit =
-        normalize_temporal_unit(largest.unwrap_or_else(|| default_largest_unit.into()))?;
     let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "nanosecond".into()))?;
+    let largest_unit = match largest.as_deref() {
+        None | Some("auto") => {
+            let default = normalize_temporal_unit(default_largest_unit.to_string())?;
+            if temporal_unit_nanoseconds(&smallest_unit) > temporal_unit_nanoseconds(&default) {
+                smallest_unit.clone()
+            } else {
+                default
+            }
+        }
+        Some(unit) => normalize_temporal_unit(unit.to_string())?,
+    };
     if temporal_unit_nanoseconds(&largest_unit) < temporal_unit_nanoseconds(&smallest_unit) {
         return Err(VmError::range(
             "largestUnit must not be smaller than smallestUnit",
         ));
     }
-    if matches!(smallest_unit.as_str(), "year" | "month" | "week") {
-        return Err(VmError::range("invalid PlainDateTime smallestUnit"));
-    }
-    if !allow_day && (largest_unit == "day" || smallest_unit == "day") {
-        return Err(VmError::range("day is not a valid PlainTime unit"));
+    if !allow_day
+        && (matches!(largest_unit.as_str(), "year" | "month" | "week" | "day")
+            || matches!(smallest_unit.as_str(), "year" | "month" | "week" | "day"))
+    {
+        return Err(VmError::range("invalid PlainTime difference unit"));
     }
     let maximum = match smallest_unit.as_str() {
         "day" => 2,
@@ -7436,7 +7704,9 @@ fn plain_date_time_difference_options(
         "millisecond" | "microsecond" | "nanosecond" => 1_000,
         _ => 1,
     };
-    if increment >= maximum || maximum % increment != 0 {
+    if !matches!(smallest_unit.as_str(), "year" | "month" | "week")
+        && (increment >= maximum || maximum % increment != 0)
+    {
         return Err(VmError::range("invalid Temporal rounding increment"));
     }
     Ok(InstantDifferenceOptions {
@@ -7507,7 +7777,7 @@ fn temporal_plain_date_time_to_zoned_date_time(
             "Temporal.PlainDateTime.prototype.toZonedDateTime requires a time zone",
         ));
     }
-    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let time_zone_id = temporal_time_zone_string(vm, context, time_zone_value)?;
     let exact_epoch_nanoseconds = epoch_nanoseconds_i128_from_plain_parts(
         temporal_number_slot(context, object, "year"),
         temporal_number_slot(context, object, "month"),
@@ -7532,7 +7802,8 @@ fn month_code(month: f64) -> String {
 
 fn parse_month_code(value: &str) -> Option<f64> {
     let month = value.strip_prefix('M')?;
-    Some(parse_fixed_digits(month, 2)? as f64)
+    let month = parse_fixed_digits(month, 2)?;
+    (1..=12).contains(&month).then_some(month as f64)
 }
 
 fn temporal_calendar_id_from_object(
@@ -7549,11 +7820,43 @@ fn temporal_calendar_id_from_object(
     if matches!(value, JsValue::Undefined) {
         Ok("iso8601".into())
     } else {
-        let text = vm.to_string_coerce(value, context)?.to_ascii_lowercase();
-        if text.is_empty() {
+        if let JsValue::Object(calendar_object) = value {
+            if matches!(
+                own_string(context, calendar_object, TEMPORAL_KIND).as_deref(),
+                Some(
+                    "PlainDate"
+                        | "PlainDateTime"
+                        | "PlainMonthDay"
+                        | "PlainYearMonth"
+                        | "ZonedDateTime"
+                )
+            ) {
+                return Ok(own_string(context, calendar_object, "calendarId")
+                    .unwrap_or_else(|| "iso8601".into()));
+            }
+            return Err(VmError::type_error(
+                "Temporal calendar must be a string or Temporal object",
+            ));
+        }
+        let JsValue::String(text) = value else {
+            return Err(VmError::type_error(
+                "Temporal calendar must be a string or Temporal object",
+            ));
+        };
+        if text.is_empty() || !text.is_ascii() {
             Err(VmError::range("invalid Temporal calendar"))
         } else {
-            Ok(text)
+            let text = text.to_ascii_lowercase();
+            if parse_temporal_plain_date_string(&text).is_some()
+                || parse_plain_year_month(&text).is_some()
+                || parse_plain_month_day(&text).is_some()
+            {
+                Ok("iso8601".into())
+            } else if text.starts_with(|ch: char| ch.is_ascii_digit() || matches!(ch, '+' | '-')) {
+                Err(VmError::range("invalid Temporal calendar ISO string"))
+            } else {
+                Ok(text)
+            }
         }
     }
 }
@@ -7737,20 +8040,31 @@ fn temporal_plain_year_month_construct(
 }
 
 fn parse_plain_year_month(text: &str) -> Option<(f64, f64, f64)> {
-    let text = text.split('[').next().unwrap_or(text);
-    let date = text.split('T').next().unwrap_or(text);
-    let mut parts = date.split('-');
-    let year = parts.next()?.parse::<i32>().ok()?;
-    let month = parse_fixed_digits(parts.next()?, 2)?;
-    let day = match parts.next() {
-        Some(value) => parse_fixed_digits_day(value)?,
-        None => 1,
+    let body = validate_iso_calendar_annotations(text.trim())?;
+    let (date, time) = match body.find(['T', 't', ' ']) {
+        Some(index) => (&body[..index], Some(&body[index + 1..])),
+        None => (body, None),
     };
+    if let Some(time) = time {
+        validate_plain_date_time_tail(time)?;
+    }
+    let signed = date.starts_with(['+', '-']);
+    let year_len = if signed { 7 } else { 4 };
+    let normalized = if date.as_bytes().get(year_len) == Some(&b'-') {
+        match date.len() - year_len {
+            3 => format!("{date}-01"),
+            6 => date.to_string(),
+            _ => return None,
+        }
+    } else {
+        match (signed, date.len()) {
+            (false, 6) | (true, 9) => format!("{date}01"),
+            (false, 8) | (true, 11) => date.to_string(),
+            _ => return None,
+        }
+    };
+    let (year, month, day) = parse_temporal_date_part(&normalized)?;
     Some((year as f64, month as f64, day as f64))
-}
-
-fn parse_fixed_digits_day(value: &str) -> Option<u32> {
-    parse_fixed_digits(value, 2)
 }
 
 fn temporal_plain_year_month_from(
@@ -8084,8 +8398,17 @@ fn year_month_difference_options(
         Some(object) => option_string(vm, context, object, "smallestUnit")?,
         None => None,
     };
-    let largest_unit = normalize_temporal_unit(largest.unwrap_or_else(|| "month".into()))?;
     let smallest_unit = normalize_temporal_unit(smallest.unwrap_or_else(|| "month".into()))?;
+    let largest_unit = match largest.as_deref() {
+        None | Some("auto") => {
+            if temporal_unit_nanoseconds(&smallest_unit) > 30 * NS_PER_DAY_I128 {
+                smallest_unit.clone()
+            } else {
+                "month".into()
+            }
+        }
+        Some(unit) => normalize_temporal_unit(unit.to_string())?,
+    };
     if !matches!(largest_unit.as_str(), "year" | "month")
         || !matches!(smallest_unit.as_str(), "year" | "month")
         || temporal_unit_nanoseconds(&largest_unit) < temporal_unit_nanoseconds(&smallest_unit)
@@ -8244,15 +8567,59 @@ fn temporal_plain_month_day_construct(
 }
 
 fn parse_plain_month_day(text: &str) -> Option<(f64, f64, f64)> {
-    let text = text.split('[').next().unwrap_or(text);
-    if let Some(rest) = text.strip_prefix("--") {
-        let mut parts = rest.split('-');
-        let month = parse_fixed_digits(parts.next()?, 2)?;
-        let day = parse_fixed_digits(parts.next()?, 2)?;
+    let body = validate_iso_calendar_annotations(text.trim())?;
+    if let Some(rest) = body.strip_prefix("--") {
+        let (month, day) = if rest.len() == 5 && rest.as_bytes().get(2) == Some(&b'-') {
+            (
+                parse_fixed_digits(&rest[..2], 2)?,
+                parse_fixed_digits(&rest[3..], 2)?,
+            )
+        } else if rest.len() == 4 {
+            (
+                parse_fixed_digits(&rest[..2], 2)?,
+                parse_fixed_digits(&rest[2..], 2)?,
+            )
+        } else {
+            return None;
+        };
+        validate_plain_date(1972.0, month as f64, day as f64).ok()?;
         return Some((month as f64, day as f64, 1972.0));
     }
-    let (year, month, day) = parse_plain_date(text)?;
-    Some((month, day, year))
+    if body.len() == 5 && body.as_bytes().get(2) == Some(&b'-') {
+        let month = parse_fixed_digits(&body[..2], 2)?;
+        let day = parse_fixed_digits(&body[3..], 2)?;
+        validate_plain_date(1972.0, month as f64, day as f64).ok()?;
+        return Some((month as f64, day as f64, 1972.0));
+    }
+    if body.len() == 4 && body.chars().all(|ch| ch.is_ascii_digit()) {
+        let month = parse_fixed_digits(&body[..2], 2)?;
+        let day = parse_fixed_digits(&body[2..], 2)?;
+        validate_plain_date(1972.0, month as f64, day as f64).ok()?;
+        return Some((month as f64, day as f64, 1972.0));
+    }
+    let (date, time) = match body.find(['T', 't', ' ']) {
+        Some(index) => (&body[..index], Some(&body[index + 1..])),
+        None => (body, None),
+    };
+    if let Some(time) = time {
+        validate_plain_date_time_tail(time)?;
+    }
+    let signed = date.starts_with(['+', '-']);
+    let (month_text, day_text) = match (signed, date.len()) {
+        (false, 10) if date.as_bytes().get(4) == Some(&b'-') => (&date[5..7], &date[8..10]),
+        (false, 8) => (&date[4..6], &date[6..8]),
+        (true, 13) if date.as_bytes().get(7) == Some(&b'-') => (&date[8..10], &date[11..13]),
+        (true, 11) => (&date[7..9], &date[9..11]),
+        _ => return None,
+    };
+    let year_digits = if signed { &date[1..7] } else { &date[..4] };
+    if !year_digits.chars().all(|ch| ch.is_ascii_digit()) || date.starts_with("-000000") {
+        return None;
+    }
+    let month = parse_fixed_digits(month_text, 2)?;
+    let day = parse_fixed_digits(day_text, 2)?;
+    validate_plain_date(1972.0, month as f64, day as f64).ok()?;
+    Some((month as f64, day as f64, 1972.0))
 }
 
 fn temporal_plain_month_day_from(
@@ -8747,7 +9114,7 @@ fn temporal_zoned_date_time_construct(
             "Temporal.ZonedDateTime requires a time zone",
         ));
     } else {
-        vm.to_string_coerce(arg_or_undefined(arguments, 1), context)?
+        temporal_time_zone_string(vm, context, arg_or_undefined(arguments, 1))?
     };
     let calendar_id = if matches!(arguments.get(2), None | Some(JsValue::Undefined)) {
         "iso8601".into()
@@ -8766,12 +9133,45 @@ fn temporal_zoned_date_time_construct(
 }
 
 fn parse_zoned_date_time(text: &str) -> Option<(i128, String)> {
-    let time_zone_id = text
-        .rsplit_once('[')
-        .and_then(|(_, zone)| zone.strip_suffix(']'))
-        .unwrap_or("UTC")
-        .to_string();
-    let without_annotation = text.split('[').next().unwrap_or(text);
+    let first_annotation = text.find('[')?;
+    let without_annotation = &text[..first_annotation];
+    let mut rest = &text[first_annotation..];
+    let mut time_zone_id = None;
+    let mut saw_calendar = false;
+    while !rest.is_empty() {
+        let after_open = rest.strip_prefix('[')?;
+        let end = after_open.find(']')?;
+        let raw_annotation = &after_open[..end];
+        let critical = raw_annotation.starts_with('!');
+        let annotation = raw_annotation.strip_prefix('!').unwrap_or(raw_annotation);
+        if annotation.is_empty() {
+            return None;
+        }
+        if let Some((key, value)) = annotation.split_once('=') {
+            if value.is_empty() || (key != "u-ca" && critical) {
+                return None;
+            }
+            if key == "u-ca" {
+                if saw_calendar {
+                    if critical {
+                        return None;
+                    }
+                } else {
+                    saw_calendar = true;
+                }
+            }
+        } else {
+            if time_zone_id.is_some()
+                || annotation.contains('!')
+                || offset_annotation_has_subminute_syntax(annotation)
+            {
+                return None;
+            }
+            time_zone_id = Some(annotation.to_string());
+        }
+        rest = &after_open[end + 1..];
+    }
+    let time_zone_id = time_zone_id?;
     if let Some(epoch_nanoseconds) = parse_instant_string(without_annotation) {
         return Some((epoch_nanoseconds, time_zone_id));
     }
@@ -8788,10 +9188,35 @@ fn parse_zoned_date_time(text: &str) -> Option<(i128, String)> {
     };
     validate_plain_date(year, month, day).ok()?;
     validate_plain_time(time).ok()?;
-    Some((
-        epoch_nanoseconds_i128_from_plain_parts(year, month, day, time),
-        time_zone_id,
-    ))
+    let local_ns = epoch_nanoseconds_i128_from_plain_parts(year, month, day, time);
+    let offset_ns = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    Some((local_ns - offset_ns, time_zone_id))
+}
+
+fn validate_temporal_time_zone_syntax(text: &str) -> Result<(), VmError> {
+    if text.contains("-000000") || offset_annotation_has_subminute_syntax(text) {
+        return Err(VmError::range("invalid Temporal time zone"));
+    }
+    if let Some((_, time)) = text.split_once(['T', 't'])
+        && let Some(fraction_index) = time.find(['.', ','])
+    {
+        let head = &time[..fraction_index];
+        let compact_len = head.chars().filter(|ch| ch.is_ascii_digit()).count();
+        if compact_len == 2 || compact_len == 4 {
+            return Err(VmError::range("invalid fractional Temporal time"));
+        }
+    }
+    Ok(())
+}
+
+fn temporal_time_zone_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<String, VmError> {
+    let text = vm.to_string_coerce(value, context)?;
+    validate_temporal_time_zone_syntax(&text)?;
+    Ok(text)
 }
 
 fn temporal_zoned_date_time_from(
@@ -8828,7 +9253,7 @@ fn temporal_zoned_date_time_from(
                 let time_zone_id = if matches!(time_zone, JsValue::Undefined) {
                     "UTC".into()
                 } else {
-                    vm.to_string_coerce(time_zone, context)?
+                    temporal_time_zone_string(vm, context, time_zone)?
                 };
                 let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
                 let year = temporal_object_number(vm, context, object, "year")?;
@@ -9418,7 +9843,7 @@ fn temporal_zoned_date_time_with_time_zone(
             "Temporal.ZonedDateTime.prototype.withTimeZone requires a time zone",
         ));
     }
-    let time_zone_id = vm.to_string_coerce(time_zone_value, context)?;
+    let time_zone_id = temporal_time_zone_string(vm, context, time_zone_value)?;
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time(
         context,
@@ -9599,7 +10024,7 @@ fn temporal_now_zoned_date_time_iso(
 ) -> Result<JsValue, VmError> {
     let time_zone_id = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
         JsValue::Undefined => "UTC".into(),
-        value => vm.to_string_coerce(value, context)?,
+        value => temporal_time_zone_string(vm, context, value)?,
     };
     let epoch_ms = current_time_ms();
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
@@ -9619,12 +10044,26 @@ fn temporal_now_fields() -> DateFields {
     decompose_time(current_time_ms()).unwrap()
 }
 
+fn validate_temporal_now_time_zone(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+) -> Result<(), VmError> {
+    if let Some(value) = arguments.first()
+        && !matches!(value, JsValue::Undefined)
+    {
+        temporal_time_zone_string(vm, context, value.clone())?;
+    }
+    Ok(())
+}
+
 fn temporal_now_plain_date_iso(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    validate_temporal_now_time_zone(vm, context, arguments)?;
     let fields = temporal_now_fields();
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
     create_plain_date(
@@ -9637,11 +10076,12 @@ fn temporal_now_plain_date_iso(
 }
 
 fn temporal_now_plain_time_iso(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    validate_temporal_now_time_zone(vm, context, arguments)?;
     let fields = temporal_now_fields();
     let prototype = temporal_constructor_prototype(context, "PlainTime")?;
     create_plain_time(
@@ -9659,11 +10099,12 @@ fn temporal_now_plain_time_iso(
 }
 
 fn temporal_now_plain_date_time_iso(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
+    validate_temporal_now_time_zone(vm, context, arguments)?;
     let fields = temporal_now_fields();
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
     create_plain_date_time(
