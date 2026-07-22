@@ -28,8 +28,8 @@ fn num(value: f64) -> Token {
     tok(TokenKind::Number(value))
 }
 
-fn op(spelling: &str) -> Token {
-    tok(TokenKind::Operator(spelling.to_owned()))
+fn op(spelling: &'static str) -> Token {
+    tok(TokenKind::Operator(spelling))
 }
 
 fn ident(name: &str) -> Token {

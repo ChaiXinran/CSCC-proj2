@@ -265,3 +265,81 @@ cargo run --release -- test262 --jobs 4 --progress --json reports/full-test262-s
 --all-targets` remains blocked by pre-existing test-only initializers missing
 `is_derived_constructor` and a token test passing `String` to a static-string
 operator token; the release library and Test262 runner compile successfully.
+
+### 85% foundation sprint, stage 1
+
+This sprint uses the completed A-track full baseline as its only reference:
+42,983 / 53,379 passed, 10,394 failed, 2 skipped (80.5242%). A fresh full scan
+was completed before B changes; focused before summaries are stored under
+`reports/85-next-b/`.
+
+Delivered shared B mechanisms in this stage:
+
+- Added an explicit `ToPropertyKey` bytecode operation and applied it to
+  computed instance field names at class evaluation time. Key coercion and its
+  abrupt completion no longer wait until construction, and happen exactly once.
+- Public instance fields now use CreateDataProperty semantics through the Proxy
+  internal define-own-property protocol. Inherited setters are not invoked,
+  while proxy `defineProperty` observability and descriptor attributes remain
+  intact.
+- Static field initializers execute with the class constructor as `this` and as
+  the initializer function's `[[HomeObject]]`, restoring lexical-arrow `this`
+  capture and `super` lookup.
+- Async function return completion now resolves/adopts returned native Promises
+  and thenables instead of fulfilling with a Promise object. This fixes the
+  shared nested-async path used by public and private class async methods.
+- An attempted static-module reroute through the dynamic module graph loader was
+  rejected and reverted after the complete module-code suite regressed from
+  405 to 392 passes. No gain in another directory was used to offset it.
+
+| Suite | Before | Stage 1 | Delta |
+| --- | ---: | ---: | ---: |
+| `test/language/statements/class` | 3883 / 4367 | 3905 / 4367 | +22 |
+| `test/language/expressions/class` | 3616 / 4059 | 3639 / 4059 | +23 |
+| `test/language/expressions/dynamic-import` | 600 / 1004 | 601 / 1004 | +1 |
+| `test/language/module-code` | 405 / 599 | 405 / 599 | 0 |
+| `test/language/eval-code` | 119 / 347 | 119 / 347 | 0 |
+
+The confirmed focused net is +46 with no tracked B-suite regression. This is
+below the +300 checkpoint, so no redundant post-change full scan was run yet.
+The next stage remains private method/accessor brand installation followed by
+module declaration instantiation and eval environment records; the +1,100 B
+target is not claimed complete at this checkpoint.
+
+### 85% foundation sprint, final B checkpoint
+
+The user stopped further feature work at this checkpoint. The fixed baseline
+was 42,983 / 53,379 passed, 10,394 failed, and 2 skipped.
+
+- Completed class field initialization ordering, CreateDataProperty behavior,
+  static initializer `this`/`super`, derived-constructor primitive-return
+  validation, transparent parenthesized anonymous-function name inference, and
+  the first branded private-method slot path.
+- Added async-generator `yield*` support for async-from-sync and native async
+  iterators, including awaited next/return/throw results and values.
+- Split dynamic-module loading, instantiation, and evaluation; retained module
+  environments, import indirections, namespace identity, cycles, and original
+  evaluation exceptions. ImportCall now covers options trailing commas,
+  `new import()` early errors, and source/defer phase syntax.
+- Separated script/function-body declaration conflicts from block/module
+  lexical conflicts, and separated function display names from the inner name
+  binding used only by named function expressions. This restored default-export
+  live updates; `dynamic-import/usage` is 108 / 108.
+- The static-module reroute experiment remained reverted because it regressed
+  the complete module-code suite. No focused gain was accepted as compensation.
+
+| Suite | Before | Final | Delta |
+| --- | ---: | ---: | ---: |
+| `test/language/statements/class` | 3883 / 4367 | 4123 / 4367 | +240 |
+| `test/language/expressions/class` | 3616 / 4059 | 3856 / 4059 | +240 |
+| `test/language/expressions/dynamic-import` | 600 / 1004 | 867 / 1004 | +267 |
+| `test/language/module-code` | 405 / 599 | 405 / 599 | 0 |
+| `test/language/eval-code` | 119 / 347 | 120 / 347 | +1 |
+| `test/built-ins/Promise` | 679 / 703 | 679 / 703 | 0 |
+| Full Test262 | 42,983 / 53,379 | 43,961 / 53,379 | +978 |
+
+Final full result: 43,961 passed, 9,416 failed, 2 skipped, 82.3564%.
+The requested B stretch target of +1,100 was not claimed: this checkpoint is
++978, short by 122, because the user requested that implementation stop and
+move to closeout. The JSON and textual output are stored in
+`reports/full-test262-summary.json` and `output.txt`.

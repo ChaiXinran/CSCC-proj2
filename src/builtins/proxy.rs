@@ -1078,7 +1078,7 @@ fn ordinary_set_with_own_descriptor(
     }
 }
 
-fn descriptor_object_from_update(
+pub(crate) fn descriptor_object_from_update(
     context: &mut NativeContext,
     update: &PropertyDescriptorUpdate,
 ) -> Result<JsValue, VmError> {

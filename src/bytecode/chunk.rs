@@ -235,6 +235,9 @@ pub struct FunctionTemplate {
     pub is_async: bool,
     pub is_generator: bool,
     pub is_arrow: bool,
+    /// Whether calls create the inner name binding used by named function
+    /// expressions. Declarations and methods resolve names in their outer env.
+    pub binds_name_in_activation: bool,
     /// Class constructor created for a class with an `extends` clause.
     pub is_derived_constructor: bool,
     pub is_constructable: bool,

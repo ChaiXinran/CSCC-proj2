@@ -233,9 +233,15 @@ pub enum Instruction {
     DefineClassGetterComputed,
     /// Computed-key class setter: Stack `[obj, key, fn]` → `[obj]`.
     DefineClassSetterComputed,
+    /// Sets a function's [[HomeObject]] from the value below it without
+    /// changing the stack. Stack: `[home, function]` -> `[home, function]`.
+    SetFunctionHomeObject,
     /// Computed-key data property: Stack `[obj, key, val]` → `[obj]`.
     /// Defines obj[key] = val with {writable, enumerable, configurable}.
     DefineDataPropertyComputed,
+    /// Applies the ECMAScript ToPropertyKey abstract operation to the stack top.
+    /// Stack: `[value]` -> `[string-or-symbol]`.
+    ToPropertyKey,
     /// Resolves `extends` heritage for the instance prototype. `null` stays
     /// null; every other value reads its `prototype` property.
     GetClassHeritagePrototype,
@@ -464,6 +470,10 @@ impl Instruction {
             | Self::JumpIfNotNullish(_)
             | Self::JumpIfNotUndefined(_)
             | Self::RequireObjectCoercible => StackEffect::with_required(1, 0, 0),
+
+            Self::ToPropertyKey => StackEffect::new(1, 1),
+
+            Self::SetFunctionHomeObject => StackEffect::with_required(2, 0, 0),
 
             // no stack effect
             Self::Jump(_)

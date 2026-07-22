@@ -1460,6 +1460,7 @@ impl Compiler {
             is_async,
             is_generator,
             is_arrow: false,
+            binds_name_in_activation: false,
             is_derived_constructor: false,
             is_constructable: !is_async && !is_generator,
             has_own_prototype_property: !is_async,
@@ -3655,6 +3656,7 @@ impl Compiler {
             is_async: false,
             is_generator: false,
             is_arrow: false,
+            binds_name_in_activation: false,
             is_derived_constructor: false,
             is_constructable: false,
             has_own_prototype_property: false,
@@ -3859,6 +3861,12 @@ impl Compiler {
                     name: crate::ast::PropertyName::PrivateName(name),
                     ..
                 } => Some(name),
+                ClassElement::Method {
+                    name: crate::ast::PropertyName::PrivateName(name),
+                    is_getter: false,
+                    is_setter: false,
+                    ..
+                } => Some(name),
                 _ => None,
             };
             if let Some(name) = name
@@ -3901,7 +3909,26 @@ impl Compiler {
 
         // First pass: collect computed instance field key expressions and emit env setup.
         for (field_idx, element) in elements.iter().enumerate() {
-            if let ClassElement::Field {
+            if let ClassElement::Method {
+                name: crate::ast::PropertyName::PrivateName(name),
+                is_static: false,
+                is_getter: false,
+                is_setter: false,
+                ..
+            } = element
+            {
+                instance_field_specs.push(InstanceField {
+                    static_name: Some(format!("\0#init#{name}")),
+                    computed_binding: None,
+                    initializer: Some(Expression::Member {
+                        object: Box::new(Expression::This),
+                        property: Box::new(Expression::Identifier(format!(
+                            "\0methodsource#{name}"
+                        ))),
+                        computed: false,
+                    }),
+                });
+            } else if let ClassElement::Field {
                 name: prop_name,
                 is_static: false,
                 initializer,
@@ -3917,6 +3944,9 @@ impl Compiler {
                     let bidx = self.add_name(&binding_name, chunk)?;
                     chunk.emit(Instruction::CreateMutableBinding(bidx as u16));
                     self.compile_expression(key_expr, chunk, context)?; // push key
+                    // Convert once at class evaluation time, before any instance
+                    // initializer runs, as required by ClassFieldDefinitionEvaluation.
+                    chunk.emit(Instruction::ToPropertyKey);
                     chunk.emit(Instruction::InitializeBinding(bidx as u16)); // pop key → store
                     instance_field_specs.push(InstanceField {
                         static_name: None,
@@ -3931,7 +3961,7 @@ impl Compiler {
                         crate::ast::PropertyName::PrivateName(name) => {
                             format!("\0#init#{name}")
                         }
-                        _ => Self::class_member_storage_key(prop_name),
+                        _ => format!("\0#fieldinit#{}", Self::class_member_storage_key(prop_name)),
                     };
                     instance_field_specs.push(InstanceField {
                         static_name: Some(key),
@@ -4052,6 +4082,7 @@ impl Compiler {
             is_async: false,
             is_generator: false,
             is_arrow: false,
+            binds_name_in_activation: false,
             is_derived_constructor: super_class.is_some(),
             is_constructable: true,
             has_own_prototype_property: true,
@@ -4088,7 +4119,12 @@ impl Compiler {
                 } else {
                     base_name
                 };
-                let storage_key = Self::class_member_storage_key(prop_name);
+                let storage_key = match prop_name {
+                    crate::ast::PropertyName::PrivateName(name) if !*is_getter && !*is_setter => {
+                        format!("\0methodsource#{name}")
+                    }
+                    _ => Self::class_member_storage_key(prop_name),
+                };
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
                 let fn_template = FunctionTemplate {
@@ -4105,6 +4141,7 @@ impl Compiler {
                     is_async: function.is_async,
                     is_generator: function.is_generator,
                     is_arrow: false,
+                    binds_name_in_activation: false,
                     is_derived_constructor: false,
                     is_constructable: false,
                     has_own_prototype_property: false,
@@ -4136,6 +4173,18 @@ impl Compiler {
                         chunk.emit(Instruction::DefineClassSetter(key));
                     } else {
                         chunk.emit(Instruction::DefineClassMethod(key));
+                    }
+                    if let crate::ast::PropertyName::PrivateName(name) = prop_name
+                        && !*is_getter
+                        && !*is_setter
+                    {
+                        let source = self.add_name(&storage_key, chunk)?;
+                        let init = self.add_name(&format!("\0#init#{name}"), chunk)?;
+                        chunk.emit(Instruction::Duplicate);
+                        chunk.emit(Instruction::Duplicate);
+                        chunk.emit(Instruction::GetProperty(source));
+                        chunk.emit(Instruction::SetProperty(init));
+                        chunk.emit(Instruction::Pop);
                     }
                 }
                 // [ctor, ctor_copy]
@@ -4173,7 +4222,12 @@ impl Compiler {
                 } else {
                     base_name
                 };
-                let storage_key = Self::class_member_storage_key(prop_name);
+                let storage_key = match prop_name {
+                    crate::ast::PropertyName::PrivateName(name) if !*is_getter && !*is_setter => {
+                        format!("\0methodsource#{name}")
+                    }
+                    _ => Self::class_member_storage_key(prop_name),
+                };
                 let fn_compiled =
                     self.compile_function_body(&function.params, &function.body, context)?;
                 let fn_template = FunctionTemplate {
@@ -4190,6 +4244,7 @@ impl Compiler {
                     is_async: function.is_async,
                     is_generator: function.is_generator,
                     is_arrow: false,
+                    binds_name_in_activation: false,
                     is_derived_constructor: false,
                     is_constructable: false,
                     has_own_prototype_property: false,
@@ -4262,14 +4317,46 @@ impl Compiler {
                         .as_ref()
                         .map_or(Expression::Literal(Literal::Undefined), |b| *b.clone());
                     // Stack: [ctor]
-                    chunk.emit(Instruction::Duplicate); // [ctor, ctor]
                     if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                        chunk.emit(Instruction::Duplicate); // [ctor, ctor]
                         // Computed static field: evaluate key at class definition time.
                         self.compile_expression(key_expr, chunk, context)?; // [ctor, ctor, key]
                         self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, key, val]
                         chunk.emit(Instruction::DefineDataPropertyComputed); // [ctor, ctor]
+                        chunk.emit(Instruction::Pop); // [ctor]
                     } else {
-                        self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, val]
+                        let init_body = FunctionBody {
+                            statements: vec![Statement::Return(Some(init_val))],
+                            is_strict: true,
+                        };
+                        let init_fn = self.compile_function_body(&[], &init_body, context)?;
+                        let init_template = FunctionTemplate {
+                            name: None,
+                            params: init_fn.params,
+                            rest_param: init_fn.rest_param,
+                            length_override: Some(0),
+                            chunk: init_fn.chunk,
+                            is_strict: true,
+                            is_async: false,
+                            is_generator: false,
+                            is_arrow: false,
+                            binds_name_in_activation: false,
+                            is_derived_constructor: false,
+                            is_constructable: false,
+                            has_own_prototype_property: false,
+                            prototype_writable: false,
+                            uses_arguments: init_fn.uses_arguments,
+                            environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
+                        };
+                        let init_idx = chunk
+                            .add_function(init_template)
+                            .map_err(CompileError::from_chunk)?;
+                        chunk.emit(Instruction::Duplicate); // [ctor, ctor]
+                        chunk.emit(Instruction::Duplicate); // [ctor, ctor, ctor]
+                        chunk.emit(Instruction::CreateFunction(init_idx)); // [ctor, ctor, ctor, fn]
+                        chunk.emit(Instruction::SetFunctionHomeObject);
+                        chunk.emit(Instruction::Swap); // [ctor, fn, ctor]
+                        chunk.emit(Instruction::CallWithThis(0)); // [ctor, value]
                         let (key, private) = match prop_name {
                             crate::ast::PropertyName::PrivateName(name) => {
                                 (format!("\0#init#{name}"), true)
@@ -4282,8 +4369,8 @@ impl Compiler {
                         } else {
                             Instruction::DefineDataProperty(key_idx)
                         }); // [ctor, ctor]
+                        chunk.emit(Instruction::Pop); // [ctor]
                     }
-                    chunk.emit(Instruction::Pop); // [ctor]
                 }
                 ClassElement::StaticBlock(statements) => {
                     let block_body = FunctionBody {
@@ -4301,6 +4388,7 @@ impl Compiler {
                         is_generator: false,
                         is_async: false,
                         is_arrow: false,
+                        binds_name_in_activation: false,
                         is_derived_constructor: false,
                         is_constructable: false,
                         has_own_prototype_property: false,
@@ -4691,6 +4779,7 @@ impl Compiler {
             is_async: literal.is_async,
             is_generator: literal.is_generator,
             is_arrow: literal.is_arrow,
+            binds_name_in_activation: literal.name.is_some(),
             is_derived_constructor: false,
             is_constructable: !literal.is_arrow && !literal.is_async && !literal.is_generator,
             has_own_prototype_property: !literal.is_arrow && !literal.is_async,
@@ -5128,6 +5217,10 @@ fn is_anonymous_function_definition(expr: &Expression) -> bool {
     match expr {
         Expression::Function(lit) => lit.name.is_none(),
         Expression::Class(cls) => cls.name.is_none(),
+        // Parentheses are transparent for IsAnonymousFunctionDefinition. Keep
+        // other cover expressions (notably comma expressions) opaque so that
+        // `(0, function () {})` does not receive an inferred name.
+        Expression::Parenthesized(inner) => is_anonymous_function_definition(inner),
         _ => false,
     }
 }

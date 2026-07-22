@@ -15,8 +15,8 @@ use crate::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
         Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
         PreferredType, PrimitiveValue, PrivateBrandId, PromiseCallbackJob, PromiseReaction,
-        PropertyDescriptor, PropertyKey, PropertyKind, SymbolId, TypedArrayViewId, array_index,
-        bigint, to_property_key,
+        PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, SymbolId,
+        TypedArrayViewId, array_index, bigint, to_property_key,
     },
     vm::{CallFrame, Completion},
 };
@@ -357,6 +357,7 @@ fn resolve_export_target_inner(
 }
 
 fn evaluate_module_graph(
+    vm: &mut Vm,
     context: &mut NativeContext,
     graph: &HashMap<std::path::PathBuf, LoadedModule>,
     path: &Path,
@@ -388,7 +389,7 @@ fn evaluate_module_graph(
     for specifier in &module.dependencies {
         let dependency_path = crate::runtime::resolve_module_specifier(&path, specifier)
             .map_err(VmError::type_error)?;
-        evaluate_module_graph(context, graph, &dependency_path)?;
+        evaluate_module_graph(vm, context, graph, &dependency_path)?;
     }
 
     let environment = context
@@ -397,15 +398,19 @@ fn evaluate_module_graph(
         .ok_or_else(|| VmError::runtime("module environment is missing"))?;
     let depth = context.environment_depth();
     context.push_existing_environment(environment)?;
-    let execution = Vm::default().execute_with_context(&module.chunk, context);
+    let execution = vm.eval_execute(&module.chunk, context);
     context.restore_environment_depth(depth)?;
     if let Err(error) = execution {
+        let rejection = vm
+            .pending_exception
+            .clone()
+            .unwrap_or_else(|| vm_error_to_value(error.clone()));
         context
             .module_registry_mut()
             .set_status(module.id, crate::runtime::ModuleStatus::Failed);
         context.module_registry_mut().set_evaluation_state(
             module.id,
-            crate::runtime::ModuleEvaluationState::Rejected(vm_error_to_value(error.clone())),
+            crate::runtime::ModuleEvaluationState::Rejected(rejection),
         );
         return Err(error);
     }
@@ -441,7 +446,11 @@ fn evaluate_module_graph(
     Ok(namespace)
 }
 
-fn evaluate_local_module(context: &mut NativeContext, path: &Path) -> Result<JsValue, VmError> {
+fn evaluate_local_module(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    path: &Path,
+) -> Result<JsValue, VmError> {
     let path = crate::runtime::normalize_module_path(path);
     if matches!(
         context.module_registry().status_for_path(&path),
@@ -456,12 +465,13 @@ fn evaluate_local_module(context: &mut NativeContext, path: &Path) -> Result<JsV
     let mut graph = HashMap::new();
     load_module_graph(context, &path, &mut graph)?;
     instantiate_module_graph(context, &graph)?;
-    evaluate_module_graph(context, &graph, &path)
+    evaluate_module_graph(vm, context, &graph, &path)
 }
 
 /// B's local dynamic-module loader. Each module owns a persistent lexical
 /// environment and namespace instead of projecting bindings onto the global.
 fn load_dynamic_module_namespace(
+    vm: &mut Vm,
     context: &mut NativeContext,
     specifier: &str,
 ) -> Result<JsValue, VmError> {
@@ -471,7 +481,7 @@ fn load_dynamic_module_namespace(
         .ok_or_else(|| VmError::reference("dynamic import has no referrer path"))?;
     let path = crate::runtime::resolve_module_specifier(Path::new(&referrer), specifier)
         .map_err(VmError::type_error)?;
-    evaluate_local_module(context, &path)
+    evaluate_local_module(vm, context, &path)
 }
 
 const ITERATOR_MAX_ARRAY_LENGTH: usize = 1_000_000;
@@ -724,7 +734,10 @@ impl Vm {
             Completion::Yield { .. } | Completion::YieldDelegate { .. } => Err(VmError::runtime(
                 "yield completion escaped outside a generator",
             )),
-            Completion::Throw(value) => Err(throw_value(value, context)),
+            Completion::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("nested JavaScript execution threw"))
+            }
             Completion::Break(label) => Err(VmError::runtime(format!(
                 "break completion in eval context{}",
                 label_suffix(label.as_deref())
@@ -2006,7 +2019,16 @@ impl Vm {
                 }
                 Instruction::YieldDelegate => {
                     let iterable = self.pop_value()?;
-                    let iterator = match self.create_iterator_object(iterable, context)? {
+                    let is_async_generator = context
+                        .current_function()
+                        .and_then(|function| context.function(function))
+                        .is_some_and(|function| function.is_async && function.is_generator);
+                    let iterator_result = if is_async_generator {
+                        self.create_async_iterator_object(iterable, context)?
+                    } else {
+                        self.create_iterator_object(iterable, context)?
+                    };
+                    let iterator = match iterator_result {
                         OperationResult::Value(iterator) => iterator,
                         OperationResult::Throw(value) => return Ok(Completion::Throw(value)),
                     };
@@ -2283,18 +2305,20 @@ impl Vm {
                         });
                     let value = context.create_promise_object(promise, prototype)?;
                     match self.to_string_coerce(specifier, context) {
-                        Ok(specifier) => match load_dynamic_module_namespace(context, &specifier) {
-                            Ok(namespace) => {
-                                context.fulfill_promise(promise, namespace)?;
+                        Ok(specifier) => {
+                            match load_dynamic_module_namespace(self, context, &specifier) {
+                                Ok(namespace) => {
+                                    context.fulfill_promise(promise, namespace)?;
+                                }
+                                Err(error) => {
+                                    let reason = self
+                                        .pending_exception
+                                        .take()
+                                        .unwrap_or_else(|| vm_error_to_value(error));
+                                    context.reject_promise(promise, reason)?;
+                                }
                             }
-                            Err(error) => {
-                                let reason = self
-                                    .pending_exception
-                                    .take()
-                                    .unwrap_or_else(|| vm_error_to_value(error));
-                                context.reject_promise(promise, reason)?;
-                            }
-                        },
+                        }
                         Err(error) => {
                             let reason = self
                                 .pending_exception
@@ -2402,6 +2426,16 @@ impl Vm {
                         name,
                         PropertyDescriptor::data_with(value, true, false, true),
                     )?;
+                }
+                Instruction::SetFunctionHomeObject => {
+                    let function = self.peek_value()?.clone();
+                    let home = self
+                        .stack
+                        .get(self.stack.len().saturating_sub(2))
+                        .ok_or_else(|| VmError::runtime("missing class initializer home object"))?
+                        .clone();
+                    let home = context.require_object(&home, "class initializer home object")?;
+                    context.set_function_home_object(&function, home)?;
                 }
                 Instruction::DefineClassGetter(index) => {
                     let name = self
@@ -2624,6 +2658,16 @@ impl Vm {
                             )?;
                         }
                         _ => unreachable!("ToPropertyKey returns a string or symbol"),
+                    }
+                }
+                Instruction::ToPropertyKey => {
+                    let value = self.pop_value()?;
+                    match self.coerce_to_property_key(value, context)? {
+                        OperationResult::Value(key) => self.stack.push(key),
+                        OperationResult::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
                     }
                 }
                 Instruction::SpreadObject => {
@@ -3102,6 +3146,7 @@ impl Vm {
             is_async,
             is_generator,
             is_arrow,
+            binds_name_in_activation: template.binds_name_in_activation,
             is_derived_constructor: template.is_derived_constructor,
             is_constructable: template.is_constructable,
             has_own_prototype_property: template.has_own_prototype_property,
@@ -4466,9 +4511,63 @@ impl Vm {
                 iterator,
                 next_method,
             } => self.step_js_yield_star_iterator(iterator, next_method, sent_value, context),
-            IteratorKind::JsAsync { .. } => {
-                Err(VmError::runtime("async iterator cannot be used by yield*"))
+            IteratorKind::JsAsync { iterator } => {
+                self.step_js_async_yield_star_iterator(iterator, sent_value, context)
             }
+        }
+    }
+
+    fn step_js_async_yield_star_iterator(
+        &mut self,
+        iterator: JsValue,
+        sent_value: JsValue,
+        context: &mut NativeContext,
+    ) -> Result<YieldStarStepResult, VmError> {
+        let next = match self.get_property_value_completion(iterator.clone(), "next", context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+        };
+        if !is_callable_value(&next) {
+            return Ok(YieldStarStepResult::Throw(vm_error_to_value(
+                VmError::type_error("async iterator next is not callable"),
+            )));
+        }
+        let result = match self.call_value(next, iterator, vec![sent_value], context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+        };
+        let result = match self.await_value_now(result, context)? {
+            OperationResult::Value(value) => value,
+            OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+        };
+        if !is_object_like(&result) {
+            return Ok(YieldStarStepResult::Throw(vm_error_to_value(
+                VmError::type_error("async iterator next returned a non-object"),
+            )));
+        }
+        let done = match self.get_property_value_completion(result.clone(), "done", context)? {
+            OperationResult::Value(value) => value.to_boolean(),
+            OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+        };
+        if done {
+            let value = match self.get_property_value_completion(result, "value", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            };
+            match self.await_value_now(value, context)? {
+                OperationResult::Value(value) => Ok(YieldStarStepResult::Complete(value)),
+                OperationResult::Throw(value) => Ok(YieldStarStepResult::Throw(value)),
+            }
+        } else {
+            let value = match self.get_property_value_completion(result, "value", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            };
+            let value = match self.await_value_now(value, context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            };
+            generator_result(context, value, false).map(YieldStarStepResult::Yield)
         }
     }
 
@@ -4598,8 +4697,10 @@ impl Vm {
 
         context.close_iterator_object(JsValue::Object(id))?;
 
-        let IteratorKind::Js { iterator, .. } = kind else {
-            return Ok(YieldStarStepResult::Complete(return_value));
+        let (iterator, is_async) = match kind {
+            IteratorKind::Js { iterator, .. } => (iterator, false),
+            IteratorKind::JsAsync { iterator } => (iterator, true),
+            _ => return Ok(YieldStarStepResult::Complete(return_value)),
         };
 
         let return_method =
@@ -4619,6 +4720,14 @@ impl Vm {
             OperationResult::Value(value) => value,
             OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
         };
+        let result = if is_async {
+            match self.await_value_now(result, context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            }
+        } else {
+            result
+        };
         if !is_object_like(&result) {
             return Ok(YieldStarStepResult::Throw(vm_error_to_value(
                 VmError::type_error("iterator return returned a non-object"),
@@ -4633,9 +4742,28 @@ impl Vm {
                 OperationResult::Value(value) => value,
                 OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
             };
-            Ok(YieldStarStepResult::Complete(value))
+            if is_async {
+                match self.await_value_now(value, context)? {
+                    OperationResult::Value(value) => Ok(YieldStarStepResult::Complete(value)),
+                    OperationResult::Throw(value) => Ok(YieldStarStepResult::Throw(value)),
+                }
+            } else {
+                Ok(YieldStarStepResult::Complete(value))
+            }
         } else {
-            Ok(YieldStarStepResult::Yield(result))
+            if is_async {
+                let value = match self.get_property_value_completion(result, "value", context)? {
+                    OperationResult::Value(value) => value,
+                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+                };
+                let value = match self.await_value_now(value, context)? {
+                    OperationResult::Value(value) => value,
+                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+                };
+                generator_result(context, value, false).map(YieldStarStepResult::Yield)
+            } else {
+                Ok(YieldStarStepResult::Yield(result))
+            }
         }
     }
 
@@ -4668,14 +4796,18 @@ impl Vm {
             }
         };
 
-        let IteratorKind::Js { iterator, .. } = kind else {
-            match self.close_iterator_object_completion(iterator_val, context)? {
-                OperationResult::Value(_) => {}
-                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+        let (iterator, is_async) = match kind {
+            IteratorKind::Js { iterator, .. } => (iterator, false),
+            IteratorKind::JsAsync { iterator } => (iterator, true),
+            _ => {
+                match self.close_iterator_object_completion(iterator_val, context)? {
+                    OperationResult::Value(_) => {}
+                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+                }
+                return Ok(YieldStarStepResult::Throw(vm_error_to_value(
+                    VmError::type_error("iterator throw is not callable"),
+                )));
             }
-            return Ok(YieldStarStepResult::Throw(vm_error_to_value(
-                VmError::type_error("iterator throw is not callable"),
-            )));
         };
 
         let throw_method =
@@ -4701,6 +4833,14 @@ impl Vm {
             OperationResult::Value(value) => value,
             OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
         };
+        let result = if is_async {
+            match self.await_value_now(result, context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            }
+        } else {
+            result
+        };
         if !is_object_like(&result) {
             return Ok(YieldStarStepResult::Throw(vm_error_to_value(
                 VmError::type_error("iterator throw returned a non-object"),
@@ -4715,9 +4855,28 @@ impl Vm {
                 OperationResult::Value(value) => value,
                 OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
             };
-            Ok(YieldStarStepResult::Complete(value))
+            if is_async {
+                match self.await_value_now(value, context)? {
+                    OperationResult::Value(value) => Ok(YieldStarStepResult::Complete(value)),
+                    OperationResult::Throw(value) => Ok(YieldStarStepResult::Throw(value)),
+                }
+            } else {
+                Ok(YieldStarStepResult::Complete(value))
+            }
         } else {
-            Ok(YieldStarStepResult::Yield(result))
+            if is_async {
+                let value = match self.get_property_value_completion(result, "value", context)? {
+                    OperationResult::Value(value) => value,
+                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+                };
+                let value = match self.await_value_now(value, context)? {
+                    OperationResult::Value(value) => value,
+                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+                };
+                generator_result(context, value, false).map(YieldStarStepResult::Yield)
+            } else {
+                Ok(YieldStarStepResult::Yield(result))
+            }
         }
     }
 
@@ -6178,6 +6337,27 @@ impl Vm {
             }
             Err(error) => return Err(error),
         };
+        if let Some(name) = key.strip_prefix("\0#fieldinit#") {
+            let update = PropertyDescriptorUpdate {
+                value: Some(value.clone()),
+                writable: Some(true),
+                enumerable: Some(true),
+                configurable: Some(true),
+                get: None,
+                set: None,
+            };
+            let descriptor = proxy::descriptor_object_from_update(context, &update)?;
+            let key = PropertyKey::String(name.to_string());
+            return match proxy::internal_define_own_property(
+                self, context, receiver, &key, descriptor, update,
+            ) {
+                Ok(true) => Ok(OperationResult::Value(value)),
+                Ok(false) => self.error_to_operation_result(VmError::type_error(format!(
+                    "cannot define class field {name}"
+                ))),
+                Err(error) => self.error_to_operation_result(error),
+            };
+        }
         if let Some(name) = key.strip_prefix("\0#init#") {
             if let Some(brand) = Self::private_brand_for_name(context, name)? {
                 return match context.define_private_slot(
@@ -6600,6 +6780,9 @@ impl Vm {
     }
 
     fn should_bind_function_name_in_activation(function: &JsFunction) -> bool {
+        if !function.binds_name_in_activation {
+            return false;
+        }
         let Some(name) = &function.name else {
             return false;
         };
@@ -6626,7 +6809,10 @@ impl Vm {
         let promise_object = context.create_promise_object(promise, prototype)?;
         match operation {
             OperationResult::Value(value) => {
-                context.fulfill_promise(promise, value)?;
+                // AsyncFunctionStart resolves its capability; it must adopt a
+                // returned Promise/thenable instead of fulfilling with it as a
+                // plain object.
+                crate::builtins::promise::resolve_promise_id(self, context, promise, value)?;
             }
             OperationResult::Throw(value) => {
                 context.reject_promise(promise, value)?;
@@ -6716,17 +6902,19 @@ impl Vm {
                                 let (derived_this, initialized) = context
                                     .pop_pending_derived_this()
                                     .unwrap_or((JsValue::Undefined, false));
+                                if !matches!(result, JsValue::Undefined) {
+                                    return Ok(OperationResult::Throw(vm_error_to_value(
+                                        VmError::type_error(
+                                            "derived constructor may only return an object or undefined",
+                                        ),
+                                    )));
+                                }
                                 if !initialized {
-                                    let error = if matches!(result, JsValue::Undefined) {
+                                    return Ok(OperationResult::Throw(vm_error_to_value(
                                         VmError::reference(
                                             "derived constructor must call super() before returning",
-                                        )
-                                    } else {
-                                        VmError::type_error(
-                                            "derived constructor may only return an object",
-                                        )
-                                    };
-                                    return Ok(OperationResult::Throw(vm_error_to_value(error)));
+                                        ),
+                                    )));
                                 }
                                 return Ok(OperationResult::Value(derived_this));
                             }

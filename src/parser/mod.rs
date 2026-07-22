@@ -143,7 +143,9 @@ impl Parser {
         while !self.at_eof() {
             body.push(self.parse_statement()?);
         }
-        self.validate_lexical_declarations(&body)?;
+        // Script-level function declarations are var-scoped (in both strict
+        // and sloppy scripts), unlike declarations inside an ordinary block.
+        self.validate_function_body_declarations(&body)?;
         self.validate_private_names(&body)?;
         Ok(Program { body })
     }

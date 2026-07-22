@@ -578,6 +578,9 @@ impl Parser {
             return Err(self.error(format!("`new.{prop}` is not a valid meta-property")));
         }
         let mut callee = self.parse_primary()?;
+        if matches!(callee, Expression::DynamicImport { .. }) {
+            return Err(self.error("dynamic import cannot be used as a constructor".into()));
+        }
         while self.eat_punctuator('.') {
             if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
                 self.advance();
@@ -794,13 +797,25 @@ impl Parser {
         self.advance(); // consume `import`
         // `import.meta` — module meta-object (§13.3.12). Only valid in module code.
         if self.eat_punctuator('.') {
-            match &self.peek().kind.clone() {
-                TokenKind::Identifier(name) if name == "meta" => {
-                    self.advance();
-                    return Ok(Expression::ImportMeta);
-                }
-                _ => return Err(self.error("expected `meta` after `import.`".into())),
+            let phase = self.expect_identifier_name()?;
+            if phase == "meta" {
+                return Ok(Expression::ImportMeta);
             }
+            if phase != "source" && phase != "defer" {
+                return Err(
+                    self.error("expected `meta`, `source`, or `defer` after `import.`".into())
+                );
+            }
+            self.expect_punctuator('(')?;
+            if self.check_punctuator(')') {
+                return Err(self.error("phase import requires a specifier".into()));
+            }
+            let specifier = self.allowing_in(|parser| parser.parse_assignment())?;
+            self.expect_punctuator(')')?;
+            return Ok(Expression::DynamicImport {
+                specifier: Box::new(specifier),
+                options: None,
+            });
         }
         self.expect_punctuator('(')?;
         if self.check_punctuator(')') {
@@ -811,9 +826,13 @@ impl Parser {
             if self.check_punctuator(')') {
                 None
             } else {
-                Some(Box::new(
+                let options = Some(Box::new(
                     self.allowing_in(|parser| parser.parse_assignment())?,
-                ))
+                ));
+                // ImportCall permits a trailing comma after the options
+                // expression: import(specifier, options,).
+                let _ = self.eat_punctuator(',');
+                options
             }
         } else {
             None

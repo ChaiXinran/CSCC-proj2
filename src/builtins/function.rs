@@ -207,6 +207,7 @@ fn create_dynamic_function(
         is_async: false,
         is_generator: false,
         is_arrow: false,
+        binds_name_in_activation: false,
         is_derived_constructor: false,
         is_constructable: true,
         has_own_prototype_property: true,

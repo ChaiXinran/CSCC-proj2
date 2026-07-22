@@ -328,7 +328,7 @@ impl Parser {
         self.is_strict = outer_strict;
         self.label_stack = outer_labels;
         result?;
-        self.validate_lexical_declarations(&statements)?;
+        self.validate_function_body_declarations(&statements)?;
         Ok(FunctionBody {
             statements,
             is_strict: function_is_strict,
@@ -1965,6 +1965,21 @@ impl Parser {
         &self,
         statements: &[Statement],
     ) -> Result<(), ParseError> {
+        self.validate_declaration_conflicts(statements, true)
+    }
+
+    pub(super) fn validate_function_body_declarations(
+        &self,
+        statements: &[Statement],
+    ) -> Result<(), ParseError> {
+        self.validate_declaration_conflicts(statements, false)
+    }
+
+    fn validate_declaration_conflicts(
+        &self,
+        statements: &[Statement],
+        functions_are_lexical: bool,
+    ) -> Result<(), ParseError> {
         // Names that appear only as FunctionDeclarations in this block (for Annex B B.3.3.4).
         let fn_decl_only: HashSet<&str> = {
             let mut fn_names: HashSet<&str> = HashSet::new();
@@ -1992,7 +2007,16 @@ impl Parser {
         };
 
         let mut lexical_names: HashSet<&str> = HashSet::new();
-        for name in direct_lexical_names(statements) {
+        let direct_names = if functions_are_lexical {
+            direct_lexical_names(statements)
+        } else {
+            statements
+                .iter()
+                .filter(|statement| !matches!(statement, Statement::FunctionDeclaration { .. }))
+                .flat_map(|statement| direct_lexical_names(std::slice::from_ref(statement)))
+                .collect()
+        };
+        for name in direct_names {
             if !lexical_names.insert(name) {
                 // Annex B B.3.3.4: duplicate function declarations in non-strict mode are allowed.
                 if !self.is_strict && fn_decl_only.contains(name) {
@@ -2002,7 +2026,9 @@ impl Parser {
             }
         }
         for name in var_declared_names(statements) {
-            if lexical_names.contains(name) {
+            if lexical_names.contains(name)
+                && !(!self.is_strict && functions_are_lexical && fn_decl_only.contains(name))
+            {
                 return Err(self.error(format!(
                     "var declaration `{name}` conflicts with a lexical declaration"
                 )));
