@@ -46,7 +46,7 @@ fn gc_preserves_closure_environment_and_captured_values() {
         .unwrap();
     let captured_id = object_id(&captured);
     context
-        .declare_binding(outer, "captured", captured, true)
+        .declare_binding(outer, "captured", captured, true, false)
         .unwrap();
 
     let function = JsFunction {

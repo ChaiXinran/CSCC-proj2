@@ -15,6 +15,11 @@ pub struct Binding {
     pub value: JsValue,
     pub mutable: bool,
     pub initialized: bool,
+    /// True when the binding was created by a `let`, `const`, `class`,
+    /// catch-parameter, or function-parameter declaration. False for `var`
+    /// and `function` declarations. Used by eval declaration instantiation
+    /// to detect invalid redeclarations.
+    pub lexical: bool,
 }
 
 /// One lexical scope and its outer scope.
@@ -31,6 +36,7 @@ impl Environment {
         name: impl Into<String>,
         value: JsValue,
         mutable: bool,
+        lexical: bool,
     ) -> bool {
         let name = name.into();
         if self.bindings.contains_key(&name) {
@@ -42,6 +48,7 @@ impl Environment {
                 value,
                 mutable,
                 initialized: true,
+                lexical,
             },
         );
         true
@@ -51,9 +58,10 @@ impl Environment {
         &mut self,
         name: String,
         initialized: bool,
+        lexical: bool,
     ) -> Result<(), VmError> {
         if self.bindings.contains_key(&name) {
-            return Err(VmError::type_error(format!("duplicate binding {name}")));
+            return Err(VmError::syntax_error(format!("duplicate binding {name}")));
         }
         self.bindings.insert(
             name,
@@ -61,14 +69,15 @@ impl Environment {
                 value: JsValue::Undefined,
                 mutable: true,
                 initialized,
+                lexical,
             },
         );
         Ok(())
     }
 
-    pub fn create_immutable_binding(&mut self, name: String) -> Result<(), VmError> {
+    pub fn create_immutable_binding(&mut self, name: String, lexical: bool) -> Result<(), VmError> {
         if self.bindings.contains_key(&name) {
-            return Err(VmError::type_error(format!("duplicate binding {name}")));
+            return Err(VmError::syntax_error(format!("duplicate binding {name}")));
         }
         self.bindings.insert(
             name,
@@ -76,6 +85,7 @@ impl Environment {
                 value: JsValue::Undefined,
                 mutable: false,
                 initialized: false,
+                lexical,
             },
         );
         Ok(())

@@ -33,7 +33,7 @@ fn module_import_binding_reads_the_current_export_cell() {
         .push_environment(Some(context.global_environment()))
         .expect("allocate export environment");
     context
-        .create_mutable_binding(export_environment, "value".into(), false)
+        .create_mutable_binding(export_environment, "value".into(), false, true)
         .expect("create export binding");
     context
         .initialize_binding(export_environment, "value", JsValue::Number(1.0))
@@ -44,7 +44,7 @@ fn module_import_binding_reads_the_current_export_cell() {
         .push_environment(Some(context.global_environment()))
         .expect("allocate import environment");
     context
-        .create_immutable_binding(import_environment, "imported".into())
+        .create_immutable_binding(import_environment, "imported".into(), true)
         .expect("create import binding");
     context.create_module_import_link(
         import_environment,

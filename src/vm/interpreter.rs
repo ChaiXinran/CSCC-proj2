@@ -262,32 +262,48 @@ fn instantiate_module_declarations(
                 for declaration in declarations {
                     if declaration.pattern.is_none() {
                         match kind {
-                            crate::ast::VariableKind::Const => context
-                                .create_immutable_binding(environment, declaration.name.clone())?,
+                            crate::ast::VariableKind::Const => context.create_immutable_binding(
+                                environment,
+                                declaration.name.clone(),
+                                true,
+                            )?,
                             crate::ast::VariableKind::Let => context.create_mutable_binding(
                                 environment,
                                 declaration.name.clone(),
                                 false,
+                                true,
                             )?,
                             crate::ast::VariableKind::Var => context.declare_binding(
                                 environment,
                                 declaration.name.clone(),
                                 JsValue::Undefined,
                                 true,
+                                false,
                             )?,
                         }
                     }
                 }
             }
-            Statement::ClassDeclaration(declaration) => {
-                context.create_mutable_binding(environment, declaration.name.clone(), false)?
-            }
-            Statement::FunctionDeclaration { name, .. } => {
-                context.declare_binding(environment, name.clone(), JsValue::Undefined, true)?
-            }
+            Statement::ClassDeclaration(declaration) => context.create_mutable_binding(
+                environment,
+                declaration.name.clone(),
+                false,
+                true,
+            )?,
+            Statement::FunctionDeclaration { name, .. } => context.declare_binding(
+                environment,
+                name.clone(),
+                JsValue::Undefined,
+                true,
+                false,
+            )?,
             Statement::ModuleDeclaration(ModuleDeclaration::Import(declaration)) => {
                 for entry in &declaration.entries {
-                    context.create_immutable_binding(environment, entry.local_name.clone())?;
+                    context.create_immutable_binding(
+                        environment,
+                        entry.local_name.clone(),
+                        true,
+                    )?;
                 }
             }
             Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) => {
@@ -729,23 +745,33 @@ impl Vm {
         // The return value travels via Result, not via the operand stack.
         self.stack.truncate(saved_depth);
 
-        match result? {
-            Completion::Normal(value) | Completion::Return(value) => Ok(value),
-            Completion::Yield { .. } | Completion::YieldDelegate { .. } => Err(VmError::runtime(
-                "yield completion escaped outside a generator",
-            )),
-            Completion::Throw(value) => {
-                self.pending_exception = Some(value);
-                Err(VmError::runtime("nested JavaScript execution threw"))
+        match result {
+            // EvalDeclarationInstantiation §18.2.1.1: duplicate bindings
+            // detected during eval execution are SyntaxErrors, not TypeErrors.
+            Err(ref error)
+                if error.message.starts_with("duplicate binding")
+                    && error.kind == VmErrorKind::Type =>
+            {
+                Err(VmError::syntax_error(error.message.clone()))
             }
-            Completion::Break(label) => Err(VmError::runtime(format!(
-                "break completion in eval context{}",
-                label_suffix(label.as_deref())
-            ))),
-            Completion::Continue(label) => Err(VmError::runtime(format!(
-                "continue completion in eval context{}",
-                label_suffix(label.as_deref())
-            ))),
+            other => match other? {
+                Completion::Normal(value) | Completion::Return(value) => Ok(value),
+                Completion::Yield { .. } | Completion::YieldDelegate { .. } => Err(
+                    VmError::runtime("yield completion escaped outside a generator"),
+                ),
+                Completion::Throw(value) => {
+                    self.pending_exception = Some(value);
+                    Err(VmError::runtime("nested JavaScript execution threw"))
+                }
+                Completion::Break(label) => Err(VmError::runtime(format!(
+                    "break completion in eval context{}",
+                    label_suffix(label.as_deref())
+                ))),
+                Completion::Continue(label) => Err(VmError::runtime(format!(
+                    "continue completion in eval context{}",
+                    label_suffix(label.as_deref())
+                ))),
+            },
         }
     }
 
@@ -870,6 +896,7 @@ impl Vm {
                             name,
                             value,
                             true,
+                            false,
                         )?;
                     } else if !context.declare_global(name, value.clone()) {
                         context.set_global(name, value);
@@ -1559,18 +1586,33 @@ impl Vm {
                         .constant_string(chunk, name, current_instruction)?
                         .to_string();
                     let value = self.create_function(chunk, function, context)?;
-                    // Global function declarations also create properties on the
-                    // global object. Test262's async harness checks `$DONE` through
-                    // `globalThis.hasOwnProperty`, so keeping it lexical-only makes
-                    // every async dynamic-import test fail before it reaches import.
                     if context.current_environment() == context.global_environment() {
-                        context.declare_global(name, value);
+                        // Create the binding and a matching global property.
+                        // §15.1.3 / Annex B §B.3.3.2: global function bindings
+                        // are non-configurable.
+                        context.declare_binding(
+                            context.current_environment(),
+                            name.clone(),
+                            value.clone(),
+                            true,
+                            false,
+                        )?;
+                        let _ = context.define_own_property(
+                            context.global_object(),
+                            name,
+                            crate::runtime::PropertyDescriptor::data_with(
+                                value, true,  // writable
+                                true,  // enumerable
+                                false, // configurable
+                            ),
+                        );
                     } else {
                         context.declare_binding(
                             context.current_environment(),
                             name,
                             value,
                             true,
+                            false,
                         )?;
                     }
                 }
@@ -1579,7 +1621,13 @@ impl Vm {
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
                     let value = self.pop_value()?;
-                    context.declare_binding(context.current_environment(), name, value, true)?;
+                    context.declare_binding(
+                        context.current_environment(),
+                        name,
+                        value,
+                        true,
+                        false,
+                    )?;
                 }
                 Instruction::LoadName(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
@@ -1692,7 +1740,24 @@ impl Vm {
                             Err(e) => return Err(e),
                         }
                     }
-                    if let JsValue::Symbol(sym_id) = &key {
+                    // Per spec §13.2.3: check for null/undefined BEFORE coercing
+                    // the property key. The null/undefined check must happen first
+                    // so that TypeError takes precedence over any side effects
+                    // from ToPropertyKey (e.g. toString() on key objects).
+                    let is_nullish = matches!(object, JsValue::Null | JsValue::Undefined);
+                    if is_nullish {
+                        let kind = if matches!(object, JsValue::Null) {
+                            "null"
+                        } else {
+                            "undefined"
+                        };
+                        abrupt = Some(Completion::Throw(vm_error_to_value(
+                            VmError::type_error(format!(
+                                "Cannot read properties of {kind} (reading property key)"
+                            )),
+                        )));
+                        discard_saved_finally = true;
+                    } else if let JsValue::Symbol(sym_id) = &key {
                         match self.get_symbol_property_value_completion(object, *sym_id, context)? {
                             OperationResult::Value(value) => self.stack.push(value),
                             OperationResult::Throw(value) => {
@@ -2804,6 +2869,35 @@ impl Vm {
                         },
                     }
                 }
+                Instruction::DeleteName(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    match context.resolve_binding_environment(&name)? {
+                        Some(_env) => {
+                            // Binding exists — declared bindings are
+                            // non-configurable, so delete returns false
+                            // (non-strict) or throws (strict). With-object
+                            // property deletion is handled separately.
+                            if context.is_strict_code() {
+                                abrupt = Some(Completion::Throw(
+                                    vm_error_to_value(VmError::type_error(
+                                        "cannot delete property",
+                                    )),
+                                ));
+                                discard_saved_finally = true;
+                            } else {
+                                self.stack.push(JsValue::Boolean(false));
+                            }
+                        }
+                        None => {
+                            // Unresolvable reference — always returns true
+                            // in non-strict mode. Strict-mode delete of
+                            // identifier is rejected at parse time.
+                            self.stack.push(JsValue::Boolean(true));
+                        }
+                    }
+                }
                 Instruction::DeleteElement => {
                     let key = self.pop_value()?;
                     let value = self.pop_value()?;
@@ -2926,6 +3020,7 @@ impl Vm {
                             context.current_environment(),
                             name,
                             false,
+                            true,
                         )?;
                     }
                 }
@@ -2941,6 +3036,7 @@ impl Vm {
                         context.create_immutable_binding(
                             context.current_environment(),
                             name.clone(),
+                            true,
                         )?;
                     }
                     if let Some((target_environment, target_name)) =
@@ -2975,6 +3071,7 @@ impl Vm {
                         context.current_environment(),
                         binding_name,
                         JsValue::Number(f64::from(brand.0)),
+                        false,
                         false,
                     )?;
                 }
@@ -3522,7 +3619,7 @@ impl Vm {
     ) -> Result<(), VmError> {
         for (index, parameter) in function.params.iter().enumerate() {
             let value = arguments.get(index).cloned().unwrap_or(JsValue::Undefined);
-            context.declare_binding(environment, parameter.clone(), value, true)?;
+            context.declare_binding(environment, parameter.clone(), value, true, true)?;
         }
 
         if let Some(rest_name) = &function.rest_param {
@@ -3531,7 +3628,7 @@ impl Vm {
                 .unwrap_or(&[])
                 .to_vec();
             let rest_array = context.create_array(rest_values)?;
-            context.declare_binding(environment, rest_name.clone(), rest_array, true)?;
+            context.declare_binding(environment, rest_name.clone(), rest_array, true, true)?;
         }
 
         if let Some(name) = function
@@ -3543,6 +3640,7 @@ impl Vm {
                 environment,
                 name.clone(),
                 JsValue::Function(function_id),
+                true,
                 true,
             )?;
         }
@@ -3582,6 +3680,7 @@ impl Vm {
             "arguments",
             JsValue::Object(arguments_id),
             true,
+            false,
         )?;
 
         let _ = this_value;
@@ -6633,7 +6732,8 @@ impl Vm {
 
         for (index, parameter) in function.params.iter().enumerate() {
             let value = arguments.get(index).cloned().unwrap_or(JsValue::Undefined);
-            if let Err(error) = context.declare_binding(environment, parameter.clone(), value, true)
+            if let Err(error) =
+                context.declare_binding(environment, parameter.clone(), value, true, true)
             {
                 let _ = context.restore_environment_depth(caller_environment_depth);
                 return Err(error);
@@ -6654,7 +6754,7 @@ impl Vm {
                 }
             };
             if let Err(error) =
-                context.declare_binding(environment, rest_name.clone(), rest_array, true)
+                context.declare_binding(environment, rest_name.clone(), rest_array, true, true)
             {
                 let _ = context.restore_environment_depth(caller_environment_depth);
                 return Err(error);
@@ -6669,6 +6769,7 @@ impl Vm {
                 environment,
                 name.clone(),
                 JsValue::Function(function_id),
+                true,
                 true,
             )
         {
@@ -6721,7 +6822,7 @@ impl Vm {
                 return Err(e);
             }
             if let Err(error) =
-                context.declare_binding(environment, "arguments", arguments_obj, true)
+                context.declare_binding(environment, "arguments", arguments_obj, true, false)
             {
                 let _ = context.restore_environment_depth(caller_environment_depth);
                 return Err(error);

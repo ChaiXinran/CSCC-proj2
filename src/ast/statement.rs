@@ -75,11 +75,33 @@ pub struct VariableDeclarator {
     pub initializer: Option<Expression>,
 }
 
-/// One `catch` clause. V5 Core supports an optional identifier binding.
+/// One `catch` clause. The parameter may be an identifier or a binding pattern.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CatchClause {
-    pub parameter: Option<String>,
+    pub parameter: Option<CatchParameter>,
     pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CatchParameter {
+    Identifier(String),
+    Pattern(BindingPattern),
+}
+
+impl From<&str> for CatchParameter {
+    fn from(value: &str) -> Self {
+        Self::Identifier(value.to_owned())
+    }
+}
+
+impl std::ops::Deref for CatchParameter {
+    type Target = str;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Identifier(s) => s,
+            Self::Pattern(_) => "",
+        }
+    }
 }
 
 /// One clause in a `switch` statement. `None` denotes `default`.

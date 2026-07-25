@@ -1376,6 +1376,7 @@ impl Parser {
                     let right = self.allowing_in(|p| p.parse_assignment())?;
                     self.expect_punctuator(')')?;
                     let body = self.parse_loop_body()?;
+                    self.validate_for_head_body_names(kind, &pattern, &body)?;
                     return Ok(Statement::ForOf {
                         left: ForBinding::Declaration { kind, pattern },
                         right,
@@ -1388,6 +1389,7 @@ impl Parser {
                     let right = self.parse_expression()?;
                     self.expect_punctuator(')')?;
                     let body = self.parse_loop_body()?;
+                    self.validate_for_head_body_names(kind, &pattern, &body)?;
                     return Ok(Statement::ForIn {
                         left: ForBinding::Declaration { kind, pattern },
                         right,
@@ -1423,6 +1425,11 @@ impl Parser {
                 let right = self.parse_expression()?;
                 self.expect_punctuator(')')?;
                 let body = self.parse_loop_body()?;
+                self.validate_for_head_body_names(
+                    kind,
+                    &crate::ast::BindingPattern::Identifier(name.clone()),
+                    &body,
+                )?;
                 return Ok(Statement::ForIn {
                     left: ForBinding::Declaration {
                         kind,
@@ -1439,6 +1446,11 @@ impl Parser {
                 let right = self.allowing_in(|p| p.parse_assignment())?;
                 self.expect_punctuator(')')?;
                 let body = self.parse_loop_body()?;
+                self.validate_for_head_body_names(
+                    kind,
+                    &crate::ast::BindingPattern::Identifier(name.clone()),
+                    &body,
+                )?;
                 return Ok(Statement::ForOf {
                     left: ForBinding::Declaration {
                         kind,
@@ -1646,6 +1658,37 @@ impl Parser {
         self.expect_punctuator(')')?;
 
         let body = self.parse_loop_body()?;
+        // ForStatement early errors: the bound names introduced by a lexical
+        // declaration in the head may not be redeclared lexically by the
+        // statement body.  This is most visible for `for (let/const x; ... )`
+        // followed by a block containing `let x`/`const x`.
+        if let Some(Statement::VariableDeclaration { kind, declarations }) = init.as_deref()
+            && matches!(kind, VariableKind::Let | VariableKind::Const)
+        {
+            let head_names: Vec<String> = declarations
+                .iter()
+                .flat_map(|declaration| {
+                    if let Some(pattern) = &declaration.pattern {
+                        binding_pattern_name_strings(pattern)
+                    } else {
+                        vec![declaration.name.clone()]
+                    }
+                })
+                .collect();
+            if let Statement::Block(statements) = body.as_ref()
+                && (direct_lexical_names(statements)
+                    .iter()
+                    .any(|name| head_names.iter().any(|head| head == name))
+                    || var_declared_names(statements)
+                        .iter()
+                        .any(|name| head_names.iter().any(|head| head == name)))
+            {
+                return Err(self.error(
+                    "for declaration binding conflicts with a lexical declaration in the body"
+                        .into(),
+                ));
+            }
+        }
         Ok(Statement::For {
             init,
             test,
@@ -1660,6 +1703,38 @@ impl Parser {
         let body = self.parse_substatement("loop");
         self.loop_depth -= 1;
         Ok(Box::new(body?))
+    }
+
+    fn validate_for_head_body_names(
+        &self,
+        kind: VariableKind,
+        pattern: &BindingPattern,
+        body: &Statement,
+    ) -> Result<(), ParseError> {
+        // Only lexical `let`/`const` heads participate in the
+        // ForIn/ForOf bound-name early-error check. `var` declarations are
+        // function-scoped and may legally overlap declarations in the body.
+        if kind == VariableKind::Var {
+            return Ok(());
+        }
+        let head_names = binding_pattern_name_strings(pattern);
+        let mut seen = HashSet::new();
+        if head_names.iter().any(|name| !seen.insert(name)) {
+            return Err(self.error("duplicate lexical binding in for-loop head".into()));
+        }
+        let Statement::Block(statements) = body else {
+            return Ok(());
+        };
+        let conflicts = direct_lexical_names(statements)
+            .into_iter()
+            .chain(var_declared_names(statements))
+            .any(|name| head_names.iter().any(|head| head == name));
+        if conflicts {
+            return Err(self.error(format!(
+                "{kind:?} for-loop binding conflicts with a declaration in the body"
+            )));
+        }
+        Ok(())
     }
 
     fn parse_substatement(&mut self, context: &str) -> Result<Statement, ParseError> {
@@ -1818,21 +1893,48 @@ impl Parser {
 
         let handler = if self.eat_keyword(Keyword::Catch) {
             let parameter = if self.eat_punctuator('(') {
-                let parameter = self.expect_identifier()?;
+                let pattern = self.parse_binding_pattern()?;
                 self.expect_punctuator(')')?;
-                Some(parameter)
+                Some(match pattern {
+                    crate::ast::BindingPattern::Identifier(name) => {
+                        crate::ast::CatchParameter::Identifier(name)
+                    }
+                    pattern => crate::ast::CatchParameter::Pattern(pattern),
+                })
             } else {
                 None
             };
             let body = self.parse_block_statements()?;
-            if let Some(parameter) = &parameter
-                && direct_lexical_names(&body)
-                    .into_iter()
-                    .any(|name| name == parameter)
+            let parameter_names = match &parameter {
+                Some(crate::ast::CatchParameter::Identifier(name)) => vec![name.clone()],
+                Some(crate::ast::CatchParameter::Pattern(pattern)) => {
+                    binding_pattern_name_strings(pattern)
+                }
+                None => Vec::new(),
+            };
+            if self.is_strict
+                && parameter_names
+                    .iter()
+                    .any(|name| matches!(name.as_str(), "eval" | "arguments"))
             {
-                return Err(self.error(format!(
-                    "catch parameter `{parameter}` conflicts with a lexical declaration"
-                )));
+                return Err(self.error(
+                    "catch parameter cannot be `eval` or `arguments` in strict mode".into(),
+                ));
+            }
+            let mut seen_parameter_names = std::collections::HashSet::new();
+            if parameter_names
+                .iter()
+                .any(|name| !seen_parameter_names.insert(name))
+            {
+                return Err(self.error("duplicate catch parameter binding".into()));
+            }
+            if direct_lexical_names(&body)
+                .into_iter()
+                .any(|name| parameter_names.iter().any(|p| p == name))
+            {
+                return Err(
+                    self.error("catch parameter conflicts with a lexical declaration".into())
+                );
             }
             Some(CatchClause { parameter, body })
         } else {
@@ -2692,6 +2794,12 @@ fn collect_binding_pattern_names(pattern: &crate::ast::BindingPattern, names: &m
     }
 }
 
+fn binding_pattern_name_strings(pattern: &crate::ast::BindingPattern) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_binding_pattern_names(pattern, &mut names);
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -2955,6 +3063,20 @@ mod tests {
             parse_error("switch (x) { default: ; default: ; }")
                 .message
                 .contains("default")
+        );
+    }
+
+    #[test]
+    fn rejects_strict_catch_eval_and_arguments_bindings() {
+        assert!(
+            !parse_error("\"use strict\"; try {} catch (eval) {}")
+                .message
+                .is_empty()
+        );
+        assert!(
+            !parse_error("\"use strict\"; try {} catch ({arguments}) {}")
+                .message
+                .is_empty()
         );
     }
 

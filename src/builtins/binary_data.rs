@@ -4160,12 +4160,6 @@ fn install_intl_constructor(
     spec: IntlConstructorSpec,
 ) -> Result<(), VmError> {
     let prototype = new_ordinary_object(context, context.object_prototype())?;
-    define_hidden(
-        context,
-        prototype,
-        INTL_KIND,
-        JsValue::String(spec.kind.into()),
-    )?;
     let constructor =
         context.register_builtin(spec.name, 0, spec.construct_as_call(), Some(spec.construct))?;
     let constructor_object = context
@@ -4314,12 +4308,15 @@ fn construct_intl_object(
 }
 
 fn construct_intl_object_with_new_target(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
-    _arguments: &[JsValue],
+    arguments: &[JsValue],
     new_target: JsValue,
     kind: &'static str,
 ) -> Result<JsValue, VmError> {
+    if kind == "NumberFormat" {
+        validate_number_format_arguments(vm, context, arguments)?;
+    }
     let prototype = context
         .constructor_prototype(&new_target)?
         .or_else(|| context.object_prototype())
@@ -4327,6 +4324,408 @@ fn construct_intl_object_with_new_target(
     let object = new_ordinary_object(context, Some(prototype))?;
     define_hidden(context, object, INTL_KIND, JsValue::String(kind.into()))?;
     Ok(JsValue::Object(object))
+}
+
+fn number_format_option(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    options: &JsValue,
+    key: &str,
+) -> Result<JsValue, VmError> {
+    vm.get_property_value(options.clone(), key, context)
+}
+
+fn number_format_string_option(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    allowed: &[&str],
+) -> Result<Option<String>, VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok(None);
+    }
+    let value = vm.to_string_coerce(value, context)?;
+    if !allowed.contains(&value.as_str()) {
+        return Err(VmError::range("invalid Intl.NumberFormat option"));
+    }
+    Ok(Some(value))
+}
+
+fn number_format_get_string_option(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    options: &JsValue,
+    key: &str,
+    allowed: &[&str],
+) -> Result<Option<String>, VmError> {
+    let value = number_format_option(vm, context, options, key)?;
+    number_format_string_option(vm, context, value, allowed)
+}
+
+fn number_format_digit_option(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    minimum: f64,
+    maximum: f64,
+) -> Result<Option<f64>, VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok(None);
+    }
+    let number = vm.to_number(value, context)?;
+    if !number.is_finite() || number < minimum || number > maximum {
+        return Err(VmError::range(
+            "Intl.NumberFormat digit option is out of range",
+        ));
+    }
+    Ok(Some(number.floor()))
+}
+
+fn number_format_get_digit_option(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    options: &JsValue,
+    key: &str,
+    minimum: f64,
+    maximum: f64,
+) -> Result<Option<f64>, VmError> {
+    let value = number_format_option(vm, context, options, key)?;
+    number_format_digit_option(vm, context, value, minimum, maximum)
+}
+
+fn number_format_get_use_grouping(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    options: &JsValue,
+) -> Result<(), VmError> {
+    let value = number_format_option(vm, context, options, "useGrouping")?;
+    validate_number_format_use_grouping(vm, context, value)
+}
+
+fn is_well_formed_numbering_system(value: &str) -> bool {
+    value.split('-').all(|part| {
+        (3..=8).contains(&part.len()) && part.chars().all(|ch| ch.is_ascii_alphanumeric())
+    })
+}
+
+fn is_well_formed_currency(value: &str) -> bool {
+    value.len() == 3 && value.chars().all(|ch| ch.is_ascii_alphabetic())
+}
+
+fn is_sanctioned_simple_unit(value: &str) -> bool {
+    matches!(
+        value,
+        "acre"
+            | "bit"
+            | "byte"
+            | "celsius"
+            | "centimeter"
+            | "day"
+            | "degree"
+            | "fahrenheit"
+            | "fluid-ounce"
+            | "foot"
+            | "gallon"
+            | "gigabit"
+            | "gigabyte"
+            | "gram"
+            | "hectare"
+            | "hour"
+            | "inch"
+            | "kilobit"
+            | "kilobyte"
+            | "kilogram"
+            | "kilometer"
+            | "liter"
+            | "megabit"
+            | "megabyte"
+            | "meter"
+            | "microsecond"
+            | "mile"
+            | "mile-scandinavian"
+            | "milliliter"
+            | "millimeter"
+            | "millisecond"
+            | "minute"
+            | "month"
+            | "nanosecond"
+            | "ounce"
+            | "percent"
+            | "petabyte"
+            | "pound"
+            | "second"
+            | "stone"
+            | "terabit"
+            | "terabyte"
+            | "week"
+            | "yard"
+            | "year"
+    )
+}
+
+fn is_well_formed_unit(value: &str) -> bool {
+    if is_sanctioned_simple_unit(value) {
+        return true;
+    }
+    value.split_once("-per-").is_some_and(|(left, right)| {
+        is_sanctioned_simple_unit(left) && is_sanctioned_simple_unit(right)
+    })
+}
+
+fn validate_number_format_use_grouping(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<(), VmError> {
+    match value {
+        JsValue::Undefined | JsValue::Boolean(_) | JsValue::Null => Ok(()),
+        JsValue::Number(value) if value == 0.0 => Ok(()),
+        JsValue::String(value)
+            if matches!(
+                value.as_str(),
+                "" | "auto" | "always" | "min2" | "true" | "false"
+            ) =>
+        {
+            Ok(())
+        }
+        other => {
+            let value = vm.to_string_coerce(other, context)?;
+            if matches!(value.as_str(), "auto" | "always" | "min2") {
+                Ok(())
+            } else {
+                Err(VmError::range("invalid Intl.NumberFormat useGrouping"))
+            }
+        }
+    }
+}
+
+fn validate_number_format_arguments(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+) -> Result<(), VmError> {
+    if matches!(arguments.first(), Some(JsValue::Null)) {
+        return Err(VmError::type_error(
+            "Intl.NumberFormat locales cannot be null",
+        ));
+    }
+    let options = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if matches!(options, JsValue::Undefined) {
+        return Ok(());
+    }
+    if matches!(options, JsValue::Null) {
+        return Err(VmError::type_error(
+            "Intl.NumberFormat options cannot be null",
+        ));
+    }
+    if !matches!(
+        options,
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
+    ) {
+        return Ok(());
+    }
+
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "localeMatcher",
+        &["lookup", "best fit"],
+    )?;
+
+    let numbering_system = number_format_option(vm, context, &options, "numberingSystem")?;
+    if !matches!(numbering_system, JsValue::Undefined) {
+        let numbering_system = vm.to_string_coerce(numbering_system, context)?;
+        if !is_well_formed_numbering_system(&numbering_system) {
+            return Err(VmError::range("invalid Intl.NumberFormat numberingSystem"));
+        }
+    }
+
+    let style = number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "style",
+        &["decimal", "percent", "currency", "unit"],
+    )?
+    .unwrap_or_else(|| "decimal".into());
+
+    let currency_value = number_format_option(vm, context, &options, "currency")?;
+    let currency = if matches!(currency_value, JsValue::Undefined) {
+        None
+    } else {
+        let currency = vm.to_string_coerce(currency_value, context)?;
+        if !is_well_formed_currency(&currency) {
+            return Err(VmError::range("invalid Intl.NumberFormat currency"));
+        }
+        Some(currency)
+    };
+    if style == "currency" && currency.is_none() {
+        return Err(VmError::type_error(
+            "currency style requires a currency option",
+        ));
+    }
+
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "currencyDisplay",
+        &["code", "symbol", "narrowSymbol", "name"],
+    )?;
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "currencySign",
+        &["standard", "accounting"],
+    )?;
+
+    let unit_value = number_format_option(vm, context, &options, "unit")?;
+    let unit = if matches!(unit_value, JsValue::Undefined) {
+        None
+    } else {
+        let unit = vm.to_string_coerce(unit_value, context)?;
+        if !is_well_formed_unit(&unit) {
+            return Err(VmError::range("invalid Intl.NumberFormat unit"));
+        }
+        Some(unit)
+    };
+    if style == "unit" && unit.is_none() {
+        return Err(VmError::type_error("unit style requires a unit option"));
+    }
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "unitDisplay",
+        &["short", "narrow", "long"],
+    )?;
+
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "notation",
+        &["standard", "scientific", "engineering", "compact"],
+    )?;
+    number_format_get_digit_option(vm, context, &options, "minimumIntegerDigits", 1.0, 21.0)?;
+    let minimum_fraction =
+        number_format_get_digit_option(vm, context, &options, "minimumFractionDigits", 0.0, 100.0)?;
+    let maximum_fraction =
+        number_format_get_digit_option(vm, context, &options, "maximumFractionDigits", 0.0, 100.0)?;
+    if minimum_fraction
+        .zip(maximum_fraction)
+        .is_some_and(|(minimum, maximum)| maximum < minimum)
+    {
+        return Err(VmError::range(
+            "maximumFractionDigits is less than minimumFractionDigits",
+        ));
+    }
+    let minimum_significant = number_format_get_digit_option(
+        vm,
+        context,
+        &options,
+        "minimumSignificantDigits",
+        1.0,
+        21.0,
+    )?;
+    let maximum_significant = number_format_get_digit_option(
+        vm,
+        context,
+        &options,
+        "maximumSignificantDigits",
+        1.0,
+        21.0,
+    )?;
+    if maximum_significant
+        .zip(minimum_significant.or(Some(1.0)))
+        .is_some_and(|(maximum, minimum)| maximum < minimum)
+    {
+        return Err(VmError::range(
+            "maximumSignificantDigits is less than minimumSignificantDigits",
+        ));
+    }
+
+    let rounding_increment_value =
+        number_format_option(vm, context, &options, "roundingIncrement")?;
+    let rounding_increment = if matches!(rounding_increment_value, JsValue::Undefined) {
+        1.0
+    } else {
+        let value = vm.to_number(rounding_increment_value, context)?;
+        const ALLOWED: &[f64] = &[
+            1.0, 2.0, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0,
+            2500.0, 5000.0,
+        ];
+        if !ALLOWED.contains(&value) {
+            return Err(VmError::range(
+                "invalid Intl.NumberFormat roundingIncrement",
+            ));
+        }
+        value
+    };
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "roundingMode",
+        &[
+            "ceil",
+            "floor",
+            "expand",
+            "trunc",
+            "halfCeil",
+            "halfFloor",
+            "halfExpand",
+            "halfTrunc",
+            "halfEven",
+        ],
+    )?;
+    let rounding_priority = number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "roundingPriority",
+        &["auto", "morePrecision", "lessPrecision"],
+    )?
+    .unwrap_or_else(|| "auto".into());
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "trailingZeroDisplay",
+        &["auto", "stripIfInteger"],
+    )?;
+
+    if rounding_increment != 1.0 {
+        if rounding_priority != "auto"
+            || minimum_significant.is_some()
+            || maximum_significant.is_some()
+        {
+            return Err(VmError::type_error(
+                "roundingIncrement is incompatible with significant-digit rounding",
+            ));
+        }
+        if minimum_fraction
+            .zip(maximum_fraction)
+            .is_some_and(|(minimum, maximum)| minimum != maximum)
+        {
+            return Err(VmError::range(
+                "roundingIncrement requires equal fraction digit bounds",
+            ));
+        }
+    }
+
+    number_format_get_string_option(vm, context, &options, "compactDisplay", &["short", "long"])?;
+    number_format_get_use_grouping(vm, context, &options)?;
+    number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "signDisplay",
+        &["auto", "never", "always", "exceptZero", "negative"],
+    )?;
+    Ok(())
 }
 
 fn require_intl_kind(

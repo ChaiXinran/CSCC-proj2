@@ -249,6 +249,11 @@ pub enum Instruction {
     DefineElement(u32),
     DeleteProperty(u16),
     DeleteElement,
+    /// `delete identifier` — resolves the name at runtime. Returns `true`
+    /// when the binding does not exist (non-strict) or the property was
+    /// successfully removed; returns `false` when the binding is
+    /// non-configurable; throws ReferenceError in strict mode.
+    DeleteName(u16),
     HasProperty,
     InstanceOf,
 
@@ -540,6 +545,7 @@ impl Instruction {
             }
 
             Self::DeleteProperty(_) => StackEffect::new(1, 1),
+            Self::DeleteName(_) => StackEffect::new(0, 1),
 
             // IterableToArray: [iterable] → [array]
             Self::IterableToArray => StackEffect::new(1, 1),

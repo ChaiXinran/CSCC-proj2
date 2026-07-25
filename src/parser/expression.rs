@@ -573,6 +573,11 @@ impl Parser {
         if self.eat_punctuator('.') {
             let prop = self.expect_identifier_name()?;
             if prop == "target" {
+                if self.function_depth == 0 {
+                    return Err(self.error(
+                        "`new.target` is only valid inside a function or class constructor".into(),
+                    ));
+                }
                 return Ok(Expression::NewTarget);
             }
             return Err(self.error(format!("`new.{prop}` is not a valid meta-property")));
@@ -770,6 +775,11 @@ impl Parser {
                 Ok(Expression::This)
             }
             TokenKind::Keyword(Keyword::Super) => {
+                if self.function_depth == 0 {
+                    return Err(self.error(
+                        "`super` is only valid in a derived constructor or class method".into(),
+                    ));
+                }
                 self.advance();
                 Ok(Expression::Super)
             }
@@ -3897,6 +3907,12 @@ mod tests {
         Parser::new(tokens)
             .parse_program()
             .expect_err("parsing fails");
+    }
+
+    #[test]
+    fn rejects_new_target_at_script_level() {
+        parse_program_err("new.target;");
+        parse_program_ok("function f() { return new.target; }");
     }
 
     fn number(value: f64) -> Expression {
