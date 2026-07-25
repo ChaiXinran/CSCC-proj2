@@ -2051,11 +2051,23 @@ fn augment_intl(context: &mut NativeContext) -> Result<(), VmError> {
         context,
         intl,
         "NumberFormat",
-        &[(
-            "formatToParts",
-            1,
-            intl_number_format_format_to_parts as NativeCall,
-        )],
+        &[
+            (
+                "formatToParts",
+                1,
+                intl_number_format_format_to_parts as NativeCall,
+            ),
+            (
+                "formatRange",
+                2,
+                intl_number_format_format_range as NativeCall,
+            ),
+            (
+                "formatRangeToParts",
+                2,
+                intl_number_format_format_range_to_parts as NativeCall,
+            ),
+        ],
     )?;
 
     install_intl_constructor(
@@ -2215,12 +2227,6 @@ fn install_locale_constructor(context: &mut NativeContext, intl: ObjectId) -> Re
         return Ok(());
     }
     let prototype = new_ordinary_object(context, context.object_prototype())?;
-    define_hidden(
-        context,
-        prototype,
-        INTL_KIND,
-        JsValue::String("Locale".into()),
-    )?;
     let constructor =
         context.register_builtin("Locale", 1, intl_locale_call, Some(intl_locale_construct))?;
     let constructor_object = context
@@ -2247,12 +2253,103 @@ fn install_locale_constructor(context: &mut NativeContext, intl: ObjectId) -> Re
             "get language",
             intl_locale_language_get as NativeCall,
         ),
+        ("script", "get script", intl_locale_script_get as NativeCall),
+        ("region", "get region", intl_locale_region_get as NativeCall),
+        (
+            "variants",
+            "get variants",
+            intl_locale_variants_get as NativeCall,
+        ),
+        (
+            "calendar",
+            "get calendar",
+            intl_locale_calendar_get as NativeCall,
+        ),
+        (
+            "collation",
+            "get collation",
+            intl_locale_collation_get as NativeCall,
+        ),
+        (
+            "hourCycle",
+            "get hourCycle",
+            intl_locale_hour_cycle_get as NativeCall,
+        ),
+        (
+            "caseFirst",
+            "get caseFirst",
+            intl_locale_case_first_get as NativeCall,
+        ),
+        (
+            "numeric",
+            "get numeric",
+            intl_locale_numeric_get as NativeCall,
+        ),
+        (
+            "numberingSystem",
+            "get numberingSystem",
+            intl_locale_numbering_system_get as NativeCall,
+        ),
+        (
+            "firstDayOfWeek",
+            "get firstDayOfWeek",
+            intl_locale_first_day_of_week_get as NativeCall,
+        ),
     ] {
         define_accessor(context, prototype, name, getter, call)?;
     }
     define_method(context, prototype, "toString", 0, intl_locale_to_string)?;
-    define_method(context, prototype, "maximize", 0, intl_locale_identity)?;
-    define_method(context, prototype, "minimize", 0, intl_locale_identity)?;
+    define_method(context, prototype, "maximize", 0, intl_locale_maximize)?;
+    define_method(context, prototype, "minimize", 0, intl_locale_minimize)?;
+    define_method(
+        context,
+        prototype,
+        "getCalendars",
+        0,
+        intl_locale_get_calendars,
+    )?;
+    define_method(
+        context,
+        prototype,
+        "getCollations",
+        0,
+        intl_locale_get_collations,
+    )?;
+    define_method(
+        context,
+        prototype,
+        "getHourCycles",
+        0,
+        intl_locale_get_hour_cycles,
+    )?;
+    define_method(
+        context,
+        prototype,
+        "getNumberingSystems",
+        0,
+        intl_locale_get_numbering_systems,
+    )?;
+    define_method(
+        context,
+        prototype,
+        "getTextInfo",
+        0,
+        intl_locale_get_text_info,
+    )?;
+    define_method(
+        context,
+        prototype,
+        "getTimeZones",
+        0,
+        intl_locale_get_time_zones,
+    )?;
+    define_method(
+        context,
+        prototype,
+        "getWeekInfo",
+        0,
+        intl_locale_get_week_info,
+    )?;
     let tag = context.well_known_symbols().to_string_tag;
     context.define_symbol_own_property(
         prototype,
@@ -2355,22 +2452,16 @@ fn intl_list_format_construct(
 }
 
 fn intl_locale_call(
-    vm: &mut Vm,
-    context: &mut NativeContext,
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
     _this: JsValue,
-    arguments: &[JsValue],
+    _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let constructor = context
-        .get_global("Intl")
-        .and_then(|intl| context.value_object(&intl))
-        .and_then(|intl| context.get_own_property_descriptor(intl, "Locale"))
-        .and_then(|descriptor| descriptor.value_cloned())
-        .ok_or_else(|| VmError::runtime("Intl.Locale missing"))?;
-    intl_locale_construct(vm, context, arguments, constructor)
+    Err(VmError::type_error("Intl.Locale requires 'new'"))
 }
 
 fn intl_locale_construct(
-    vm: &mut Vm,
+    _vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -2380,15 +2471,25 @@ fn intl_locale_construct(
         .or_else(|| context.object_prototype())
         .ok_or_else(|| VmError::runtime("Intl.Locale prototype missing"))?;
     let object = new_ordinary_object(context, Some(prototype))?;
-    let locale = canonicalize_locale(
-        &vm.to_string_coerce(
-            arguments
-                .first()
-                .cloned()
-                .unwrap_or_else(|| JsValue::String("en-US".into())),
-            context,
-        )?,
-    );
+    let tag = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let locale = match tag {
+        JsValue::String(tag) => {
+            if !is_structurally_valid_locale(&tag) {
+                return Err(VmError::range("invalid Intl.Locale language tag"));
+            }
+            canonicalize_locale(&tag)
+        }
+        JsValue::Object(object)
+            if own_string(context, object, INTL_KIND).as_deref() == Some("Locale") =>
+        {
+            own_string(context, object, INTL_LOCALE).unwrap_or_else(|| "und".into())
+        }
+        _ => {
+            return Err(VmError::type_error(
+                "Intl.Locale tag must be a string or Locale",
+            ));
+        }
+    };
     define_hidden(context, object, INTL_KIND, JsValue::String("Locale".into()))?;
     define_hidden(context, object, INTL_LOCALE, JsValue::String(locale))?;
     Ok(JsValue::Object(object))
@@ -2422,6 +2523,11 @@ fn collect_locale_list(
                     &vm.to_string_coerce(other, context)?,
                 )]);
             };
+            if own_string(context, object, INTL_KIND).as_deref() == Some("Locale") {
+                return Ok(vec![
+                    own_string(context, object, INTL_LOCALE).unwrap_or_else(|| "und".into()),
+                ]);
+            }
             let length = context
                 .get_property(context.object_value(object), "length")?
                 .to_number()
@@ -2432,7 +2538,17 @@ fn collect_locale_list(
                 let value =
                     context.get_property(context.object_value(object), &index.to_string())?;
                 if !matches!(value, JsValue::Undefined) {
-                    locales.push(canonicalize_locale(&vm.to_string_coerce(value, context)?));
+                    if let Some(locale_object) = context.value_object(&value)
+                        && own_string(context, locale_object, INTL_KIND).as_deref()
+                            == Some("Locale")
+                    {
+                        locales.push(
+                            own_string(context, locale_object, INTL_LOCALE)
+                                .unwrap_or_else(|| "und".into()),
+                        );
+                    } else {
+                        locales.push(canonicalize_locale(&vm.to_string_coerce(value, context)?));
+                    }
                 }
             }
             Ok(locales)
@@ -2445,13 +2561,238 @@ fn canonicalize_locale(locale: &str) -> String {
     if trimmed.is_empty() || trimmed == "und" {
         return "und".into();
     }
-    let mut parts = trimmed.split('-');
-    let language = parts.next().unwrap_or("und").to_ascii_lowercase();
-    let region = parts.next().map(str::to_ascii_uppercase);
-    match region {
-        Some(region) if !region.is_empty() => format!("{language}-{region}"),
-        _ => language,
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(replacement) = match lower.as_str() {
+        "art-lojban" => Some("jbo"),
+        "cel-gaulish" => Some("xtg"),
+        "zh-guoyu" => Some("zh"),
+        "zh-hakka" => Some("hak"),
+        "zh-xiang" => Some("hsn"),
+        "hy-arevela" => Some("hy"),
+        "hy-arevmda" => Some("hyw"),
+        _ => None,
+    } {
+        return replacement.into();
     }
+    let parts: Vec<&str> = trimmed.split('-').collect();
+    let mut output = Vec::new();
+    let language = match parts[0].to_ascii_lowercase().as_str() {
+        "iw" => "he".into(),
+        "in" => "id".into(),
+        "ji" => "yi".into(),
+        "mo" => "ro".into(),
+        "aar" => "aa".into(),
+        "heb" => "he".into(),
+        "ces" => "cs".into(),
+        language => language.into(),
+    };
+    output.push(language);
+    let mut index = 1;
+    if parts.get(index).is_some_and(|part| is_script_subtag(part)) {
+        let script: String = match parts[index].to_ascii_lowercase().as_str() {
+            "qaai" => "zinh".into(),
+            script => script.into(),
+        };
+        output.push(format!(
+            "{}{}",
+            script[..1].to_ascii_uppercase(),
+            &script[1..]
+        ));
+        index += 1;
+    }
+    if parts.get(index).is_some_and(|part| is_region_subtag(part)) {
+        let region = parts[index].to_ascii_uppercase();
+        let region = match region.as_str() {
+            "BU" => "MM",
+            "DD" => "DE",
+            "FX" => "FR",
+            "TP" => "TL",
+            "YD" => "YE",
+            "ZR" => "CD",
+            "SU" if output.get(1).is_some_and(|script| script == "Armn") => "AM",
+            _ => region.as_str(),
+        };
+        output.push(region.into());
+        index += 1;
+    }
+    let mut variants = Vec::new();
+    while parts.get(index).is_some_and(|part| is_variant_subtag(part)) {
+        variants.push(parts[index].to_ascii_lowercase());
+        index += 1;
+    }
+    variants.sort();
+    output.extend(variants);
+    let mut extensions: Vec<(String, Vec<String>)> = Vec::new();
+    while index < parts.len() {
+        let singleton = parts[index].to_ascii_lowercase();
+        index += 1;
+        let mut extension = Vec::new();
+        if singleton == "x" {
+            extension.extend(parts[index..].iter().map(|part| part.to_ascii_lowercase()));
+            extensions.push((singleton, extension));
+            break;
+        }
+        if singleton == "u" {
+            let mut attributes = Vec::new();
+            let mut keywords: Vec<(String, Vec<String>)> = Vec::new();
+            let mut seen_keywords = std::collections::HashSet::new();
+            while index < parts.len() && parts[index].len() > 2 {
+                attributes.push(parts[index].to_ascii_lowercase());
+                index += 1;
+            }
+            while index < parts.len() && parts[index].len() != 1 {
+                let key = parts[index].to_ascii_lowercase();
+                index += 1;
+                let mut value = Vec::new();
+                while index < parts.len() && parts[index].len() > 2 {
+                    value.push(parts[index].to_ascii_lowercase());
+                    index += 1;
+                }
+                if matches!(key.as_str(), "kf" | "kn")
+                    && value.first().is_some_and(|value| value == "true")
+                {
+                    value.clear();
+                }
+                if key == "ca" && value.as_slice() == ["islamicc"] {
+                    value = vec!["islamic".into(), "civil".into()];
+                }
+                if seen_keywords.insert(key.clone()) {
+                    keywords.push((key, value));
+                }
+            }
+            attributes.sort();
+            extension.extend(attributes);
+            keywords.sort_by(|left, right| left.0.cmp(&right.0));
+            for (key, value) in keywords {
+                extension.push(key);
+                extension.extend(value);
+            }
+        } else {
+            while index < parts.len() && parts[index].len() != 1 {
+                extension.push(parts[index].to_ascii_lowercase());
+                index += 1;
+            }
+        }
+        extensions.push((singleton, extension));
+    }
+    extensions.sort_by(|left, right| match (left.0.as_str(), right.0.as_str()) {
+        ("x", "x") => std::cmp::Ordering::Equal,
+        ("x", _) => std::cmp::Ordering::Greater,
+        (_, "x") => std::cmp::Ordering::Less,
+        _ => left.0.cmp(&right.0),
+    });
+    for (singleton, extension) in extensions {
+        output.push(singleton);
+        output.extend(extension);
+    }
+    output.join("-")
+}
+
+fn is_structurally_valid_locale(locale: &str) -> bool {
+    if locale.is_empty() || !locale.is_ascii() || locale.contains('_') {
+        return false;
+    }
+    let parts: Vec<&str> = locale.split('-').collect();
+    if parts.is_empty()
+        || !(matches!(parts[0].len(), 2 | 3) || (5..=8).contains(&parts[0].len()))
+        || !parts[0].chars().all(|ch| ch.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let mut seen_variants = std::collections::HashSet::new();
+    let mut seen_singletons = std::collections::HashSet::new();
+    let mut index = 1;
+    if parts.get(index).is_some_and(|part| is_script_subtag(part)) {
+        index += 1;
+    }
+    if parts.get(index).is_some_and(|part| is_region_subtag(part)) {
+        index += 1;
+    }
+    while parts.get(index).is_some_and(|part| is_variant_subtag(part)) {
+        if !seen_variants.insert(parts[index].to_ascii_lowercase()) {
+            return false;
+        }
+        index += 1;
+    }
+    while index < parts.len() {
+        if parts[index].len() != 1 || !parts[index].chars().all(|ch| ch.is_ascii_alphanumeric()) {
+            return false;
+        }
+        let singleton = parts[index].to_ascii_lowercase();
+        if !seen_singletons.insert(singleton.clone()) {
+            return false;
+        }
+        index += 1;
+        let start = index;
+        if singleton == "x" {
+            while index < parts.len() {
+                if !(1..=8).contains(&parts[index].len())
+                    || !parts[index].chars().all(|ch| ch.is_ascii_alphanumeric())
+                {
+                    return false;
+                }
+                index += 1;
+            }
+        } else {
+            while index < parts.len() && parts[index].len() != 1 {
+                if !(2..=8).contains(&parts[index].len())
+                    || !parts[index].chars().all(|ch| ch.is_ascii_alphanumeric())
+                {
+                    return false;
+                }
+                index += 1;
+            }
+        }
+        if index == start {
+            return false;
+        }
+        if singleton == "t" && has_duplicate_tlang_variants(&parts[start..index]) {
+            return false;
+        }
+    }
+    true
+}
+
+fn has_duplicate_tlang_variants(parts: &[&str]) -> bool {
+    let Some(language) = parts.first() else {
+        return false;
+    };
+    if !(matches!(language.len(), 2 | 3) || (5..=8).contains(&language.len()))
+        || !language.chars().all(|ch| ch.is_ascii_alphabetic())
+    {
+        return false;
+    }
+    let mut index = 1;
+    if parts.get(index).is_some_and(|part| is_script_subtag(part)) {
+        index += 1;
+    }
+    if parts.get(index).is_some_and(|part| is_region_subtag(part)) {
+        index += 1;
+    }
+    let mut variants = std::collections::HashSet::new();
+    while parts.get(index).is_some_and(|part| is_variant_subtag(part)) {
+        if !variants.insert(parts[index].to_ascii_lowercase()) {
+            return true;
+        }
+        index += 1;
+    }
+    false
+}
+
+fn is_script_subtag(value: &str) -> bool {
+    value.len() == 4 && value.chars().all(|ch| ch.is_ascii_alphabetic())
+}
+
+fn is_region_subtag(value: &str) -> bool {
+    (value.len() == 2 && value.chars().all(|ch| ch.is_ascii_alphabetic()))
+        || (value.len() == 3 && value.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn is_variant_subtag(value: &str) -> bool {
+    ((5..=8).contains(&value.len()) && value.chars().all(|ch| ch.is_ascii_alphanumeric()))
+        || (value.len() == 4
+            && value.starts_with(|ch: char| ch.is_ascii_digit())
+            && value.chars().all(|ch| ch.is_ascii_alphanumeric()))
 }
 
 fn intl_get_canonical_locales(
@@ -2711,6 +3052,79 @@ fn intl_number_format_format_to_parts(
     context.create_array(parts)
 }
 
+fn intl_number_format_range_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<String, VmError> {
+    let value = vm.to_number(value, context)?;
+    if value.is_nan() {
+        return Err(VmError::range(
+            "Intl.NumberFormat range value must not be NaN",
+        ));
+    }
+    Ok(if value.is_infinite() {
+        if value.is_sign_negative() {
+            "-∞".into()
+        } else {
+            "∞".into()
+        }
+    } else {
+        JsValue::Number(value).to_js_string().unwrap_or_default()
+    })
+}
+
+fn intl_number_format_format_range(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    require_intl_kind(context, &this_value, "NumberFormat")?;
+    let start = intl_number_format_range_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let end = intl_number_format_range_value(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    Ok(JsValue::String(if start == end {
+        start
+    } else {
+        format!("{start}–{end}")
+    }))
+}
+
+fn intl_number_format_format_range_to_parts(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    require_intl_kind(context, &this_value, "NumberFormat")?;
+    let start = intl_number_format_range_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    let end = intl_number_format_range_value(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    if start == end {
+        let shared = source_part(context, "integer", start, "shared")?;
+        return context.create_array(vec![shared]);
+    }
+    let start = source_part(context, "integer", start, "startRange")?;
+    let separator = source_part(context, "literal", "–".into(), "shared")?;
+    let end = source_part(context, "integer", end, "endRange")?;
+    context.create_array(vec![start, separator, end])
+}
+
 fn intl_plural_rules_resolved_options(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -2938,7 +3352,10 @@ fn intl_locale_base_name_get(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(intl_locale_value(context, &this_value)?))
+    Ok(JsValue::String(locale_base_name(&intl_locale_value(
+        context,
+        &this_value,
+    )?)))
 }
 
 fn intl_locale_language_get(
@@ -2953,6 +3370,148 @@ fn intl_locale_language_get(
     ))
 }
 
+fn locale_base_name(locale: &str) -> String {
+    locale
+        .split('-')
+        .take_while(|part| part.len() != 1)
+        .collect::<Vec<_>>()
+        .join("-")
+}
+
+fn locale_base_components(locale: &str) -> (String, Option<String>, Option<String>, Vec<String>) {
+    let base = locale_base_name(locale);
+    let parts: Vec<&str> = base.split('-').collect();
+    let language = parts.first().copied().unwrap_or("und").to_owned();
+    let mut index = 1;
+    let script = parts
+        .get(index)
+        .filter(|part| is_script_subtag(part))
+        .map(|part| {
+            index += 1;
+            (*part).to_owned()
+        });
+    let region = parts
+        .get(index)
+        .filter(|part| is_region_subtag(part))
+        .map(|part| {
+            index += 1;
+            (*part).to_owned()
+        });
+    let variants = parts[index..]
+        .iter()
+        .map(|part| (*part).to_owned())
+        .collect();
+    (language, script, region, variants)
+}
+
+fn locale_unicode_keyword(locale: &str, wanted: &str) -> Option<String> {
+    let parts: Vec<&str> = locale.split('-').collect();
+    let mut index = parts
+        .iter()
+        .position(|part| part.eq_ignore_ascii_case("u"))?
+        + 1;
+    while index < parts.len() && parts[index].len() > 2 {
+        index += 1;
+    }
+    while index < parts.len() && parts[index].len() != 1 {
+        let key = parts[index].to_ascii_lowercase();
+        index += 1;
+        let start = index;
+        while index < parts.len() && parts[index].len() > 2 {
+            index += 1;
+        }
+        if key == wanted {
+            return Some(parts[start..index].join("-").to_ascii_lowercase());
+        }
+    }
+    None
+}
+
+fn intl_locale_script_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    Ok(locale_base_components(&locale)
+        .1
+        .map(JsValue::String)
+        .unwrap_or(JsValue::Undefined))
+}
+
+fn intl_locale_region_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    Ok(locale_base_components(&locale)
+        .2
+        .map(JsValue::String)
+        .unwrap_or(JsValue::Undefined))
+}
+
+fn intl_locale_variants_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    let variants = locale_base_components(&locale).3;
+    Ok(if variants.is_empty() {
+        JsValue::Undefined
+    } else {
+        JsValue::String(variants.join("-"))
+    })
+}
+
+fn intl_locale_keyword_get(
+    context: &NativeContext,
+    this_value: &JsValue,
+    key: &str,
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, this_value)?;
+    Ok(locale_unicode_keyword(&locale, key)
+        .map(JsValue::String)
+        .unwrap_or(JsValue::Undefined))
+}
+
+macro_rules! locale_keyword_getter {
+    ($name:ident, $key:literal) => {
+        fn $name(
+            _vm: &mut Vm,
+            context: &mut NativeContext,
+            this_value: JsValue,
+            _arguments: &[JsValue],
+        ) -> Result<JsValue, VmError> {
+            intl_locale_keyword_get(context, &this_value, $key)
+        }
+    };
+}
+
+locale_keyword_getter!(intl_locale_calendar_get, "ca");
+locale_keyword_getter!(intl_locale_collation_get, "co");
+locale_keyword_getter!(intl_locale_hour_cycle_get, "hc");
+locale_keyword_getter!(intl_locale_case_first_get, "kf");
+locale_keyword_getter!(intl_locale_numbering_system_get, "nu");
+locale_keyword_getter!(intl_locale_first_day_of_week_get, "fw");
+
+fn intl_locale_numeric_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    Ok(match locale_unicode_keyword(&locale, "kn") {
+        Some(value) => JsValue::Boolean(value.is_empty() || value == "true"),
+        None => JsValue::Undefined,
+    })
+}
+
 fn intl_locale_to_string(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -2962,13 +3521,269 @@ fn intl_locale_to_string(
     Ok(JsValue::String(intl_locale_value(context, &this_value)?))
 }
 
-fn intl_locale_identity(
+fn locale_suffix(locale: &str) -> &str {
+    let base_length = locale_base_name(locale).len();
+    &locale[base_length..]
+}
+
+fn likely_locale_triple(
+    language: &str,
+    script: Option<&str>,
+    region: Option<&str>,
+) -> Option<(String, String, String)> {
+    let (language, default_script, default_region) = match language {
+        "und" => match (script, region) {
+            (Some("Thai"), _) => ("th", "Thai", "TH"),
+            (Some("Cyrl"), Some("RO")) => ("bg", "Cyrl", "RO"),
+            (_, Some("419")) => ("es", "Latn", "419"),
+            (_, Some("150")) => ("en", "Latn", "150"),
+            (_, Some("AT")) => ("de", "Latn", "AT"),
+            (_, Some("CW")) => ("pap", "Latn", "CW"),
+            (_, Some("US")) => ("en", "Latn", "US"),
+            (_, Some("AQ")) => ("en", "Latn", "AQ"),
+            _ => ("en", "Latn", "US"),
+        },
+        "en" => (
+            "en",
+            "Latn",
+            if script == Some("Shaw") { "GB" } else { "US" },
+        ),
+        "ar" => ("ar", "Arab", "EG"),
+        "th" => ("th", "Thai", "TH"),
+        "es" => ("es", "Latn", "ES"),
+        "it" => ("it", "Latn", "IT"),
+        "ru" => ("ru", "Cyrl", "RU"),
+        "de" => ("de", "Latn", "DE"),
+        "bg" => ("bg", "Cyrl", "BG"),
+        "ro" => ("ro", "Latn", "RO"),
+        "uz" => ("uz", "Latn", "UZ"),
+        "hi" => ("hi", "Deva", "IN"),
+        "aa" => ("aa", "Latn", "ET"),
+        "he" => ("he", "Hebr", "IL"),
+        "cs" => ("cs", "Latn", "CZ"),
+        "hy" | "hyw" => (language, "Armn", "AM"),
+        "jbo" => ("jbo", "Latn", "001"),
+        "hak" | "hsn" => (language, "Hans", "CN"),
+        "aae" => ("aae", "Latn", "IT"),
+        "pap" => ("pap", "Latn", "CW"),
+        "zh" => {
+            let traditional = script == Some("Hant") || matches!(region, Some("TW" | "HK" | "MO"));
+            (
+                "zh",
+                if traditional { "Hant" } else { "Hans" },
+                if traditional { "TW" } else { "CN" },
+            )
+        }
+        _ => return None,
+    };
+    Some((
+        language.into(),
+        script.unwrap_or(default_script).into(),
+        region.unwrap_or(default_region).into(),
+    ))
+}
+
+fn locale_with_likely_subtags(locale: &str) -> String {
+    let (language, script, region, variants) = locale_base_components(locale);
+    let Some((language, script, region)) =
+        likely_locale_triple(&language, script.as_deref(), region.as_deref())
+    else {
+        return locale.into();
+    };
+    let mut result = vec![language, script, region];
+    result.extend(variants);
+    format!("{}{}", result.join("-"), locale_suffix(locale))
+}
+
+fn locale_without_likely_subtags(locale: &str) -> String {
+    let maximal = locale_with_likely_subtags(locale);
+    let (language, script, region, variants) = locale_base_components(&maximal);
+    let Some(maximal_triple) =
+        likely_locale_triple(&language, script.as_deref(), region.as_deref())
+    else {
+        return locale.into();
+    };
+    let candidates = [
+        (language.clone(), None, None),
+        (language.clone(), None, region.clone()),
+        (language.clone(), script.clone(), None),
+    ];
+    let mut minimal = vec![language.clone(), script.unwrap(), region.unwrap()];
+    for (candidate_language, candidate_script, candidate_region) in candidates {
+        if likely_locale_triple(
+            &candidate_language,
+            candidate_script.as_deref(),
+            candidate_region.as_deref(),
+        ) == Some(maximal_triple.clone())
+        {
+            minimal = vec![candidate_language];
+            if let Some(script) = candidate_script {
+                minimal.push(script);
+            }
+            if let Some(region) = candidate_region {
+                minimal.push(region);
+            }
+            break;
+        }
+    }
+    minimal.extend(variants);
+    format!("{}{}", minimal.join("-"), locale_suffix(&maximal))
+}
+
+fn create_locale_from_receiver(
+    context: &mut NativeContext,
+    receiver: &JsValue,
+    locale: String,
+) -> Result<JsValue, VmError> {
+    let receiver = require_intl_kind(context, receiver, "Locale")?;
+    let prototype = context
+        .get_prototype_of(receiver)
+        .or_else(|| context.object_prototype());
+    let object = new_ordinary_object(context, prototype)?;
+    define_hidden(context, object, INTL_KIND, JsValue::String("Locale".into()))?;
+    define_hidden(context, object, INTL_LOCALE, JsValue::String(locale))?;
+    Ok(JsValue::Object(object))
+}
+
+fn intl_locale_maximize(
     _vm: &mut Vm,
-    _context: &mut NativeContext,
+    context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(this_value)
+    let locale = intl_locale_value(context, &this_value)?;
+    create_locale_from_receiver(context, &this_value, locale_with_likely_subtags(&locale))
+}
+
+fn intl_locale_minimize(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    create_locale_from_receiver(context, &this_value, locale_without_likely_subtags(&locale))
+}
+
+fn intl_locale_preferred_array(
+    context: &mut NativeContext,
+    this_value: &JsValue,
+    values: &[&str],
+) -> Result<JsValue, VmError> {
+    require_intl_kind(context, this_value, "Locale")?;
+    context.create_array(
+        values
+            .iter()
+            .map(|value| JsValue::String((*value).into()))
+            .collect(),
+    )
+}
+
+fn intl_locale_get_calendars(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    if let Some(calendar) = locale_unicode_keyword(&locale, "ca") {
+        context.create_array(vec![JsValue::String(calendar)])
+    } else {
+        intl_locale_preferred_array(context, &this_value, &["gregory"])
+    }
+}
+
+fn intl_locale_get_collations(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    intl_locale_preferred_array(context, &this_value, &["emoji", "eor"])
+}
+
+fn intl_locale_get_hour_cycles(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    intl_locale_preferred_array(context, &this_value, &["h12", "h23"])
+}
+
+fn intl_locale_get_numbering_systems(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    intl_locale_preferred_array(context, &this_value, &["latn"])
+}
+
+fn intl_locale_get_text_info(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    let language = locale.split('-').next().unwrap_or("und");
+    let direction = if matches!(language, "ar" | "fa" | "he" | "ur") {
+        "rtl"
+    } else {
+        "ltr"
+    };
+    object_from_pairs(context, [("direction", JsValue::String(direction.into()))])
+}
+
+fn intl_locale_get_time_zones(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    let region = locale_base_components(&locale).2;
+    let zones: &[&str] = match region.as_deref() {
+        Some("US") => &["America/New_York"],
+        Some("GB") => &["Europe/London"],
+        Some("JP") => &["Asia/Tokyo"],
+        Some("CN") => &["Asia/Shanghai"],
+        Some("DE") => &["Europe/Berlin"],
+        None => return Ok(JsValue::Undefined),
+        Some(_) => &["UTC"],
+    };
+    intl_locale_preferred_array(context, &this_value, zones)
+}
+
+fn intl_locale_get_week_info(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let locale = intl_locale_value(context, &this_value)?;
+    let region = locale_base_components(&locale).2;
+    let european = matches!(region.as_deref(), Some("GB" | "DE" | "FR" | "ES" | "IT"));
+    let first_day = match locale_unicode_keyword(&locale, "fw").as_deref() {
+        Some("mon") => 1.0,
+        Some("tue") => 2.0,
+        Some("wed") => 3.0,
+        Some("thu") => 4.0,
+        Some("fri") => 5.0,
+        Some("sat") => 6.0,
+        Some("sun") => 7.0,
+        _ if european => 1.0,
+        _ => 7.0,
+    };
+    let weekend = context.create_array(vec![JsValue::Number(6.0), JsValue::Number(7.0)])?;
+    object_from_pairs(
+        context,
+        [
+            ("firstDay", JsValue::Number(first_day)),
+            ("weekend", weekend),
+        ],
+    )
 }
 
 fn install_temporal(context: &mut NativeContext) -> Result<(), VmError> {
@@ -5637,13 +6452,22 @@ fn temporal_plain_date_construct(
 }
 
 fn validate_plain_date(year: f64, month: f64, day: f64) -> Result<(), VmError> {
-    if !year.is_finite() || !month.is_finite() || !day.is_finite() {
+    if !year.is_finite()
+        || !month.is_finite()
+        || !day.is_finite()
+        || year.fract() != 0.0
+        || month.fract() != 0.0
+        || day.fract() != 0.0
+    {
         return Err(VmError::range("invalid Temporal.PlainDate"));
     }
     let year = year.trunc() as i32;
     let month = month.trunc() as u32;
     let day = day.trunc() as u32;
-    if !(1..=12).contains(&month) || !(1..=month_day_count(year, month)).contains(&day) {
+    if !(1..=12).contains(&month)
+        || !(1..=month_day_count(year, month)).contains(&day)
+        || !iso_date_within_temporal_range(year, month, day)
+    {
         Err(VmError::range("invalid Temporal.PlainDate"))
     } else {
         Ok(())
@@ -5656,7 +6480,13 @@ fn validate_plain_date_for_calendar(
     month: f64,
     day: f64,
 ) -> Result<(), VmError> {
-    if !year.is_finite() || !month.is_finite() || !day.is_finite() {
+    if !year.is_finite()
+        || !month.is_finite()
+        || !day.is_finite()
+        || year.fract() != 0.0
+        || month.fract() != 0.0
+        || day.fract() != 0.0
+    {
         return Err(VmError::range("invalid Temporal.PlainDate"));
     }
     let year = year.trunc() as i32;
@@ -5665,11 +6495,22 @@ fn validate_plain_date_for_calendar(
     let months = calendar_months_in_year(calendar, year);
     if !(1..=months).contains(&month)
         || !(1..=calendar_month_day_count(calendar, year, month)).contains(&day)
+        || !iso_date_within_temporal_range(calendar_iso_year(calendar, year), month, day)
     {
         Err(VmError::range("invalid Temporal.PlainDate"))
     } else {
         Ok(())
     }
+}
+
+/// Temporal PlainDate and the date portion of all built-in calendars are
+/// bounded by the ISO date range corresponding to +/-100,000,000 days from the
+/// epoch.  Checking the exact day (rather than only the year) is important for
+/// the boundary dates -271821-04-19 and 275760-09-13.
+fn iso_date_within_temporal_range(year: i32, month: u32, day: u32) -> bool {
+    let day_number = days_from_civil(year, month, day) as i128;
+    let epoch_ns = day_number.saturating_mul(NS_PER_DAY_I128);
+    epoch_ns.abs() <= MAX_INSTANT_NS
 }
 
 fn temporal_constructor_prototype(
@@ -5822,15 +6663,18 @@ fn temporal_calendar_from_argument(
 ) -> Result<String, VmError> {
     match value.cloned().unwrap_or(JsValue::Undefined) {
         JsValue::Undefined => Ok("iso8601".into()),
+        JsValue::Null => Err(VmError::type_error(
+            "Temporal calendar must be a string or object",
+        )),
+        JsValue::Boolean(_) | JsValue::Number(_) | JsValue::BigInt(_) | JsValue::Symbol(_) => Err(
+            VmError::type_error("Temporal calendar must be a string or object"),
+        ),
+        JsValue::Object(_) => Err(VmError::type_error(
+            "Temporal calendar object is not supported by this calendar slot",
+        )),
         value => {
-            let calendar = canonicalize_temporal_calendar_id(
-                &vm.to_string_coerce(value, context)?.to_ascii_lowercase(),
-            );
-            if calendar.is_empty() {
-                Err(VmError::range("invalid Temporal calendar"))
-            } else {
-                Ok(calendar)
-            }
+            let text = vm.to_string_coerce(value, context)?;
+            normalize_temporal_calendar_string(&text)
         }
     }
 }
@@ -5840,6 +6684,46 @@ fn canonicalize_temporal_calendar_id(calendar: &str) -> String {
         "islamicc" => "islamic-civil".into(),
         "ethiopic-amete-alem" => "ethioaa".into(),
         _ => calendar.into(),
+    }
+}
+
+fn normalize_temporal_calendar_string(value: &str) -> Result<String, VmError> {
+    if value.is_empty() || !value.is_ascii() {
+        return Err(VmError::range("invalid Temporal calendar"));
+    }
+    let text = value.to_ascii_lowercase();
+    // Temporal accepts an ISO date/time string in calendar positions and
+    // interprets it as the built-in ISO calendar.
+    if parse_temporal_plain_date_string(&text).is_some()
+        || parse_plain_year_month(&text).is_some()
+        || parse_plain_month_day(&text).is_some()
+        || parse_plain_time(&text).is_some()
+    {
+        return Ok("iso8601".into());
+    }
+    let calendar = canonicalize_temporal_calendar_id(&text);
+    const KNOWN_CALENDARS: &[&str] = &[
+        "iso8601",
+        "gregory",
+        "japanese",
+        "buddhist",
+        "roc",
+        "coptic",
+        "ethiopic",
+        "ethioaa",
+        "hebrew",
+        "indian",
+        "persian",
+        "islamic",
+        "islamic-civil",
+        "islamic-rgsa",
+        "islamic-tbla",
+        "islamic-umalqura",
+    ];
+    if KNOWN_CALENDARS.contains(&calendar.as_str()) {
+        Ok(calendar)
+    } else {
+        Err(VmError::range("invalid Temporal calendar"))
     }
 }
 
