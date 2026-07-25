@@ -115,9 +115,9 @@ impl Compiler {
         let lexical_scope = self.predeclare_lexical_bindings(&program.body, &mut chunk)?;
         context.lexical_scopes.push(lexical_scope);
 
-        // Hoist all var declarations to the top of the global scope (pre-declare as undefined).
-        // This ensures var names from un-executed branches (loops, if-bodies) are still
-        // accessible in the enclosing scope after that branch.
+        // Hoist all var declarations to the top of the program scope (pre-declare
+        // as undefined). This ensures var names from un-executed branches are
+        // still accessible in the enclosing scope.
         {
             let mut var_names: Vec<String> = Vec::new();
             collect_var_names(&program.body, &mut var_names);
@@ -127,6 +127,29 @@ impl Compiler {
                     .map_err(CompileError::from_chunk)?;
                 for name in var_names {
                     let idx = self.add_name(&name, &mut chunk)?;
+                    chunk.emit(Instruction::Constant(undef_const));
+                    chunk.emit(Instruction::DeclareGlobal(idx));
+                }
+            }
+        }
+
+        // Annex B §B.3.3.2 / §B.3.3.3: pre-hoist block-contained function
+        // declaration names (initialised to undefined). The DeclareFunction
+        // emitted by compile_block will update each binding to the actual
+        // function object when the block is entered.
+        {
+            let mut annex_b_var_names: Vec<String> = Vec::new();
+            let top_lex = collect_top_level_lexical_names(&program.body);
+            // Pass empty set — top-level functions are already handled by normal
+            // hoisting and are skipped inside collect_annex_b_var_names.
+            let empty_hoisted = std::collections::HashSet::new();
+            collect_annex_b_var_names(&program.body, &top_lex, &empty_hoisted, &mut annex_b_var_names);
+            if !annex_b_var_names.is_empty() {
+                let undef_const = chunk
+                    .add_constant(Constant::Undefined)
+                    .map_err(CompileError::from_chunk)?;
+                for name in &annex_b_var_names {
+                    let idx = self.add_name(name, &mut chunk)?;
                     chunk.emit(Instruction::Constant(undef_const));
                     chunk.emit(Instruction::DeclareGlobal(idx));
                 }
@@ -335,18 +358,18 @@ impl Compiler {
         // at function entry by compile_function_body).
         let mut path_b_fn_names: std::collections::HashSet<String> =
             std::collections::HashSet::new();
-        if context.function_depth > 0 {
-            // Check ALL currently visible lexical scopes (function-body + any outer blocks).
-            let all_visible_lexicals: std::collections::HashSet<&str> = context
-                .lexical_scopes
-                .iter()
-                .flat_map(|scope| scope.iter().map(|s| s.as_str()))
-                .collect();
-            for stmt in statements {
-                if let Statement::FunctionDeclaration { name, .. } = stmt {
-                    if all_visible_lexicals.contains(name.as_str()) {
-                        path_b_fn_names.insert(name.clone());
-                    }
+        // Check ALL currently visible lexical scopes. At script level
+        // (function_depth == 0), this is the top-level lexical scope; at
+        // function level it includes outer function + block scopes.
+        let all_visible_lexicals: std::collections::HashSet<&str> = context
+            .lexical_scopes
+            .iter()
+            .flat_map(|scope| scope.iter().map(|s| s.as_str()))
+            .collect();
+        for stmt in statements {
+            if let Statement::FunctionDeclaration { name, .. } = stmt {
+                if all_visible_lexicals.contains(name.as_str()) {
+                    path_b_fn_names.insert(name.clone());
                 }
             }
         }
@@ -390,6 +413,23 @@ impl Compiler {
         // Path-B fn names are declared by DeclareFunction below (no pre-declare needed).
         for name in &path_b_fn_names {
             scope.insert(name.clone());
+        }
+        // Path-A functions need block-scoped bindings that shadow the outer
+        // var-scoped bindings. After CreateLexicalEnvironment, load the outer
+        // function value and create/initialize a same-named binding here.
+        for stmt in statements {
+            if let Statement::FunctionDeclaration { name, .. } = stmt {
+                if !path_b_fn_names.contains(name) {
+                    let name_idx = self.add_name(name, chunk)?;
+                    scope.insert(name.clone());
+                    // Load the var-scoped binding from the outer scope.
+                    chunk.emit(Instruction::LoadName(name_idx));
+                    // Create a block-scoped mutable binding.
+                    chunk.emit(Instruction::CreateMutableBinding(name_idx));
+                    // Initialize it to the loaded function value.
+                    chunk.emit(Instruction::InitializeBinding(name_idx));
+                }
+            }
         }
         context.lexical_scopes.push(scope);
         // Hoist path-B fn decls (DeclareFunction into block env), skipping path-A ones.
@@ -513,7 +553,20 @@ impl Compiler {
 
             let names = lexical_names(&handler.body);
             let mut scope = self.predeclare_names(&names, &handler.body, chunk)?;
-            if let Some(parameter) = &handler.parameter {
+            if let Some(crate::ast::CatchParameter::Pattern(parameter)) = &handler.parameter {
+                for name in binding_pattern_names(parameter) {
+                    let index = self.add_name(&name, chunk)?;
+                    chunk.emit(Instruction::CreateMutableBinding(index));
+                    scope.insert(name);
+                }
+                chunk.emit(Instruction::LoadException);
+                // Catch parameters use the same binding-pattern machinery as
+                // declarations. This preserves iterator closing/defaults and
+                // makes `catch ([a, b])` / `catch ({x})` observable correctly.
+                self.compile_binding_pattern(VariableKind::Let, parameter, chunk, context)?;
+            } else if let Some(crate::ast::CatchParameter::Identifier(parameter)) =
+                &handler.parameter
+            {
                 let parameter_index = self.add_name(parameter, chunk)?;
                 chunk.emit(Instruction::CreateMutableBinding(parameter_index));
                 scope.insert(parameter.clone());
@@ -1032,7 +1085,17 @@ impl Compiler {
             None => None,
         };
 
-        let needs_iteration_env = !declared.is_empty();
+        // A classic `for` with a `const` declaration has a single immutable
+        // binding for the lifetime of the loop.  Unlike `let`, it must not be
+        // copied through a per-iteration environment and written back with
+        // `StoreName` after the body (that would attempt to update an
+        // immutable binding).  `const` heads with an update expression are an
+        // early error and are rejected by the parser; for the valid form,
+        // there is no per-iteration binding to rotate.
+        let needs_iteration_env = !declared.is_empty()
+            && declared
+                .iter()
+                .any(|(_, kind)| *kind != VariableKind::Const);
         if needs_iteration_env {
             for (name, _) in &declared {
                 let index = self.add_name(name, chunk)?;
@@ -1163,20 +1226,22 @@ impl Compiler {
         chunk.emit(Instruction::CreateMutableBinding(cursor_index));
         scope.insert(INDEX.to_string());
 
-        // Declare the loop variable(s) up front.
+        // Lexical bindings remain uninitialized during RHS evaluation (TDZ);
+        // each iteration receives a fresh binding below. `var` is hoisted by
+        // declaration instantiation and is not part of this hidden scope.
         match left {
             crate::ast::ForBinding::Declaration { kind, pattern } => {
-                let undefined = chunk
-                    .add_constant(Constant::Undefined)
-                    .map_err(CompileError::from_chunk)?;
-                for name in binding_pattern_names(pattern) {
-                    let idx = self.add_name(&name, chunk)?;
-                    chunk.emit(Instruction::CreateMutableBinding(idx));
-                    chunk.emit(Instruction::Constant(undefined));
-                    chunk.emit(Instruction::InitializeBinding(idx));
-                    scope.insert(name.clone());
+                if matches!(kind, VariableKind::Let | VariableKind::Const) {
+                    for name in binding_pattern_names(pattern) {
+                        let idx = self.add_name(&name, chunk)?;
+                        chunk.emit(if *kind == VariableKind::Const {
+                            Instruction::CreateImmutableBinding(idx)
+                        } else {
+                            Instruction::CreateMutableBinding(idx)
+                        });
+                        scope.insert(name);
+                    }
                 }
-                let _ = kind; // used below
             }
             crate::ast::ForBinding::Target(_) => {}
         }
@@ -1205,17 +1270,45 @@ impl Compiler {
         chunk.emit(Instruction::LoadName(keys_index));
         chunk.emit(Instruction::LoadName(cursor_index));
         chunk.emit(Instruction::GetElement);
+        let has_iteration_environment = matches!(
+            left,
+            crate::ast::ForBinding::Declaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                ..
+            }
+        );
+        if let crate::ast::ForBinding::Declaration { kind, pattern } = left
+            && has_iteration_environment
+        {
+            chunk.emit(Instruction::CreateLexicalEnvironment);
+            context.environment_depth += 1;
+            let mut iteration_scope = HashSet::new();
+            for name in binding_pattern_names(pattern) {
+                let idx = self.add_name(&name, chunk)?;
+                chunk.emit(if *kind == VariableKind::Const {
+                    Instruction::CreateImmutableBinding(idx)
+                } else {
+                    Instruction::CreateMutableBinding(idx)
+                });
+                iteration_scope.insert(name);
+            }
+            context.lexical_scopes.push(iteration_scope);
+        }
         match left {
             crate::ast::ForBinding::Declaration { kind, pattern } => {
-                match (kind, pattern) {
-                    (_, crate::ast::BindingPattern::Identifier(name)) => {
-                        let idx = self.add_name(name, chunk)?;
-                        chunk.emit(Instruction::StoreName(idx));
-                        chunk.emit(Instruction::Pop);
-                    }
-                    (_, pat) => {
-                        // Use store (not initialize) — bindings were already initialized before the loop.
-                        self.compile_binding_pattern_store(pat, chunk, context)?;
+                if has_iteration_environment {
+                    self.compile_binding_pattern(*kind, pattern, chunk, context)?;
+                } else {
+                    match (kind, pattern) {
+                        (_, crate::ast::BindingPattern::Identifier(name)) => {
+                            let idx = self.add_name(name, chunk)?;
+                            chunk.emit(Instruction::StoreName(idx));
+                            chunk.emit(Instruction::Pop);
+                        }
+                        (_, pat) => {
+                            // Use store (not initialize) — bindings were already initialized before the loop.
+                            self.compile_binding_pattern_store(pat, chunk, context)?;
+                        }
                     }
                 }
             }
@@ -1231,14 +1324,19 @@ impl Compiler {
             },
         }
 
+        let outer_environment_depth = if has_iteration_environment {
+            context.environment_depth - 1
+        } else {
+            context.environment_depth
+        };
         context.loops.push(LoopContext {
             continue_target: None,
             continue_jumps: Vec::new(),
-            environment_depth: context.environment_depth,
+            environment_depth: outer_environment_depth,
         });
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
-            environment_depth: context.environment_depth,
+            environment_depth: outer_environment_depth,
             label: None,
         });
 
@@ -1248,6 +1346,11 @@ impl Compiler {
             return Err(error);
         }
 
+        if has_iteration_environment {
+            context.lexical_scopes.pop();
+            chunk.emit(Instruction::PopEnvironment);
+            context.environment_depth -= 1;
+        }
         let update_target = chunk.current_offset();
         let continue_jumps = context
             .loops
@@ -3613,13 +3716,12 @@ impl Compiler {
                 Ok(())
             }
             // `delete identifier` — strict mode is rejected at parse time.
-            // In sloppy mode, declared bindings are non-configurable and
-            // `delete` always returns `false` for them.
-            Expression::Identifier(_) => {
-                let false_idx = chunk
-                    .add_constant(Constant::Boolean(false))
-                    .map_err(CompileError::from_chunk)?;
-                chunk.emit(Instruction::Constant(false_idx));
+            // In sloppy mode, unresolvable references return `true`, declared
+            // bindings return `false`, and configurable global properties can
+            // be deleted.
+            Expression::Identifier(name) => {
+                let name_index = self.add_name(name, chunk)?;
+                chunk.emit(Instruction::DeleteName(name_index));
                 Ok(())
             }
             // `delete (non-reference)` — e.g. `delete 1`, `delete (a + b)`.
@@ -5485,6 +5587,337 @@ fn for_each_sub_statement(stmt: &Statement, f: &mut impl FnMut(&Statement)) -> b
         _ => {}
     }
     true
+}
+
+/// Collects let/const/class names declared at the top level of `statements`.
+pub(crate) fn collect_top_level_lexical_names(
+    statements: &[Statement],
+) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for stmt in statements {
+        match stmt {
+            Statement::VariableDeclaration { kind, declarations } => {
+                if matches!(
+                    kind,
+                    crate::ast::VariableKind::Let | crate::ast::VariableKind::Const
+                ) {
+                    for d in declarations {
+                        if d.pattern.is_none() {
+                            names.insert(d.name.clone());
+                        }
+                    }
+                }
+            }
+            Statement::ClassDeclaration(cls) => {
+                names.insert(cls.name.clone());
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// Collects block-contained function declaration names eligible for Annex B
+/// §B.3.3.3 pre-hoisting. A name is eligible when replacing the function
+/// declaration with a `var` declaration would NOT produce an Early Error —
+/// i.e. the name is not already bound as a lexical name (let/const/class) in
+/// any enclosing block within the eval body.
+pub(crate) fn collect_annex_b_var_names(
+    statements: &[Statement],
+    enclosing_lex_names: &std::collections::HashSet<String>,
+    already_hoisted: &std::collections::HashSet<String>,
+    result: &mut Vec<String>,
+) {
+    // Collect lexical names declared at this level (in blocks, not top-level
+    // which is already in enclosing_lex_names).
+    let mut block_level_lex_names = enclosing_lex_names.clone();
+
+    for stmt in statements {
+        match stmt {
+            Statement::Block(body) => {
+                // Collect lexical names in this block.
+                let mut inner_lex_names = block_level_lex_names.clone();
+                for s in body {
+                    match s {
+                        Statement::VariableDeclaration { kind, declarations } => {
+                            if matches!(
+                                kind,
+                                crate::ast::VariableKind::Let | crate::ast::VariableKind::Const
+                            ) {
+                                for d in declarations {
+                                    if d.pattern.is_none() {
+                                        inner_lex_names.insert(d.name.clone());
+                                    }
+                                }
+                            }
+                        }
+                        Statement::ClassDeclaration(cls) => {
+                            inner_lex_names.insert(cls.name.clone());
+                        }
+                        _ => {}
+                    }
+                }
+                // Recurse: function declarations inside this block are checked
+                // against block_level_lex_names (the names visible OUTSIDE this
+                // block). Nested blocks see inner_lex_names.
+                for s in body {
+                    match s {
+                        Statement::FunctionDeclaration { name, .. } => {
+                            // Annex B §B.3.3.3 step ii: would `var <name>` be an
+                            // early error? If name is already lexically declared
+                            // in an enclosing scope → yes → skip.
+                            if !block_level_lex_names.contains(name) && !result.contains(name) {
+                                result.push(name.clone());
+                            }
+                        }
+                        Statement::Block(_) => {
+                            collect_annex_b_var_names(
+                                std::slice::from_ref(s),
+                                &inner_lex_names,
+                                already_hoisted,
+                                result,
+                            );
+                        }
+                        _ => {
+                            // Check sub-statements for nested blocks with fn decls.
+                            collect_annex_b_var_names_in_sub(s, &inner_lex_names, already_hoisted, result);
+                        }
+                    }
+                }
+                // Update the block-level lex names for subsequent statements.
+                block_level_lex_names = inner_lex_names;
+            }
+            Statement::FunctionDeclaration { .. } => {
+                // Top-level fn decl is handled by compile_program's normal
+                // hoisting; skip here.
+            }
+            Statement::VariableDeclaration { kind, declarations } => {
+                if matches!(
+                    kind,
+                    crate::ast::VariableKind::Let | crate::ast::VariableKind::Const
+                ) {
+                    for d in declarations {
+                        if d.pattern.is_none() {
+                            block_level_lex_names.insert(d.name.clone());
+                        }
+                    }
+                }
+            }
+            Statement::ClassDeclaration(cls) => {
+                block_level_lex_names.insert(cls.name.clone());
+            }
+            _ => {
+                collect_annex_b_var_names_in_sub(stmt, &block_level_lex_names, already_hoisted, result);
+            }
+        }
+    }
+}
+
+/// Recurses into sub-statements (if/while/for/try/switch bodies) to find
+/// nested blocks with Annex B function declarations.
+fn collect_annex_b_var_names_in_sub(
+    stmt: &Statement,
+    enclosing_lex_names: &std::collections::HashSet<String>,
+    already_hoisted: &std::collections::HashSet<String>,
+    result: &mut Vec<String>,
+) {
+    // Collect bare FunctionDeclaration names from nested scopes
+    // (switch-case, if-else), then don't descend further.
+    if let Statement::FunctionDeclaration { name, .. } = stmt {
+        if !enclosing_lex_names.contains(name)
+            && !already_hoisted.contains(name)
+            && !result.contains(name)
+        {
+            result.push(name.clone());
+        }
+        return;
+    }
+    // Don't descend into function/class expressions or class declarations.
+    if matches!(
+        stmt,
+        Statement::Expression(Expression::Function(_))
+            | Statement::Expression(Expression::Class(_))
+            | Statement::ClassDeclaration { .. }
+            | Statement::ModuleDeclaration(_)
+    ) {
+        return;
+    }
+    match stmt {
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
+            collect_annex_b_var_names_in_if_body(
+                consequent, enclosing_lex_names, already_hoisted, result,
+            );
+            if let Some(alt) = alternate {
+                collect_annex_b_var_names_in_if_body(
+                    alt, enclosing_lex_names, already_hoisted, result,
+                );
+            }
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::With { body, .. } => {
+            collect_annex_b_var_names_in_if_body(
+                body, enclosing_lex_names, already_hoisted, result,
+            );
+        }
+        Statement::For { body, init, .. } => {
+            let mut body_lex = enclosing_lex_names.clone();
+            if let Some(init_stmt) = init {
+                add_lexical_names_from_var_decl(init_stmt, &mut body_lex);
+            }
+            collect_annex_b_var_names_in_if_body_with_lex(
+                body, &body_lex, already_hoisted, result,
+            );
+        }
+        Statement::ForIn { left, body, .. } | Statement::ForOf { left, body, .. } => {
+            let mut body_lex = enclosing_lex_names.clone();
+            add_lexical_names_from_for_binding(left, &mut body_lex);
+            collect_annex_b_var_names_in_if_body_with_lex(
+                body, &body_lex, already_hoisted, result,
+            );
+        }
+        Statement::Try {
+            block,
+            handler,
+            finalizer,
+            ..
+        } => {
+            collect_annex_b_var_names(
+                block, enclosing_lex_names, already_hoisted, result,
+            );
+            if let Some(h) = handler {
+                let mut handler_lex = enclosing_lex_names.clone();
+                if let Some(crate::ast::CatchParameter::Identifier(name)) = &h.parameter {
+                    handler_lex.insert(name.clone());
+                }
+                collect_annex_b_var_names(
+                    &h.body, &handler_lex, already_hoisted, result,
+                );
+            }
+            if let Some(f) = finalizer {
+                collect_annex_b_var_names(
+                    f, enclosing_lex_names, already_hoisted, result,
+                );
+            }
+        }
+        Statement::Switch { cases, .. } => {
+            for case in cases {
+                collect_annex_b_var_names(
+                    &case.consequent, enclosing_lex_names, already_hoisted, result,
+                );
+            }
+        }
+        Statement::Block(body) => {
+            collect_annex_b_var_names(
+                body, enclosing_lex_names, already_hoisted, result,
+            );
+        }
+        Statement::Labelled { body, .. } => {
+            collect_annex_b_var_names_in_if_body(
+                body, enclosing_lex_names, already_hoisted, result,
+            );
+        }
+        _ => {}
+    }
+}
+
+fn collect_annex_b_var_names_in_if_body(
+    body: &Statement,
+    enclosing_lex_names: &std::collections::HashSet<String>,
+    already_hoisted: &std::collections::HashSet<String>,
+    result: &mut Vec<String>,
+) {
+    match body {
+        Statement::FunctionDeclaration { name, .. } => {
+            if !enclosing_lex_names.contains(name)
+                && !already_hoisted.contains(name)
+                && !result.contains(name)
+            {
+                result.push(name.clone());
+            }
+        }
+        Statement::Block(block_body) => {
+            collect_annex_b_var_names(
+                block_body, enclosing_lex_names, already_hoisted, result,
+            );
+        }
+        _ => {
+            collect_annex_b_var_names_in_sub(
+                body, enclosing_lex_names, already_hoisted, result,
+            );
+        }
+    }
+}
+
+/// Like `collect_annex_b_var_names_in_if_body` but uses a pre-computed
+/// lexical name set that already includes loop-header declarations.
+fn collect_annex_b_var_names_in_if_body_with_lex(
+    body: &Statement,
+    enclosing_lex_names: &std::collections::HashSet<String>,
+    already_hoisted: &std::collections::HashSet<String>,
+    result: &mut Vec<String>,
+) {
+    match body {
+        Statement::FunctionDeclaration { name, .. } => {
+            if !enclosing_lex_names.contains(name)
+                && !already_hoisted.contains(name)
+                && !result.contains(name)
+            {
+                result.push(name.clone());
+            }
+        }
+        Statement::Block(block_body) => {
+            collect_annex_b_var_names(
+                block_body, enclosing_lex_names, already_hoisted, result,
+            );
+        }
+        _ => {
+            collect_annex_b_var_names_in_sub(
+                body, enclosing_lex_names, already_hoisted, result,
+            );
+        }
+    }
+}
+
+/// Extracts let/const names from a ForBinding (for-in / for-of left side).
+fn add_lexical_names_from_for_binding(
+    left: &crate::ast::ForBinding,
+    names: &mut std::collections::HashSet<String>,
+) {
+    if let crate::ast::ForBinding::Declaration { kind, pattern } = left {
+        if matches!(
+            kind,
+            crate::ast::VariableKind::Let | crate::ast::VariableKind::Const
+        ) {
+            if let crate::ast::BindingPattern::Identifier(name) = pattern {
+                names.insert(name.clone());
+            }
+        }
+    }
+}
+
+/// Extracts let/const names from a VariableDeclaration statement used as a
+/// for-loop init clause.
+fn add_lexical_names_from_var_decl(
+    stmt: &Statement,
+    names: &mut std::collections::HashSet<String>,
+) {
+    if let Statement::VariableDeclaration { kind, declarations } = stmt {
+        if matches!(
+            kind,
+            crate::ast::VariableKind::Let | crate::ast::VariableKind::Const
+        ) {
+            for d in declarations {
+                if d.pattern.is_none() {
+                    names.insert(d.name.clone());
+                }
+            }
+        }
+    }
 }
 
 /// Collect all `var`-declared names from a statement list, recursing into

@@ -1586,7 +1586,7 @@ impl NativeContext {
                 .heap
                 .environment_mut(self.global_environment)
                 .expect("global environment must exist");
-            environment.create_binding(name.clone(), value.clone(), true)
+            environment.create_binding(name.clone(), value.clone(), true, false)
         };
         let _ = self.define_own_property(
             self.global_object,
@@ -1611,7 +1611,7 @@ impl NativeContext {
                 true
             } else if !self.strict {
                 // Non-strict: create global binding if it doesn't exist (implicit global).
-                environment.create_binding(name.to_string(), value.clone(), true)
+                environment.create_binding(name.to_string(), value.clone(), true, false)
             } else {
                 false
             }
@@ -1632,13 +1632,14 @@ impl NativeContext {
         name: impl Into<String>,
         value: JsValue,
         mutable: bool,
+        lexical: bool,
     ) -> Result<(), VmError> {
         let name = name.into();
         let environment = self
             .heap
             .environment_mut(environment)
             .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
-        if environment.create_binding(name.clone(), value.clone(), mutable) {
+        if environment.create_binding(name.clone(), value.clone(), mutable, lexical) {
             return Ok(());
         }
         environment.set_mutable_binding(&name, value)
@@ -1675,6 +1676,23 @@ impl NativeContext {
         self.heap
             .environment(environment)
             .is_some_and(|environment| environment.has_binding(name))
+    }
+
+    /// Walks the current environment chain looking for a binding with `name`.
+    /// Returns `Some(true)` if the first occurrence is a lexical binding
+    /// (let/const/class/param), `Some(false)` if it's a var/function binding,
+    /// or `None` if there is no such binding in scope.
+    #[must_use]
+    pub fn find_binding_kind(&self, name: &str) -> Option<bool> {
+        let mut current = Some(self.current_environment);
+        while let Some(id) = current {
+            let environment = self.heap.environment(id)?;
+            if let Some(binding) = environment.binding(name) {
+                return Some(binding.lexical);
+            }
+            current = environment.outer;
+        }
+        None
     }
 
     pub fn module_registry(&self) -> &ModuleRegistry {
@@ -1848,22 +1866,24 @@ impl NativeContext {
         environment: EnvironmentId,
         name: String,
         initialized: bool,
+        lexical: bool,
     ) -> Result<(), VmError> {
         self.heap
             .environment_mut(environment)
             .ok_or_else(|| VmError::runtime("missing lexical environment"))?
-            .create_mutable_binding(name, initialized)
+            .create_mutable_binding(name, initialized, lexical)
     }
 
     pub fn create_immutable_binding(
         &mut self,
         environment: EnvironmentId,
         name: String,
+        lexical: bool,
     ) -> Result<(), VmError> {
         self.heap
             .environment_mut(environment)
             .ok_or_else(|| VmError::runtime("missing lexical environment"))?
-            .create_immutable_binding(name)
+            .create_immutable_binding(name, lexical)
     }
 
     pub fn initialize_binding(
@@ -1987,7 +2007,7 @@ impl NativeContext {
         // Non-strict: unresolvable reference creates a global binding (PutValue spec step).
         // Add to global environment so resolve_binding_value can find it later.
         if !self.strict {
-            return self.declare_binding(self.global_environment, name, value, true);
+            return self.declare_binding(self.global_environment, name, value, true, false);
         }
         Err(VmError::reference(format!("{name} is not defined")))
     }

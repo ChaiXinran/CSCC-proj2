@@ -9,7 +9,7 @@
 //! cross-team [`crate::contracts::ProgramCompiler`] adapter delegates to it.
 
 mod chunk;
-mod compiler;
+pub(crate) mod compiler;
 mod opcode;
 
 pub use chunk::{

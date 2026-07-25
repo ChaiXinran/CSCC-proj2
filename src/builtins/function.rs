@@ -126,19 +126,234 @@ pub fn eval_call(
         JsValue::String(source) => source,
         other => return Ok(other),
     };
-    let tokens = Lexer::new(&source)
+    // Direct eval inherits strictness from the calling execution context.
+    // The parser derives strict mode from the directive prologue, so make
+    // inherited strictness explicit before parsing (this also enforces the
+    // strict-only early errors for eval/arguments catch bindings).
+    let is_strict = context.is_strict_code();
+    let strict_source;
+    let parse_source: &str = if is_strict {
+        strict_source = format!("\"use strict\";\n{source}");
+        &strict_source
+    } else {
+        &source
+    };
+    let tokens = Lexer::new(parse_source)
         .tokenize()
         .map_err(dynamic_function_syntax_error)?;
-    let program = Parser::with_source(tokens, &source)
+    let program = Parser::with_source(tokens, parse_source)
         .parse_program()
         .map_err(dynamic_function_syntax_error)?;
+    // EvalDeclarationInstantiation §18.2.1.1: check for binding conflicts
+    // between the eval code's declarations and the calling context's scope.
+    // Strict eval has its own scope, so we only validate non-strict eval.
+    // When the calling context is non-strict but the eval source itself starts
+    // with "use strict", the eval also gets its own scope (no conflict check).
+    let eval_source_is_strict = source.trim_start().starts_with("\"use strict\"")
+        || source.trim_start().starts_with("'use strict'");
+    if !is_strict && !eval_source_is_strict {
+        validate_eval_declarations(&program, context)?;
+    }
+    // Annex B §B.3.3.3: for non-strict direct eval in a function scope,
+    // pre-declare block-contained function names in the calling context's
+    // var environment. This creates mutable bindings initialized to undefined
+    // before any eval code runs, matching the spec's pre-hoisting semantics.
+    let in_function_scope = context.current_environment() != context.global_environment();
+    if !is_strict && !eval_source_is_strict && in_function_scope {
+        predeclare_eval_annex_b_functions(&program, context)?;
+    }
     let mut chunk = Compiler::new()
         .compile_program(&program)
         .map_err(dynamic_function_syntax_error)?;
-    if context.current_environment() != context.global_environment() {
+    if in_function_scope {
         rewrite_eval_global_accesses(&mut chunk);
     }
     vm.eval_execute(&chunk, context)
+}
+
+/// Annex B §B.3.3.3: pre-declares block-contained function names in the
+/// calling context's var environment. Only names that do NOT conflict with
+/// lexical bindings either (a) within the eval body or (b) in the outer
+/// runtime scope are pre-declared.
+fn predeclare_eval_annex_b_functions(
+    program: &crate::ast::Program,
+    context: &mut NativeContext,
+) -> Result<(), VmError> {
+    let top_lex = crate::bytecode::compiler::collect_top_level_lexical_names(&program.body);
+    let mut annex_b_names: Vec<String> = Vec::new();
+    crate::bytecode::compiler::collect_annex_b_var_names(
+        &program.body,
+        &top_lex,
+        &std::collections::HashSet::new(),
+        &mut annex_b_names,
+    );
+    for name in &annex_b_names {
+        // Skip if already bound in the calling scope (either var or lexical).
+        if context.find_binding_kind(name).is_some() {
+            continue;
+        }
+        // Create a mutable var-scoped binding, initialized to undefined.
+        context.declare_binding(
+            context.current_environment(),
+            name.clone(),
+            JsValue::Undefined,
+            true,  // mutable
+            false, // var-scoped (not lexical)
+        )?;
+    }
+    Ok(())
+}
+
+/// EvalDeclarationInstantiation §18.2.1.1 binding-conflict checks.
+/// In non-strict direct eval:
+///   - Var/function declarations conflict with LEXICAL bindings in the
+///     enclosing scope chain (var declarations can't override let/const/
+///     class/param bindings).
+///   - Lexical declarations conflict with any binding in the CURRENT
+///     lexical environment only.
+///
+/// Indirect eval (§18.2.1.2) always uses the global scope as its outer
+/// and does not check the calling scope; we approximate this by skipping
+/// the check when already at global scope.
+fn validate_eval_declarations(
+    program: &crate::ast::Program,
+    context: &mut NativeContext,
+) -> Result<(), VmError> {
+    use std::collections::HashSet;
+
+    // Only validate when eval scope might conflict with calling scope.
+    // At global scope, var re-declarations are always OK (they create
+    // configurable properties) and lexical declarations go to the global
+    // lexical environment.
+    if context.current_environment() == context.global_environment() {
+        return Ok(());
+    }
+
+    let mut var_names = HashSet::new();
+    let mut lex_names = HashSet::new();
+    collect_eval_declaration_names(&program.body, &mut var_names, &mut lex_names);
+
+    // Var/function declarations: SyntaxError if a LEXICAL binding with the
+    // same name exists anywhere in the enclosing scope chain (§18.2.1.1
+    // step 5.d.ii).
+    for name in &var_names {
+        if context.find_binding_kind(name) == Some(true) {
+            return Err(VmError::syntax_error(format!(
+                "Identifier '{name}' has already been declared"
+            )));
+        }
+    }
+
+    // Lexical declarations: SyntaxError if any binding with the same name
+    // already exists in the CURRENT lexical environment (§18.2.1.1
+    // step 11).
+    for name in &lex_names {
+        if context.has_binding_in_environment(context.current_environment(), name) {
+            return Err(VmError::syntax_error(format!(
+                "Identifier '{name}' has already been declared"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Walks `statements` recursively to collect var/function-declared names and
+/// let/const/class-declared names. Only visits block/statement bodies directly
+/// nested under the eval body — nested function bodies have their own scope
+/// and are not checked.
+fn collect_eval_declaration_names(
+    statements: &[crate::ast::Statement],
+    var_names: &mut std::collections::HashSet<String>,
+    lex_names: &mut std::collections::HashSet<String>,
+) {
+    use crate::ast::{Statement, VariableKind};
+    for stmt in statements {
+        match stmt {
+            Statement::VariableDeclaration { kind, declarations } => {
+                for decl in declarations {
+                    if decl.pattern.is_none() {
+                        match kind {
+                            VariableKind::Var => {
+                                var_names.insert(decl.name.clone());
+                            }
+                            VariableKind::Let | VariableKind::Const => {
+                                lex_names.insert(decl.name.clone());
+                            }
+                        }
+                    }
+                }
+            }
+            Statement::FunctionDeclaration { name, .. } => {
+                var_names.insert(name.clone());
+            }
+            Statement::ClassDeclaration(declaration) => {
+                lex_names.insert(declaration.name.clone());
+            }
+            // Recurse into control-flow bodies (same eval scope).
+            // Skip nested function bodies — they introduce their own scope.
+            Statement::Block(body) => {
+                collect_eval_declaration_names(body, var_names, lex_names);
+            }
+            Statement::Labelled { body, .. } => {
+                // Only recurse if the labelled body is a block.
+                if let Statement::Block(inner) = body.as_ref() {
+                    collect_eval_declaration_names(inner, var_names, lex_names);
+                }
+            }
+            Statement::If {
+                consequent,
+                alternate,
+                ..
+            } => {
+                if let Statement::Block(inner) = consequent.as_ref() {
+                    collect_eval_declaration_names(inner, var_names, lex_names);
+                }
+                if let Some(alt) = alternate {
+                    if let Statement::Block(inner) = alt.as_ref() {
+                        collect_eval_declaration_names(inner, var_names, lex_names);
+                    }
+                }
+            }
+            Statement::While { body, .. }
+            | Statement::DoWhile { body, .. }
+            | Statement::With { body, .. } => {
+                if let Statement::Block(inner) = body.as_ref() {
+                    collect_eval_declaration_names(inner, var_names, lex_names);
+                }
+            }
+            Statement::For { body, .. }
+            | Statement::ForIn { body, .. }
+            | Statement::ForOf { body, .. } => {
+                if let Statement::Block(inner) = body.as_ref() {
+                    collect_eval_declaration_names(inner, var_names, lex_names);
+                }
+            }
+            Statement::Try {
+                block,
+                handler,
+                finalizer,
+                ..
+            } => {
+                collect_eval_declaration_names(block, var_names, lex_names);
+                if let Some(handler) = handler {
+                    collect_eval_declaration_names(&handler.body, var_names, lex_names);
+                }
+                if let Some(finalizer) = finalizer {
+                    collect_eval_declaration_names(finalizer, var_names, lex_names);
+                }
+            }
+            Statement::Switch { cases, .. } => {
+                for case in cases {
+                    collect_eval_declaration_names(&case.consequent, var_names, lex_names);
+                }
+            }
+            // Ignore: Expression, Return, Break, Continue, Throw, Empty,
+            // FunctionDeclaration (nested scope), ClassDeclaration (already
+            // collected above), DestructuringDeclaration.
+            _ => {}
+        }
+    }
 }
 
 fn rewrite_eval_global_accesses(chunk: &mut Chunk) {

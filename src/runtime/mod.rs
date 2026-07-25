@@ -1,5 +1,6 @@
 //! Native runtime data model.
 
+pub mod abstract_ops;
 pub mod bigint;
 mod buffer;
 mod coercion;

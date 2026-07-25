@@ -11,6 +11,7 @@ pub use expression::{
     UpdateOperator,
 };
 pub use statement::{
-    CatchClause, ExportDeclaration, ExportEntry, ForBinding, ImportDeclaration, ImportEntry,
-    ModuleDeclaration, Program, Statement, SwitchCase, VariableDeclarator, VariableKind,
+    CatchClause, CatchParameter, ExportDeclaration, ExportEntry, ForBinding, ImportDeclaration,
+    ImportEntry, ModuleDeclaration, Program, Statement, SwitchCase, VariableDeclarator,
+    VariableKind,
 };
