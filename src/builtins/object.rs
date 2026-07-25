@@ -37,6 +37,11 @@ pub fn install_object(context: &mut NativeContext) {
             object_get_own_property_descriptor as crate::runtime::NativeCall,
         ),
         (
+            "getOwnPropertyDescriptors",
+            1,
+            object_get_own_property_descriptors as crate::runtime::NativeCall,
+        ),
+        (
             "getOwnPropertyNames",
             1,
             object_get_own_property_names as crate::runtime::NativeCall,
@@ -208,25 +213,42 @@ fn object_create(
         && !matches!(properties, JsValue::Undefined)
     {
         let properties = context.require_object(properties, "read property descriptors")?;
-        let keys = context
-            .heap()
-            .object(properties)
-            .ok_or_else(|| VmError::runtime("missing descriptor map"))?
-            .own_property_keys();
+        let properties_value = JsValue::Object(properties);
+        let keys = proxy::internal_own_property_keys(vm, context, properties_value.clone())?;
         for key in keys {
-            if !context
-                .get_own_property_descriptor(properties, &key)
-                .is_some_and(|descriptor| descriptor.enumerable)
+            if !proxy::internal_get_own_property(vm, context, properties_value.clone(), &key)?
+                .is_some_and(|d| d.enumerable)
             {
                 continue;
             }
-            let descriptor_value =
-                vm.get_property_value(JsValue::Object(properties), &key, context)?;
+            let descriptor_value = match &key {
+                PropertyKey::String(name) => {
+                    vm.get_property_value(properties_value.clone(), name, context)?
+                }
+                PropertyKey::Symbol(symbol) => vm
+                    .get_symbol_property_value_with_receiver_from_builtin(
+                        properties_value.clone(),
+                        properties_value.clone(),
+                        *symbol,
+                        context,
+                    )?,
+            };
             let descriptor_object =
                 context.require_object(&descriptor_value, "read property descriptor")?;
             let update = descriptor_update_from_object(vm, context, descriptor_object)?;
-            if !context.validate_and_apply_property_descriptor(object, key, update)? {
-                return Err(VmError::type_error("cannot define property"));
+            match key {
+                PropertyKey::String(name) => {
+                    if !context.validate_and_apply_property_descriptor(object, name, update)? {
+                        return Err(VmError::type_error("cannot define property"));
+                    }
+                }
+                PropertyKey::Symbol(symbol) => {
+                    if !context
+                        .validate_and_apply_symbol_property_descriptor(object, symbol, update)?
+                    {
+                        return Err(VmError::type_error("cannot define property"));
+                    }
+                }
             }
         }
     }
@@ -277,6 +299,38 @@ fn object_get_own_property_descriptor(
         return Ok(JsValue::Undefined);
     };
     descriptor_to_object(context, descriptor)
+}
+
+fn object_get_own_property_descriptors(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let object = vm.to_object(target.clone(), context)?;
+    let target = match target {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => target,
+        _ => context.object_value(object),
+    };
+    let result_value = context.create_object(std::iter::empty())?;
+    let result = context.require_object(&result_value, "create descriptor result")?;
+    for key in proxy::internal_own_property_keys(vm, context, target.clone())? {
+        let Some(descriptor) = proxy::internal_get_own_property(vm, context, target.clone(), &key)?
+        else {
+            continue;
+        };
+        let PropertyKey::String(name) = key else {
+            continue;
+        };
+        let descriptor_object = descriptor_to_object(context, descriptor)?;
+        context.define_own_property(
+            result,
+            name,
+            PropertyDescriptor::data_with(descriptor_object, true, true, true),
+        )?;
+    }
+    Ok(result_value)
 }
 
 fn own_descriptor_for_key(
@@ -616,23 +670,30 @@ fn object_define_properties(
         return Ok(target);
     }
     let props = context.require_object(&props_value, "defineProperties props")?;
-    let keys = context
-        .heap()
-        .object(props)
-        .ok_or_else(|| VmError::runtime("missing props object"))?
-        .own_property_keys();
+    let props_object = JsValue::Object(props);
+    let keys = proxy::internal_own_property_keys(vm, context, props_object.clone())?;
     for key in keys {
-        if !context
-            .get_own_property_descriptor(props, &key)
+        if !proxy::internal_get_own_property(vm, context, props_object.clone(), &key)?
             .is_some_and(|d| d.enumerable)
         {
             continue;
         }
-        let descriptor_value = vm.get_property_value(JsValue::Object(props), &key, context)?;
+        let descriptor_value = match &key {
+            PropertyKey::String(name) => {
+                vm.get_property_value(props_object.clone(), name, context)?
+            }
+            PropertyKey::Symbol(symbol) => vm
+                .get_symbol_property_value_with_receiver_from_builtin(
+                    props_object.clone(),
+                    props_object.clone(),
+                    *symbol,
+                    context,
+                )?,
+        };
         let descriptor_object =
             context.require_object(&descriptor_value, "read property descriptor")?;
         let update = descriptor_update_from_object(vm, context, descriptor_object)?;
-        let property_key = PropertyKey::String(key);
+        let property_key = key;
         if !proxy::internal_define_own_property(
             vm,
             context,
@@ -698,22 +759,22 @@ fn object_values(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = vm.to_object(target, context)?;
-    let keys = context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?
-        .own_property_keys();
-    let values: Vec<JsValue> = keys
-        .into_iter()
-        .filter(|key| {
-            context
-                .get_own_property_descriptor(object, key)
-                .is_some_and(|d| d.enumerable)
-        })
-        .filter_map(|key| context.get_own_property_descriptor(object, &key))
-        .filter_map(|d| d.value_cloned())
-        .collect();
+    let object = vm.to_object(target.clone(), context)?;
+    let target = match target {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => target,
+        _ => context.object_value(object),
+    };
+    let mut values = Vec::new();
+    for key in proxy::internal_own_property_keys(vm, context, target.clone())? {
+        if !proxy::internal_get_own_property(vm, context, target.clone(), &key)?
+            .is_some_and(|d| d.enumerable)
+        {
+            continue;
+        }
+        if let PropertyKey::String(name) = key {
+            values.push(vm.get_property_value(target.clone(), &name, context)?);
+        }
+    }
     context.create_array(values)
 }
 
@@ -724,22 +785,23 @@ fn object_entries(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let object = vm.to_object(target, context)?;
-    let keys = context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?
-        .own_property_keys();
+    let object = vm.to_object(target.clone(), context)?;
+    let target = match target {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => target,
+        _ => context.object_value(object),
+    };
     let mut pairs: Vec<JsValue> = Vec::new();
-    for key in keys {
-        let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
-            continue;
-        };
-        if !descriptor.enumerable {
+    for key in proxy::internal_own_property_keys(vm, context, target.clone())? {
+        if !proxy::internal_get_own_property(vm, context, target.clone(), &key)?
+            .is_some_and(|d| d.enumerable)
+        {
             continue;
         }
-        let value = descriptor.value_cloned().unwrap_or(JsValue::Undefined);
-        let pair = context.create_array(vec![JsValue::String(key), value])?;
+        let PropertyKey::String(name) = key else {
+            continue;
+        };
+        let value = vm.get_property_value(target.clone(), &name, context)?;
+        let pair = context.create_array(vec![JsValue::String(name), value])?;
         pairs.push(pair);
     }
     context.create_array(pairs)
@@ -983,40 +1045,22 @@ fn object_is_extensible(
 }
 
 fn object_is_frozen(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let JsValue::Object(object) = target else {
+    if context.value_object(&target).is_none() {
         return Ok(JsValue::Boolean(true));
-    };
-    if context.is_extensible(object)? {
+    }
+    if proxy::internal_is_extensible(vm, context, target.clone())? {
         return Ok(JsValue::Boolean(false));
     }
-    let keys = context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?
-        .own_property_keys();
-    for key in keys {
-        if context
-            .get_own_property_descriptor(object, &key)
-            .is_some_and(|d| {
-                d.configurable || matches!(d.kind, PropertyKind::Data { writable: true, .. })
-            })
-        {
-            return Ok(JsValue::Boolean(false));
-        }
-    }
-    for symbol in own_symbol_keys(context, object)? {
-        if context
-            .get_own_symbol_property_descriptor(object, symbol)
-            .is_some_and(|d| {
-                d.configurable || matches!(d.kind, PropertyKind::Data { writable: true, .. })
-            })
-        {
+    for key in proxy::internal_own_property_keys(vm, context, target.clone())? {
+        if proxy::internal_get_own_property(vm, context, target.clone(), &key)?.is_some_and(|d| {
+            d.configurable || matches!(d.kind, PropertyKind::Data { writable: true, .. })
+        }) {
             return Ok(JsValue::Boolean(false));
         }
     }
@@ -1024,34 +1068,20 @@ fn object_is_frozen(
 }
 
 fn object_is_sealed(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let JsValue::Object(object) = target else {
+    if context.value_object(&target).is_none() {
         return Ok(JsValue::Boolean(true));
-    };
-    if context.is_extensible(object)? {
+    }
+    if proxy::internal_is_extensible(vm, context, target.clone())? {
         return Ok(JsValue::Boolean(false));
     }
-    let keys = context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?
-        .own_property_keys();
-    for key in keys {
-        if context
-            .get_own_property_descriptor(object, &key)
-            .is_some_and(|d| d.configurable)
-        {
-            return Ok(JsValue::Boolean(false));
-        }
-    }
-    for symbol in own_symbol_keys(context, object)? {
-        if context
-            .get_own_symbol_property_descriptor(object, symbol)
+    for key in proxy::internal_own_property_keys(vm, context, target.clone())? {
+        if proxy::internal_get_own_property(vm, context, target.clone(), &key)?
             .is_some_and(|d| d.configurable)
         {
             return Ok(JsValue::Boolean(false));

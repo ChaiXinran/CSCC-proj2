@@ -28,6 +28,7 @@
 !.env.example
 
 # Tool caches and generated dependencies
+.cache/
 node_modules/
 __pycache__/
 *.py[cod]

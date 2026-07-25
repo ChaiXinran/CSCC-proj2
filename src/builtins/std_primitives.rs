@@ -12,7 +12,7 @@ use super::{boolean, error, json, math, number, proxy, regexp, string};
 use crate::runtime::{
     BigIntValue, IteratorMode, JsObject, JsValue, NativeCall, NativeConstruct, NativeContext,
     NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-    PropertyDescriptorUpdate, PropertyKind, bigint,
+    PropertyDescriptorUpdate, PropertyKind, abstract_ops, bigint,
 };
 use crate::vm::{Vm, VmError, VmErrorKind};
 
@@ -123,13 +123,7 @@ fn to_uint32(value: f64) -> u32 {
 }
 
 fn to_length(value: f64) -> usize {
-    if value.is_nan() || value <= 0.0 {
-        0
-    } else if value >= 1_000_000.0 {
-        1_000_000
-    } else {
-        value.trunc() as usize
-    }
+    abstract_ops::to_length(value)
 }
 
 fn map_string_error(error: string::StringBuiltinError) -> VmError {
@@ -1619,7 +1613,7 @@ fn get_symbol_method(
     if matches!(method, JsValue::Undefined | JsValue::Null) {
         return Ok(None);
     }
-    if !is_callable_value(&method) {
+    if !abstract_ops::is_callable(&method) {
         return Err(VmError::type_error("symbol method is not callable"));
     }
     Ok(Some(method))
@@ -1934,7 +1928,7 @@ fn string_replace(
     }
     let value = this_string(vm, context, this)?;
     let replace_arg = arg(arguments, 1);
-    let replace_is_fn = is_callable_value(&replace_arg);
+    let replace_is_fn = abstract_ops::is_callable(&replace_arg);
 
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         let re = compile_cached_regexp(context, &pattern, &flags)?;
@@ -2137,7 +2131,7 @@ fn string_replace_all(
     }
     let value = this_string(vm, context, this)?;
     let replace_arg = arg(arguments, 1);
-    let replace_is_fn = is_callable_value(&replace_arg);
+    let replace_is_fn = abstract_ops::is_callable(&replace_arg);
 
     if let Some((pattern, flags)) = regexp_data(context, &first_arg) {
         if !regexp::is_global(&flags) {
@@ -3201,7 +3195,7 @@ fn disposable_stack_use_impl(
             context,
         )?;
     }
-    if !context.is_callable_value(&disposer) {
+    if !abstract_ops::is_callable_with_context(context, &disposer) {
         return Err(VmError::type_error("resource is not disposable"));
     }
     let state = context.disposable_stack_mut(object).unwrap();
@@ -3239,7 +3233,7 @@ fn disposable_stack_adopt_impl(
 ) -> Result<JsValue, VmError> {
     let object = disposable_stack_object(context, &this, asynchronous)?;
     let disposer = arg(arguments, 1);
-    if !context.is_callable_value(&disposer) {
+    if !abstract_ops::is_callable_with_context(context, &disposer) {
         return Err(VmError::type_error("onDispose is not callable"));
     }
     let state = context.disposable_stack_mut(object).unwrap();
@@ -3280,7 +3274,7 @@ fn disposable_stack_defer_impl(
 ) -> Result<JsValue, VmError> {
     let object = disposable_stack_object(context, &this, asynchronous)?;
     let disposer = arg(arguments, 0);
-    if !context.is_callable_value(&disposer) {
+    if !abstract_ops::is_callable_with_context(context, &disposer) {
         return Err(VmError::type_error("onDispose is not callable"));
     }
     let state = context.disposable_stack_mut(object).unwrap();
@@ -3925,7 +3919,7 @@ fn regexp_symbol_replace(
     let replace_arg = arg(arguments, 1);
     let global = flags.contains('g');
     let re = compile_cached_regexp(context, &pattern, &flags)?;
-    if is_callable_value(&replace_arg) {
+    if abstract_ops::is_callable(&replace_arg) {
         return apply_replace_fn(vm, context, &string, &re, global, replace_arg);
     }
     let replacement = vm.to_string_coerce(replace_arg, context)?;
@@ -4122,7 +4116,7 @@ fn reflect_apply(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arg(arguments, 0);
-    if !context.is_callable_value(&target) {
+    if !abstract_ops::is_callable_with_context(context, &target) {
         return Err(VmError::type_error("Reflect.apply target is not callable"));
     }
     let this_arg = arg(arguments, 1);
@@ -4360,10 +4354,6 @@ fn array_like_to_vec(
     Ok(values)
 }
 
-fn is_callable_value(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
-}
-
 fn reflect_descriptor_update_from_object(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -4413,7 +4403,7 @@ fn reflect_optional_callable(value: JsValue, label: &str) -> Result<Option<JsVal
     if matches!(value, JsValue::Undefined) {
         return Ok(None);
     }
-    if is_callable_value(&value) {
+    if abstract_ops::is_callable(&value) {
         return Ok(Some(value));
     }
     Err(VmError::type_error(format!(

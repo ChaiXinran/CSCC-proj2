@@ -32,6 +32,7 @@ use crate::{
     runtime::{
         Intrinsics, JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, NativeErrorKind,
         NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
+        abstract_ops,
     },
     vm::{Vm, VmError},
 };
@@ -202,9 +203,10 @@ pub fn mark_not_constructor(_ctx: &mut NativeContext, _function: &JsValue) {
 }
 
 /// Returns true when `value` is a callable object (function or builtin).
+/// Delegates to the canonical runtime definition in `abstract_ops`.
 #[must_use]
 pub fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
+    abstract_ops::is_callable(value)
 }
 
 /// Returns the first argument or `Undefined` when the argument list is empty.

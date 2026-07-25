@@ -4,6 +4,7 @@ use crate::{
     runtime::{
         IteratorKind, IteratorMode, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
         ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate,
+        abstract_ops::{self, to_integer_or_infinity},
     },
     vm::{Vm, VmError},
 };
@@ -192,62 +193,27 @@ fn get_property_preserving_throw(
     }
 }
 
-/// Shared SpeciesConstructor abstract operation used by V13-C collection
-/// creation paths. Property access is observable and abrupt completions retain
-/// the original JavaScript throw value.
+/// Shared SpeciesConstructor abstract operation — delegates to the
+/// canonical implementation in `abstract_ops` for consistent semantics
+/// across Array, Promise, TypedArray, and RegExp.
 pub(crate) fn species_constructor(
     vm: &mut Vm,
     context: &mut NativeContext,
     object: JsValue,
     default_constructor: JsValue,
 ) -> Result<JsValue, VmError> {
-    let constructor = get_property_preserving_throw(vm, context, object, "constructor")?;
-    if matches!(constructor, JsValue::Undefined) {
-        return Ok(default_constructor);
-    }
-    if context.value_object(&constructor).is_none() {
-        return Err(VmError::type_error("constructor property is not an object"));
-    }
-    let species = vm.get_symbol_property_value_with_receiver_from_builtin(
-        constructor.clone(),
-        constructor,
-        context.well_known_symbols().species,
-        context,
-    )?;
-    if matches!(species, JsValue::Null | JsValue::Undefined) {
-        return Ok(default_constructor);
-    }
-    if !context.is_constructable_value(&species) {
-        return Err(VmError::type_error("Symbol.species is not a constructor"));
-    }
-    Ok(species)
+    abstract_ops::species_constructor(vm, context, object, default_constructor)
 }
 
-/// Shared ArraySpeciesCreate abstract operation for Array methods that create
-/// result containers.
+/// Shared ArraySpeciesCreate abstract operation — delegates to the
+/// canonical implementation in `abstract_ops` for consistent semantics.
 pub(crate) fn array_species_create(
     vm: &mut Vm,
     context: &mut NativeContext,
     original_array: JsValue,
     length: usize,
 ) -> Result<JsValue, VmError> {
-    let is_array = context
-        .value_object(&original_array)
-        .is_some_and(|object| context.is_array_object(object).unwrap_or(false));
-    if !is_array {
-        return context.create_sparse_array(length);
-    }
-    let default_constructor = context
-        .intrinsics()
-        .map(|intrinsics| intrinsics.array_constructor.clone())
-        .ok_or_else(|| VmError::runtime("Array constructor missing"))?;
-    let constructor =
-        species_constructor(vm, context, original_array, default_constructor.clone())?;
-    if constructor == default_constructor {
-        context.create_sparse_array(length)
-    } else {
-        vm.construct_value_from_builtin(constructor, vec![JsValue::Number(length as f64)], context)
-    }
+    abstract_ops::array_species_create(vm, context, original_array, length)
 }
 
 pub fn array_call(
@@ -467,16 +433,6 @@ fn normalize_index(raw: f64, length: usize) -> usize {
     }
 }
 
-fn to_integer_or_infinity(number: f64) -> f64 {
-    if number.is_nan() || number == 0.0 {
-        0.0
-    } else if number.is_infinite() {
-        number
-    } else {
-        number.trunc()
-    }
-}
-
 fn array_from_start_index(raw: f64, length: usize) -> usize {
     let integer = to_integer_or_infinity(raw);
     if integer.is_infinite() {
@@ -514,13 +470,6 @@ fn array_from_last_index(raw: f64, length: usize) -> Option<usize> {
         } else {
             Some(length - from_end)
         }
-    }
-}
-
-fn same_value_zero(left: &JsValue, right: &JsValue) -> bool {
-    match (left, right) {
-        (JsValue::Number(a), JsValue::Number(b)) => a == b || (a.is_nan() && b.is_nan()),
-        _ => left.strict_equals(right),
     }
 }
 
@@ -1409,7 +1358,7 @@ fn array_includes(
     let from = array_from_start_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     for i in from..length.min(MAX_DENSE_ALLOC) {
         let val = get_existing_elem(vm, context, receiver.clone(), object, i)?;
-        if same_value_zero(&val, &search) {
+        if abstract_ops::same_value_zero(&val, &search) {
             return Ok(JsValue::Boolean(true));
         }
     }

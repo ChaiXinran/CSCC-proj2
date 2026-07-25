@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{
     runtime::{
         JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, ObjectId, PreferredType,
-        PrimitiveValue, PropertyDescriptor, PropertyKind, bigint,
+        PrimitiveValue, PropertyDescriptor, PropertyKind, abstract_ops, bigint,
     },
     vm::{Vm, VmError},
 };
@@ -1479,7 +1479,7 @@ fn date_to_json(
         return Ok(JsValue::Null);
     }
     let to_iso_string = vm.get_property_value(this_value.clone(), "toISOString", context)?;
-    if !is_callable(&to_iso_string) {
+    if !abstract_ops::is_callable(&to_iso_string) {
         return Err(VmError::type_error(
             "Date.prototype.toJSON toISOString is not callable",
         ));
@@ -1974,7 +1974,7 @@ fn ordinary_to_primitive(
 ) -> Result<JsValue, VmError> {
     for method_name in [first, second] {
         let method = vm.get_property_value(value.clone(), method_name, context)?;
-        if !is_callable(&method) {
+        if !abstract_ops::is_callable(&method) {
             continue;
         }
         let result = vm.call_value_from_builtin(method, value.clone(), Vec::new(), context)?;
@@ -1992,10 +1992,6 @@ fn is_object_like(value: &JsValue) -> bool {
         value,
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
     )
-}
-
-fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
 }
 
 fn augment_intl(context: &mut NativeContext) -> Result<(), VmError> {

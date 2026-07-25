@@ -8,7 +8,7 @@ use super::regexp;
 use crate::{
     runtime::{
         IteratorMode, JsObject, JsValue, NativeCall, NativeContext, ObjectId, ObjectKind,
-        PropertyDescriptor, PropertyKey, PropertyKind, to_property_key,
+        PropertyDescriptor, PropertyKey, PropertyKind, abstract_ops, to_property_key,
     },
     vm::{Vm, VmError},
 };
@@ -785,13 +785,7 @@ fn create_regexp_groups_object(
 }
 
 fn to_length(value: f64) -> usize {
-    if value.is_nan() || value <= 0.0 {
-        0
-    } else if !value.is_finite() || value >= 9_007_199_254_740_991.0 {
-        9_007_199_254_740_991usize
-    } else {
-        value.trunc() as usize
-    }
+    abstract_ops::to_length(value)
 }
 
 fn byte_index_from_utf16(text: &str, utf16_index: usize) -> Option<usize> {
@@ -1481,29 +1475,7 @@ fn regexp_species_constructor(
     let default_constructor = context
         .get_global("RegExp")
         .ok_or_else(|| VmError::runtime("RegExp constructor missing"))?;
-    let constructor = get_property(vm, context, rx, "constructor")?;
-    if matches!(constructor, JsValue::Undefined) {
-        return Ok(default_constructor);
-    }
-    if context.value_object(&constructor).is_none() {
-        return Err(VmError::type_error(
-            "RegExp species constructor is not an object",
-        ));
-    }
-    let species_symbol = context.well_known_symbols().species;
-    let species = vm.get_symbol_property_value_with_receiver_from_builtin(
-        constructor.clone(),
-        constructor,
-        species_symbol,
-        context,
-    )?;
-    if matches!(species, JsValue::Undefined | JsValue::Null) {
-        return Ok(default_constructor);
-    }
-    if !context.is_constructable_value(&species) {
-        return Err(VmError::type_error("RegExp species is not a constructor"));
-    }
-    Ok(species)
+    abstract_ops::species_constructor(vm, context, rx, default_constructor)
 }
 
 fn to_uint32(value: f64) -> u32 {

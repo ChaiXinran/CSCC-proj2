@@ -7068,8 +7068,45 @@ impl Vm {
                     }
                 },
                 Job::PromiseCallback(job) => self.run_promise_callback_job(context, job)?,
+                Job::PromiseResolveThenable(job) => {
+                    self.run_promise_resolve_thenable_job(context, job)?;
+                }
             }
         }
+        Ok(())
+    }
+
+    fn run_promise_resolve_thenable_job(
+        &mut self,
+        context: &mut NativeContext,
+        job: crate::runtime::ResolveThenableJob,
+    ) -> Result<(), VmError> {
+        // PromiseResolveThenableJob (spec 27.2.1.7):
+        // Call thenable.then(resolve, reject) where resolve/reject are bound
+        // functions for the target promise.
+        let promise_resolve_fn = context
+            .find_builtin_by_name("__AgentJSPromiseResolveFunction")
+            .ok_or_else(|| crate::vm::VmError::runtime("missing PromiseResolveFunction"))?;
+        let promise_reject_fn = context
+            .find_builtin_by_name("__AgentJSPromiseRejectFunction")
+            .ok_or_else(|| crate::vm::VmError::runtime("missing PromiseRejectFunction"))?;
+
+        let resolve = context.register_bound_function(
+            promise_resolve_fn,
+            crate::runtime::JsValue::Undefined,
+            vec![job.promise_to_resolve.clone()],
+            1.0,
+            String::new(),
+        )?;
+        let reject = context.register_bound_function(
+            promise_reject_fn,
+            crate::runtime::JsValue::Undefined,
+            vec![job.promise_to_resolve],
+            1.0,
+            String::new(),
+        )?;
+
+        self.call_value_from_builtin(job.then, job.thenable, vec![resolve, reject], context)?;
         Ok(())
     }
 
@@ -7085,9 +7122,19 @@ impl Vm {
         };
         let Some(handler) = handler else {
             if job.fulfilled {
-                context.fulfill_promise(job.result_promise, job.value)?;
+                let _ = self.call_value_from_builtin(
+                    job.resolve,
+                    JsValue::Undefined,
+                    vec![job.value],
+                    context,
+                )?;
             } else {
-                context.reject_promise(job.result_promise, job.value)?;
+                let _ = self.call_value_from_builtin(
+                    job.reject,
+                    JsValue::Undefined,
+                    vec![job.value],
+                    context,
+                )?;
             }
             return Ok(());
         };
@@ -7102,21 +7149,36 @@ impl Vm {
             OperationResult::Value(value) => {
                 if job.finally {
                     if job.fulfilled {
-                        context.fulfill_promise(job.result_promise, original_value)?;
+                        let _ = self.call_value_from_builtin(
+                            job.resolve,
+                            JsValue::Undefined,
+                            vec![original_value],
+                            context,
+                        )?;
                     } else {
-                        context.reject_promise(job.result_promise, original_value)?;
+                        let _ = self.call_value_from_builtin(
+                            job.reject,
+                            JsValue::Undefined,
+                            vec![original_value],
+                            context,
+                        )?;
                     }
                     return Ok(());
                 }
-                crate::builtins::promise::resolve_promise_id(
-                    self,
+                let _ = self.call_value_from_builtin(
+                    job.resolve,
+                    JsValue::Undefined,
+                    vec![value],
                     context,
-                    job.result_promise,
-                    value,
                 )?;
             }
             OperationResult::Throw(value) => {
-                context.reject_promise(job.result_promise, value)?;
+                let _ = self.call_value_from_builtin(
+                    job.reject,
+                    JsValue::Undefined,
+                    vec![value],
+                    context,
+                )?;
             }
         }
         Ok(())

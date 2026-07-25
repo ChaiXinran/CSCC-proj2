@@ -33,7 +33,9 @@ impl Default for PromiseRecord {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseThenReaction {
-    pub result_promise: PromiseId,
+    pub result_promise: Option<PromiseId>,
+    pub resolve: JsValue,
+    pub reject: JsValue,
     pub on_fulfilled: Option<JsValue>,
     pub on_rejected: Option<JsValue>,
     pub finally: bool,
@@ -56,12 +58,24 @@ pub enum PromiseReaction {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PromiseCallbackJob {
-    pub result_promise: PromiseId,
+    pub result_promise: Option<PromiseId>,
+    pub resolve: JsValue,
+    pub reject: JsValue,
     pub on_fulfilled: Option<JsValue>,
     pub on_rejected: Option<JsValue>,
     pub fulfilled: bool,
     pub value: JsValue,
     pub finally: bool,
+}
+
+/// Job that resolves a promise by calling a thenable's `then` method.
+/// Used by `PromiseResolveThenableJob` in the spec.
+/// Stores the promise as a `JsValue` (Object) so the VM can resolve it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolveThenableJob {
+    pub promise_to_resolve: JsValue,
+    pub thenable: JsValue,
+    pub then: JsValue,
 }
 
 /// Host-observable native jobs used by tests and Test262 host plumbing.
@@ -74,6 +88,7 @@ pub enum NativeJob {
 pub enum Job {
     PromiseReaction(PromiseJob),
     PromiseCallback(PromiseCallbackJob),
+    PromiseResolveThenable(ResolveThenableJob),
     HostCallback(NativeJob),
 }
 
@@ -132,12 +147,21 @@ impl Trace for PromiseThenReaction {
         if let Some(value) = &self.on_rejected {
             value.trace(tracer);
         }
+        self.resolve.trace(tracer);
+        self.reject.trace(tracer);
     }
 }
 
 impl Trace for PromiseJob {
     fn trace(&self, tracer: &mut Tracer<'_>) {
         self.value.trace(tracer);
+    }
+}
+
+impl Trace for ResolveThenableJob {
+    fn trace(&self, tracer: &mut Tracer<'_>) {
+        self.thenable.trace(tracer);
+        self.then.trace(tracer);
     }
 }
 
@@ -150,6 +174,8 @@ impl Trace for PromiseCallbackJob {
         if let Some(value) = &self.on_rejected {
             value.trace(tracer);
         }
+        self.resolve.trace(tracer);
+        self.reject.trace(tracer);
     }
 }
 
@@ -158,6 +184,7 @@ impl Trace for Job {
         match self {
             Self::PromiseReaction(job) => job.trace(tracer),
             Self::PromiseCallback(job) => job.trace(tracer),
+            Self::PromiseResolveThenable(job) => job.trace(tracer),
             Self::HostCallback(_) => {}
         }
     }

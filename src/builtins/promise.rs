@@ -5,6 +5,7 @@ use crate::{
     runtime::{
         Job, JsObject, JsValue, NativeCall, NativeContext, NativeErrorKind, ObjectId, PromiseId,
         PromiseJob, PromiseReaction, PromiseThenReaction, PropertyDescriptor, PropertyKey,
+        abstract_ops,
     },
     vm::{Vm, VmError},
 };
@@ -163,7 +164,10 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     )?;
     context.register_builtin(PROMISE_AGGREGATE_REJECT, 1, promise_aggregate_reject, None)?;
 
-    context.declare_global("Promise", constructor);
+    context.declare_global("Promise", constructor.clone());
+    // Override property descriptor: built-in globals must be non-enumerable (17 ECMAScript Standard Built-in Objects).
+    let global = context.global_object();
+    context.define_own_property(global, "Promise".into(), PropertyDescriptor::data_with(constructor, true, false, true))?;
     Ok(())
 }
 
@@ -206,14 +210,14 @@ fn promise_prototype(context: &NativeContext) -> Option<ObjectId> {
     }
 }
 
-struct PromiseCapability {
-    promise: JsValue,
-    promise_id: Option<PromiseId>,
-    resolve: JsValue,
-    reject: JsValue,
+pub(crate) struct PromiseCapability {
+    pub(crate) promise: JsValue,
+    pub(crate) promise_id: Option<PromiseId>,
+    pub(crate) resolve: JsValue,
+    pub(crate) reject: JsValue,
 }
 
-fn new_promise_capability(
+pub(crate) fn new_promise_capability(
     vm: &mut Vm,
     context: &mut NativeContext,
     constructor: JsValue,
@@ -294,7 +298,7 @@ fn enqueue_settle(
 }
 
 fn is_callable(context: &NativeContext, value: &JsValue) -> bool {
-    context.is_callable_value(value)
+    abstract_ops::is_callable_with_context(context, value)
 }
 
 fn promise_call(
@@ -1282,8 +1286,19 @@ fn promise_catch(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let on_rejected = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let then = vm.get_property_value(this.clone(), "then", context)?;
-    vm.call_value_from_builtin(then, this, vec![JsValue::Undefined, on_rejected], context)
+    let then = abstract_ops::get(
+        vm,
+        context,
+        this.clone(),
+        PropertyKey::String("then".into()),
+    )?;
+    abstract_ops::call(
+        vm,
+        context,
+        then,
+        this,
+        vec![JsValue::Undefined, on_rejected],
+    )
 }
 
 fn promise_finally(
@@ -1294,13 +1309,19 @@ fn promise_finally(
 ) -> Result<JsValue, VmError> {
     let constructor = promise_species_constructor(vm, context, this.clone())?;
     let on_finally = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let then = vm.get_property_value(this.clone(), "then", context)?;
+    let then = abstract_ops::get(
+        vm,
+        context,
+        this.clone(),
+        PropertyKey::String("then".into()),
+    )?;
     if !is_callable(context, &on_finally) {
-        return vm.call_value_from_builtin(
+        return abstract_ops::call(
+            vm,
+            context,
             then,
             this,
             vec![on_finally.clone(), on_finally],
-            context,
         );
     }
     let fulfilled = bind_internal(
@@ -1317,7 +1338,7 @@ fn promise_finally(
         PROMISE_FINALLY_HANDLER,
         vec![constructor, on_finally, JsValue::Boolean(false)],
     )?;
-    vm.call_value_from_builtin(then, this, vec![fulfilled, rejected], context)
+    abstract_ops::call(vm, context, then, this, vec![fulfilled, rejected])
 }
 
 fn promise_then_with_finally(
@@ -1332,10 +1353,7 @@ fn promise_then_with_finally(
     };
     let constructor = promise_species_constructor(vm, context, this.clone())?;
     let capability = new_promise_capability(vm, context, constructor)?;
-    let result_object = capability.promise;
-    let result_promise = capability.promise_id.ok_or_else(|| {
-        VmError::type_error("Promise species constructor did not create a native Promise")
-    })?;
+    let result_object = capability.promise.clone();
     let on_fulfilled = arguments
         .first()
         .filter(|value| is_callable(context, value))
@@ -1351,7 +1369,9 @@ fn promise_then_with_finally(
     context.add_promise_reaction(
         source,
         PromiseThenReaction {
-            result_promise,
+            result_promise: capability.promise_id,
+            resolve: capability.resolve,
+            reject: capability.reject,
             on_fulfilled,
             on_rejected,
             finally,
@@ -1368,31 +1388,7 @@ fn promise_species_constructor(
     let default_constructor = context
         .get_global("Promise")
         .ok_or_else(|| VmError::runtime("Promise constructor is not installed"))?;
-    let constructor = vm.get_property_value(promise.clone(), "constructor", context)?;
-    if matches!(constructor, JsValue::Undefined) {
-        return Ok(default_constructor);
-    }
-    if !matches!(
-        constructor,
-        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
-    ) {
-        return Err(VmError::type_error(
-            "Promise constructor property is not an object",
-        ));
-    }
-    let species = vm.get_symbol_property_value_with_receiver_from_builtin(
-        constructor.clone(),
-        constructor,
-        context.well_known_symbols().species,
-        context,
-    )?;
-    if matches!(species, JsValue::Undefined | JsValue::Null) {
-        return Ok(default_constructor);
-    }
-    if !context.is_constructable_value(&species) {
-        return Err(VmError::type_error("Promise species is not a constructor"));
-    }
-    Ok(species)
+    abstract_ops::species_constructor(vm, context, promise, default_constructor)
 }
 
 fn promise_finally_handler(
@@ -1475,10 +1471,13 @@ pub(crate) fn resolve_promise_value(
     }
 
     if let Some(source) = context.promise_id_from_value(&value) {
+        let (resolve, reject) = create_promise_resolving_functions(context, promise_object)?;
         return context.add_promise_reaction(
             source,
             PromiseThenReaction {
-                result_promise: promise,
+                result_promise: Some(promise),
+                resolve,
+                reject,
                 on_fulfilled: None,
                 on_rejected: None,
                 finally: false,

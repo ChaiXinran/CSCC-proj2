@@ -38,7 +38,7 @@ impl Parser {
     pub(super) fn parse_expression(&mut self) -> Result<Expression, ParseError> {
         let first = self.parse_assignment()?;
         if !self.check_punctuator(',') {
-            return Ok(first);
+            return Ok(unwrap_parenthesized(first));
         }
         let mut exprs = vec![first];
         while self.eat_punctuator(',') {
@@ -3033,12 +3033,6 @@ impl Parser {
         available: &HashSet<String>,
     ) -> Result<(), ParseError> {
         if let Some(super_class) = super_class {
-            if expr_contains_arrow_function(super_class) {
-                return Err(ParseError {
-                    span: self.peek().span,
-                    message: "class heritage may not be an arrow function".into(),
-                });
-            }
             self.validate_private_names_in_expr(super_class, available)?;
         }
 
@@ -3645,112 +3639,6 @@ fn private_bound_name(element: &ClassElement) -> Option<&str> {
     }
 }
 
-fn expr_contains_arrow_function(expr: &Expression) -> bool {
-    match expr {
-        Expression::Function(function) => function.is_arrow,
-        Expression::Parenthesized(inner)
-        | Expression::Spread(inner)
-        | Expression::Await(inner)
-        | Expression::Unary {
-            argument: inner, ..
-        }
-        | Expression::Update {
-            argument: inner, ..
-        } => expr_contains_arrow_function(inner),
-        Expression::Binary { left, right, .. }
-        | Expression::Logical { left, right, .. }
-        | Expression::Assignment {
-            target: left,
-            value: right,
-        }
-        | Expression::CompoundAssignment {
-            target: left,
-            value: right,
-            ..
-        }
-        | Expression::Member {
-            object: left,
-            property: right,
-            ..
-        } => expr_contains_arrow_function(left) || expr_contains_arrow_function(right),
-        Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
-            expr_contains_arrow_function(callee)
-                || arguments.iter().any(|arg| match arg {
-                    CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
-                        expr_contains_arrow_function(expr)
-                    }
-                })
-        }
-        Expression::Conditional {
-            test,
-            consequent,
-            alternate,
-        } => {
-            expr_contains_arrow_function(test)
-                || expr_contains_arrow_function(consequent)
-                || expr_contains_arrow_function(alternate)
-        }
-        Expression::Array(elements) => elements.iter().any(|element| match element {
-            ArrayElement::Expression(expr) | ArrayElement::Spread(expr) => {
-                expr_contains_arrow_function(expr)
-            }
-            ArrayElement::Hole => false,
-        }),
-        Expression::Object(properties) => properties.iter().any(|property| match property {
-            ObjectProperty::Data { value, .. } | ObjectProperty::PrototypeSetter { value } => {
-                expr_contains_arrow_function(value)
-            }
-            ObjectProperty::ComputedData { key, value } => {
-                expr_contains_arrow_function(key) || expr_contains_arrow_function(value)
-            }
-            ObjectProperty::Spread(expr) => expr_contains_arrow_function(expr),
-            ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
-        }),
-        Expression::TemplateLiteral(template) => template
-            .expressions
-            .iter()
-            .any(expr_contains_arrow_function),
-        Expression::TaggedTemplate { tag, template } => {
-            expr_contains_arrow_function(tag)
-                || template
-                    .expressions
-                    .iter()
-                    .any(expr_contains_arrow_function)
-        }
-        Expression::Yield { argument, .. } => argument
-            .as_deref()
-            .is_some_and(expr_contains_arrow_function),
-        Expression::DynamicImport { specifier, options } => {
-            expr_contains_arrow_function(specifier)
-                || options.as_deref().is_some_and(expr_contains_arrow_function)
-        }
-        Expression::Sequence(expressions) => expressions.iter().any(expr_contains_arrow_function),
-        Expression::OptionalChain { base, steps } => {
-            expr_contains_arrow_function(base)
-                || steps.iter().any(|step| match step {
-                    OptionalChainStep::Member { property, .. } => {
-                        expr_contains_arrow_function(property)
-                    }
-                    OptionalChainStep::Call { arguments, .. } => {
-                        arguments.iter().any(|arg| match arg {
-                            CallArgument::Expression(expr) | CallArgument::Spread(expr) => {
-                                expr_contains_arrow_function(expr)
-                            }
-                        })
-                    }
-                })
-        }
-        Expression::Class(_)
-        | Expression::Literal(_)
-        | Expression::Identifier(_)
-        | Expression::This
-        | Expression::Super
-        | Expression::NewTarget
-        | Expression::ImportMeta
-        | Expression::PrivateName(_) => false,
-    }
-}
-
 /// Maps an operator spelling to its precedence, or `None` if it is not a binary
 /// or logical operator.
 fn binary_precedence(operator: &str) -> Option<u8> {
@@ -3774,6 +3662,8 @@ fn binary_precedence(operator: &str) -> Option<u8> {
 
 /// Builds the AST node for an infix operator.
 fn combine(operator: &str, left: Expression, right: Expression) -> Expression {
+    let left = unwrap_parenthesized(left);
+    let right = unwrap_parenthesized(right);
     if let Some(logical) = logical_operator(operator) {
         Expression::Logical {
             operator: logical,
@@ -3786,6 +3676,14 @@ fn combine(operator: &str, left: Expression, right: Expression) -> Expression {
             left: Box::new(left),
             right: Box::new(right),
         }
+    }
+}
+
+/// Strips an outer `Parenthesized` wrapper, if present.
+fn unwrap_parenthesized(expr: Expression) -> Expression {
+    match expr {
+        Expression::Parenthesized(inner) => *inner,
+        other => other,
     }
 }
 

@@ -9,7 +9,7 @@ use crate::{
     runtime::{
         ArrayBufferId, BigIntValue, DataViewId, IteratorMode, JsObject, JsValue, NativeCall,
         NativeContext, ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
-        TypedArrayElementKind, TypedArrayViewId, bigint,
+        TypedArrayElementKind, TypedArrayViewId, abstract_ops, bigint,
     },
     vm::{Vm, VmError},
 };
@@ -235,13 +235,7 @@ fn to_index(vm: &mut Vm, context: &mut NativeContext, value: JsValue) -> Result<
 
 fn to_length(vm: &mut Vm, context: &mut NativeContext, value: JsValue) -> Result<usize, VmError> {
     let number = vm.to_number(value, context)?;
-    if number.is_nan() || number <= 0.0 {
-        return Ok(0);
-    }
-    if number.is_infinite() || number > MAX_SKELETON_BUFFER_BYTES as f64 {
-        return Ok(MAX_SKELETON_BUFFER_BYTES);
-    }
-    Ok(number.floor() as usize)
+    Ok(abstract_ops::to_length(number))
 }
 
 fn argument_integer(
@@ -2640,12 +2634,8 @@ fn typed_array_length_get(
     Ok(JsValue::Number(length as f64))
 }
 
-fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
-}
-
 fn require_callable(value: &JsValue, label: &str) -> Result<(), VmError> {
-    if is_callable(value) {
+    if abstract_ops::is_callable(value) {
         Ok(())
     } else {
         Err(VmError::type_error(format!(
@@ -2711,14 +2701,6 @@ fn typed_array_set_if_in_bounds(
         context.typed_array_store_element(view, index, value)?;
     }
     Ok(())
-}
-
-fn same_value_zero(left: &JsValue, right: &JsValue) -> bool {
-    match (left, right) {
-        (JsValue::Number(a), JsValue::Number(b)) if a.is_nan() && b.is_nan() => true,
-        (JsValue::Number(a), JsValue::Number(b)) if *a == 0.0 && *b == 0.0 => true,
-        _ => left.strict_equals(right),
-    }
 }
 
 pub(crate) fn validate_typed_array(
@@ -3262,7 +3244,7 @@ fn typed_array_to_locale_string(
             continue;
         }
         let to_locale = vm.get_property_value(element.clone(), "toLocaleString", context)?;
-        if !context.is_callable_value(&to_locale) {
+        if !abstract_ops::is_callable_with_context(context, &to_locale) {
             return Err(VmError::type_error(
                 "TypedArray element toLocaleString is not callable",
             ));
@@ -3314,7 +3296,7 @@ fn typed_array_includes(
     let search = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let start = normalize_relative_index(argument_integer(vm, context, arguments, 1, 0.0)?, length);
     for index in start..length {
-        if same_value_zero(
+        if abstract_ops::same_value_zero(
             &typed_array_element_or_undefined(context, view, index)?,
             &search,
         ) {

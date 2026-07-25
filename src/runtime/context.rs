@@ -531,6 +531,10 @@ impl NativeContext {
                         roots.value_roots.push(value.clone());
                     }
                 }
+                Job::PromiseResolveThenable(job) => {
+                    roots.value_roots.push(job.thenable.clone());
+                    roots.value_roots.push(job.then.clone());
+                }
                 Job::HostCallback(_) => {}
             }
         }
@@ -3610,6 +3614,8 @@ impl NativeContext {
             self.job_queue
                 .push(Job::PromiseCallback(PromiseCallbackJob {
                     result_promise: reaction.result_promise,
+                    resolve: reaction.resolve,
+                    reject: reaction.reject,
                     on_fulfilled: reaction.on_fulfilled,
                     on_rejected: reaction.on_rejected,
                     fulfilled,
@@ -3635,6 +3641,8 @@ impl NativeContext {
                 self.job_queue
                     .push(Job::PromiseCallback(PromiseCallbackJob {
                         result_promise: reaction.result_promise,
+                        resolve: reaction.resolve,
+                        reject: reaction.reject,
                         on_fulfilled: reaction.on_fulfilled,
                         on_rejected: reaction.on_rejected,
                         fulfilled: true,
@@ -3646,6 +3654,8 @@ impl NativeContext {
                 self.job_queue
                     .push(Job::PromiseCallback(PromiseCallbackJob {
                         result_promise: reaction.result_promise,
+                        resolve: reaction.resolve,
+                        reject: reaction.reject,
                         on_fulfilled: reaction.on_fulfilled,
                         on_rejected: reaction.on_rejected,
                         fulfilled: false,
@@ -3692,6 +3702,11 @@ impl NativeContext {
             Job::PromiseCallback(_) => {
                 return Err(VmError::runtime(
                     "promise callback jobs require VM-assisted draining",
+                ));
+            }
+            Job::PromiseResolveThenable(_) => {
+                return Err(VmError::runtime(
+                    "promise resolve-thenable jobs require VM-assisted draining",
                 ));
             }
             Job::HostCallback(NativeJob::PushOutput(line)) => self.push_output(line),

@@ -8,6 +8,7 @@ use crate::{
     runtime::{
         IteratorKind, IteratorRecord, JsObject, JsValue, NativeCall, NativeContext, ObjectId,
         ObjectKind, PropertyDescriptor, PropertyKey, PropertyKind,
+        abstract_ops::{is_callable, is_callable_with_context, same_value_zero},
     },
     vm::{Vm, VmError},
 };
@@ -159,17 +160,6 @@ fn array_like_length(context: &mut NativeContext, object: ObjectId) -> Result<us
     Ok(value.to_number().unwrap_or(0.0).max(0.0) as usize)
 }
 
-fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
-}
-
-fn same_value_zero(left: &JsValue, right: &JsValue) -> bool {
-    match (left, right) {
-        (JsValue::Number(a), JsValue::Number(b)) => (a.is_nan() && b.is_nan()) || a == b,
-        _ => left.strict_equals(right),
-    }
-}
-
 fn entry_key(index: usize) -> String {
     format!("__agentjs_collection_entry_{index}_key__")
 }
@@ -317,6 +307,7 @@ fn clear_collection(context: &mut NativeContext, collection: ObjectId) -> Result
 }
 
 fn initialize_map_like(
+    vm: &mut Vm,
     context: &mut NativeContext,
     target: ObjectId,
     iterable: JsValue,
@@ -325,22 +316,45 @@ fn initialize_map_like(
     if matches!(iterable, JsValue::Undefined | JsValue::Null) {
         return Ok(());
     }
-    let source = context.require_object(&iterable, "initialize Map")?;
-    let length = array_like_length(context, source)?;
-    for index in 0..length.min(MAX_COLLECTION_ENTRIES) {
-        let pair = context.get_property(iterable.clone(), &index.to_string())?;
-        let pair_object = context.require_object(&pair, "Map initializer entry")?;
-        let key = context.get_property(context.object_value(pair_object), "0")?;
+    // Get the observable "set" method (spec: Get(map, "set")).
+    let adder = vm.get_property_value(JsValue::Object(target), "set", context)?;
+    if !is_callable_with_context(context, &adder) {
+        return Err(VmError::type_error("Map.prototype.set is not callable"));
+    }
+    let target_value = JsValue::Object(target);
+    let mut iterator = context.get_iterator(iterable)?;
+    let mut count = 0;
+    while count < MAX_COLLECTION_ENTRIES {
+        let Some(item) = context.iterator_next(&mut iterator)? else {
+            break;
+        };
+        if matches!(item, JsValue::Undefined | JsValue::Null) {
+            let _ = context.iterator_close(&mut iterator);
+            return Err(VmError::type_error("Iterator value is not an object"));
+        }
+        let value_obj = context.require_object(&item, "Map initializer entry")?;
+        let key = context.get_property(context.object_value(value_obj), "0")?;
         if weak {
             require_object_key(context, &key, "WeakMap")?;
         }
-        let value = context.get_property(context.object_value(pair_object), "1")?;
-        set_collection_entry(context, target, key, value)?;
+        let value = context.get_property(context.object_value(value_obj), "1")?;
+        // Call observable set(key, value) — errors propagate and trigger iterator close.
+        if let Err(e) = vm.call_value_from_builtin(
+            adder.clone(),
+            target_value.clone(),
+            vec![key, value],
+            context,
+        ) {
+            let _ = context.iterator_close(&mut iterator);
+            return Err(e);
+        }
+        count += 1;
     }
     Ok(())
 }
 
 fn initialize_set_like(
+    vm: &mut Vm,
     context: &mut NativeContext,
     target: ObjectId,
     iterable: JsValue,
@@ -349,29 +363,54 @@ fn initialize_set_like(
     if matches!(iterable, JsValue::Undefined | JsValue::Null) {
         return Ok(());
     }
-    let source = context.require_object(&iterable, "initialize Set")?;
-    let length = array_like_length(context, source)?;
-    for index in 0..length.min(MAX_COLLECTION_ENTRIES) {
-        let value = context.get_property(iterable.clone(), &index.to_string())?;
+    // Get the observable "add" method (spec: Get(set, "add")).
+    let adder = vm.get_property_value(JsValue::Object(target), "add", context)?;
+    if !is_callable_with_context(context, &adder) {
+        return Err(VmError::type_error("Set.prototype.add is not callable"));
+    }
+    let target_value = JsValue::Object(target);
+    let mut iterator = context.get_iterator(iterable)?;
+    let mut count = 0;
+    while count < MAX_COLLECTION_ENTRIES {
+        let Some(value) = context.iterator_next(&mut iterator)? else {
+            break;
+        };
         if weak {
             require_object_key(context, &value, "WeakSet")?;
         }
-        set_collection_entry(context, target, value.clone(), value)?;
+        if let Err(e) = vm.call_value_from_builtin(
+            adder.clone(),
+            target_value.clone(),
+            vec![value],
+            context,
+        ) {
+            let _ = context.iterator_close(&mut iterator);
+            return Err(e);
+        }
+        count += 1;
     }
     Ok(())
 }
 
-fn collection_size_get(
+fn map_size_get(
     _vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = context.require_object(&this_value, "collection size")?;
-    let kind = own_string(context, object, COLLECTION_KIND);
-    if !matches!(kind.as_deref(), Some("Map" | "Set")) {
-        return Err(VmError::type_error("receiver is not a sized collection"));
-    }
+    let object = require_collection(context, &this_value, "Map")?;
+    Ok(JsValue::Number(
+        own_usize(context, object, COLLECTION_SIZE) as f64
+    ))
+}
+
+fn set_size_get(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_collection(context, &this_value, "Set")?;
     Ok(JsValue::Number(
         own_usize(context, object, COLLECTION_SIZE) as f64
     ))
@@ -2487,7 +2526,7 @@ fn install_map(context: &mut NativeContext, iterator: IteratorIntrinsic) -> Resu
         "constructor".into(),
         method_descriptor(constructor.clone()),
     )?;
-    let size_getter = context.register_builtin("get size", 0, collection_size_get, None)?;
+    let size_getter = context.register_builtin("get size", 0, map_size_get, None)?;
     context.define_own_property(
         prototype,
         "size".into(),
@@ -2507,6 +2546,8 @@ fn install_map(context: &mut NativeContext, iterator: IteratorIntrinsic) -> Resu
         method_descriptor(entries),
     )?;
     define_method(context, prototype, "forEach", 1, map_for_each)?;
+    define_method(context, prototype, "getOrInsert", 2, map_get_or_insert)?;
+    define_method(context, prototype, "getOrInsertComputed", 2, map_get_or_insert_computed)?;
     context.define_symbol_own_property(
         prototype,
         context.well_known_symbols().to_string_tag,
@@ -2531,7 +2572,7 @@ fn map_call(
 }
 
 fn map_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -2545,6 +2586,7 @@ fn map_construct(
         unreachable!()
     };
     initialize_map_like(
+        vm,
         context,
         object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
@@ -2757,8 +2799,8 @@ fn map_for_each(
         ));
     }
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    let next = own_usize(context, map, COLLECTION_NEXT_INDEX);
-    for index in 0..next {
+    let mut index = 0usize;
+    while index < own_usize(context, map, COLLECTION_NEXT_INDEX) {
         if entry_is_active(context, map, index) {
             let key = collection_entry_key(context, map, index).unwrap_or(JsValue::Undefined);
             let value = collection_entry_value(context, map, index).unwrap_or(JsValue::Undefined);
@@ -2769,8 +2811,62 @@ fn map_for_each(
                 context,
             )?;
         }
+        index += 1;
     }
     Ok(JsValue::Undefined)
+}
+
+fn map_get_or_insert(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let map = require_collection(context, &this_value, "Map")?;
+    let mut key = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    // CanonicalizeKeyedCollectionKey: -0 → +0
+    if let JsValue::Number(n) = &key {
+        if *n == 0.0 && n.is_sign_negative() {
+            key = JsValue::Number(0.0);
+        }
+    }
+    if let Some(index) = find_entry(context, map, &key) {
+        return collection_entry_value(context, map, index)
+            .ok_or_else(|| VmError::runtime("Map entry value missing"));
+    }
+    let default_value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    set_collection_entry(context, map, key, default_value.clone())?;
+    Ok(default_value)
+}
+
+fn map_get_or_insert_computed(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let map = require_collection(context, &this_value, "Map")?;
+    let mut key = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    // Spec: check callable FIRST, before checking key existence.
+    let callback = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if !is_callable(&callback) {
+        return Err(VmError::type_error(
+            "Map.prototype.getOrInsertComputed callback is not callable",
+        ));
+    }
+    // CanonicalizeKeyedCollectionKey: -0 → +0
+    if let JsValue::Number(n) = &key {
+        if *n == 0.0 && n.is_sign_negative() {
+            key = JsValue::Number(0.0);
+        }
+    }
+    if let Some(index) = find_entry(context, map, &key) {
+        return collection_entry_value(context, map, index)
+            .ok_or_else(|| VmError::runtime("Map entry value missing"));
+    }
+    let value = vm.call_value_from_builtin(callback, JsValue::Undefined, vec![key.clone()], context)?;
+    set_collection_entry(context, map, key, value.clone())?;
+    Ok(value)
 }
 
 fn install_set(context: &mut NativeContext, _iterator: IteratorIntrinsic) -> Result<(), VmError> {
@@ -2796,7 +2892,7 @@ fn install_set(context: &mut NativeContext, _iterator: IteratorIntrinsic) -> Res
         "constructor".into(),
         method_descriptor(constructor.clone()),
     )?;
-    let size_getter = context.register_builtin("get size", 0, collection_size_get, None)?;
+    let size_getter = context.register_builtin("get size", 0, set_size_get, None)?;
     context.define_own_property(
         prototype,
         "size".into(),
@@ -2861,7 +2957,7 @@ fn set_call(
 }
 
 fn set_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -2875,6 +2971,7 @@ fn set_construct(
         unreachable!()
     };
     initialize_set_like(
+        vm,
         context,
         object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
@@ -2988,8 +3085,8 @@ fn set_for_each(
         ));
     }
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    let next = own_usize(context, set, COLLECTION_NEXT_INDEX);
-    for index in 0..next {
+    let mut index = 0usize;
+    while index < own_usize(context, set, COLLECTION_NEXT_INDEX) {
         if entry_is_active(context, set, index) {
             let value = collection_entry_key(context, set, index).unwrap_or(JsValue::Undefined);
             vm.call_value_from_builtin(
@@ -2999,6 +3096,7 @@ fn set_for_each(
                 context,
             )?;
         }
+        index += 1;
     }
     Ok(JsValue::Undefined)
 }
@@ -3016,19 +3114,40 @@ fn set_values_from_collection(context: &NativeContext, set: ObjectId) -> Vec<JsV
     values
 }
 
+/// Implements GetSetRecord (spec proposal): validates that `obj` is a Set-like
+/// object with callable `has` and `keys`, and numeric `size`. Returns the obj's
+/// values via its `keys()` iterator.
 fn set_like_values(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: JsValue,
 ) -> Result<Vec<JsValue>, VmError> {
+    // Fast path: it's already a Set.
     if let Ok(set) = require_collection(context, &value, "Set") {
         return Ok(set_values_from_collection(context, set));
     }
+    // GetSetRecord(obj):
     let object = context.require_object(&value, "Set method argument")?;
-    let keys = vm.get_property_value(context.object_value(object), "keys", context)?;
-    if !is_callable(&keys) {
-        return Err(VmError::type_error("set-like keys is not callable"));
+    let obj_id = context
+        .value_object(&value)
+        .ok_or_else(|| VmError::type_error("Set method argument is not an object"))?;
+    // 1. Let size be ? Get(obj, "size").
+    let size_value = vm.get_property_value(value.clone(), "size", context)?;
+    // 2. Let has be ? Get(obj, "has").
+    let has = vm.get_property_value(value.clone(), "has", context)?;
+    // 3. Let keys be ? Get(obj, "keys").
+    let keys = vm.get_property_value(value.clone(), "keys", context)?;
+    // 4. If IsCallable(has) is false, throw TypeError.
+    if !is_callable_with_context(context, &has) {
+        return Err(VmError::type_error("set-like 'has' method is not callable"));
     }
+    // 5. If IsCallable(keys) is false, throw TypeError.
+    if !is_callable_with_context(context, &keys) {
+        return Err(VmError::type_error("set-like 'keys' method is not callable"));
+    }
+    // 6. Let numberSize be ? ToNumber(size). (Side-effect: throws for NaN/undefined)
+    let _number_size = vm.to_number(size_value, context)?;
+    // 7. Call keys() and collect values.
     let iterator = vm.call_value_from_builtin(keys, value, Vec::new(), context)?;
     collect_iterator_values(vm, context, iterator)
 }
@@ -3236,7 +3355,7 @@ fn weak_map_call(
 }
 
 fn weak_map_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -3250,6 +3369,7 @@ fn weak_map_construct(
         unreachable!()
     };
     initialize_map_like(
+        vm,
         context,
         object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
@@ -3354,7 +3474,7 @@ fn weak_set_call(
 }
 
 fn weak_set_construct(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
     new_target: JsValue,
@@ -3368,6 +3488,7 @@ fn weak_set_construct(
         unreachable!()
     };
     initialize_set_like(
+        vm,
         context,
         object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),

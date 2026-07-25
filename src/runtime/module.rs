@@ -64,9 +64,9 @@ pub struct ModuleExportBinding {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModuleStatus {
-    Parsed,
+    Unlinked,
     Linking,
     Linked,
     Evaluating,
@@ -81,12 +81,21 @@ pub enum ModuleEvaluationState {
     Rejected(JsValue),
 }
 
+/// Track the evaluation promise for a module.
+/// Used by dynamic import and TLA to signal completion.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleEvaluationPromise {
+    pub promise: JsValue,
+    pub promise_id: Option<u32>,
+}
+
 #[derive(Debug, Default)]
 pub struct ModuleRegistry {
     next_id: u32,
     records: HashMap<PathBuf, ModuleRecord>,
     statuses: HashMap<ModuleId, ModuleStatus>,
     evaluation_states: HashMap<ModuleId, ModuleEvaluationState>,
+    evaluation_promises: HashMap<ModuleId, ModuleEvaluationPromise>,
     environments: HashMap<ModuleId, EnvironmentId>,
     namespaces: HashMap<ModuleId, JsValue>,
 }
@@ -142,7 +151,7 @@ impl ModuleRegistry {
                 exports: Vec::new(),
             },
         );
-        self.statuses.insert(id, ModuleStatus::Parsed);
+        self.statuses.insert(id, ModuleStatus::Unlinked);
         self.evaluation_states
             .insert(id, ModuleEvaluationState::Pending);
         id
@@ -234,6 +243,43 @@ impl ModuleRegistry {
             record.imports = imports;
             record.exports = exports;
         }
+    }
+
+    /// Set the evaluation promise for a module.
+    /// Used by dynamic import and TLA to signal completion.
+    pub fn set_evaluation_promise(&mut self, id: ModuleId, promise: ModuleEvaluationPromise) {
+        self.evaluation_promises.insert(id, promise);
+    }
+
+    /// Get the evaluation promise for a module.
+    pub fn evaluation_promise(&self, id: ModuleId) -> Option<&ModuleEvaluationPromise> {
+        self.evaluation_promises.get(&id)
+    }
+
+    /// Check if the module's status has transitioned to a final state.
+    pub fn is_final_status(status: ModuleStatus) -> bool {
+        matches!(status, ModuleStatus::Evaluated | ModuleStatus::Failed)
+    }
+
+    /// Transition a module through its lifecycle states.
+    /// Returns an error if the transition is invalid.
+    pub fn transition_to(&mut self, id: ModuleId, new_status: ModuleStatus) -> Result<(), String> {
+        let current = self.statuses.get(&id).copied().unwrap_or(ModuleStatus::Unlinked);
+        let valid = match (current, new_status) {
+            (ModuleStatus::Unlinked, ModuleStatus::Linking) => true,
+            (ModuleStatus::Linking, ModuleStatus::Linked) => true,
+            (ModuleStatus::Linked, ModuleStatus::Evaluating) => true,
+            (ModuleStatus::Evaluating, ModuleStatus::Evaluated) => true,
+            (_, ModuleStatus::Failed) => true, // can fail from any state
+            _ => false,
+        };
+        if !valid {
+            return Err(format!(
+                "invalid module state transition: {current:?} -> {new_status:?}"
+            ));
+        }
+        self.statuses.insert(id, new_status);
+        Ok(())
     }
 }
 

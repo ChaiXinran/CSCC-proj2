@@ -1,5 +1,6 @@
 //! Native runtime data model.
 
+pub mod abstract_ops;
 pub mod bigint;
 mod buffer;
 mod coercion;
@@ -15,6 +16,7 @@ mod object;
 mod private;
 mod property;
 mod property_map;
+pub mod realm;
 mod symbol;
 mod value;
 
@@ -39,12 +41,12 @@ pub(crate) use iterator::IteratorKind;
 pub use iterator::{IteratorMode, IteratorRecord};
 pub use job::{
     Job, JobQueue, NativeJob, PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction,
-    PromiseRecord, PromiseState, PromiseThenReaction,
+    PromiseRecord, PromiseState, PromiseThenReaction, ResolveThenableJob,
 };
 pub use module::{
-    DynamicImportOutcome, DynamicImportRequest, ModuleEvaluationState, ModuleExportBinding,
-    ModuleId, ModuleImportBinding, ModuleLoadState, ModuleRecord, ModuleRegistry, ModuleStatus,
-    normalize_module_path, resolve_module_specifier,
+    DynamicImportOutcome, DynamicImportRequest, ModuleEvaluationPromise, ModuleEvaluationState,
+    ModuleExportBinding, ModuleId, ModuleImportBinding, ModuleLoadState, ModuleRecord,
+    ModuleRegistry, ModuleStatus, normalize_module_path, resolve_module_specifier,
 };
 pub(crate) use object::array_index;
 pub use object::{

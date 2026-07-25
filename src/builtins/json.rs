@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use crate::{
-    runtime::{JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyKind},
+    runtime::{JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyKind, abstract_ops},
     vm::{Vm, VmError},
 };
 
@@ -37,7 +37,7 @@ pub(crate) fn parse_json_with_reviver(
     context: &mut NativeContext,
 ) -> Result<JsValue, VmError> {
     let value = parse_json(source, context)?;
-    if !is_callable(&reviver) {
+    if !abstract_ops::is_callable(&reviver) {
         return Ok(value);
     }
     let wrapper = context.create_object([("".into(), value)])?;
@@ -109,7 +109,7 @@ pub(crate) fn stringify_json_with_options(
     vm: &mut Vm,
     context: &mut NativeContext,
 ) -> Result<Option<String>, VmError> {
-    let replacer_function = is_callable(&replacer).then_some(replacer.clone());
+    let replacer_function = abstract_ops::is_callable(&replacer).then_some(replacer.clone());
     let property_list = build_property_list(&replacer, vm, context)?;
     let gap = build_gap(space, vm, context)?;
     let wrapper = context.create_object([("".into(), value)])?;
@@ -123,10 +123,6 @@ pub(crate) fn stringify_json_with_options(
         stack: HashSet::new(),
     };
     state.serialize_property(wrapper, "")
-}
-
-fn is_callable(value: &JsValue) -> bool {
-    matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
 }
 
 fn build_property_list(
@@ -221,7 +217,7 @@ impl StringifyState<'_> {
             let to_json = self
                 .vm
                 .get_property_value(value.clone(), "toJSON", self.context)?;
-            if is_callable(&to_json) {
+            if abstract_ops::is_callable(&to_json) {
                 value = self.vm.call_value_from_builtin(
                     to_json,
                     value,
