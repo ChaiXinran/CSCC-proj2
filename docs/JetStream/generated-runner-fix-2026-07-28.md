@@ -32,13 +32,18 @@
 - AgentJS：17/25 通过；
 - Node 参考 runner：6/6 通过。
 
-当前 AgentJS 剩余失败：
+后续定位纠正：
 
-- `regexp.js`：RegExp look-around 尚未实现；
-- 7 个旧 JetStream3 workload：已经进入原生 class/workload 路径，但在
-  `DefaultBenchmark` 的对象 rest 参数传递后丢失 `tags`，最终在
-  `_processTags(rawTags).map(...)` 失败。这是引擎的对象 rest/派生构造共享
-  语义问题，不再通过修改测试文件绕过。
+- 对象 rest 和 `super(args)` 没有丢失 `tags`；
+- 旧 harness 将每个资源放进独立 `new Function`，导致 workload 的
+  `class Benchmark` 词法绑定丢失，runner 错误解析到 Driver 的同名类；
+- 修复为把同一 workload 的资源和 runner 合并到一个共享函数作用域；
+- 随后暴露并修复 `obj.method?.()`、`(obj?.method)()` 和
+  `super.method?.()` 丢失 receiver 的 bytecode lowering。
+
+修复后 7 个旧 runner 均越过原来的 `tags`/`this` 异常。当前剩余错误已
+分别进入 Intl 结果校验、动态 Function、全局库绑定及其他 workload 能力；
+`WSL` 在 90 秒诊断窗口内超时。
 
 ## 验证
 
@@ -47,6 +52,13 @@
 - `cargo check --all-targets`：通过；
 - `cargo test --all-targets`：通过；
 - `cargo clippy --all-targets -- -D warnings`：通过。
+
+可选链 Test262 从 28/38 提升到 30/38，新通过
+`optional-call-preserves-this.js` 和
+`super-property-optional-call.js`。Class 目录复测保持：
+
+- `language/statements/class`：4165/4367；
+- `language/expressions/class`：3902/4059。
 
 为清除 ABC 合并后新增的 clippy 阻塞，同时删除了
 `src/vm/interpreter.rs` 中无调用点、仅转发到

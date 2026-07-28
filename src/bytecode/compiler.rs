@@ -1984,7 +1984,7 @@ impl Compiler {
                 Ok(())
             }
             Expression::OptionalChain { base, steps } => {
-                self.compile_optional_chain(base, steps, chunk, context)
+                self.compile_optional_chain(base, steps, false, chunk, context)
             }
             Expression::PrivateName(_) => Err(CompileError::unsupported(
                 "standalone private name expression",
@@ -1996,47 +1996,138 @@ impl Compiler {
         &mut self,
         base: &Expression,
         steps: &[OptionalChainStep],
+        preserve_final_receiver: bool,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         use crate::ast::CallArgument;
 
-        self.compile_expression(base, chunk, context)?;
+        let first_step_is_call = matches!(steps.first(), Some(OptionalChainStep::Call { .. }));
+        let mut call_has_receiver = false;
+        let mut callable_base = base;
+        while let Expression::Parenthesized(inner) = callable_base {
+            callable_base = inner;
+        }
+        if first_step_is_call {
+            if let Expression::Member {
+                object,
+                property,
+                computed,
+            } = callable_base
+            {
+                if matches!(object.as_ref(), Expression::Super) {
+                    if *computed {
+                        self.compile_expression(property, chunk, context)?;
+                        chunk.emit(Instruction::GetSuperElementMethod);
+                    } else {
+                        let name = match property.as_ref() {
+                            Expression::Identifier(name) => name.clone(),
+                            Expression::PrivateName(name) => format!("\x00#{name}"),
+                            other => {
+                                return Err(CompileError::unsupported(format!(
+                                    "non-identifier optional super method property {other:?}"
+                                )));
+                            }
+                        };
+                        let index = self.add_name(&name, chunk)?;
+                        chunk.emit(Instruction::GetSuperMethod(index));
+                    }
+                } else {
+                    self.compile_expression(object, chunk, context)?;
+                    if *computed {
+                        self.compile_expression(property, chunk, context)?;
+                        chunk.emit(Instruction::GetElementMethod);
+                    } else {
+                        let name = match property.as_ref() {
+                            Expression::Identifier(name) => name.clone(),
+                            Expression::PrivateName(name) => format!("\x00#{name}"),
+                            other => {
+                                return Err(CompileError::unsupported(format!(
+                                    "non-identifier optional method property {other:?}"
+                                )));
+                            }
+                        };
+                        let index = self.add_name(&name, chunk)?;
+                        chunk.emit(Instruction::GetMethod(index));
+                    }
+                }
+                call_has_receiver = true;
+            } else if let Expression::OptionalChain {
+                base: nested_base,
+                steps: nested_steps,
+            } = callable_base
+                && matches!(nested_steps.last(), Some(OptionalChainStep::Member { .. }))
+            {
+                self.compile_optional_chain(nested_base, nested_steps, true, chunk, context)?;
+                call_has_receiver = true;
+            } else {
+                self.compile_expression(base, chunk, context)?;
+            }
+        } else {
+            self.compile_expression(base, chunk, context)?;
+        }
 
         // Collect offsets of `Jump(placeholder)` instructions in the null paths so we
         // can back-patch them all to the same `all_done` target once we know it.
         let mut null_path_jumps: Vec<usize> = Vec::new();
 
-        for step in steps {
+        for (step_index, step) in steps.iter().enumerate() {
             let is_optional = match step {
                 OptionalChainStep::Member { optional, .. }
                 | OptionalChainStep::Call { optional, .. } => *optional,
             };
 
             if is_optional {
+                let optional_receiver_call =
+                    matches!(step, OptionalChainStep::Call { .. }) && call_has_receiver;
+                if optional_receiver_call {
+                    // GetMethod/GetElementMethod leave [callee, receiver]. Put the
+                    // callee on top for the nullish test, then restore the call
+                    // layout on the non-nullish path.
+                    chunk.emit(Instruction::Swap);
+                }
                 // Peek the top value: if not null/undefined skip the null path.
                 let skip_null = chunk.emit(Instruction::JumpIfNotNullish(usize::MAX));
                 // Null path: discard the nullish value, push undefined, jump to all_done.
                 chunk.emit(Instruction::Pop);
+                if optional_receiver_call {
+                    chunk.emit(Instruction::Pop);
+                }
                 let undef_idx = chunk
                     .add_constant(Constant::Undefined)
                     .map_err(CompileError::from_chunk)?;
                 chunk.emit(Instruction::Constant(undef_idx));
+                if preserve_final_receiver {
+                    chunk.emit(Instruction::Constant(undef_idx));
+                }
                 let jump_to_done = chunk.emit(Instruction::Jump(usize::MAX));
                 null_path_jumps.push(jump_to_done);
                 // Patch the skip-null jump to the instruction that follows.
                 chunk
                     .patch_jump(skip_null, chunk.current_offset())
                     .map_err(CompileError::from_chunk)?;
+                if optional_receiver_call {
+                    chunk.emit(Instruction::Swap);
+                }
             }
 
             match step {
                 OptionalChainStep::Member {
                     property, computed, ..
                 } => {
+                    let followed_by_call = matches!(
+                        steps.get(step_index + 1),
+                        Some(OptionalChainStep::Call { .. })
+                    );
+                    let needs_receiver = followed_by_call
+                        || (preserve_final_receiver && step_index + 1 == steps.len());
                     if *computed {
                         self.compile_expression(property, chunk, context)?;
-                        chunk.emit(Instruction::GetElement);
+                        chunk.emit(if needs_receiver {
+                            Instruction::GetElementMethod
+                        } else {
+                            Instruction::GetElement
+                        });
                     } else {
                         let name = match property.as_ref() {
                             Expression::Identifier(n) => n.clone(),
@@ -2048,8 +2139,13 @@ impl Compiler {
                             }
                         };
                         let idx = self.add_name(&name, chunk)?;
-                        chunk.emit(Instruction::GetProperty(idx));
+                        chunk.emit(if needs_receiver {
+                            Instruction::GetMethod(idx)
+                        } else {
+                            Instruction::GetProperty(idx)
+                        });
                     }
+                    call_has_receiver = needs_receiver;
                 }
                 OptionalChainStep::Call { arguments, .. } => {
                     let has_spread = arguments
@@ -2070,7 +2166,12 @@ impl Compiler {
                         };
                         self.compile_expression(e, chunk, context)?;
                     }
-                    chunk.emit(Instruction::Call(n));
+                    chunk.emit(if call_has_receiver {
+                        Instruction::CallWithThis(n)
+                    } else {
+                        Instruction::Call(n)
+                    });
+                    call_has_receiver = false;
                 }
             }
         }
@@ -3169,6 +3270,10 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         use crate::ast::CallArgument;
+        let mut callee = callee;
+        while let Expression::Parenthesized(inner) = callee {
+            callee = inner;
+        }
         let has_spread = arguments
             .iter()
             .any(|a| matches!(a, CallArgument::Spread(_)));
@@ -3292,6 +3397,45 @@ impl Compiler {
                         unreachable!()
                     };
                     self.compile_expression(e, chunk, context)?;
+                }
+                chunk.emit(Instruction::CallWithThis(argument_count));
+            }
+            return Ok(());
+        }
+
+        // Parentheses do not erase the Reference produced by an optional
+        // member chain: `(object?.method)()` must still call with `object` as
+        // `this`. Compile the final member as a method reference and keep the
+        // same explicit-receiver call layout used by ordinary member calls.
+        if let Expression::OptionalChain { base, steps } = callee
+            && matches!(steps.last(), Some(OptionalChainStep::Member { .. }))
+        {
+            self.compile_optional_chain(base, steps, true, chunk, context)?;
+            if has_spread {
+                let (n_regular, spread_expr) =
+                    self.split_trailing_spread(arguments, "optional-chain method call")?;
+                let n = u16::try_from(n_regular).map_err(|_| CompileError {
+                    is_syntax: false,
+                    message: "too many call arguments".into(),
+                })?;
+                for arg in &arguments[..n_regular] {
+                    let CallArgument::Expression(expression) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(expression, chunk, context)?;
+                }
+                self.compile_expression(spread_expr, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(n));
+            } else {
+                let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    is_syntax: false,
+                    message: "call argument count exceeds the u16 bytecode range".into(),
+                })?;
+                for arg in arguments {
+                    let CallArgument::Expression(expression) = arg else {
+                        unreachable!()
+                    };
+                    self.compile_expression(expression, chunk, context)?;
                 }
                 chunk.emit(Instruction::CallWithThis(argument_count));
             }
@@ -6155,6 +6299,24 @@ mod tests {
                 .any(|instruction| matches!(instruction, Instruction::GetMethod(_)))
         );
         assert!(chunk.instructions.contains(&Instruction::CallWithThis(2)));
+    }
+
+    #[test]
+    fn parenthesized_optional_member_call_preserves_receiver() {
+        let chunk = compile("(object?.method)()");
+        assert!(
+            chunk
+                .instructions
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::GetMethod(_))),
+            "{:?}",
+            chunk.instructions
+        );
+        assert!(
+            chunk.instructions.contains(&Instruction::CallWithThis(0)),
+            "{:?}",
+            chunk.instructions
+        );
     }
 
     #[test]

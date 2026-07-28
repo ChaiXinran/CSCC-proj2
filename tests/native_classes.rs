@@ -172,3 +172,38 @@ fn class_rejects_a_non_constructable_heritage_value() {
         .expect_err("an arrow function is not a constructor");
     assert_eq!(error.kind.name(), "TypeError");
 }
+
+#[test]
+fn optional_method_calls_preserve_the_receiver() {
+    assert_eq!(
+        run("let direct = { value: 7, read() { return this.value; } }; \
+             let computed = { value: 8, read() { return this.value; } }; \
+             let chained = { value: 9, read() { return this.value; } }; \
+             direct.read?.() + ':' + computed['read']?.() + ':' + chained?.read() + \
+             ':' + (direct?.read)() + ':' + (computed.read)?.() + ':' + (chained?.read)?.()"),
+        "7:8:9:7:8:9"
+    );
+}
+
+#[test]
+fn optional_method_call_short_circuits_with_one_result_value() {
+    assert_eq!(
+        run("let calls = 0; let value = { missing: undefined }; \
+             let result = value.missing?.(calls++); \
+             (result === undefined) + ':' + calls"),
+        "true:0"
+    );
+}
+
+#[test]
+fn optional_super_method_call_preserves_the_derived_receiver() {
+    assert_eq!(
+        run("class Base { read() { return this.value; } } \
+             class Derived extends Base { \
+                 constructor() { super(); this.value = 12; } \
+                 readBase() { return super.read?.(); } \
+             } \
+             new Derived().readBase()"),
+        "12"
+    );
+}
