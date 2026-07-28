@@ -4,6 +4,7 @@ use crate::{
     runtime::{
         IteratorKind, IteratorMode, JsValue, NativeContext, NativeErrorKind, NativeErrorValue,
         ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor, PropertyDescriptorUpdate,
+        PropertyKey,
         abstract_ops::{self, to_integer_or_infinity},
     },
     vm::{Vm, VmError},
@@ -489,7 +490,7 @@ fn get_elem(
     index: usize,
 ) -> Result<JsValue, VmError> {
     context.consume_loop_iteration()?;
-    vm.get_property_value(value, &index.to_string(), context)
+    get_property_preserving_throw(vm, context, value, &index.to_string())
 }
 
 fn argument_number(
@@ -512,14 +513,14 @@ fn call_callback(
     this_arg: JsValue,
     args: Vec<JsValue>,
 ) -> Result<JsValue, VmError> {
-    if !is_callable(&callback) {
+    if !context.is_callable_value(&callback) {
         return Err(VmError::type_error("callback is not a function"));
     }
     vm.call_value_from_builtin(callback, this_arg, args, context)
 }
 
-fn require_callable(value: &JsValue, method: &str) -> Result<(), VmError> {
-    if !is_callable(value) {
+fn require_callable(context: &NativeContext, value: &JsValue, method: &str) -> Result<(), VmError> {
+    if !context.is_callable_value(value) {
         Err(VmError::type_error(format!(
             "{method}: callback is not callable"
         )))
@@ -1022,12 +1023,18 @@ fn set_array_from_length(
 }
 
 fn array_of(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
-    _this: JsValue,
+    this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    context.create_array(arguments.to_vec())
+    let result = array_from_create_result(vm, context, this, Some(arguments.len()))?;
+    let object = context.require_object(&result, "Array.of result")?;
+    for (index, value) in arguments.iter().cloned().enumerate() {
+        create_data_property_or_throw(context, object, index, value)?;
+    }
+    set_array_from_length(vm, context, result.clone(), arguments.len())?;
+    Ok(result)
 }
 
 // ── Array.prototype methods ───────────────────────────────────────────────────
@@ -1079,14 +1086,7 @@ fn array_to_string(
     if context.is_callable_value(&join) {
         return vm.call_value_from_builtin(join, receiver, Vec::new(), context);
     }
-    let object_prototype = context
-        .object_prototype()
-        .ok_or_else(|| VmError::runtime("Object.prototype missing"))?;
-    let fallback = context
-        .get_own_property_descriptor(object_prototype, "toString")
-        .and_then(|descriptor| descriptor.value_cloned())
-        .ok_or_else(|| VmError::runtime("Object.prototype.toString missing"))?;
-    vm.call_value_from_builtin(fallback, receiver, Vec::new(), context)
+    super::object::object_to_string(vm, context, receiver, &[])
 }
 
 fn array_join(
@@ -1119,12 +1119,61 @@ fn array_reverse(
 ) -> Result<JsValue, VmError> {
     let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let mid = length / 2;
-    for i in 0..mid {
-        let j = length - 1 - i;
-        let a = get_elem(vm, context, target.clone(), i)?;
-        let b = get_elem(vm, context, target.clone(), j)?;
-        set_array_index_strict(vm, context, target.clone(), i, b)?;
-        set_array_index_strict(vm, context, target.clone(), j, a)?;
+    if mid > MAX_DENSE_ALLOC {
+        return Err(VmError::runtime_limit(
+            "Array.prototype.reverse iteration limit exceeded",
+        ));
+    }
+    for lower in 0..mid {
+        context.consume_loop_iteration()?;
+        let upper = length - lower - 1;
+        let lower_key = PropertyKey::String(lower.to_string());
+        let upper_key = PropertyKey::String(upper.to_string());
+        let lower_exists =
+            super::proxy::internal_has_property(vm, context, target.clone(), &lower_key)?;
+        let lower_value = if lower_exists {
+            Some(super::proxy::internal_get(
+                vm,
+                context,
+                target.clone(),
+                &lower_key,
+                target.clone(),
+            )?)
+        } else {
+            None
+        };
+        let upper_exists =
+            super::proxy::internal_has_property(vm, context, target.clone(), &upper_key)?;
+        let upper_value = if upper_exists {
+            Some(super::proxy::internal_get(
+                vm,
+                context,
+                target.clone(),
+                &upper_key,
+                target.clone(),
+            )?)
+        } else {
+            None
+        };
+        match (lower_value, upper_value) {
+            (Some(lower_value), Some(upper_value)) => {
+                set_array_index_strict(vm, context, target.clone(), lower, upper_value)?;
+                set_array_index_strict(vm, context, target.clone(), upper, lower_value)?;
+            }
+            (None, Some(upper_value)) => {
+                set_array_index_strict(vm, context, target.clone(), lower, upper_value)?;
+                if !super::proxy::internal_delete(vm, context, target.clone(), &upper_key)? {
+                    return Err(VmError::type_error("cannot delete reverse source"));
+                }
+            }
+            (Some(lower_value), None) => {
+                if !super::proxy::internal_delete(vm, context, target.clone(), &lower_key)? {
+                    return Err(VmError::type_error("cannot delete reverse source"));
+                }
+                set_array_index_strict(vm, context, target.clone(), upper, lower_value)?;
+            }
+            (None, None) => {}
+        }
     }
     Ok(target)
 }
@@ -1226,10 +1275,19 @@ fn array_splice(
     let (object, target, length) = array_object_target(vm, context, this_value)?;
 
     let start = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
-    let delete_count = argument_number(vm, context, arguments, 1, (length - start) as f64)?
-        .max(0.0)
-        .min((length - start) as f64) as usize;
+    let delete_count = match arguments.get(1) {
+        None if arguments.is_empty() => 0,
+        None => length - start,
+        Some(value) => to_integer_or_infinity(vm.to_number(value.clone(), context)?)
+            .max(0.0)
+            .min((length - start) as f64) as usize,
+    };
     let insert_items: Vec<JsValue> = arguments.get(2..).unwrap_or(&[]).to_vec();
+    if length > MAX_DENSE_ALLOC {
+        return Err(VmError::runtime_limit(
+            "Array.prototype.splice iteration limit exceeded",
+        ));
+    }
 
     // Collect removed elements
     let removed = array_species_create(vm, context, target.clone(), delete_count)?;
@@ -1288,6 +1346,17 @@ fn array_index_of(
     }
     let from_index =
         array_from_start_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
+    if length > MAX_DENSE_ALLOC && context.proxy_record(object).is_none() {
+        let mut indices = own_numeric_indices(context, object, from_index, length)?;
+        indices.sort_unstable();
+        for index in indices {
+            let value = get_existing_elem(vm, context, receiver.clone(), object, index)?;
+            if value.strict_equals(&search) {
+                return Ok(JsValue::Number(index as f64));
+            }
+        }
+        return Ok(JsValue::Number(-1.0));
+    }
     for i in from_index..length.min(MAX_DENSE_ALLOC) {
         if !array_index_exists(context, &receiver, object, i)? {
             continue;
@@ -1311,11 +1380,24 @@ fn array_last_index_of(
     if length == 0 {
         return Ok(JsValue::Number(-1.0));
     }
-    let from_raw = argument_number(vm, context, arguments, 1, (length - 1) as f64)?;
+    let from_raw = match arguments.get(1) {
+        None => (length - 1) as f64,
+        Some(value) => vm.to_number(value.clone(), context)?,
+    };
     let Some(from) = array_from_last_index(from_raw, length) else {
         return Ok(JsValue::Number(-1.0));
     };
-    let from = from.min(MAX_DENSE_ALLOC.saturating_sub(1));
+    if from >= MAX_DENSE_ALLOC && context.proxy_record(object).is_none() {
+        let mut indices = own_numeric_indices(context, object, 0, from.saturating_add(1))?;
+        indices.sort_unstable_by(|left, right| right.cmp(left));
+        for index in indices {
+            let value = get_existing_elem(vm, context, receiver.clone(), object, index)?;
+            if value.strict_equals(&search) {
+                return Ok(JsValue::Number(index as f64));
+            }
+        }
+        return Ok(JsValue::Number(-1.0));
+    }
     for i in (0..=from).rev() {
         if !array_index_exists(context, &receiver, object, i)? {
             continue;
@@ -1326,6 +1408,24 @@ fn array_last_index_of(
         }
     }
     Ok(JsValue::Number(-1.0))
+}
+
+fn own_numeric_indices(
+    context: &NativeContext,
+    object: ObjectId,
+    start: usize,
+    end: usize,
+) -> Result<Vec<usize>, VmError> {
+    let object = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing array-like object"))?;
+    Ok(object
+        .own_property_keys()
+        .into_iter()
+        .filter_map(|key| key.parse::<usize>().ok())
+        .filter(|index| (start..end).contains(index))
+        .collect())
 }
 
 fn array_fill(
@@ -1420,7 +1520,7 @@ fn array_for_each(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, "Array.prototype.forEach")?;
+    require_callable(context, &callback, "Array.prototype.forEach")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         if !array_index_exists(context, &receiver, object, i)? {
@@ -1447,7 +1547,7 @@ fn array_map(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, "Array.prototype.map")?;
+    require_callable(context, &callback, "Array.prototype.map")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let result = array_species_create(vm, context, receiver.clone(), length)?;
     for i in 0..length.min(MAX_DENSE_ALLOC) {
@@ -1476,7 +1576,7 @@ fn array_filter(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, "Array.prototype.filter")?;
+    require_callable(context, &callback, "Array.prototype.filter")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let result = array_species_create(vm, context, receiver.clone(), 0)?;
     let mut target_index = 0usize;
@@ -1513,7 +1613,7 @@ fn array_reduce(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, "Array.prototype.reduce")?;
+    require_callable(context, &callback, "Array.prototype.reduce")?;
 
     let safe_len = length.min(MAX_DENSE_ALLOC);
     let (mut acc, start) = if let Some(init) = arguments.get(1) {
@@ -1559,7 +1659,7 @@ fn array_reduce_right(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, "Array.prototype.reduceRight")?;
+    require_callable(context, &callback, "Array.prototype.reduceRight")?;
 
     let safe_end = length.min(MAX_DENSE_ALLOC);
     let (mut acc, end) = if let Some(init) = arguments.get(1) {
@@ -1605,7 +1705,7 @@ fn array_every(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, "Array.prototype.every")?;
+    require_callable(context, &callback, "Array.prototype.every")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         if !array_index_exists(context, &receiver, object, i)? {
@@ -1635,7 +1735,7 @@ fn array_some(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, "Array.prototype.some")?;
+    require_callable(context, &callback, "Array.prototype.some")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         if !array_index_exists(context, &receiver, object, i)? {
@@ -1712,7 +1812,7 @@ fn array_find_common(
     let (object, receiver, callback_object, length) =
         array_callback_target(vm, context, this_value)?;
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    require_callable(&callback, &format!("Array.prototype.{method}"))?;
+    require_callable(context, &callback, &format!("Array.prototype.{method}"))?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let safe_len = length.min(MAX_DENSE_ALLOC);
     let iter: Box<dyn Iterator<Item = usize>> = if reverse {
@@ -1842,7 +1942,7 @@ fn array_sort(
         .cloned()
         .filter(|v| !matches!(v, JsValue::Undefined));
     if let Some(compare_fn) = &compare_fn {
-        require_callable(compare_fn, "Array.prototype.sort")?;
+        require_callable(context, compare_fn, "Array.prototype.sort")?;
     }
 
     let elements: Vec<JsValue> = {
@@ -2003,24 +2103,44 @@ fn array_copy_within(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let (_object, target_value, length) = array_object_target(vm, context, this_value)?;
-    let target_index = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
-    let start = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
+    let mut to = normalize_index(argument_number(vm, context, arguments, 0, 0.0)?, length);
+    let mut from = normalize_index(argument_number(vm, context, arguments, 1, 0.0)?, length);
     let end = normalize_index(
         argument_number(vm, context, arguments, 2, length as f64)?,
         length,
     );
-    let copy_len = end
-        .saturating_sub(start)
-        .min(length.saturating_sub(target_index));
-    let src: Vec<JsValue> = {
-        let mut v = Vec::with_capacity(copy_len);
-        for i in 0..copy_len {
-            v.push(get_elem(vm, context, target_value.clone(), start + i)?);
-        }
-        v
+    let mut count = end.saturating_sub(from).min(length.saturating_sub(to));
+    if count > MAX_DENSE_ALLOC {
+        return Err(VmError::runtime_limit(
+            "Array.prototype.copyWithin iteration limit exceeded",
+        ));
+    }
+    let direction = if from < to && to < from.saturating_add(count) {
+        from += count - 1;
+        to += count - 1;
+        -1isize
+    } else {
+        1isize
     };
-    for (i, val) in src.into_iter().enumerate() {
-        set_array_index_strict(vm, context, target_value.clone(), target_index + i, val)?;
+    while count > 0 {
+        context.consume_loop_iteration()?;
+        let from_key = PropertyKey::String(from.to_string());
+        let to_key = PropertyKey::String(to.to_string());
+        if super::proxy::internal_has_property(vm, context, target_value.clone(), &from_key)? {
+            let value = super::proxy::internal_get(
+                vm,
+                context,
+                target_value.clone(),
+                &from_key,
+                target_value.clone(),
+            )?;
+            set_array_index_strict(vm, context, target_value.clone(), to, value)?;
+        } else if !super::proxy::internal_delete(vm, context, target_value.clone(), &to_key)? {
+            return Err(VmError::type_error("cannot delete copyWithin target"));
+        }
+        from = from.wrapping_add_signed(direction);
+        to = to.wrapping_add_signed(direction);
+        count -= 1;
     }
     Ok(target_value)
 }
@@ -2147,11 +2267,10 @@ fn array_to_spliced(
     let start_raw = argument_number(vm, context, arguments, 0, 0.0)?;
     let start = normalize_index(start_raw, capped);
 
-    let default_delete = (capped - start) as f64;
     let delete_count = if arguments.len() < 2 {
         capped - start
     } else {
-        argument_number(vm, context, arguments, 1, default_delete)?
+        to_integer_or_infinity(vm.to_number(arguments[1].clone(), context)?)
             .max(0.0)
             .min((capped - start) as f64) as usize
     };
