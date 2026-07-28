@@ -57,6 +57,12 @@ pub struct Parser {
     /// Number of enclosing function bodies. Used to reject `return` that appears
     /// outside any function.
     function_depth: usize,
+    /// Whether the current class element context permits `super.prop`.
+    ///
+    /// Static blocks and field initializers are not function bodies, so they
+    /// cannot use `function_depth` to recognize their valid super-property
+    /// references.
+    allow_class_super_property: bool,
     /// When true, the relational `in` operator is not consumed by expression
     /// parsing. Used while parsing a `for` header so `for (x in obj)` can be
     /// disambiguated from `for (x in y; …)`. Reset on entry to any nested
@@ -101,6 +107,7 @@ impl Parser {
             loop_depth: 0,
             switch_depth: 0,
             function_depth: 0,
+            allow_class_super_property: false,
             no_in: false,
             source: None,
             nesting_depth: 0,

@@ -61,3 +61,79 @@ Focused cases:
 - No Test262, Boa, or QuickJS submodule file changed.
 - Object method validation is now a single extension point for future method
   static semantics.
+
+## Class / super follow-up
+
+This A-group batch restores native super-property semantics in class static
+contexts without changing the frozen VM invocation or bytecode interfaces.
+
+- Static blocks and class field initializers now parse `super.prop` while still
+  retaining their separate early-error checks for `super()` and `arguments`.
+- Plain `super.prop` and `super[key]` reads use the existing super lookup
+  opcodes and discard the call receiver when no call follows.
+- Static block helper functions receive the class constructor as their
+  HomeObject, so lookup remains dynamic after prototype changes.
+- The JetStream preparation script no longer rewrites
+  `super.updateUIAfterRun()` into an explicit prototype call. The remaining
+  extends/constructor/prototype-chain adaptations stay coupled for a later
+  batch.
+
+Focused results:
+
+| Suite | Baseline | Final | Change |
+|---|---:|---:|---:|
+| `language/statements/class` | 4157/4367 | 4160/4367 | +3, 0 regressions |
+| `language/expressions/class` | 3895/4059 | 3895/4059 | unchanged |
+| `tests/native_classes.rs` | 13/13 | 15/15 | +2 regressions tests |
+
+Newly passing Test262 cases include
+`static-init-super-property.js`, `super/in-static-getter.js`, and
+`super/in-static-setter.js`.
+
+JetStream evidence:
+
+- Added `docs/JetStream/jetstream2-agentjs-vs-boa-2026-07-28.md` using the
+  existing 10-runner AgentJS/Boa comparison format.
+- Five freshly generated full-Driver workloads pass without class/super
+  errors: `ai-astar`, `richards`, `stanford-crypto-sha256`, `splay`, and
+  `navier-stokes`.
+- `crypto` remains blocked by call depth and `regexp` by unsupported
+  look-around.
+- The four checked-in legacy standard runners are invalid artifacts: their
+  `DefaultBenchmark` has no `extends` but still calls `super(args)`. Both
+  AgentJS and Boa reject them, so they are not counted as class regressions.
+
+## Class ordering and early-error follow-up
+
+Additional A-owned fixes:
+
+- Evaluate computed static and instance field keys once in their common source
+  order, then reuse the captured property keys during initialization.
+- Keep abrupt completion during computed-key evaluation ahead of every later
+  key and initializer.
+- Apply strict binding-name validation to class expressions as well as class
+  declarations, including escaped `let`, `static`, and `yield`.
+- Parse class heritage under strict mode while continuing to allow `await` as
+  a class-expression name in script code.
+- For `class C extends null`, preserve `C.[[Prototype]]` as
+  `%Function.prototype%` while keeping `C.prototype.[[Prototype]]` null.
+
+Test262 progression:
+
+| Suite | Before follow-up | Final | Change |
+|---|---:|---:|---:|
+| `language/statements/class` | 4160/4367 | 4164/4367 | +4, 0 regressions |
+| `language/expressions/class` | 3895/4059 | 3901/4059 | +6, 0 regressions |
+
+Shared-interface requirements for B:
+
+- Super writes need a single VM operation implementing
+  `base.[[Set]](key, value, receiver)` for named and computed keys. Ordinary
+  `SetProperty` cannot represent a distinct super base and current-this
+  receiver, so A cannot correctly lower assignment, updates, compound
+  assignment, or logical assignment without this interface.
+- Repeated `super()` and lexical-arrow access to an uninitialized derived
+  `this` must be enforced by the B-owned frame/derived-this state.
+- Private method/accessor slots need kind-aware runtime storage (field, method,
+  accessor) before A can complete immutable private methods and private
+  getter/setter dispatch without encoding a second runtime path.

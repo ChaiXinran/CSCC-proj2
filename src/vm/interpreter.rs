@@ -1527,9 +1527,12 @@ impl Vm {
                 Instruction::Call(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
-                    match self.call_value(callee, JsValue::Undefined, arguments, context)? {
-                        OperationResult::Value(value) => self.stack.push(value),
-                        OperationResult::Throw(value) => {
+                    match self.invoke_call(
+                        CallRequest::new(callee, JsValue::Undefined, arguments),
+                        context,
+                    )? {
+                        InvocationOutcome::Value(value) => self.stack.push(value),
+                        InvocationOutcome::Throw(value) => {
                             abrupt = Some(Completion::Throw(value));
                             discard_saved_finally = true;
                         }
@@ -1538,9 +1541,11 @@ impl Vm {
                 Instruction::Construct(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
-                    match self.construct_value(callee, arguments, context)? {
-                        OperationResult::Value(value) => self.stack.push(value),
-                        OperationResult::Throw(value) => {
+                    match self
+                        .invoke_construct(ConstructRequest::ordinary(callee, arguments), context)?
+                    {
+                        InvocationOutcome::Value(value) => self.stack.push(value),
+                        InvocationOutcome::Throw(value) => {
                             abrupt = Some(Completion::Throw(value));
                             discard_saved_finally = true;
                         }
@@ -1926,9 +1931,12 @@ impl Vm {
                             let callee = self.pop_value()?;
                             let mut all_args = regular_args;
                             all_args.extend(spread_args);
-                            match self.call_value(callee, JsValue::Undefined, all_args, context)? {
-                                OperationResult::Value(v) => self.stack.push(v),
-                                OperationResult::Throw(v) => {
+                            match self.invoke_call(
+                                CallRequest::new(callee, JsValue::Undefined, all_args),
+                                context,
+                            )? {
+                                InvocationOutcome::Value(v) => self.stack.push(v),
+                                InvocationOutcome::Throw(v) => {
                                     abrupt = Some(Completion::Throw(v));
                                     discard_saved_finally = true;
                                 }
@@ -1956,9 +1964,12 @@ impl Vm {
                             let callee = self.pop_value()?;
                             let mut all_args = regular_args;
                             all_args.extend(spread_args);
-                            match self.call_value(callee, this_value, all_args, context)? {
-                                OperationResult::Value(v) => self.stack.push(v),
-                                OperationResult::Throw(v) => {
+                            match self.invoke_call(
+                                CallRequest::new(callee, this_value, all_args),
+                                context,
+                            )? {
+                                InvocationOutcome::Value(v) => self.stack.push(v),
+                                InvocationOutcome::Throw(v) => {
                                     abrupt = Some(Completion::Throw(v));
                                     discard_saved_finally = true;
                                 }
@@ -1985,9 +1996,12 @@ impl Vm {
                             let callee = self.pop_value()?;
                             let mut all_args = regular_args;
                             all_args.extend(spread_args);
-                            match self.construct_value(callee, all_args, context)? {
-                                OperationResult::Value(v) => self.stack.push(v),
-                                OperationResult::Throw(v) => {
+                            match self.invoke_construct(
+                                ConstructRequest::ordinary(callee, all_args),
+                                context,
+                            )? {
+                                InvocationOutcome::Value(v) => self.stack.push(v),
+                                InvocationOutcome::Throw(v) => {
                                     abrupt = Some(Completion::Throw(v));
                                     discard_saved_finally = true;
                                 }
@@ -2282,9 +2296,11 @@ impl Vm {
                     let arguments = self.pop_arguments(argument_count)?;
                     let this_value = self.pop_value()?;
                     let callee = self.pop_value()?;
-                    match self.call_value(callee, this_value, arguments, context)? {
-                        OperationResult::Value(value) => self.stack.push(value),
-                        OperationResult::Throw(value) => {
+                    match self
+                        .invoke_call(CallRequest::new(callee, this_value, arguments), context)?
+                    {
+                        InvocationOutcome::Value(value) => self.stack.push(value),
+                        InvocationOutcome::Throw(value) => {
                             abrupt = Some(Completion::Throw(value));
                             discard_saved_finally = true;
                         }
@@ -3932,15 +3948,18 @@ impl Vm {
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
         let new_target = context.current_new_target();
-        match self.construct_value_with_new_target(constructor, arguments, new_target, context)? {
-            OperationResult::Value(value) if is_object_like(&value) => {
+        match self.invoke_construct(
+            ConstructRequest::with_new_target(constructor, arguments, new_target),
+            context,
+        )? {
+            InvocationOutcome::Value(value) if is_object_like(&value) => {
                 context.initialize_derived_this(value.clone())?;
                 Ok(OperationResult::Value(value))
             }
-            OperationResult::Value(_) => Ok(OperationResult::Throw(vm_error_to_value(
+            InvocationOutcome::Value(_) => Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error("super constructor did not return an object"),
             ))),
-            OperationResult::Throw(value) => Ok(OperationResult::Throw(value)),
+            InvocationOutcome::Throw(value) => Ok(OperationResult::Throw(value)),
         }
     }
 
@@ -4913,6 +4932,22 @@ impl Vm {
         }
     }
 
+    pub(crate) fn invoke_call_from_builtin(
+        &mut self,
+        request: CallRequest,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        match self.invoke_call(request, context)? {
+            InvocationOutcome::Value(value) => Ok(value),
+            InvocationOutcome::Throw(value) => {
+                self.pending_exception = Some(value);
+                Err(VmError::runtime("JavaScript callback threw"))
+            }
+        }
+    }
+
+    /// Compatibility adapter for builtin code that has not yet migrated to
+    /// `CallRequest`. New builtin code must use `invoke_call_from_builtin`.
     pub(crate) fn call_value_from_builtin(
         &mut self,
         callee: JsValue,
@@ -4920,13 +4955,7 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        match self.invoke_call(CallRequest::new(callee, this_value, arguments), context)? {
-            InvocationOutcome::Value(value) => Ok(value),
-            InvocationOutcome::Throw(value) => {
-                self.pending_exception = Some(value);
-                Err(VmError::runtime("JavaScript callback threw"))
-            }
-        }
+        self.invoke_call_from_builtin(CallRequest::new(callee, this_value, arguments), context)
     }
 
     pub(crate) fn close_iterator_from_builtin(
@@ -5114,23 +5143,38 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<Result<JsValue, JsValue>, VmError> {
-        self.invoke_call(CallRequest::new(callee, this_value, arguments), context)
-            .map(InvocationOutcome::into_value)
+        Ok(self
+            .invoke_call(CallRequest::new(callee, this_value, arguments), context)?
+            .into_value())
     }
 
-    pub(crate) fn construct_value_from_builtin(
+    pub(crate) fn invoke_construct_from_builtin(
         &mut self,
-        constructor: JsValue,
-        arguments: Vec<JsValue>,
+        request: ConstructRequest,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        match self.invoke_construct(ConstructRequest::ordinary(constructor, arguments), context)? {
+        match self.invoke_construct(request, context)? {
             InvocationOutcome::Value(value) => Ok(value),
             InvocationOutcome::Throw(value) => {
                 self.pending_exception = Some(value);
                 Err(VmError::runtime("JavaScript constructor threw"))
             }
         }
+    }
+
+    /// Compatibility adapter for builtin code that has not yet migrated to
+    /// `ConstructRequest`. New builtin code must use
+    /// `invoke_construct_from_builtin`.
+    pub(crate) fn construct_value_from_builtin(
+        &mut self,
+        constructor: JsValue,
+        arguments: Vec<JsValue>,
+        context: &mut NativeContext,
+    ) -> Result<JsValue, VmError> {
+        self.invoke_construct_from_builtin(
+            ConstructRequest::ordinary(constructor, arguments),
+            context,
+        )
     }
 
     pub(crate) fn construct_value_from_builtin_with_new_target(
@@ -5140,16 +5184,10 @@ impl Vm {
         new_target: JsValue,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        match self.invoke_construct(
+        self.invoke_construct_from_builtin(
             ConstructRequest::with_new_target(constructor, arguments, new_target),
             context,
-        )? {
-            InvocationOutcome::Value(value) => Ok(value),
-            InvocationOutcome::Throw(value) => {
-                self.pending_exception = Some(value);
-                Err(VmError::runtime("JavaScript constructor threw"))
-            }
-        }
+        )
     }
 
     pub(crate) fn set_property_value_strict_from_builtin(
@@ -5453,6 +5491,15 @@ impl Vm {
             (JsValue::Null, JsValue::Undefined) | (JsValue::Undefined, JsValue::Null)
         ) {
             return Ok(true);
+        }
+        // Objects are never abstract-equal to null or undefined. In
+        // particular, do not run ToPrimitive here: doing so can invoke an
+        // arbitrary user `toString` while evaluating common guards such as
+        // `value != null`.
+        if (is_object_like(&left) && matches!(right, JsValue::Null | JsValue::Undefined))
+            || (matches!(left, JsValue::Null | JsValue::Undefined) && is_object_like(&right))
+        {
+            return Ok(false);
         }
         match (&left, &right) {
             (JsValue::Number(left), JsValue::String(_)) => {

@@ -10,6 +10,10 @@ use crate::{
 
 use super::{Vm, VmError, interpreter::OperationResult};
 
+/// The JavaScript completion produced by the VM invocation boundary.
+///
+/// Engine failures remain `Err(VmError)`; catchable JavaScript exceptions are
+/// represented by `Throw` independently of the thrown value's runtime type.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum InvocationOutcome {
     Value(JsValue),
@@ -95,6 +99,7 @@ pub(crate) struct FunctionInstantiationRequest {
 }
 
 impl Vm {
+    /// Stable VM boundary for all JavaScript calls.
     pub(crate) fn invoke_call(
         &mut self,
         request: CallRequest,
@@ -109,6 +114,7 @@ impl Vm {
         .map(Into::into)
     }
 
+    /// Stable VM boundary for all JavaScript constructor calls.
     pub(crate) fn invoke_construct(
         &mut self,
         request: ConstructRequest,

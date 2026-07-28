@@ -3114,6 +3114,29 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        if matches!(object, Expression::Super) {
+            if computed {
+                self.compile_expression(property, chunk, context)?;
+                chunk.emit(Instruction::GetSuperElementMethod);
+            } else {
+                let property_name = match property {
+                    Expression::Identifier(name) => name.clone(),
+                    Expression::PrivateName(name) => format!("\x00#{name}"),
+                    _ => {
+                        return Err(CompileError::unsupported(format!(
+                            "non-identifier super property {property:?}"
+                        )));
+                    }
+                };
+                let property_index = self.add_name(&property_name, chunk)?;
+                chunk.emit(Instruction::GetSuperMethod(property_index));
+            }
+            // Super lookup opcodes also preserve the receiver for a following
+            // call. A plain property read only keeps the resolved value.
+            chunk.emit(Instruction::Pop);
+            return Ok(());
+        }
+
         if computed {
             // object[key]  →  push object, push key, GetElement
             self.compile_expression(object, chunk, context)?;
@@ -4007,10 +4030,34 @@ impl Compiler {
             initializer: Option<Expression>,
         }
 
-        let mut computed_field_env = false; // whether we opened a class-scope env for computed keys
+        let mut computed_field_env = false;
+        let mut computed_field_bindings = vec![None; elements.len()];
         let mut instance_field_specs: Vec<InstanceField> = Vec::new();
 
-        // First pass: collect computed instance field key expressions and emit env setup.
+        // Evaluate every computed field key exactly once in source order,
+        // regardless of whether the field is static or instance-owned.
+        for (field_idx, element) in elements.iter().enumerate() {
+            let ClassElement::Field {
+                name: crate::ast::PropertyName::Computed(key_expr),
+                ..
+            } = element
+            else {
+                continue;
+            };
+            if !computed_field_env {
+                chunk.emit(Instruction::CreateLexicalEnvironment);
+                computed_field_env = true;
+            }
+            let binding_name = format!("__cfield_key_{field_idx}__");
+            let binding_idx = self.add_name(&binding_name, chunk)?;
+            chunk.emit(Instruction::CreateMutableBinding(binding_idx));
+            self.compile_expression(key_expr, chunk, context)?;
+            chunk.emit(Instruction::ToPropertyKey);
+            chunk.emit(Instruction::InitializeBinding(binding_idx));
+            computed_field_bindings[field_idx] = Some(binding_name);
+        }
+
+        // Collect instance initialization records after key evaluation.
         for (field_idx, element) in elements.iter().enumerate() {
             if let ClassElement::Method {
                 name: crate::ast::PropertyName::PrivateName(name),
@@ -4037,23 +4084,13 @@ impl Compiler {
                 initializer,
             } = element
             {
-                if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                if matches!(prop_name, crate::ast::PropertyName::Computed(_)) {
                     // Open a synthetic lexical scope once (so the constructor can capture it).
-                    if !computed_field_env {
-                        chunk.emit(Instruction::CreateLexicalEnvironment);
-                        computed_field_env = true;
-                    }
-                    let binding_name = format!("__cfield_key_{field_idx}__");
-                    let bidx = self.add_name(&binding_name, chunk)?;
-                    chunk.emit(Instruction::CreateMutableBinding(bidx));
-                    self.compile_expression(key_expr, chunk, context)?; // push key
                     // Convert once at class evaluation time, before any instance
                     // initializer runs, as required by ClassFieldDefinitionEvaluation.
-                    chunk.emit(Instruction::ToPropertyKey);
-                    chunk.emit(Instruction::InitializeBinding(bidx)); // pop key → store
                     instance_field_specs.push(InstanceField {
                         static_name: None,
-                        computed_binding: Some(binding_name),
+                        computed_binding: computed_field_bindings[field_idx].clone(),
                         initializer: initializer.as_ref().map(|b| *b.clone()),
                     });
                 } else {
@@ -4201,7 +4238,18 @@ impl Compiler {
 
         if let Some(super_idx) = super_binding {
             chunk.emit(Instruction::LoadName(super_idx)); // [ctor, ctor_copy, super]
+            let set_constructor_parent = chunk.emit(Instruction::JumpIfNotNullish(usize::MAX));
+            chunk.emit(Instruction::Pop); // null heritage keeps %Function.prototype%
+            let constructor_parent_done = chunk.emit(Instruction::Jump(usize::MAX));
+            let set_constructor_parent_target = chunk.current_offset();
             chunk.emit(Instruction::SetObjectPrototype); // [ctor, ctor_copy]
+            let constructor_parent_done_target = chunk.current_offset();
+            chunk
+                .patch_jump(set_constructor_parent, set_constructor_parent_target)
+                .map_err(CompileError::from_chunk)?;
+            chunk
+                .patch_jump(constructor_parent_done, constructor_parent_done_target)
+                .map_err(CompileError::from_chunk)?;
         }
 
         // Static methods — defined on the constructor itself.
@@ -4402,14 +4450,9 @@ impl Compiler {
             context.environment_depth -= 1;
         }
 
-        // Pop the computed-field-key scope if we opened one.
-        if computed_field_env {
-            chunk.emit(Instruction::PopEnvironment);
-        }
-
         // Static fields — initialized on the constructor after the class is created.
         // Stack: [ctor]
-        for element in elements {
+        for (element_idx, element) in elements.iter().enumerate() {
             match element {
                 ClassElement::Field {
                     name: prop_name,
@@ -4420,10 +4463,13 @@ impl Compiler {
                         .as_ref()
                         .map_or(Expression::Literal(Literal::Undefined), |b| *b.clone());
                     // Stack: [ctor]
-                    if let crate::ast::PropertyName::Computed(key_expr) = prop_name {
+                    if matches!(prop_name, crate::ast::PropertyName::Computed(_)) {
                         chunk.emit(Instruction::Duplicate); // [ctor, ctor]
-                        // Computed static field: evaluate key at class definition time.
-                        self.compile_expression(key_expr, chunk, context)?; // [ctor, ctor, key]
+                        let binding_name = computed_field_bindings[element_idx]
+                            .as_ref()
+                            .expect("computed field key binding");
+                        let binding_idx = self.add_name(binding_name, chunk)?;
+                        chunk.emit(Instruction::LoadName(binding_idx)); // [ctor, ctor, key]
                         self.compile_expression(&init_val, chunk, context)?; // [ctor, ctor, key, val]
                         chunk.emit(Instruction::DefineDataPropertyComputed); // [ctor, ctor]
                         chunk.emit(Instruction::Pop); // [ctor]
@@ -4506,12 +4552,17 @@ impl Compiler {
                     // machinery supplies the class constructor as `this`.
                     chunk.emit(Instruction::Duplicate); // [ctor, ctor]
                     chunk.emit(Instruction::CreateFunction(block_idx)); // [ctor, ctor, fn]
+                    chunk.emit(Instruction::SetFunctionHomeObject);
                     chunk.emit(Instruction::Swap); // [ctor, fn, ctor]
                     chunk.emit(Instruction::CallWithThis(0)); // [ctor, result]
                     chunk.emit(Instruction::Pop); // [ctor]
                 }
                 _ => {}
             }
+        }
+
+        if computed_field_env {
+            chunk.emit(Instruction::PopEnvironment);
         }
 
         if private_brand_env {

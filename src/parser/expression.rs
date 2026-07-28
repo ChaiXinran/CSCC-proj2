@@ -792,7 +792,7 @@ impl Parser {
                 Ok(Expression::This)
             }
             TokenKind::Keyword(Keyword::Super) => {
-                if self.function_depth == 0 {
+                if self.function_depth == 0 && !self.allow_class_super_property {
                     return Err(self.error(
                         "`super` is only valid in a derived constructor or class method".into(),
                     ));
@@ -1524,12 +1524,13 @@ impl Parser {
 
     fn parse_class_expression(&mut self) -> Result<Expression, ParseError> {
         self.advance(); // `class`
-        let name = if matches!(self.peek().kind, TokenKind::Identifier(_)) {
-            if let TokenKind::Identifier(n) = self.advance().kind {
-                Some(n)
-            } else {
-                unreachable!()
-            }
+        let outer_strict = self.is_strict;
+        self.is_strict = true;
+        let name = if matches!(
+            self.peek().kind,
+            TokenKind::Identifier(_) | TokenKind::Keyword(Keyword::Await)
+        ) {
+            Some(self.expect_class_name()?)
         } else {
             None
         };
@@ -1538,6 +1539,7 @@ impl Parser {
         } else {
             None
         };
+        self.is_strict = outer_strict;
         let elements = self.parse_class_body()?;
         Ok(Expression::Class(ClassExpression {
             name,
@@ -1606,7 +1608,10 @@ impl Parser {
                 self.function_depth = 0;
                 self.loop_depth = 0;
                 self.switch_depth = 0;
+                let outer_allow_class_super_property = self.allow_class_super_property;
+                self.allow_class_super_property = true;
                 let block = self.parse_block();
+                self.allow_class_super_property = outer_allow_class_super_property;
                 self.is_async_context = outer_async;
                 self.is_generator_context = outer_generator;
                 self.function_depth = outer_function_depth;
@@ -1752,7 +1757,11 @@ impl Parser {
                         prop_name.to_key_string()
                     )));
                 }
-                let init_expr = self.parse_assignment()?;
+                let outer_allow_class_super_property = self.allow_class_super_property;
+                self.allow_class_super_property = true;
+                let init_expr = self.parse_assignment();
+                self.allow_class_super_property = outer_allow_class_super_property;
+                let init_expr = init_expr?;
                 self.check_field_init_early_errors(&init_expr)?;
                 let initializer = Some(Box::new(init_expr));
                 // ASI: after field initializer, if no `;`, next token must be on new line or `}`.
