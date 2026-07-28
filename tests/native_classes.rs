@@ -20,12 +20,42 @@ fn fields_and_static_blocks_follow_source_order() {
 }
 
 #[test]
+fn static_fields_and_blocks_resolve_super_with_the_class_as_receiver() {
+    assert_eq!(
+        run(
+            "class Parent { static value = 7; static read() { return this.value + 1; } } class Child extends Parent { static field = super.value; static { this.block = super.read(); } } Child.field + ':' + Child.block"
+        ),
+        "7:8"
+    );
+}
+
+#[test]
+fn static_accessors_resolve_super_data_accessors_and_methods() {
+    assert_eq!(
+        run(
+            "class Parent { static value = 7; static get doubled() { return this.value * 2; } static read() { return this.value + 1; } } class Child extends Parent { static get result() { return super.doubled + ':' + super['read'](); } static set result(value) { this.seen = value + super.value; } } let first = Child.result; Child.result = 3; first + ':' + Child.seen"
+        ),
+        "14:8:10"
+    );
+}
+
+#[test]
 fn computed_field_key_is_evaluated_once_at_class_definition() {
     assert_eq!(
         run(
             "let n = 0; let key = () => (n++, 'x'); class C { [key()] = 1; } let c = new C(); c.x + ':' + n"
         ),
         "1:1"
+    );
+}
+
+#[test]
+fn computed_static_and_instance_field_keys_follow_source_order() {
+    assert_eq!(
+        run(
+            "let i = 0; class C { [i++] = i++; static [i++] = i++; [i++] = i++; } let c = new C(); c[0] + ':' + C[1] + ':' + c[2] + ':' + i"
+        ),
+        "4:3:5:6"
     );
 }
 
@@ -129,9 +159,9 @@ fn derived_constructor_rejects_a_primitive_return_override() {
 fn class_extending_null_uses_a_null_instance_prototype_parent() {
     assert_eq!(
         run(
-            "class C extends null { constructor() { return {}; } } Object.getPrototypeOf(C.prototype) === null"
+            "class C extends null { constructor() { return {}; } } (Object.getPrototypeOf(C.prototype) === null) + ':' + (Object.getPrototypeOf(C) === Function.prototype)"
         ),
-        "true"
+        "true:true"
     );
 }
 

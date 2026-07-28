@@ -64,10 +64,6 @@ class JetStreamBenchmarkBase {`,
         /constructor\(\.\.\.args\) \{\r?\n\s*super\(\.\.\.args\);/g,
         "constructor(plan) {\n        initializeJetStreamBenchmark(this, plan);",
     )
-    .replaceAll(
-        "super.updateUIAfterRun();",
-        "JetStreamBenchmarkBase.prototype.updateUIAfterRun.call(this);",
-    )
     .replace(
         "const ARESGroup =",
         `const Benchmark = JetStreamBenchmarkBase;

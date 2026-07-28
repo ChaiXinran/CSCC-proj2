@@ -1120,13 +1120,13 @@ impl Parser {
         let outer_strict = self.is_strict;
         self.is_strict = true;
         let name_result = self.expect_class_name();
-        self.is_strict = outer_strict;
         let name = name_result?;
         let super_class = if self.eat_keyword(Keyword::Extends) {
             Some(self.parse_assignment()?)
         } else {
             None
         };
+        self.is_strict = outer_strict;
         let elements = self.parse_class_body()?;
         Ok(Statement::ClassDeclaration(crate::ast::ClassDeclaration {
             name,
@@ -1211,7 +1211,7 @@ impl Parser {
     /// Parses a class name identifier, enforcing strict-mode rules plus
     /// rejecting `let`, `static`, and `yield` (which are reserved in class contexts)
     /// and their escaped forms.
-    fn expect_class_name(&mut self) -> Result<String, ParseError> {
+    pub(super) fn expect_class_name(&mut self) -> Result<String, ParseError> {
         use crate::parser::{is_strict_future_reserved, is_strict_future_reserved_keyword};
         let tok = self.peek().clone();
         // `yield` is a keyword that must be rejected as a class name.
