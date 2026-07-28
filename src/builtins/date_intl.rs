@@ -724,6 +724,69 @@ fn parse_iso_date_string(input: &str) -> Option<f64> {
     Some(time_clip(local_ms - offset_ms as f64))
 }
 
+fn parse_legacy_date_string(input: &str) -> Option<f64> {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let normalized = input.replace(',', "");
+    let parts: Vec<&str> = normalized.split_whitespace().collect();
+    let (month_text, day_text, year_text, time_text, zone_text) =
+        if parts.get(1).is_some_and(|part| MONTHS.contains(part)) {
+            (
+                *parts.get(1)?,
+                *parts.get(2)?,
+                *parts.get(3)?,
+                *parts.get(4)?,
+                *parts.get(5)?,
+            )
+        } else {
+            (
+                *parts.get(2)?,
+                *parts.get(1)?,
+                *parts.get(3)?,
+                *parts.get(4)?,
+                *parts.get(5)?,
+            )
+        };
+    let month = MONTHS.iter().position(|month| *month == month_text)? as u32 + 1;
+    let day = day_text.parse::<u32>().ok()?;
+    let year = year_text.parse::<i32>().ok()?;
+    if !(1..=month_day_count(year, month)).contains(&day) {
+        return None;
+    }
+    let mut time = time_text.split(':');
+    let hour = time.next()?.parse::<u32>().ok()?;
+    let minute = time.next()?.parse::<u32>().ok()?;
+    let second = time.next()?.parse::<u32>().ok()?;
+    if time.next().is_some() || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let offset_ms = if zone_text == "GMT" || zone_text == "UTC" {
+        0_i64
+    } else {
+        let offset = zone_text.strip_prefix("GMT")?;
+        if offset.len() != 5 || !offset.starts_with(['+', '-']) {
+            return None;
+        }
+        let hours = offset[1..3].parse::<i64>().ok()?;
+        let minutes = offset[3..5].parse::<i64>().ok()?;
+        if hours > 23 || minutes > 59 {
+            return None;
+        }
+        let sign = if offset.starts_with('-') { -1 } else { 1 };
+        sign * (hours * 60 + minutes) * 60_000
+    };
+    let local_ms = make_date(
+        days_from_civil(year, month, day) as f64,
+        make_time(hour as f64, minute as f64, second as f64, 0.0),
+    );
+    Some(time_clip(local_ms - offset_ms as f64))
+}
+
+fn parse_date_string(input: &str) -> Option<f64> {
+    parse_iso_date_string(input).or_else(|| parse_legacy_date_string(input))
+}
+
 fn temporal_to_bigint(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -1356,7 +1419,7 @@ fn date_construct(
         1 => {
             let value = arguments[0].clone();
             match value {
-                JsValue::String(text) => parse_iso_date_string(&text).unwrap_or(f64::NAN),
+                JsValue::String(text) => parse_date_string(&text).unwrap_or(f64::NAN),
                 other => time_clip(vm.to_number(other, context)?),
             }
         }
@@ -1413,7 +1476,7 @@ fn date_parse(
         context,
     )?;
     Ok(JsValue::Number(
-        parse_iso_date_string(&text).unwrap_or(f64::NAN),
+        parse_date_string(&text).unwrap_or(f64::NAN),
     ))
 }
 

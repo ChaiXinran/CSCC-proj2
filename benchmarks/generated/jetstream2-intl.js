@@ -738,7 +738,7 @@ class Scripts {
                     throw new Error(name + "." + property + " is not defined.");
                 }
             });
-            globalThis.JetStream = {
+            const JetStream = globalThis.JetStream = {
                 __proto__: throwOnAccess("JetStream"),
                 preload: {
                     __proto__: throwOnAccess("JetStream.preload"),
@@ -1576,7 +1576,7 @@ class AsyncBenchmark extends DefaultBenchmark {
                     if ("ShellPrefetchedResources" in globalThis) {
                         return new ShellTextDecoder().decode(ShellPrefetchedResources[path]);
                     }
-                    return read(path);
+                    return readFile(path);
                 };
 
                 JetStream.dynamicImport = async function(path) {
@@ -3274,7 +3274,7 @@ if (JetStreamParams.testList.length) {
     benchmarks = findBenchmarksByTag("Default", defaultDisabledTags)
 }
 
-var JetStream = new Driver(benchmarks);
+let JetStream = new Driver(benchmarks);
 
 
 JetStream.initialize()

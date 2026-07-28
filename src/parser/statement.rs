@@ -526,7 +526,7 @@ impl Parser {
         if self.peek().line_terminator_before
             || matches!(
                 self.peek().kind,
-                TokenKind::Punctuator(';') | TokenKind::Eof
+                TokenKind::Punctuator(';') | TokenKind::Punctuator('}') | TokenKind::Eof
             )
         {
             self.eat_punctuator(';');
