@@ -33,6 +33,7 @@ const CAPABILITY_RESOLVE: &str = "__agentjs_promise_capability_resolve__";
 const CAPABILITY_REJECT: &str = "__agentjs_promise_capability_reject__";
 
 pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
+    remove_spurious_bootstrap_to_string_tags(context)?;
     let constructor =
         context.register_builtin("Promise", 1, promise_call, Some(promise_construct))?;
     let JsValue::BuiltinFunction(constructor_id) = constructor else {
@@ -172,6 +173,61 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
         "Promise".into(),
         PropertyDescriptor::data_with(constructor, true, false, true),
     )?;
+    Ok(())
+}
+
+fn remove_spurious_bootstrap_to_string_tags(context: &mut NativeContext) -> Result<(), VmError> {
+    let symbol = context.well_known_symbols().to_string_tag;
+    let mut prototypes = vec![
+        context.object_prototype(),
+        context.function_prototype_object(),
+        context.array_prototype(),
+        context.string_prototype(),
+        context.number_prototype(),
+        context.boolean_prototype(),
+        context.error_prototype(),
+        context.regexp_prototype(),
+    ];
+    for name in ["Date", "Symbol"] {
+        let prototype = context
+            .get_global(name)
+            .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten());
+        prototypes.push(prototype);
+    }
+    for prototype in prototypes.into_iter().flatten() {
+        context.remove_bootstrap_symbol_property(prototype, symbol)?;
+    }
+    normalize_standard_object_prototypes(context)
+}
+
+fn normalize_standard_object_prototypes(context: &mut NativeContext) -> Result<(), VmError> {
+    let object_prototype = context.object_prototype();
+    for name in ["JSON", "Math"] {
+        if let Some(object) = context
+            .get_global(name)
+            .and_then(|value| context.value_object(&value))
+        {
+            context.set_prototype_of(object, object_prototype)?;
+        }
+    }
+    let error_constructor = context
+        .get_global("Error")
+        .and_then(|value| context.value_object(&value));
+    for name in [
+        "EvalError",
+        "RangeError",
+        "ReferenceError",
+        "SyntaxError",
+        "TypeError",
+        "URIError",
+    ] {
+        if let Some(constructor) = context
+            .get_global(name)
+            .and_then(|value| context.value_object(&value))
+        {
+            context.set_prototype_of(constructor, error_constructor)?;
+        }
+    }
     Ok(())
 }
 

@@ -96,7 +96,10 @@ pub struct RealmActivation {
 }
 
 const PROTOTYPE_CHAIN_LIMIT: usize = 1024;
-pub const MAX_ARRAY_LENGTH: usize = 1_000_000;
+/// ECMAScript Array length is a uint32 value. Large arrays remain sparse in
+/// the heap, while individual algorithms enforce their own work/allocation
+/// budgets.
+pub const MAX_ARRAY_LENGTH: usize = u32::MAX as usize;
 pub const MAX_ARRAY_BUFFER_BYTE_LENGTH: usize = 1 << 26;
 const MAX_UTF16_ALLOCATION_UNITS: usize = 1 << 23;
 const REGEXP_CACHE_LIMIT: usize = 64;
@@ -211,6 +214,7 @@ pub struct NativeContext {
     function_legacy_setter: Option<JsValue>,
     object_values: HashMap<ObjectId, JsValue>,
     error_objects: HashSet<ObjectId>,
+    arguments_objects: HashSet<ObjectId>,
     /// Maps JS error-object ids to their constructor name (e.g. "EvalError").
     /// Populated when an error object is created via a named constructor so that
     /// `throw_value` can produce a correctly-typed VmError for top-level throws.
@@ -306,6 +310,7 @@ impl NativeContext {
             function_legacy_setter: None,
             object_values: HashMap::new(),
             error_objects: HashSet::new(),
+            arguments_objects: HashSet::new(),
             error_object_names: HashMap::new(),
             raw_json_objects: HashMap::new(),
             disposable_stacks: HashMap::new(),
@@ -612,6 +617,8 @@ impl NativeContext {
             self.heap.contains_object(*object) && value_references_live_heap(value, &self.heap)
         });
         self.error_objects
+            .retain(|object| self.heap.contains_object(*object));
+        self.arguments_objects
             .retain(|object| self.heap.contains_object(*object));
         self.raw_json_objects
             .retain(|object, _| self.heap.contains_object(*object));
@@ -1200,6 +1207,21 @@ impl NativeContext {
         Ok(true)
     }
 
+    pub(crate) fn remove_bootstrap_symbol_property(
+        &mut self,
+        object: ObjectId,
+        symbol: SymbolId,
+    ) -> Result<(), VmError> {
+        let object = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing bootstrap prototype"))?;
+        object
+            .symbol_properties
+            .retain(|(property_symbol, _)| *property_symbol != symbol);
+        Ok(())
+    }
+
     pub fn validate_and_apply_symbol_property_descriptor(
         &mut self,
         object: ObjectId,
@@ -1457,6 +1479,15 @@ impl NativeContext {
 
     pub fn mark_error_object(&mut self, object: ObjectId) {
         self.error_objects.insert(object);
+    }
+
+    pub fn mark_arguments_object(&mut self, object: ObjectId) {
+        self.arguments_objects.insert(object);
+    }
+
+    #[must_use]
+    pub fn is_arguments_object(&self, object: ObjectId) -> bool {
+        self.arguments_objects.contains(&object)
     }
 
     pub fn set_error_object_name(&mut self, object: ObjectId, name: &'static str) {
@@ -3510,13 +3541,23 @@ impl NativeContext {
     }
 
     pub fn is_array_object(&self, object: ObjectId) -> Result<bool, VmError> {
-        Ok(matches!(
-            self.heap
-                .object(object)
-                .ok_or_else(|| VmError::runtime("missing object"))?
-                .kind,
-            ObjectKind::Array { .. }
-        ))
+        let value = self
+            .heap
+            .object(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        match &value.kind {
+            ObjectKind::Array { .. } => Ok(true),
+            ObjectKind::Proxy { record } => {
+                if matches!(record.handler, JsValue::Null) {
+                    return Err(VmError::type_error("proxy has been revoked"));
+                }
+                let Some(target) = self.value_object(&record.target) else {
+                    return Ok(false);
+                };
+                self.is_array_object(target)
+            }
+            _ => Ok(false),
+        }
     }
 
     pub(crate) fn array_buffer_id_for_object(&self, object: ObjectId) -> Option<ArrayBufferId> {
@@ -4819,10 +4860,15 @@ pub fn to_property_key(value: &JsValue) -> Result<PropertyKey, VmError> {
         JsValue::Symbol(symbol) => Ok(PropertyKey::Symbol(*symbol)),
         JsValue::String(value) => Ok(PropertyKey::String(value.clone())),
         JsValue::BigInt(value) => Ok(PropertyKey::String(value.to_string())),
-        JsValue::Number(value) if value.fract() == 0.0 => {
-            Ok(PropertyKey::String(format!("{value:.0}")))
+        // This is the pure primitive half of ToPropertyKey. Reuse the
+        // runtime's ECMAScript Number::toString spelling so property creation,
+        // lookup, and descriptor operations agree for -0, infinities, and the
+        // fixed/scientific notation boundaries.
+        JsValue::Number(_) => {
+            Ok(PropertyKey::String(value.to_js_string().expect(
+                "numeric primitives always have a string spelling",
+            )))
         }
-        JsValue::Number(value) => Ok(PropertyKey::String(value.to_string())),
         JsValue::Boolean(value) => Ok(PropertyKey::String(value.to_string())),
         JsValue::Null => Ok(PropertyKey::String("null".into())),
         JsValue::Undefined => Ok(PropertyKey::String("undefined".into())),

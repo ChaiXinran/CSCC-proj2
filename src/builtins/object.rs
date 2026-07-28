@@ -4,7 +4,7 @@ use super::proxy;
 use crate::{
     runtime::{
         JsObject, JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-        PropertyDescriptorUpdate, PropertyKey, PropertyKind, SymbolId,
+        PropertyDescriptorUpdate, PropertyKey, PropertyKind,
     },
     vm::{Vm, VmError},
 };
@@ -69,6 +69,7 @@ pub fn install_object(context: &mut NativeContext) {
             1,
             object_from_entries as crate::runtime::NativeCall,
         ),
+        ("groupBy", 2, object_group_by as crate::runtime::NativeCall),
         ("assign", 2, object_assign as crate::runtime::NativeCall),
         ("is", 2, object_is as crate::runtime::NativeCall),
         ("freeze", 1, object_freeze as crate::runtime::NativeCall),
@@ -267,6 +268,7 @@ fn object_define_property(
     let descriptor_value = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
     let descriptor_object = context.require_object(&descriptor_value, "read descriptor")?;
     let update = descriptor_update_from_object(vm, context, descriptor_object)?;
+    let update = normalize_array_length_update(vm, context, &target, &key, update)?;
     if proxy::internal_define_own_property(
         vm,
         context,
@@ -320,15 +322,16 @@ fn object_get_own_property_descriptors(
         else {
             continue;
         };
-        let PropertyKey::String(name) = key else {
-            continue;
-        };
         let descriptor_object = descriptor_to_object(context, descriptor)?;
-        context.define_own_property(
-            result,
-            name,
-            PropertyDescriptor::data_with(descriptor_object, true, true, true),
-        )?;
+        let descriptor = PropertyDescriptor::data_with(descriptor_object, true, true, true);
+        match key {
+            PropertyKey::String(name) => {
+                context.define_own_property(result, name, descriptor)?;
+            }
+            PropertyKey::Symbol(symbol) => {
+                context.define_symbol_own_property(result, symbol, descriptor)?;
+            }
+        }
     }
     Ok(result_value)
 }
@@ -411,23 +414,32 @@ fn descriptor_update_from_object(
     descriptor_object: ObjectId,
 ) -> Result<PropertyDescriptorUpdate, VmError> {
     let mut update = PropertyDescriptorUpdate::default();
-    if let Some(value) = descriptor_field(vm, context, descriptor_object, "value")? {
-        update.value = Some(value);
-    }
-    if let Some(value) = descriptor_field(vm, context, descriptor_object, "writable")? {
-        update.writable = Some(value.to_boolean());
-    }
+    // ToPropertyDescriptor reads inherited fields through [[HasProperty]] and
+    // [[Get]] in this exact observable order.
     if let Some(value) = descriptor_field(vm, context, descriptor_object, "enumerable")? {
         update.enumerable = Some(value.to_boolean());
     }
     if let Some(value) = descriptor_field(vm, context, descriptor_object, "configurable")? {
         update.configurable = Some(value.to_boolean());
     }
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "value")? {
+        update.value = Some(value);
+    }
+    if let Some(value) = descriptor_field(vm, context, descriptor_object, "writable")? {
+        update.writable = Some(value.to_boolean());
+    }
     if let Some(value) = descriptor_field(vm, context, descriptor_object, "get")? {
         update.get = Some(optional_callable(context, value, "getter")?);
     }
     if let Some(value) = descriptor_field(vm, context, descriptor_object, "set")? {
         update.set = Some(optional_callable(context, value, "setter")?);
+    }
+    if (update.value.is_some() || update.writable.is_some())
+        && (update.get.is_some() || update.set.is_some())
+    {
+        return Err(VmError::type_error(
+            "property descriptor cannot be both a data and accessor descriptor",
+        ));
     }
     Ok(update)
 }
@@ -438,16 +450,12 @@ fn descriptor_field(
     object: ObjectId,
     key: &str,
 ) -> Result<Option<JsValue>, VmError> {
-    if !context.has_property(object, key)? {
+    let receiver = context.object_value(object);
+    let property_key = PropertyKey::String(key.into());
+    if !proxy::internal_has_property(vm, context, receiver.clone(), &property_key)? {
         return Ok(None);
     }
-    vm.get_property_value_with_receiver_from_builtin(
-        JsValue::Object(object),
-        JsValue::Object(object),
-        key,
-        context,
-    )
-    .map(Some)
+    proxy::internal_get(vm, context, receiver.clone(), &property_key, receiver).map(Some)
 }
 
 fn optional_callable(
@@ -515,43 +523,51 @@ fn object_has_own_property(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = vm.to_object(this_value, context)?;
-    let descriptor = own_descriptor_for_key(
+    let key = proxy::to_property_key(
         vm,
         context,
-        object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let object = vm.to_object(this_value, context)?;
+    let descriptor =
+        proxy::internal_get_own_property(vm, context, context.object_value(object), &key)?;
     Ok(JsValue::Boolean(descriptor.is_some()))
 }
 
-fn object_to_string(
-    _vm: &mut Vm,
+pub(crate) fn object_to_string(
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    // If the value is an object (or wrapper), check for Symbol.toStringTag first.
-    if let Some(object_id) = context.value_object(&this_value) {
+    if !matches!(this_value, JsValue::Null | JsValue::Undefined) {
         let to_string_tag = context.well_known_symbols().to_string_tag;
-        if let Some(JsValue::String(tag)) =
-            context.get_symbol_property_value(object_id, to_string_tag)
-        {
+        let tag = vm.get_symbol_property_value_with_receiver_from_builtin(
+            this_value.clone(),
+            this_value.clone(),
+            to_string_tag,
+            context,
+        )?;
+        if let JsValue::String(tag) = tag {
             return Ok(JsValue::String(format!("[object {tag}]")));
         }
     }
 
-    let tag = match &this_value {
-        JsValue::Null => "Null",
-        JsValue::Undefined => "Undefined",
-        JsValue::Boolean(_) => "Boolean",
-        JsValue::Number(_) => "Number",
-        JsValue::BigInt(_) => "BigInt",
-        JsValue::String(_) => "String",
-        JsValue::Symbol(_) => "Symbol",
-        JsValue::Function(_) | JsValue::BuiltinFunction(_) => "Function",
-        JsValue::Object(id) => object_builtin_tag(context, *id)?,
-        JsValue::Error(_) => "Error",
+    let tag = if context.is_callable_value(&this_value) {
+        "Function"
+    } else {
+        match &this_value {
+            JsValue::Null => "Null",
+            JsValue::Undefined => "Undefined",
+            JsValue::Boolean(_) => "Boolean",
+            JsValue::Number(_) => "Number",
+            JsValue::BigInt(_) => "Object",
+            JsValue::String(_) => "String",
+            JsValue::Symbol(_) => "Object",
+            JsValue::Function(_) | JsValue::BuiltinFunction(_) => unreachable!(),
+            JsValue::Object(id) => object_builtin_tag(context, *id)?,
+            JsValue::Error(_) => "Error",
+        }
     };
     Ok(JsValue::String(format!("[object {tag}]")))
 }
@@ -572,11 +588,17 @@ fn object_to_locale_string(
 }
 
 fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'static str, VmError> {
+    if context.is_arguments_object(object) {
+        return Ok("Arguments");
+    }
     if matches!(
         context.object_value(object),
         JsValue::Function(_) | JsValue::BuiltinFunction(_)
     ) {
         return Ok("Function");
+    }
+    if context.is_array_object(object)? {
+        return Ok("Array");
     }
     let value = context
         .heap()
@@ -586,9 +608,9 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Array { .. } => "Array",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Boolean(_)) => "Boolean",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::Number(_)) => "Number",
-        ObjectKind::PrimitiveWrapper(PrimitiveValue::BigInt(_)) => "BigInt",
+        ObjectKind::PrimitiveWrapper(PrimitiveValue::BigInt(_)) => "Object",
         ObjectKind::PrimitiveWrapper(PrimitiveValue::String(_)) => "String",
-        ObjectKind::PrimitiveWrapper(PrimitiveValue::Symbol(_)) => "Symbol",
+        ObjectKind::PrimitiveWrapper(PrimitiveValue::Symbol(_)) => "Object",
         ObjectKind::RegExp { .. } => "RegExp",
         ObjectKind::ArrayBuffer { .. } => "ArrayBuffer",
         ObjectKind::DataView { .. } => "DataView",
@@ -597,7 +619,7 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Ordinary => "Object",
         ObjectKind::Iterator { .. } => "Object",
         ObjectKind::Generator { .. } => "Generator",
-        ObjectKind::Promise { .. } => "Promise",
+        ObjectKind::Promise { .. } => "Object",
         ObjectKind::Proxy { .. } => "Object",
         ObjectKind::WeakRef { .. } => "WeakRef",
         ObjectKind::FinalizationRegistry { .. } => "FinalizationRegistry",
@@ -605,33 +627,36 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
 }
 
 fn object_value_of(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
+    vm: &mut Vm,
+    context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(this_value)
+    let object = vm.to_object(this_value.clone(), context)?;
+    Ok(if context.value_object(&this_value).is_some() {
+        this_value
+    } else {
+        context.object_value(object)
+    })
 }
 
 fn object_is_prototype_of(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let proto = match context.require_object(&this_value, "isPrototypeOf") {
-        Ok(id) => id,
-        Err(_) => return Ok(JsValue::Boolean(false)),
-    };
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let Ok(mut current) = context.require_object(&value, "isPrototypeOf target") else {
+    if context.value_object(&value).is_none() {
         return Ok(JsValue::Boolean(false));
-    };
+    }
+    let proto = vm.to_object(this_value, context)?;
+    let mut current = value;
     loop {
-        match context.get_prototype_of(current) {
+        match proxy::internal_get_prototype_of(vm, context, current)? {
             None => return Ok(JsValue::Boolean(false)),
             Some(p) if p == proto => return Ok(JsValue::Boolean(true)),
-            Some(p) => current = p,
+            Some(p) => current = context.object_value(p),
         }
     }
 }
@@ -642,16 +667,18 @@ fn object_property_is_enumerable(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = match context.require_object(&this_value, "propertyIsEnumerable") {
-        Ok(id) => id,
-        Err(_) => return Ok(JsValue::Boolean(false)),
-    };
-    let descriptor = own_descriptor_for_key(
+    let key = proxy::to_property_key(
         vm,
         context,
-        object,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
+    let object = vm.to_object(this_value.clone(), context)?;
+    let target = if context.value_object(&this_value).is_some() {
+        this_value
+    } else {
+        context.object_value(object)
+    };
+    let descriptor = proxy::internal_get_own_property(vm, context, target, &key)?;
     Ok(JsValue::Boolean(
         descriptor.map(|d| d.enumerable).unwrap_or(false),
     ))
@@ -669,11 +696,14 @@ fn object_define_properties(
     context.require_object(&target, "defineProperties")?;
     let props_value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     if matches!(props_value, JsValue::Undefined | JsValue::Null) {
-        return Ok(target);
+        return Err(VmError::type_error(
+            "Object.defineProperties properties must not be null or undefined",
+        ));
     }
-    let props = context.require_object(&props_value, "defineProperties props")?;
-    let props_object = JsValue::Object(props);
+    let props = vm.to_object(props_value, context)?;
+    let props_object = context.object_value(props);
     let keys = proxy::internal_own_property_keys(vm, context, props_object.clone())?;
+    let mut descriptors = Vec::new();
     for key in keys {
         if !proxy::internal_get_own_property(vm, context, props_object.clone(), &key)?
             .is_some_and(|d| d.enumerable)
@@ -695,7 +725,12 @@ fn object_define_properties(
         let descriptor_object =
             context.require_object(&descriptor_value, "read property descriptor")?;
         let update = descriptor_update_from_object(vm, context, descriptor_object)?;
-        let property_key = key;
+        descriptors.push((key, descriptor_value, update));
+    }
+    // DefineProperties first converts every enumerable descriptor. No target
+    // mutation is allowed if a later conversion completes abruptly.
+    for (property_key, descriptor_value, update) in descriptors {
+        let update = normalize_array_length_update(vm, context, &target, &property_key, update)?;
         if !proxy::internal_define_own_property(
             vm,
             context,
@@ -708,6 +743,32 @@ fn object_define_properties(
         }
     }
     Ok(target)
+}
+
+fn normalize_array_length_update(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: &JsValue,
+    key: &PropertyKey,
+    mut update: PropertyDescriptorUpdate,
+) -> Result<PropertyDescriptorUpdate, VmError> {
+    if !matches!(key, PropertyKey::String(name) if name == "length") {
+        return Ok(update);
+    }
+    let Some(object) = context.value_object(target) else {
+        return Ok(update);
+    };
+    if context.proxy_record(object).is_some() || !context.is_array_object(object)? {
+        return Ok(update);
+    }
+    if let Some(value) = update.value.take() {
+        let number = vm.to_number(value, context)?;
+        // ArraySetLength rejects fractional, negative, infinite, and >2^32-1
+        // values after the observable ToNumber conversion.
+        context.array_length_from_value(JsValue::Number(number))?;
+        update.value = Some(JsValue::Number(number));
+    }
+    Ok(update)
 }
 
 fn object_get_own_property_names(
@@ -819,14 +880,40 @@ fn object_from_entries(
     let JsValue::Object(result_object) = result.clone() else {
         unreachable!()
     };
-    let mut iterator =
-        context.get_iterator(arguments.first().cloned().unwrap_or(JsValue::Undefined))?;
-    while let Some(entry) = context.iterator_next(&mut iterator)? {
-        let entry_object = context.require_object(&entry, "Object.fromEntries entry")?;
-        let entry_value = JsValue::Object(entry_object);
-        let key_value = vm.get_property_value(entry_value.clone(), "0", context)?;
-        let key = proxy::to_property_key(vm, context, key_value)?;
-        let value = vm.get_property_value(entry_value, "1", context)?;
+    let (iterator, next) = object_get_iterator(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?;
+    while let Some(entry) = object_iterator_step(vm, context, iterator.clone(), next.clone())? {
+        let processed = (|| {
+            let entry_object = context.require_object(&entry, "Object.fromEntries entry")?;
+            let entry_value = context.object_value(entry_object);
+            let key_value = match vm.get_property_value_catching_from_builtin(
+                entry_value.clone(),
+                "0",
+                context,
+            )? {
+                Ok(value) => value,
+                Err(value) => return Err(vm.throw_value_from_builtin(value)),
+            };
+            // AddEntriesFromIterable observes both entry property gets before
+            // coercing the key.
+            let value =
+                match vm.get_property_value_catching_from_builtin(entry_value, "1", context)? {
+                    Ok(value) => value,
+                    Err(value) => return Err(vm.throw_value_from_builtin(value)),
+                };
+            let key = proxy::to_property_key(vm, context, key_value)?;
+            Ok::<_, VmError>((key, value))
+        })();
+        let (key, value) = match processed {
+            Ok(pair) => pair,
+            Err(error) => {
+                let _ = vm.close_iterator_from_builtin(iterator.clone(), context);
+                return Err(error);
+            }
+        };
         let descriptor = PropertyDescriptor::data_with(value, true, true, true);
         match key {
             PropertyKey::String(key) => {
@@ -836,6 +923,123 @@ fn object_from_entries(
                 context.define_symbol_own_property(result_object, symbol, descriptor)?;
             }
         }
+    }
+    Ok(result)
+}
+
+fn object_get_iterator(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    items: JsValue,
+) -> Result<(JsValue, JsValue), VmError> {
+    let method = vm.get_symbol_property_value_with_receiver_from_builtin(
+        items.clone(),
+        items.clone(),
+        context.well_known_symbols().iterator,
+        context,
+    )?;
+    if !context.is_callable_value(&method) {
+        return Err(VmError::type_error("value is not iterable"));
+    }
+    let iterator = vm.call_value_from_builtin(method, items, Vec::new(), context)?;
+    context.require_object(&iterator, "iterator method result")?;
+    let next = vm.get_property_value(iterator.clone(), "next", context)?;
+    if !context.is_callable_value(&next) {
+        return Err(VmError::type_error("iterator next is not callable"));
+    }
+    Ok((iterator, next))
+}
+
+fn object_iterator_step(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    iterator: JsValue,
+    next: JsValue,
+) -> Result<Option<JsValue>, VmError> {
+    let result = vm.call_value_from_builtin(next, iterator, Vec::new(), context)?;
+    context.require_object(&result, "iterator result")?;
+    let done = match vm.get_property_value_catching_from_builtin(result.clone(), "done", context)? {
+        Ok(value) => value,
+        Err(value) => return Err(vm.throw_value_from_builtin(value)),
+    };
+    if done.to_boolean() {
+        return Ok(None);
+    }
+    match vm.get_property_value_catching_from_builtin(result, "value", context)? {
+        Ok(value) => Ok(Some(value)),
+        Err(value) => Err(vm.throw_value_from_builtin(value)),
+    }
+}
+
+fn object_group_by(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let items = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let callback = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if !context.is_callable_value(&callback) {
+        return Err(VmError::type_error(
+            "Object.groupBy callback is not callable",
+        ));
+    }
+
+    let result = context.ordinary_object_with_prototype(None)?;
+    let result_object = context.require_object(&result, "Object.groupBy result")?;
+    let (iterator, next) = object_get_iterator(vm, context, items)?;
+    let mut index = 0usize;
+    while let Some(value) = object_iterator_step(vm, context, iterator.clone(), next.clone())? {
+        context.consume_loop_iteration()?;
+        let key_value = match vm.call_value_from_builtin(
+            callback.clone(),
+            JsValue::Undefined,
+            vec![value.clone(), JsValue::Number(index as f64)],
+            context,
+        ) {
+            Ok(key) => key,
+            Err(error) => {
+                let _ = vm.close_iterator_from_builtin(iterator.clone(), context);
+                return Err(error);
+            }
+        };
+        let key = match proxy::to_property_key(vm, context, key_value) {
+            Ok(key) => key,
+            Err(error) => {
+                let _ = vm.close_iterator_from_builtin(iterator.clone(), context);
+                return Err(error);
+            }
+        };
+        let existing = match &key {
+            PropertyKey::String(key) => context.get_own_property_descriptor(result_object, key),
+            PropertyKey::Symbol(symbol) => {
+                context.get_own_symbol_property_descriptor(result_object, *symbol)
+            }
+        };
+        if let Some(group) = existing.and_then(|descriptor| descriptor.value_cloned()) {
+            let group_object = context.require_object(&group, "Object.groupBy group")?;
+            let length = context
+                .get_own_property_descriptor(group_object, "length")
+                .and_then(|descriptor| descriptor.value_cloned())
+                .and_then(|value| match value {
+                    JsValue::Number(value) => Some(value as usize),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            context.set_property(group, length.to_string(), value)?;
+        } else {
+            let group = context.create_array(vec![value])?;
+            let descriptor = PropertyDescriptor::data_with(group, true, true, true);
+            match key {
+                PropertyKey::String(key) => {
+                    context.define_own_property(result_object, key, descriptor)?;
+                }
+                PropertyKey::Symbol(symbol) => {
+                    context.define_symbol_own_property(result_object, symbol, descriptor)?;
+                }
+            }
+        }
+        index += 1;
     }
     Ok(result)
 }
@@ -924,96 +1128,66 @@ fn property_key_label(key: &crate::runtime::PropertyKey) -> String {
     }
 }
 
-fn own_symbol_keys(context: &NativeContext, object: ObjectId) -> Result<Vec<SymbolId>, VmError> {
-    Ok(context
-        .heap()
-        .object(object)
-        .ok_or_else(|| VmError::runtime("missing object"))?
-        .symbol_properties
-        .iter()
-        .map(|(symbol, _)| *symbol)
-        .collect())
-}
-
 fn object_freeze(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    if let JsValue::Object(object) = &target {
-        let keys = context
-            .heap()
-            .object(*object)
-            .ok_or_else(|| VmError::runtime("missing object"))?
-            .own_property_keys();
-        for key in keys {
-            let Some(descriptor) = context.get_own_property_descriptor(*object, &key) else {
-                continue;
-            };
-            let update = PropertyDescriptorUpdate {
-                configurable: Some(false),
-                writable: matches!(descriptor.kind, PropertyKind::Data { .. }).then_some(false),
-                ..PropertyDescriptorUpdate::default()
-            };
-            context
-                .validate_and_apply_property_descriptor(*object, key, update)
-                .ok();
-        }
-        for symbol in own_symbol_keys(context, *object)? {
-            let Some(descriptor) = context.get_own_symbol_property_descriptor(*object, symbol)
-            else {
-                continue;
-            };
-            let update = PropertyDescriptorUpdate {
-                configurable: Some(false),
-                writable: matches!(descriptor.kind, PropertyKind::Data { .. }).then_some(false),
-                ..PropertyDescriptorUpdate::default()
-            };
-            context
-                .validate_and_apply_symbol_property_descriptor(*object, symbol, update)
-                .ok();
-        }
-        context.prevent_extensions(*object)?;
+    if context.value_object(&target).is_some() {
+        set_integrity_level(vm, context, target.clone(), true)?;
     }
     Ok(target)
 }
 
 fn object_seal(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    if let JsValue::Object(object) = &target {
-        let keys = context
-            .heap()
-            .object(*object)
-            .ok_or_else(|| VmError::runtime("missing object"))?
-            .own_property_keys();
-        for key in keys {
-            let update = PropertyDescriptorUpdate {
-                configurable: Some(false),
-                ..PropertyDescriptorUpdate::default()
-            };
-            context
-                .validate_and_apply_property_descriptor(*object, key, update)
-                .ok();
-        }
-        for symbol in own_symbol_keys(context, *object)? {
-            let update = PropertyDescriptorUpdate {
-                configurable: Some(false),
-                ..PropertyDescriptorUpdate::default()
-            };
-            context
-                .validate_and_apply_symbol_property_descriptor(*object, symbol, update)
-                .ok();
-        }
-        context.prevent_extensions(*object)?;
+    if context.value_object(&target).is_some() {
+        set_integrity_level(vm, context, target.clone(), false)?;
     }
     Ok(target)
+}
+
+fn set_integrity_level(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    target: JsValue,
+    frozen: bool,
+) -> Result<(), VmError> {
+    if !proxy::internal_prevent_extensions(vm, context, target.clone())? {
+        return Err(VmError::type_error("cannot prevent extensions"));
+    }
+    let keys = proxy::internal_own_property_keys(vm, context, target.clone())?;
+    for key in keys {
+        let Some(current) = proxy::internal_get_own_property(vm, context, target.clone(), &key)?
+        else {
+            continue;
+        };
+        let update = PropertyDescriptorUpdate {
+            configurable: Some(false),
+            writable: (frozen && matches!(current.kind, PropertyKind::Data { .. }))
+                .then_some(false),
+            ..PropertyDescriptorUpdate::default()
+        };
+        let descriptor_arg = proxy::descriptor_object_from_update(context, &update)?;
+        if !proxy::internal_define_own_property(
+            vm,
+            context,
+            target.clone(),
+            &key,
+            descriptor_arg,
+            update,
+        )? {
+            return Err(VmError::type_error("cannot set object integrity level"));
+        }
+    }
+    Ok(())
 }
 
 fn object_prevent_extensions(
