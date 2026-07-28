@@ -73,7 +73,9 @@ fn internalize_json_property(
                 | ObjectKind::Iterator { .. }
                 | ObjectKind::Generator { .. }
                 | ObjectKind::Promise { .. }
-                | ObjectKind::Proxy { .. } => object_value.own_property_keys(),
+                | ObjectKind::Proxy { .. }
+                | ObjectKind::WeakRef { .. }
+                | ObjectKind::FinalizationRegistry { .. } => object_value.own_property_keys(),
             }
         };
         for property in keys {
@@ -711,7 +713,9 @@ fn stringify_object(
         | ObjectKind::Iterator { .. }
         | ObjectKind::Generator { .. }
         | ObjectKind::Promise { .. }
-        | ObjectKind::Proxy { .. } => {
+        | ObjectKind::Proxy { .. }
+        | ObjectKind::WeakRef { .. }
+        | ObjectKind::FinalizationRegistry { .. } => {
             let mut parts = Vec::new();
             for key in object_value.own_property_keys() {
                 let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {

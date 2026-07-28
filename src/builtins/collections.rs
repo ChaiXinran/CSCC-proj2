@@ -49,6 +49,8 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     install_set(context, iterator)?;
     install_weak_map(context)?;
     install_weak_set(context)?;
+    install_weak_ref(context)?;
+    install_finalization_registry(context)?;
     Ok(())
 }
 
@@ -3543,4 +3545,260 @@ fn weak_set_delete(
     Ok(JsValue::Boolean(delete_collection_entry(
         context, set, &value,
     )?))
+}
+
+fn intrinsic_constructor_prototype(
+    context: &NativeContext,
+    constructor_name: &str,
+) -> Result<ObjectId, VmError> {
+    context
+        .get_global(constructor_name)
+        .and_then(|constructor| context.value_object(&constructor))
+        .and_then(|constructor| context.get_own_property(constructor, "prototype"))
+        .and_then(PropertyDescriptor::value_cloned)
+        .and_then(|value| context.value_object(&value))
+        .ok_or_else(|| VmError::runtime(format!("{constructor_name} prototype missing")))
+}
+
+fn can_be_held_weakly(context: &NativeContext, value: &JsValue) -> bool {
+    context.value_object(value).is_some()
+        || matches!(value, JsValue::Symbol(symbol) if context.symbol_key_for(*symbol).is_none())
+}
+
+fn install_weak_ref(context: &mut NativeContext) -> Result<(), VmError> {
+    let prototype = new_ordinary_object(context, context.object_prototype())?;
+    let constructor =
+        context.register_builtin("WeakRef", 1, weak_ref_call, Some(weak_ref_construct))?;
+    let constructor_object = context
+        .value_object(&constructor)
+        .ok_or_else(|| VmError::runtime("WeakRef constructor object missing"))?;
+    context.define_own_property(
+        constructor_object,
+        "prototype".into(),
+        constant_descriptor(JsValue::Object(prototype)),
+    )?;
+    context.define_own_property(
+        prototype,
+        "constructor".into(),
+        method_descriptor(constructor.clone()),
+    )?;
+    define_method(context, prototype, "deref", 0, weak_ref_deref)?;
+    context.define_symbol_own_property(
+        prototype,
+        context.well_known_symbols().to_string_tag,
+        readonly_configurable_descriptor(JsValue::String("WeakRef".into())),
+    )?;
+    declare_standard_global(context, "WeakRef", constructor)
+}
+
+fn weak_ref_call(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Err(VmError::type_error("WeakRef constructor requires 'new'"))
+}
+
+fn weak_ref_construct(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !can_be_held_weakly(context, &target) {
+        return Err(VmError::type_error("WeakRef target cannot be held weakly"));
+    }
+    let fallback = intrinsic_constructor_prototype(context, "WeakRef")?;
+    let prototype = context
+        .constructor_prototype(&new_target)?
+        .unwrap_or(fallback);
+    let mut object_value = JsObject::weak_ref(target);
+    object_value.prototype = Some(prototype);
+    let object = context
+        .heap_mut()
+        .allocate_object(object_value)
+        .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+    Ok(JsValue::Object(object))
+}
+
+fn weak_ref_deref(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = context.require_object(&this_value, "WeakRef.prototype.deref")?;
+    match context.heap().object(object).map(|object| &object.kind) {
+        Some(ObjectKind::WeakRef { target }) => Ok(target.clone()),
+        _ => Err(VmError::type_error("receiver is not a WeakRef object")),
+    }
+}
+
+fn install_finalization_registry(context: &mut NativeContext) -> Result<(), VmError> {
+    let prototype = new_ordinary_object(context, context.object_prototype())?;
+    let constructor = context.register_builtin(
+        "FinalizationRegistry",
+        1,
+        finalization_registry_call,
+        Some(finalization_registry_construct),
+    )?;
+    let constructor_object = context
+        .value_object(&constructor)
+        .ok_or_else(|| VmError::runtime("FinalizationRegistry constructor object missing"))?;
+    context.define_own_property(
+        constructor_object,
+        "prototype".into(),
+        constant_descriptor(JsValue::Object(prototype)),
+    )?;
+    context.define_own_property(
+        prototype,
+        "constructor".into(),
+        method_descriptor(constructor.clone()),
+    )?;
+    define_method(
+        context,
+        prototype,
+        "register",
+        2,
+        finalization_registry_register,
+    )?;
+    define_method(
+        context,
+        prototype,
+        "unregister",
+        1,
+        finalization_registry_unregister,
+    )?;
+    context.define_symbol_own_property(
+        prototype,
+        context.well_known_symbols().to_string_tag,
+        readonly_configurable_descriptor(JsValue::String("FinalizationRegistry".into())),
+    )?;
+    declare_standard_global(context, "FinalizationRegistry", constructor)
+}
+
+fn finalization_registry_call(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Err(VmError::type_error(
+        "FinalizationRegistry constructor requires 'new'",
+    ))
+}
+
+fn finalization_registry_construct(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+    new_target: JsValue,
+) -> Result<JsValue, VmError> {
+    let cleanup = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !is_callable_with_context(context, &cleanup) {
+        return Err(VmError::type_error(
+            "FinalizationRegistry cleanup callback is not callable",
+        ));
+    }
+    let fallback = intrinsic_constructor_prototype(context, "FinalizationRegistry")?;
+    let prototype = context
+        .constructor_prototype(&new_target)?
+        .unwrap_or(fallback);
+    let mut object_value = JsObject::finalization_registry();
+    object_value.prototype = Some(prototype);
+    let object = context
+        .heap_mut()
+        .allocate_object(object_value)
+        .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
+    Ok(JsValue::Object(object))
+}
+
+fn require_finalization_registry(
+    context: &NativeContext,
+    this_value: &JsValue,
+) -> Result<ObjectId, VmError> {
+    let object = context.require_object(this_value, "FinalizationRegistry receiver")?;
+    if matches!(
+        context.heap().object(object).map(|object| &object.kind),
+        Some(ObjectKind::FinalizationRegistry { .. })
+    ) {
+        Ok(object)
+    } else {
+        Err(VmError::type_error(
+            "receiver is not a FinalizationRegistry object",
+        ))
+    }
+}
+
+fn finalization_registry_register(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let registry = require_finalization_registry(context, &this_value)?;
+    let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !can_be_held_weakly(context, &target) {
+        return Err(VmError::type_error(
+            "FinalizationRegistry target cannot be held weakly",
+        ));
+    }
+    let held_value = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if target.same_value(&held_value) {
+        return Err(VmError::type_error(
+            "FinalizationRegistry target and held value must differ",
+        ));
+    }
+    let token = arguments.get(2).cloned().unwrap_or(JsValue::Undefined);
+    if !matches!(token, JsValue::Undefined) && !can_be_held_weakly(context, &token) {
+        return Err(VmError::type_error(
+            "FinalizationRegistry unregister token cannot be held weakly",
+        ));
+    }
+    let ObjectKind::FinalizationRegistry { unregister_tokens } = &mut context
+        .heap_mut()
+        .object_mut(registry)
+        .ok_or_else(|| VmError::runtime("FinalizationRegistry object missing"))?
+        .kind
+    else {
+        unreachable!()
+    };
+    unregister_tokens.push((!matches!(token, JsValue::Undefined)).then_some(token));
+    Ok(JsValue::Undefined)
+}
+
+fn finalization_registry_unregister(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let registry = require_finalization_registry(context, &this_value)?;
+    let token = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !can_be_held_weakly(context, &token) {
+        return Err(VmError::type_error(
+            "FinalizationRegistry unregister token cannot be held weakly",
+        ));
+    }
+    let mut removed = false;
+    let ObjectKind::FinalizationRegistry { unregister_tokens } = &mut context
+        .heap_mut()
+        .object_mut(registry)
+        .ok_or_else(|| VmError::runtime("FinalizationRegistry object missing"))?
+        .kind
+    else {
+        unreachable!()
+    };
+    for registered in unregister_tokens {
+        if registered
+            .as_ref()
+            .is_some_and(|registered| registered.same_value(&token))
+        {
+            *registered = None;
+            removed = true;
+        }
+    }
+    Ok(JsValue::Boolean(removed))
 }

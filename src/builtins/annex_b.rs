@@ -410,7 +410,9 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, St
         | ObjectKind::Iterator { .. }
         | ObjectKind::Generator { .. }
         | ObjectKind::Promise { .. }
-        | ObjectKind::Proxy { .. } => None,
+        | ObjectKind::Proxy { .. }
+        | ObjectKind::WeakRef { .. }
+        | ObjectKind::FinalizationRegistry { .. } => None,
     }
 }
 

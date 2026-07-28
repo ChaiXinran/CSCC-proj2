@@ -599,6 +599,8 @@ fn object_builtin_tag(context: &NativeContext, object: ObjectId) -> Result<&'sta
         ObjectKind::Generator { .. } => "Generator",
         ObjectKind::Promise { .. } => "Promise",
         ObjectKind::Proxy { .. } => "Object",
+        ObjectKind::WeakRef { .. } => "WeakRef",
+        ObjectKind::FinalizationRegistry { .. } => "FinalizationRegistry",
     })
 }
 

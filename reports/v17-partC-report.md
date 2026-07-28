@@ -68,3 +68,37 @@ rustfmt --edition 2024 --check src/builtins/date_intl.rs
 - `cargo fmt --all -- --check` passes.
 - `cargo clippy --all-targets -- -D warnings` passes.
 - `cargo test --no-default-features --test native_test262` passes (15/15).
+# WeakRef / FinalizationRegistry correctness follow-up
+
+- Added the missing `WeakRef` constructor/prototype surface, target validation,
+  `deref`, custom `new.target.prototype` handling, and `Symbol.toStringTag`.
+- Added the missing `FinalizationRegistry` constructor/prototype surface with
+  cleanup-callback validation, `register`/`unregister`, weak-target/token
+  validation, token identity removal, and descriptor-visible builtin shape.
+- The current collector does not yet enqueue cleanup callbacks. The
+  implementation deliberately covers deterministic ECMAScript observability;
+  nondeterministic collection scheduling remains deferred.
+
+Validation:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `test/built-ins/WeakRef` | 0 / 29 | 25 / 29 | +25 |
+| `test/built-ins/FinalizationRegistry` | 0 / 47 | 43 / 47 | +43 |
+| Full Test262 | 45,654 / 53,379 | 45,725 / 53,379 | +71 |
+
+Full conformance moved from **85.5280%** to **85.6610%** (+0.1330 percentage
+points), with failures decreasing from 7,723 to 7,652 and skips unchanged at
+2. The focused suites account for +68 passes; the full scan records a further
++3 net cross-suite improvement.
+
+Commands:
+
+```powershell
+cargo test --locked --test native_weak_refs
+cargo check --locked --all-targets
+cargo test --locked --all-targets
+target\release\agentjs.exe test262 --backend native --root test262 --suite test\built-ins\WeakRef --jobs 4
+target\release\agentjs.exe test262 --backend native --root test262 --suite test\built-ins\FinalizationRegistry --jobs 4
+target\release\agentjs.exe test262 --backend native --root test262 --jobs 4 --progress --json reports\full-test262-summary.json
+```
