@@ -373,6 +373,7 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
         error_prototype,
         regexp_prototype,
     });
+    context.set_prototype_of(context.global_object(), Some(object_prototype))?;
 
     let mut console_object = JsObject::ordinary();
     console_object.prototype = Some(object_prototype);

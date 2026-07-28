@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use regex::Regex;
+use fancy_regex::Regex;
 
 use super::{
     ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction, BuiltinId,
@@ -212,6 +212,7 @@ pub struct NativeContext {
     strict: bool,
     top_level_this: JsValue,
     output: Vec<String>,
+    temporary_roots: Vec<JsValue>,
     budget: ExecutionBudget,
     call_depth: u64,
     gc_allocation_threshold: usize,
@@ -302,6 +303,7 @@ impl NativeContext {
             strict: false,
             top_level_this: JsValue::Object(global_object),
             output: Vec::new(),
+            temporary_roots: Vec::new(),
             budget: ExecutionBudget::default(),
             call_depth: 0,
             gc_allocation_threshold: 10_000,
@@ -405,6 +407,19 @@ impl NativeContext {
         roots
     }
 
+    pub(crate) fn push_temporary_roots(
+        &mut self,
+        roots: impl IntoIterator<Item = JsValue>,
+    ) -> usize {
+        let base = self.temporary_roots.len();
+        self.temporary_roots.extend(roots);
+        base
+    }
+
+    pub(crate) fn truncate_temporary_roots(&mut self, base: usize) {
+        self.temporary_roots.truncate(base);
+    }
+
     fn complete_root_set(&self, roots: &RootSet) -> RootSet {
         let mut roots = roots.clone();
         self.add_internal_roots(&mut roots);
@@ -414,6 +429,9 @@ impl NativeContext {
     fn add_internal_roots(&self, roots: &mut RootSet) {
         roots.object_roots.push(self.global_object);
         roots.value_roots.push(self.top_level_this.clone());
+        roots
+            .value_roots
+            .extend(self.temporary_roots.iter().cloned());
         roots.value_roots.extend(
             self.private_slots
                 .values()
@@ -1940,6 +1958,9 @@ impl NativeContext {
             }
             current = environment.outer;
         }
+        if let Some(value) = self.with_environment_property_value(self.global_object, name)? {
+            return Ok(Some((self.global_environment, value)));
+        }
         Ok(None)
     }
 
@@ -2007,6 +2028,10 @@ impl NativeContext {
                 return self.refresh_module_namespace_binding(id, name, value);
             }
             current = outer;
+        }
+        if self.has_property(self.global_object, name)? {
+            self.set_object_property(self.global_object, name, value, self.strict)?;
+            return Ok(());
         }
         // Non-strict: unresolvable reference creates a global binding (PutValue spec step).
         // Add to global environment so resolve_binding_value can find it later.
@@ -2848,8 +2873,34 @@ impl NativeContext {
         let strict = self.strict;
         // `set` returns Ok(false) for non-writable in sloppy mode (silent ignore per spec),
         // and Err(TypeError) for non-writable in strict mode — both are correct here.
-        self.set(object, &name, value.clone(), strict)?;
+        let updated = self.set(object.clone(), &name, value.clone(), strict)?;
+        if updated {
+            self.synchronize_global_object_binding(&object, &name, value.clone())?;
+        }
         Ok(value)
+    }
+
+    pub(crate) fn synchronize_global_object_binding(
+        &mut self,
+        receiver: &JsValue,
+        name: &str,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        if *receiver != JsValue::Object(self.global_object) {
+            return Ok(());
+        }
+        let global_binding_is_object_backed = self
+            .heap
+            .environment(self.global_environment)
+            .and_then(|environment| environment.binding(name))
+            .is_some_and(|binding| !binding.lexical);
+        if global_binding_is_object_backed {
+            self.heap
+                .environment_mut(self.global_environment)
+                .expect("global environment must exist")
+                .set_mutable_binding(name, value)?;
+        }
+        Ok(())
     }
 
     pub fn get_element(&mut self, object: JsValue, key: JsValue) -> Result<JsValue, VmError> {
@@ -4638,9 +4689,9 @@ pub fn to_property_key(value: &JsValue) -> Result<PropertyKey, VmError> {
         JsValue::Object(_)
         | JsValue::Function(_)
         | JsValue::BuiltinFunction(_)
-        | JsValue::Error(_) => Err(VmError::type_error(
-            "object property keys are not supported in native V4",
-        )),
+        | JsValue::Error(_) => Err(VmError::type_error(format!(
+            "object property key {value} requires ToPrimitive"
+        ))),
     }
 }
 

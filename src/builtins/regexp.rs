@@ -2,7 +2,7 @@
 //!
 //! The thin adapter layer in `v6.rs` bridges these into the runtime.
 
-use regex::{Regex, RegexBuilder};
+use fancy_regex::{Regex, RegexBuilder};
 
 const MAX_REPLACEMENT_OUTPUT_BYTES: usize = 1 << 23;
 
@@ -32,11 +32,35 @@ pub fn compile_regex(pattern: &str, flags: &str) -> Result<Regex, String> {
 }
 
 fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
+    // Native strings store Unicode scalar values rather than exposed UTF-16
+    // code units. A legacy JS pattern that explicitly matches a high-surrogate
+    // followed by a low-surrogate therefore corresponds to one astral scalar.
+    let normalized_surrogate_pairs =
+        pattern.replace(r"[\uD800-\uDBFF][\uDC00-\uDFFF]", r"[\u{10000}-\u{10FFFF}]");
+    let pattern = normalized_surrogate_pairs.as_str();
     let needs_dot = pattern.contains('.');
     // \0 in JS regex = null char; Rust regex treats \0 as a backreference (error).
     let needs_null = pattern.contains("\\0");
+    // JavaScript control-letter escapes (`\cA` through `\cZ`) are not
+    // recognized by the Rust regex parser.
+    let needs_control_escape = pattern.contains("\\c");
     let unicode_mode = flags.contains('u') || flags.contains('v');
-    if !needs_null && (!needs_dot || (flags.contains('s') && unicode_mode)) {
+    let needs_legacy_class_open = !unicode_mode
+        && pattern
+            .chars()
+            .filter(|character| *character == '[')
+            .count()
+            > 1;
+    let needs_legacy_class_escape_range = !unicode_mode
+        && [r"\d-", r"\D-", r"\s-", r"\S-", r"\w-", r"\W-"]
+            .iter()
+            .any(|escape| pattern.contains(escape));
+    if !needs_null
+        && !needs_control_escape
+        && !needs_legacy_class_open
+        && !needs_legacy_class_escape_range
+        && (!needs_dot || (flags.contains('s') && unicode_mode))
+    {
         return pattern.to_string();
     }
     let dot_replacement = if flags.contains('s') && unicode_mode {
@@ -56,6 +80,22 @@ fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
             if let Some(next) = chars.next() {
                 if next == '0' && !chars.peek().is_some_and(char::is_ascii_digit) {
                     output.push_str(r"\x00");
+                } else if in_class
+                    && !unicode_mode
+                    && matches!(next, 'd' | 'D' | 's' | 'S' | 'w' | 'W')
+                    && chars.peek() == Some(&'-')
+                {
+                    chars.next();
+                    output.push('\\');
+                    output.push(next);
+                    output.push_str(r"\-");
+                } else if next == 'c'
+                    && let Some(control) = chars.peek().copied()
+                    && control.is_ascii_alphabetic()
+                {
+                    chars.next();
+                    let code = (control.to_ascii_uppercase() as u8) & 0x1f;
+                    output.push_str(&format!(r"\x{code:02X}"));
                 } else {
                     output.push(ch);
                     output.push(next);
@@ -66,8 +106,12 @@ fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
             continue;
         }
         if ch == '[' {
-            in_class = true;
-            output.push(ch);
+            if in_class && !flags.contains('v') {
+                output.push_str(r"\[");
+            } else {
+                in_class = true;
+                output.push(ch);
+            }
             continue;
         }
         if ch == ']' {
@@ -98,6 +142,8 @@ pub fn is_global(flags: &str) -> bool {
 pub fn search(regex: &Regex, text: &str) -> Option<usize> {
     regex
         .find(text)
+        .ok()
+        .flatten()
         .map(|m| text[..m.start()].encode_utf16().count())
 }
 
@@ -105,7 +151,7 @@ pub fn search(regex: &Regex, text: &str) -> Option<usize> {
 /// The returned vector has the full match at index 0 followed by capture groups
 /// (as `Option<String>` where `None` represents an unmatched optional group).
 pub fn exec_once(regex: &Regex, text: &str) -> Option<Vec<Option<String>>> {
-    regex.captures(text).map(|caps| {
+    regex.captures(text).ok().flatten().map(|caps| {
         (0..caps.len())
             .map(|i| caps.get(i).map(|m| m.as_str().to_owned()))
             .collect()
@@ -116,6 +162,7 @@ pub fn exec_once(regex: &Regex, text: &str) -> Option<Vec<Option<String>>> {
 pub fn exec_global(regex: &Regex, text: &str) -> Vec<String> {
     regex
         .find_iter(text)
+        .filter_map(Result::ok)
         .map(|m| m.as_str().to_owned())
         .collect()
 }
@@ -216,7 +263,10 @@ pub fn replace_first(regex: &Regex, text: &str, replacement: &str) -> Replacemen
     if !replacement.contains('$') {
         return replace_first_literal(regex, text, replacement);
     }
-    let Some(caps) = regex.captures(text) else {
+    let Some(caps) = regex
+        .captures(text)
+        .map_err(|_| "regexp execution limit exceeded")?
+    else {
         return Ok(text.to_owned());
     };
     let m = caps.get(0).unwrap();
@@ -241,6 +291,7 @@ pub fn replace_all(regex: &Regex, text: &str, replacement: &str) -> ReplacementR
     let mut result = String::new();
     let mut last_end = 0;
     for caps in regex.captures_iter(text) {
+        let caps = caps.map_err(|_| "regexp execution limit exceeded")?;
         let m = caps.get(0).unwrap();
         let before = &text[last_end..m.start()];
         let full_match = m.as_str();
@@ -268,7 +319,10 @@ fn replace_first_literal(
     text: &str,
     replacement: &str,
 ) -> ReplacementResult<String> {
-    let Some(m) = regex.find(text) else {
+    let Some(m) = regex
+        .find(text)
+        .map_err(|_| "regexp execution limit exceeded")?
+    else {
         return Ok(text.to_owned());
     };
     let mut result = String::with_capacity(
@@ -286,6 +340,7 @@ fn replace_all_literal(regex: &Regex, text: &str, replacement: &str) -> Replacem
     let mut result = String::with_capacity(text.len());
     let mut last_end = 0;
     for m in regex.find_iter(text) {
+        let m = m.map_err(|_| "regexp execution limit exceeded")?;
         push_str_checked(&mut result, &text[last_end..m.start()])?;
         push_str_checked(&mut result, replacement)?;
         last_end = m.end();
@@ -312,7 +367,7 @@ pub struct MatchDetail {
 /// [`MatchDetail`] entries. Used by builtin replace with function callback.
 pub fn matches_with_detail(regex: &Regex, text: &str, global: bool) -> Vec<MatchDetail> {
     let mut out = Vec::new();
-    for caps in regex.captures_iter(text) {
+    for caps in regex.captures_iter(text).filter_map(Result::ok) {
         let m = caps.get(0).unwrap();
         let index = text[..m.start()].encode_utf16().count();
         let full_match = m.as_str().to_owned();
@@ -342,7 +397,7 @@ pub fn split(regex: &Regex, text: &str, limit: Option<usize>) -> Vec<Option<Stri
     let mut result: Vec<Option<String>> = Vec::new();
     let mut last_end = 0;
 
-    for caps in regex.captures_iter(text) {
+    for caps in regex.captures_iter(text).filter_map(Result::ok) {
         let m = caps.get(0).unwrap();
         if result.len() >= limit {
             break;
@@ -377,8 +432,61 @@ mod tests {
     fn js_nul_escape_compiles_for_rust_regex() {
         let regex = compile_regex(r"[\0\t]", "").expect("JS NUL escape should compile");
 
-        assert!(regex.is_match("\0"));
-        assert!(regex.is_match("\t"));
-        assert!(!regex.is_match("x"));
+        assert!(regex.is_match("\0").unwrap());
+        assert!(regex.is_match("\t").unwrap());
+        assert!(!regex.is_match("x").unwrap());
+    }
+
+    #[test]
+    fn js_control_letter_escape_compiles_for_rust_regex() {
+        let regex = compile_regex(r"^[^\cX]+$", "").expect("JS control escape should compile");
+
+        assert!(regex.is_match("plain text").unwrap());
+        assert!(!regex.is_match("\u{18}").unwrap());
+    }
+
+    #[test]
+    fn numeric_backreferences_require_the_same_captured_text() {
+        let regex = compile_regex(
+            r"^(?:[0-9a-fA-F]{2}([-:\s]))([0-9a-fA-F]{2}\1){4}([0-9a-fA-F]{2})$",
+            "",
+        )
+        .expect("numeric backreference should compile");
+
+        assert!(regex.is_match("00:11:22:33:44:55").unwrap());
+        assert!(regex.is_match("00-11-22-33-44-55").unwrap());
+        assert!(!regex.is_match("00:11-22:33:44:55").unwrap());
+    }
+
+    #[test]
+    fn non_unicode_character_class_accepts_a_literal_open_bracket() {
+        let regex = compile_regex(r"[-[\]{}()*+?.,\\^$|#\s]", "g")
+            .expect("literal open bracket in a legacy character class should compile");
+
+        assert!(regex.is_match("[").unwrap());
+        assert!(regex.is_match("]").unwrap());
+        assert!(regex.is_match(" ").unwrap());
+        assert!(!regex.is_match("a").unwrap());
+    }
+
+    #[test]
+    fn legacy_surrogate_pair_range_matches_an_astral_scalar() {
+        let regex = compile_regex(r"[\uD800-\uDBFF][\uDC00-\uDFFF]", "g")
+            .expect("legacy surrogate-pair range should compile");
+
+        assert!(regex.is_match("😀").unwrap());
+        assert!(!regex.is_match("a").unwrap());
+    }
+
+    #[test]
+    fn legacy_class_escape_range_treats_the_hyphen_as_a_literal() {
+        let regex =
+            compile_regex(r"^[^\s-_]$", "").expect("legacy class-escape range should compile");
+
+        assert!(regex.is_match("a").unwrap());
+        assert!(regex.is_match("s").unwrap());
+        assert!(!regex.is_match(" ").unwrap());
+        assert!(!regex.is_match("-").unwrap());
+        assert!(!regex.is_match("_").unwrap());
     }
 }

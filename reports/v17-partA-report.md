@@ -166,3 +166,41 @@ Newly passing Test262 cases:
 
 - `optional-call-preserves-this.js`
 - `super-property-optional-call.js`
+
+## JetStream dynamic source and global binding follow-up
+
+The repaired JetStream3 runners exposed three frontend/runtime boundary gaps:
+
+- `return}` in minified dynamic `Function` source did not apply automatic
+  semicolon insertion.
+- Dynamic functions did not resolve data properties added to the global
+  object after compilation (the UMD export pattern used by threejs).
+- `LoadGlobal` only checked own global properties, so inherited
+  `Object.prototype` bindings such as `toString` were invisible.
+
+Changes:
+
+- Treat a closing brace as an empty-return ASI boundary.
+- Fall back from environment bindings to the global object record, including
+  dynamic functions and inherited global properties.
+- Keep global `var` bindings synchronized with successful `globalThis`
+  writes.
+- Give each generated workload a local `JetStream` facade while retaining a
+  separate lexical Driver binding.
+
+Focused validation:
+
+| Suite | Result |
+|---|---:|
+| `language/statements/return` | 15/16, 0 skipped |
+| `language/global-code` | 24/42, 0 skipped |
+| `tests/jetstream_function_constructor.rs` | 16/16 |
+
+Runner status after the changes:
+
+- threejs advances past the missing `THREE` binding and reaches the 90-second
+  diagnostic timeout.
+- validatorjs advances through dynamic source compilation and global
+  `toString`; its next unsupported feature is RegExp backreferences.
+- jsdom-d3-startup, mobx, and web-ssr now identify missing embedded preload
+  resources instead of failing with an undefined callable.

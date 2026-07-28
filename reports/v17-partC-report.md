@@ -225,3 +225,25 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 target\release\agentjs.exe test262 --root test262 --suite test\built-ins\Temporal --jobs 4 --json reports\.native-test262-tmp\temporal-plus-103-summary.json
 ```
+
+## JetStream RegExp compatibility follow-up
+
+- Translate JavaScript control-letter escapes such as `\cX` to the
+  corresponding control code before compiling with the Rust regex backend.
+- Install the `RegExp` `Symbol.toStringTag`, allowing validatorjs to recognize
+  regular expressions through `Object.prototype.toString.call(value)`.
+- Added focused tests for control escapes and both literal/constructed RegExp
+  branding.
+
+Validation:
+
+| Suite | Result |
+|---|---:|
+| `test/built-ins/RegExp` | 1464/1879, 0 skipped |
+| control-letter translation unit test | pass |
+| RegExp branding integration test | pass |
+
+validatorjs now executes its assertion corpus until it reaches a pattern with
+numeric backreferences. The current Rust `regex` backend does not support
+backreferences; resolving that remaining item requires a backtracking-capable
+backend or a separate compatibility execution path.
