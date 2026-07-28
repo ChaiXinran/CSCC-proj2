@@ -1007,7 +1007,7 @@ fn validate_plain_date_time_tail(input: &str) -> Option<()> {
     let (head, fraction) = compact
         .split_once('.')
         .map_or((compact.as_str(), ""), |(head, fraction)| (head, fraction));
-    if !fraction.is_empty() && parse_fraction_to_ns(fraction).is_none() {
+    if !fraction.is_empty() && (head.len() != 6 || parse_fraction_to_ns(fraction).is_none()) {
         return None;
     }
     if head.len() != 2 && head.len() != 4 && head.len() != 6 {
@@ -1154,6 +1154,7 @@ fn parse_time_zone_offset_ns_impl(input: &str, allow_subminute: bool) -> Option<
     if (colon_count > 0 && !matches!(colon_count, 1 | 2))
         || !matches!(compact.len(), 2 | 4 | 6)
         || (colon_count > 0 && compact.len() != (colon_count + 1) * 2)
+        || (!fraction_text.is_empty() && compact.len() != 6)
         || !compact.chars().all(|ch| ch.is_ascii_digit())
     {
         return None;
@@ -4031,7 +4032,7 @@ fn install_temporal_duration(
         0,
         temporal_duration_to_string,
     )?;
-    define_method(context, prototype, "toJSON", 0, temporal_duration_to_string)?;
+    define_method(context, prototype, "toJSON", 0, temporal_duration_to_json)?;
     define_method(context, prototype, "valueOf", 0, temporal_value_of)?;
     for (name, getter, slot) in [
         ("years", "get years", "years"),
@@ -4544,6 +4545,22 @@ fn validate_duration_values(values: DurationValues) -> Result<DurationValues, Vm
             sign = next;
         }
     }
+    if values.years.abs() > MAX_DURATION_DATE_FIELD
+        || values.months.abs() > MAX_DURATION_DATE_FIELD
+        || values.weeks.abs() > MAX_DURATION_DATE_FIELD
+    {
+        return Err(VmError::range("Temporal.Duration fields are out of range"));
+    }
+    let total_time_ns = values.days as i128 * NS_PER_DAY_I128
+        + values.hours as i128 * NS_PER_HOUR_I128
+        + values.minutes as i128 * NS_PER_MINUTE_I128
+        + values.seconds as i128 * NS_PER_SECOND_I128
+        + values.milliseconds as i128 * NS_PER_MILLISECOND_I128
+        + values.microseconds as i128 * 1_000
+        + values.nanoseconds as i128;
+    if total_time_ns.abs() > MAX_DURATION_TOTAL_NS {
+        return Err(VmError::range("Temporal.Duration fields are out of range"));
+    }
     Ok(values)
 }
 
@@ -4810,9 +4827,11 @@ fn duration_total_unit(
     context: &mut NativeContext,
     value: Option<JsValue>,
 ) -> Result<(String, bool), VmError> {
-    match value.unwrap_or(JsValue::Undefined) {
+    let value = value.unwrap_or(JsValue::Undefined);
+    match value {
         JsValue::String(unit) => Ok((normalize_temporal_unit(unit)?, false)),
-        JsValue::Object(object) => {
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            let object = context.require_object(&value, "Temporal.Duration.prototype.total")?;
             let relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
             let unit = temporal_get_property(vm, context, object, "unit")?;
             if matches!(unit, JsValue::Undefined) {
@@ -4850,7 +4869,7 @@ fn validate_temporal_relative_to(
         JsValue::Object(object) => {
             if matches!(
                 own_string(context, object, TEMPORAL_KIND).as_deref(),
-                Some("PlainDate" | "ZonedDateTime")
+                Some("PlainDate" | "PlainDateTime" | "ZonedDateTime")
             ) {
                 return Ok(true);
             }
@@ -4862,12 +4881,27 @@ fn validate_temporal_relative_to(
             let day = temporal_required_object_number(vm, context, object, "day")?;
             temporal_calendar_id_from_object(vm, context, object)?;
             validate_plain_date(year, month, day)?;
+            validate_plain_time(PlainTimeValues {
+                hour: temporal_object_number(vm, context, object, "hour")?,
+                minute: temporal_object_number(vm, context, object, "minute")?,
+                second: constrain_time_second(temporal_object_number(
+                    vm, context, object, "second",
+                )?),
+                millisecond: temporal_object_number(vm, context, object, "millisecond")?,
+                microsecond: temporal_object_number(vm, context, object, "microsecond")?,
+                nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
+            })?;
             let time_zone = temporal_get_property(vm, context, object, "timeZone")?;
             if !matches!(time_zone, JsValue::Undefined) {
                 temporal_time_zone_string(vm, context, time_zone)?;
                 let offset = temporal_get_property(vm, context, object, "offset")?;
                 if !matches!(offset, JsValue::Undefined) {
-                    let text = vm.to_string_coerce(offset, context)?;
+                    let text = temporal_string_or_object_to_string(
+                        vm,
+                        context,
+                        offset,
+                        "Temporal relativeTo offset must be a string",
+                    )?;
                     parse_iso_time_zone_offset_ns(&text)
                         .ok_or_else(|| VmError::range("invalid Temporal relativeTo offset"))?;
                 }
@@ -4889,34 +4923,65 @@ fn temporal_duration_with(
         &arguments.first().cloned().unwrap_or(JsValue::Undefined),
         "Temporal.Duration.prototype.with",
     )?;
-    values.years = duration_replacement(vm, context, object, "years", values.years)?;
-    values.months = duration_replacement(vm, context, object, "months", values.months)?;
-    values.weeks = duration_replacement(vm, context, object, "weeks", values.weeks)?;
-    values.days = duration_replacement(vm, context, object, "days", values.days)?;
-    values.hours = duration_replacement(vm, context, object, "hours", values.hours)?;
-    values.minutes = duration_replacement(vm, context, object, "minutes", values.minutes)?;
-    values.seconds = duration_replacement(vm, context, object, "seconds", values.seconds)?;
-    values.milliseconds =
-        duration_replacement(vm, context, object, "milliseconds", values.milliseconds)?;
-    values.microseconds =
-        duration_replacement(vm, context, object, "microseconds", values.microseconds)?;
-    values.nanoseconds =
-        duration_replacement(vm, context, object, "nanoseconds", values.nanoseconds)?;
-    create_duration_with_default_prototype(context, values)
+
+    // PrepareTemporalFields observes duration-like properties in alphabetical
+    // order and converts each value immediately after reading it.
+    let days = duration_partial_field(vm, context, object, "days")?;
+    let hours = duration_partial_field(vm, context, object, "hours")?;
+    let microseconds = duration_partial_field(vm, context, object, "microseconds")?;
+    let milliseconds = duration_partial_field(vm, context, object, "milliseconds")?;
+    let minutes = duration_partial_field(vm, context, object, "minutes")?;
+    let months = duration_partial_field(vm, context, object, "months")?;
+    let nanoseconds = duration_partial_field(vm, context, object, "nanoseconds")?;
+    let seconds = duration_partial_field(vm, context, object, "seconds")?;
+    let weeks = duration_partial_field(vm, context, object, "weeks")?;
+    let years = duration_partial_field(vm, context, object, "years")?;
+
+    if [
+        days,
+        hours,
+        microseconds,
+        milliseconds,
+        minutes,
+        months,
+        nanoseconds,
+        seconds,
+        weeks,
+        years,
+    ]
+    .iter()
+    .all(Option::is_none)
+    {
+        return Err(VmError::type_error(
+            "Temporal duration-like object has no duration properties",
+        ));
+    }
+
+    values.days = days.unwrap_or(values.days);
+    values.hours = hours.unwrap_or(values.hours);
+    values.microseconds = microseconds.unwrap_or(values.microseconds);
+    values.milliseconds = milliseconds.unwrap_or(values.milliseconds);
+    values.minutes = minutes.unwrap_or(values.minutes);
+    values.months = months.unwrap_or(values.months);
+    values.nanoseconds = nanoseconds.unwrap_or(values.nanoseconds);
+    values.seconds = seconds.unwrap_or(values.seconds);
+    values.weeks = weeks.unwrap_or(values.weeks);
+    values.years = years.unwrap_or(values.years);
+
+    create_duration_with_default_prototype(context, validate_duration_values(values)?)
 }
 
-fn duration_replacement(
+fn duration_partial_field(
     vm: &mut Vm,
     context: &mut NativeContext,
     object: ObjectId,
     name: &str,
-    current: f64,
-) -> Result<f64, VmError> {
+) -> Result<Option<f64>, VmError> {
     let value = temporal_get_property(vm, context, object, name)?;
     if matches!(value, JsValue::Undefined) {
-        Ok(current)
+        Ok(None)
     } else {
-        duration_integer(vm.to_number(value, context)?)
+        duration_integer(vm.to_number(value, context)?).map(Some)
     }
 }
 
@@ -4938,7 +5003,10 @@ fn temporal_duration_compare(
     )?;
     let relative_to = match arguments.get(2).cloned().unwrap_or(JsValue::Undefined) {
         JsValue::Undefined => JsValue::Undefined,
-        JsValue::Object(options) => temporal_get_property(vm, context, options, "relativeTo")?,
+        options @ (JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)) => {
+            let options = context.require_object(&options, "Temporal.Duration.compare options")?;
+            temporal_get_property(vm, context, options, "relativeTo")?
+        }
         _ => {
             return Err(VmError::type_error(
                 "Temporal.Duration.compare options must be an object",
@@ -4995,6 +5063,8 @@ const NS_PER_SECOND: f64 = 1_000_000_000.0;
 const NS_PER_MINUTE: f64 = 60.0 * NS_PER_SECOND;
 const NS_PER_HOUR: f64 = 60.0 * NS_PER_MINUTE;
 const NS_PER_DAY: f64 = 24.0 * NS_PER_HOUR;
+const MAX_DURATION_DATE_FIELD: f64 = 4_294_967_295.0;
+const MAX_DURATION_TOTAL_NS: i128 = 9_007_199_254_740_991_999_999_999;
 
 fn duration_time_nanoseconds(values: DurationValues) -> f64 {
     values.hours * NS_PER_HOUR
@@ -5073,12 +5143,46 @@ fn temporal_get_property(
     object: ObjectId,
     name: &str,
 ) -> Result<JsValue, VmError> {
-    vm.get_property_value_with_receiver_from_builtin(
-        JsValue::Object(object),
-        JsValue::Object(object),
-        name,
-        context,
-    )
+    vm.get_property_value(JsValue::Object(object), name, context)
+}
+
+fn temporal_string_or_object_to_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    error: &str,
+) -> Result<String, VmError> {
+    match value {
+        JsValue::String(text) => Ok(text),
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            vm.to_string_coerce(value, context)
+        }
+        _ => Err(VmError::type_error(error)),
+    }
+}
+
+fn temporal_month_code_to_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<String, VmError> {
+    let primitive = match value {
+        JsValue::String(text) => return Ok(text),
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
+            vm.to_primitive(value, PreferredType::String, context)?
+        }
+        _ => {
+            return Err(VmError::type_error(
+                "Temporal monthCode property must be a string",
+            ));
+        }
+    };
+    match primitive {
+        JsValue::String(text) => Ok(text),
+        _ => Err(VmError::type_error(
+            "Temporal monthCode property must be a string",
+        )),
+    }
 }
 
 fn temporal_object_number(
@@ -5088,8 +5192,17 @@ fn temporal_object_number(
     name: &str,
 ) -> Result<f64, VmError> {
     let value = temporal_get_property(vm, context, object, name)?;
+    temporal_number_or_default_from_value(vm, context, value, 0.0)
+}
+
+fn temporal_number_or_default_from_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    default: f64,
+) -> Result<f64, VmError> {
     if matches!(value, JsValue::Undefined) {
-        Ok(0.0)
+        Ok(default)
     } else {
         vm.to_number(value, context)
     }
@@ -5209,11 +5322,12 @@ fn temporal_required_month_from_object(
     let month_code = if matches!(month_code_value, JsValue::Undefined) {
         None
     } else {
-        let JsValue::String(text) = month_code_value else {
-            return Err(VmError::type_error(
-                "Temporal monthCode property must be a string",
-            ));
-        };
+        let text = temporal_string_or_object_to_string(
+            vm,
+            context,
+            month_code_value,
+            "Temporal monthCode property must be a string",
+        )?;
         let parsed =
             parse_month_code(&text).ok_or_else(|| VmError::range("invalid Temporal monthCode"))?;
         if calendar == Some("iso8601") && (parsed > 12.0 || text.ends_with('L')) {
@@ -5279,12 +5393,8 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
         if number.is_empty() || number == "." {
             return None;
         }
-        let amount = number.parse::<f64>().ok()?;
-        if !amount.is_finite() {
-            return None;
-        }
         let designator = chars.next()?;
-        let fractional = amount.fract() != 0.0;
+        let fractional = number.contains('.');
         if fractional && chars.peek().is_some() {
             return None;
         }
@@ -5305,6 +5415,14 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
             return None;
         }
         saw_part = true;
+        if designator == 'S' && in_time {
+            parse_duration_seconds_part(&number, duration_sign, &mut values)?;
+            continue;
+        }
+        let amount = number.parse::<f64>().ok()?;
+        if !amount.is_finite() {
+            return None;
+        }
         let signed = duration_sign * amount;
         match (designator, in_time) {
             ('Y', false) if !fractional => values.years = signed,
@@ -5336,21 +5454,52 @@ fn parse_duration(text: &str) -> Option<DurationValues> {
                 values.microseconds += balanced.microseconds;
                 values.nanoseconds += balanced.nanoseconds;
             }
-            ('S', true) => {
-                values.seconds += duration_sign * amount.trunc();
-                let total = (duration_sign * amount.fract() * NS_PER_SECOND).round();
-                let balanced = balance_duration(DurationValues {
-                    nanoseconds: total,
-                    ..DurationValues::default()
-                });
-                values.milliseconds += balanced.milliseconds;
-                values.microseconds += balanced.microseconds;
-                values.nanoseconds += balanced.nanoseconds;
-            }
             _ => return None,
         }
     }
     saw_part.then_some(values)
+}
+
+fn parse_duration_seconds_part(
+    number: &str,
+    duration_sign: f64,
+    values: &mut DurationValues,
+) -> Option<()> {
+    let mut parts = number.split('.');
+    let whole = parts.next()?;
+    let fraction = parts.next();
+    if parts.next().is_some() {
+        return None;
+    }
+    let seconds = if whole.is_empty() {
+        0.0
+    } else {
+        let value = whole.parse::<f64>().ok()?;
+        if !value.is_finite() {
+            return None;
+        }
+        value
+    };
+    values.seconds += duration_sign * seconds;
+    let Some(fraction) = fraction else {
+        return Some(());
+    };
+    if fraction.len() > 9 {
+        return None;
+    }
+    let mut padded = fraction.to_string();
+    while padded.len() < 9 {
+        padded.push('0');
+    }
+    let subsecond_ns = if padded.is_empty() {
+        0
+    } else {
+        padded.parse::<u32>().ok()?
+    };
+    values.milliseconds += duration_sign * (subsecond_ns / 1_000_000) as f64;
+    values.microseconds += duration_sign * ((subsecond_ns / 1_000) % 1_000) as f64;
+    values.nanoseconds += duration_sign * (subsecond_ns % 1_000) as f64;
+    Some(())
 }
 
 fn temporal_duration_to_string(
@@ -5386,19 +5535,14 @@ fn temporal_duration_to_string(
         microseconds: temporal_number_slot(context, object, "microseconds"),
         nanoseconds: temporal_number_slot(context, object, "nanoseconds"),
     };
-    let total_ns = values.hours as i128 * NS_PER_HOUR_I128
-        + values.minutes as i128 * NS_PER_MINUTE_I128
-        + values.seconds as i128 * NS_PER_SECOND_I128
+    let original_seconds = values.seconds;
+    let total_ns = values.seconds as i128 * NS_PER_SECOND_I128
         + values.milliseconds as i128 * NS_PER_MILLISECOND_I128
         + values.microseconds as i128 * 1_000
         + values.nanoseconds as i128;
     let rounded = round_signed_i128(total_ns, options.quantum, options.mode);
     let negative = rounded < 0;
     let mut remainder = rounded.unsigned_abs();
-    let hours = remainder / NS_PER_HOUR_I128 as u128;
-    remainder %= NS_PER_HOUR_I128 as u128;
-    let minutes = remainder / NS_PER_MINUTE_I128 as u128;
-    remainder %= NS_PER_MINUTE_I128 as u128;
     let seconds = remainder / NS_PER_SECOND_I128 as u128;
     remainder %= NS_PER_SECOND_I128 as u128;
     let milliseconds = remainder / NS_PER_MILLISECOND_I128 as u128;
@@ -5406,13 +5550,89 @@ fn temporal_duration_to_string(
     let microseconds = remainder / 1_000;
     let nanoseconds = remainder % 1_000;
     let sign = if negative { -1.0 } else { 1.0 };
-    values.hours = sign * hours as f64;
-    values.minutes = sign * minutes as f64;
     values.seconds = sign * seconds as f64;
     values.milliseconds = sign * milliseconds as f64;
     values.microseconds = sign * microseconds as f64;
     values.nanoseconds = sign * nanoseconds as f64;
+    if original_seconds.abs() < 60.0
+        && values.seconds.abs() >= 60.0
+        && (values.days != 0.0 || values.hours != 0.0 || values.minutes != 0.0)
+    {
+        values = balance_duration(values);
+    }
     Ok(JsValue::String(format_duration(values, options.precision)))
+}
+
+fn temporal_duration_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_duration_to_string(vm, context, this_value, &[])
+}
+
+fn temporal_instant_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_instant_to_string(vm, context, this_value, &[])
+}
+
+fn temporal_plain_date_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_to_string(vm, context, this_value, &[])
+}
+
+fn temporal_plain_time_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_time_to_string(vm, context, this_value, &[])
+}
+
+fn temporal_plain_date_time_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_date_time_to_string(vm, context, this_value, &[])
+}
+
+fn temporal_plain_year_month_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_year_month_to_string(vm, context, this_value, &[])
+}
+
+fn temporal_plain_month_day_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_plain_month_day_to_string(vm, context, this_value, &[])
+}
+
+fn temporal_zoned_date_time_to_json(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    temporal_zoned_date_time_to_string(vm, context, this_value, &[])
 }
 
 fn push_duration_part(text: &mut String, value: f64, suffix: &str) {
@@ -5530,7 +5750,7 @@ fn install_temporal_instant(
         0,
         temporal_instant_to_string,
     )?;
-    define_method(context, prototype, "toJSON", 0, temporal_instant_to_string)?;
+    define_method(context, prototype, "toJSON", 0, temporal_instant_to_json)?;
     define_method(
         context,
         prototype,
@@ -6436,13 +6656,7 @@ fn install_temporal_plain_date(
         0,
         temporal_plain_date_to_string,
     )?;
-    define_method(
-        context,
-        prototype,
-        "toJSON",
-        0,
-        temporal_plain_date_to_string,
-    )?;
+    define_method(context, prototype, "toJSON", 0, temporal_plain_date_to_json)?;
     define_method(
         context,
         prototype,
@@ -6797,9 +7011,24 @@ fn temporal_calendar_from_argument(
         JsValue::Boolean(_) | JsValue::Number(_) | JsValue::BigInt(_) | JsValue::Symbol(_) => Err(
             VmError::type_error("Temporal calendar must be a string or object"),
         ),
-        JsValue::Object(_) => Err(VmError::type_error(
-            "Temporal calendar object is not supported by this calendar slot",
-        )),
+        JsValue::Object(object) => {
+            if matches!(
+                own_string(context, object, TEMPORAL_KIND).as_deref(),
+                Some(
+                    "PlainDate"
+                        | "PlainDateTime"
+                        | "PlainMonthDay"
+                        | "PlainYearMonth"
+                        | "ZonedDateTime"
+                )
+            ) {
+                Ok(own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()))
+            } else {
+                Err(VmError::type_error(
+                    "Temporal calendar object is not supported by this calendar slot",
+                ))
+            }
+        }
         value => {
             let text = vm.to_string_coerce(value, context)?;
             normalize_temporal_calendar_string(&text)
@@ -6863,6 +7092,16 @@ fn temporal_date_replacement(
     current: f64,
 ) -> Result<f64, VmError> {
     let value = temporal_get_property(vm, context, object, name)?;
+    temporal_date_replacement_from_value(vm, context, value, name, current)
+}
+
+fn temporal_date_replacement_from_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+    name: &str,
+    current: f64,
+) -> Result<f64, VmError> {
     if matches!(value, JsValue::Undefined) {
         Ok(current)
     } else {
@@ -6888,11 +7127,12 @@ fn temporal_month_from_object(
     let month_code = if matches!(month_code_value, JsValue::Undefined) {
         None
     } else {
-        let JsValue::String(value) = month_code_value else {
-            return Err(VmError::type_error(
-                "Temporal monthCode property must be a string",
-            ));
-        };
+        let value = temporal_string_or_object_to_string(
+            vm,
+            context,
+            month_code_value,
+            "Temporal monthCode property must be a string",
+        )?;
         Some(parse_month_code(&value).ok_or_else(|| VmError::range("invalid Temporal monthCode"))?)
     };
     let month = if matches!(month_value, JsValue::Undefined) {
@@ -7395,6 +7635,11 @@ fn temporal_plain_date_with_calendar(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainDate")?;
+    if matches!(arguments.first(), None | Some(JsValue::Undefined)) {
+        return Err(VmError::type_error(
+            "Temporal.PlainDate.prototype.withCalendar requires a calendar",
+        ));
+    }
     let calendar_id = temporal_calendar_from_argument(vm, context, arguments.first())?;
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
     create_plain_date_with_calendar(
@@ -7675,13 +7920,7 @@ fn install_temporal_plain_time(
         0,
         temporal_plain_time_to_string,
     )?;
-    define_method(
-        context,
-        prototype,
-        "toJSON",
-        0,
-        temporal_plain_time_to_string,
-    )?;
+    define_method(context, prototype, "toJSON", 0, temporal_plain_time_to_json)?;
     define_method(
         context,
         prototype,
@@ -7826,7 +8065,7 @@ fn temporal_plain_time_construct(
 }
 
 fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
-    let body = validate_iso_calendar_annotations(text.trim())?;
+    let body = validate_temporal_annotations(text.trim())?;
     let separator = body
         .rfind('T')
         .or_else(|| body.rfind('t'))
@@ -7838,6 +8077,9 @@ fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
         }
         &body[index + 1..]
     } else {
+        if !body.starts_with(['T', 't']) && is_ambiguous_plain_time_string(body) {
+            return None;
+        }
         body.strip_prefix('T')
             .or_else(|| body.strip_prefix('t'))
             .unwrap_or(body)
@@ -7907,6 +8149,29 @@ fn parse_plain_time(text: &str) -> Option<PlainTimeValues> {
         microsecond: ((fraction / 1_000) % 1_000) as f64,
         nanosecond: (fraction % 1_000) as f64,
     })
+}
+
+fn is_ambiguous_plain_time_string(text: &str) -> bool {
+    let text = text.split('[').next().unwrap_or(text);
+    if text.len() == 4 && text.chars().all(|ch| ch.is_ascii_digit()) {
+        let month = parse_fixed_digits(&text[..2], 2).unwrap_or(0);
+        let day = parse_fixed_digits(&text[2..], 2).unwrap_or(0);
+        return (1..=12).contains(&month) && (1..=month_day_count(2020, month)).contains(&day);
+    }
+    if text.len() == 5 && text.as_bytes().get(2).is_some_and(|ch| *ch == b'-') {
+        let month = parse_fixed_digits(&text[..2], 2).unwrap_or(0);
+        let day = parse_fixed_digits(&text[3..], 2).unwrap_or(0);
+        return (1..=12).contains(&month) && (1..=month_day_count(2020, month)).contains(&day);
+    }
+    if text.len() == 6 && text.chars().all(|ch| ch.is_ascii_digit()) {
+        let month = parse_fixed_digits(&text[4..], 2).unwrap_or(0);
+        return (1..=12).contains(&month);
+    }
+    if text.len() == 7 && text.as_bytes().get(4).is_some_and(|ch| *ch == b'-') {
+        let month = parse_fixed_digits(&text[5..], 2).unwrap_or(0);
+        return (1..=12).contains(&month);
+    }
+    false
 }
 
 fn parse_plain_date_time(text: &str) -> Option<(f64, f64, f64, PlainTimeValues)> {
@@ -7987,15 +8252,47 @@ fn plain_time_values_from_value(
         }
         value => {
             let object = context.require_object(&value, "Temporal.PlainTime value")?;
+            let hour = temporal_partial_number(vm, context, object, "hour")?;
+            let microsecond = temporal_partial_number(vm, context, object, "microsecond")?;
+            let millisecond = temporal_partial_number(vm, context, object, "millisecond")?;
+            let minute = temporal_partial_number(vm, context, object, "minute")?;
+            let nanosecond = temporal_partial_number(vm, context, object, "nanosecond")?;
+            let second = temporal_partial_number(vm, context, object, "second")?;
+            if [hour, microsecond, millisecond, minute, nanosecond, second]
+                .iter()
+                .all(Option::is_none)
+            {
+                return Err(VmError::type_error(
+                    "Temporal.PlainTime-like object has no time properties",
+                ));
+            }
             Ok(PlainTimeValues {
-                hour: temporal_object_number(vm, context, object, "hour")?,
-                minute: temporal_object_number(vm, context, object, "minute")?,
-                second: temporal_object_number(vm, context, object, "second")?,
-                millisecond: temporal_object_number(vm, context, object, "millisecond")?,
-                microsecond: temporal_object_number(vm, context, object, "microsecond")?,
-                nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
+                hour: hour.unwrap_or(0.0),
+                minute: minute.unwrap_or(0.0),
+                second: constrain_time_second(second.unwrap_or(0.0)),
+                millisecond: millisecond.unwrap_or(0.0),
+                microsecond: microsecond.unwrap_or(0.0),
+                nanosecond: nanosecond.unwrap_or(0.0),
             })
         }
+    }
+}
+
+fn constrain_time_second(second: f64) -> f64 {
+    if second == 60.0 { 59.0 } else { second }
+}
+
+fn temporal_partial_number(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    name: &str,
+) -> Result<Option<f64>, VmError> {
+    let value = temporal_get_property(vm, context, object, name)?;
+    if matches!(value, JsValue::Undefined) {
+        Ok(None)
+    } else {
+        Ok(Some(vm.to_number(value, context)?))
     }
 }
 
@@ -8107,20 +8404,22 @@ fn temporal_string_options(
     }
     let object = context.require_object(&value, "Temporal toString options")?;
     let fractional_value = temporal_get_property(vm, context, object, "fractionalSecondDigits")?;
-    let fractional_digits = if matches!(fractional_value, JsValue::Undefined) {
-        None
-    } else {
-        let text = vm.to_string_coerce(fractional_value, context)?;
-        if text == "auto" {
-            None
-        } else {
-            let number = text
-                .parse::<f64>()
-                .map_err(|_| VmError::range("invalid fractionalSecondDigits"))?;
-            if !number.is_finite() || !(0.0..=9.0).contains(&number) {
+    let fractional_digits = match fractional_value {
+        JsValue::Undefined => None,
+        JsValue::Number(number) => {
+            let digits = number.floor();
+            if !number.is_finite() || !(0.0..=9.0).contains(&digits) {
                 return Err(VmError::range("invalid fractionalSecondDigits"));
             }
-            Some(number.floor() as usize)
+            Some(digits as usize)
+        }
+        value => {
+            let text = vm.to_string_coerce(value, context)?;
+            if text == "auto" {
+                None
+            } else {
+                return Err(VmError::range("invalid fractionalSecondDigits"));
+            }
         }
     };
     let mode = temporal_round_mode(
@@ -8449,7 +8748,7 @@ fn install_temporal_plain_date_time(
         prototype,
         "toJSON",
         0,
-        temporal_plain_date_time_to_string,
+        temporal_plain_date_time_to_json,
     )?;
     define_method(
         context,
@@ -9066,6 +9365,11 @@ fn temporal_plain_date_time_with_calendar(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainDateTime")?;
+    if matches!(arguments.first(), None | Some(JsValue::Undefined)) {
+        return Err(VmError::type_error(
+            "Temporal.PlainDateTime.prototype.withCalendar requires a calendar",
+        ));
+    }
     let calendar_id = temporal_calendar_from_argument(vm, context, arguments.first())?;
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
     create_plain_date_time_with_calendar(
@@ -9303,6 +9607,25 @@ fn temporal_plain_date_time_difference(
         } else {
             (other_object, this_object)
         };
+        let calendar_values =
+            iso_date_difference_values(context, start, end, &options.largest_unit);
+        let same_local_time = plain_time_nanoseconds_i128(plain_date_time_values(context, start))
+            == plain_time_nanoseconds_i128(plain_date_time_values(context, end));
+        let exact_larger_unit = same_local_time
+            && match options.smallest_unit.as_str() {
+                "year" => {
+                    calendar_values.months == 0.0
+                        && calendar_values.weeks == 0.0
+                        && calendar_values.days == 0.0
+                }
+                "month" => calendar_values.weeks == 0.0 && calendar_values.days == 0.0,
+                "week" => calendar_values.days == 0.0,
+                "day" => true,
+                _ => false,
+            };
+        if exact_larger_unit {
+            return create_duration_with_default_prototype(context, calendar_values);
+        }
         let quantity =
             relative_plain_date_time_unit_quantity(context, start, end, &options.smallest_unit);
         let rounded = round_temporal_quantity(quantity, options.increment, options.mode);
@@ -9456,7 +9779,7 @@ fn plain_date_time_difference_options(
         "millisecond" | "microsecond" | "nanosecond" => 1_000,
         _ => 1,
     };
-    if !matches!(smallest_unit.as_str(), "year" | "month" | "week")
+    if !matches!(smallest_unit.as_str(), "year" | "month" | "week" | "day")
         && (increment >= maximum || maximum % increment != 0)
     {
         return Err(VmError::range("invalid Temporal rounding increment"));
@@ -9573,45 +9896,38 @@ fn temporal_calendar_id_from_object(
     if matches!(value, JsValue::Undefined) {
         Ok("iso8601".into())
     } else {
-        if let JsValue::Object(calendar_object) = value {
-            if matches!(
-                own_string(context, calendar_object, TEMPORAL_KIND).as_deref(),
-                Some(
-                    "PlainDate"
-                        | "PlainDateTime"
-                        | "PlainMonthDay"
-                        | "PlainYearMonth"
-                        | "ZonedDateTime"
-                )
-            ) {
-                return Ok(own_string(context, calendar_object, "calendarId")
-                    .unwrap_or_else(|| "iso8601".into()));
-            }
-            return Err(VmError::type_error(
-                "Temporal calendar must be a string or Temporal object",
-            ));
-        }
-        let JsValue::String(text) = value else {
-            return Err(VmError::type_error(
-                "Temporal calendar must be a string or Temporal object",
-            ));
-        };
-        if text.is_empty() || !text.is_ascii() {
-            Err(VmError::range("invalid Temporal calendar"))
-        } else {
-            let text = text.to_ascii_lowercase();
-            if parse_temporal_plain_date_string(&text).is_some()
-                || parse_plain_year_month(&text).is_some()
-                || parse_plain_month_day(&text).is_some()
-            {
-                Ok("iso8601".into())
-            } else if text.starts_with(|ch: char| ch.is_ascii_digit() || matches!(ch, '+' | '-')) {
-                Err(VmError::range("invalid Temporal calendar ISO string"))
-            } else {
-                Ok(canonicalize_temporal_calendar_id(&text))
-            }
-        }
+        temporal_calendar_id_from_value(context, value)
     }
+}
+
+fn temporal_calendar_id_from_value(
+    context: &NativeContext,
+    value: JsValue,
+) -> Result<String, VmError> {
+    if let JsValue::Object(calendar_object) = value {
+        if matches!(
+            own_string(context, calendar_object, TEMPORAL_KIND).as_deref(),
+            Some(
+                "PlainDate"
+                    | "PlainDateTime"
+                    | "PlainMonthDay"
+                    | "PlainYearMonth"
+                    | "ZonedDateTime"
+            )
+        ) {
+            return Ok(own_string(context, calendar_object, "calendarId")
+                .unwrap_or_else(|| "iso8601".into()));
+        }
+        return Err(VmError::type_error(
+            "Temporal calendar must be a string or Temporal object",
+        ));
+    }
+    let JsValue::String(text) = value else {
+        return Err(VmError::type_error(
+            "Temporal calendar must be a string or Temporal object",
+        ));
+    };
+    normalize_temporal_calendar_string(&text)
 }
 
 fn install_temporal_plain_year_month(
@@ -9654,7 +9970,7 @@ fn install_temporal_plain_year_month(
         prototype,
         "toJSON",
         0,
-        temporal_plain_year_month_to_string,
+        temporal_plain_year_month_to_json,
     )?;
     define_method(
         context,
@@ -10260,7 +10576,7 @@ fn install_temporal_plain_month_day(
         prototype,
         "toJSON",
         0,
-        temporal_plain_month_day_to_string,
+        temporal_plain_month_day_to_json,
     )?;
     define_method(
         context,
@@ -10628,7 +10944,7 @@ fn install_temporal_zoned_date_time(
         prototype,
         "toJSON",
         0,
-        temporal_zoned_date_time_to_string,
+        temporal_zoned_date_time_to_json,
     )?;
     define_method(
         context,
@@ -10705,7 +11021,7 @@ fn install_temporal_zoned_date_time(
         ),
         (
             "getTimeZoneTransition",
-            0,
+            1,
             temporal_zoned_date_time_get_time_zone_transition as NativeCall,
         ),
     ] {
@@ -10740,7 +11056,6 @@ fn install_temporal_zoned_date_time(
         ("daysInMonth", "get daysInMonth", "daysInMonth"),
         ("daysInYear", "get daysInYear", "daysInYear"),
         ("monthsInYear", "get monthsInYear", "monthsInYear"),
-        ("hoursInDay", "get hoursInDay", "hoursInDay"),
     ] {
         define_temporal_slot_getter(context, prototype, name, getter, "ZonedDateTime", slot)?;
     }
@@ -10781,6 +11096,13 @@ fn install_temporal_zoned_date_time(
         "epochNanoseconds",
         "get epochNanoseconds",
         temporal_zoned_date_time_epoch_nanoseconds,
+    )?;
+    define_accessor(
+        context,
+        prototype,
+        "hoursInDay",
+        "get hoursInDay",
+        temporal_zoned_date_time_hours_in_day,
     )?;
     Ok(())
 }
@@ -10887,7 +11209,6 @@ fn create_zoned_date_time(
                 JsValue::Number(if leap { 366.0 } else { 365.0 }),
             ),
             ("monthsInYear", JsValue::Number(12.0)),
-            ("hoursInDay", JsValue::Number(24.0)),
             ("inLeapYear", JsValue::Boolean(leap)),
         ],
     )
@@ -10902,25 +11223,39 @@ fn temporal_zoned_date_time_construct(
     let prototype = context
         .constructor_prototype(&new_target)?
         .ok_or_else(|| VmError::runtime("Temporal.ZonedDateTime prototype missing"))?;
-    let epoch_nanoseconds_value = arg_or_undefined(arguments, 0);
-    let epoch_nanoseconds_i128 = epoch_nanoseconds_to_i128(&epoch_nanoseconds_value)?;
+    let epoch_nanoseconds = temporal_to_bigint(vm, context, arg_or_undefined(arguments, 0))?;
+    let epoch_nanoseconds_i128 = bigint_to_i128_saturating(&epoch_nanoseconds);
     if !is_valid_instant_ns(epoch_nanoseconds_i128) {
         return Err(VmError::range("invalid Temporal.ZonedDateTime"));
     }
+    let epoch_nanoseconds_value = JsValue::BigInt(epoch_nanoseconds);
     let epoch_nanoseconds = epoch_nanoseconds_i128 as f64;
     let time_zone_id = if matches!(arguments.get(1), None | Some(JsValue::Undefined)) {
         return Err(VmError::type_error(
             "Temporal.ZonedDateTime requires a time zone",
         ));
     } else {
+        if let Some(JsValue::String(text)) = arguments.get(1)
+            && (text.contains('[') || parse_instant_string(text).is_some())
+        {
+            return Err(VmError::range(
+                "Temporal.ZonedDateTime constructor requires a time zone identifier",
+            ));
+        }
         temporal_time_zone_string(vm, context, arg_or_undefined(arguments, 1))?
     };
-    let calendar_id = if matches!(arguments.get(2), None | Some(JsValue::Undefined)) {
-        "iso8601".into()
-    } else {
-        vm.to_string_coerce(arg_or_undefined(arguments, 2), context)?
-            .to_ascii_lowercase()
-    };
+    if let Some(JsValue::String(text)) = arguments.get(2)
+        && (text.contains('[')
+            || text
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_digit() || matches!(ch, '+' | '-')))
+    {
+        return Err(VmError::range(
+            "Temporal.ZonedDateTime constructor requires a calendar identifier",
+        ));
+    }
+    let calendar_id = temporal_calendar_from_argument(vm, context, arguments.get(2))?;
     create_zoned_date_time(
         context,
         prototype,
@@ -10931,7 +11266,10 @@ fn temporal_zoned_date_time_construct(
     )
 }
 
-fn parse_zoned_date_time(text: &str) -> Option<(i128, String)> {
+fn parse_zoned_date_time(text: &str) -> Option<(i128, Option<i128>, bool, String, bool)> {
+    if text.contains('\u{2212}') {
+        return None;
+    }
     let first_annotation = text.find('[')?;
     let without_annotation = &text[..first_annotation];
     let mut rest = &text[first_annotation..];
@@ -10974,25 +11312,64 @@ fn parse_zoned_date_time(text: &str) -> Option<(i128, String)> {
         rest = &after_open[end + 1..];
     }
     let time_zone_id = time_zone_id?;
-    if let Some(epoch_nanoseconds) = parse_instant_string(without_annotation) {
-        return Some((epoch_nanoseconds, time_zone_id));
-    }
-    let (year, month, day) = parse_plain_date(without_annotation)?;
-    let time = if without_annotation.contains('T') {
-        parse_plain_time(
-            without_annotation
-                .split_once('T')
-                .map(|(_, time)| time)
-                .unwrap_or(""),
-        )?
+    let (year, month, day) = parse_iso_date_part(
+        without_annotation
+            .split_once(['T', 't', ' '])
+            .map(|(date, _)| date)
+            .unwrap_or(without_annotation),
+    )?;
+    let time_part = without_annotation
+        .split_once(['T', 't', ' '])
+        .map(|(_, time)| time);
+    let time = if let Some(time) = time_part {
+        let has_explicit_offset = time.ends_with(['Z', 'z'])
+            || time.rfind('+').is_some()
+            || time.get(1..).is_some_and(|rest| rest.rfind('-').is_some());
+        if has_explicit_offset {
+            let (hour, minute, second, fraction_ns, _offset_ns) =
+                parse_iso_time_and_offset_ns(time)?;
+            PlainTimeValues {
+                hour: hour as f64,
+                minute: minute as f64,
+                second: second as f64,
+                millisecond: (fraction_ns / 1_000_000) as f64,
+                microsecond: ((fraction_ns / 1_000) % 1_000) as f64,
+                nanosecond: (fraction_ns % 1_000) as f64,
+            }
+        } else {
+            parse_plain_time(time)?
+        }
     } else {
         PlainTimeValues::default()
     };
-    validate_plain_date(year, month, day).ok()?;
+    if !(1..=12).contains(&month) || !(1..=month_day_count(year, month)).contains(&day) {
+        return None;
+    }
     validate_plain_time(time).ok()?;
-    let local_ns = epoch_nanoseconds_i128_from_plain_parts(year, month, day, time);
-    let offset_ns = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
-    Some((local_ns - offset_ns, time_zone_id))
+    let local_ns =
+        epoch_nanoseconds_i128_from_plain_parts(year as f64, month as f64, day as f64, time);
+    let (explicit_offset, has_z_designator) = if let Some(time) = time_part {
+        if time.ends_with(['Z', 'z']) {
+            (Some(0), true)
+        } else if let Some(index) = time.rfind('+').or_else(|| {
+            time.get(1..)
+                .and_then(|rest| rest.rfind('-'))
+                .map(|i| i + 1)
+        }) {
+            (Some(parse_iso_time_zone_offset_ns(&time[index..])?), false)
+        } else {
+            (None, false)
+        }
+    } else {
+        (None, false)
+    };
+    Some((
+        local_ns,
+        explicit_offset,
+        has_z_designator,
+        time_zone_id,
+        (year, month, day) >= (-271_821, 4, 20) && (year, month, day) <= (275_760, 9, 13),
+    ))
 }
 
 fn validate_temporal_time_zone_syntax(text: &str) -> Result<(), VmError> {
@@ -11043,12 +11420,10 @@ fn temporal_time_zone_string(
     if text.eq_ignore_ascii_case("UTC") {
         return Ok("UTC".into());
     }
-    if let Some((_epoch_ns, zone)) = parse_zoned_date_time(&text) {
-        return Ok(if zone.eq_ignore_ascii_case("UTC") {
-            "UTC".into()
-        } else {
-            zone
-        });
+    if let Some((_local_ns, _offset, _has_z, zone, _local_date_in_range)) =
+        parse_zoned_date_time(&text)
+    {
+        return Ok(canonicalize_temporal_time_zone_id(&zone));
     }
     if parse_instant_string(&text).is_some() {
         if text.ends_with(['Z', 'z']) {
@@ -11060,19 +11435,30 @@ fn temporal_time_zone_string(
             .rfind(['+', '-'])
             .map(|index| separator + 1 + index)
         {
-            return Ok(body[index..].to_string());
+            return Ok(canonicalize_temporal_time_zone_id(&body[index..]));
         }
     }
-    if parse_time_zone_offset_ns(&text).is_some()
-        || (text.is_ascii()
-            && text
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '-' | '+'))
-            && !text.chars().next().is_some_and(|ch| ch.is_ascii_digit()))
+    if parse_time_zone_offset_ns(&text).is_some() {
+        Ok(canonicalize_temporal_time_zone_id(&text))
+    } else if text.is_ascii()
+        && text
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '-' | '+'))
+        && !text.chars().next().is_some_and(|ch| ch.is_ascii_digit())
     {
         Ok(text)
     } else {
         Err(VmError::range("invalid Temporal time zone"))
+    }
+}
+
+fn canonicalize_temporal_time_zone_id(identifier: &str) -> String {
+    if identifier.eq_ignore_ascii_case("UTC") {
+        "UTC".into()
+    } else if let Some(offset_ns) = parse_time_zone_offset_ns(identifier) {
+        format_time_zone_offset_ns(offset_ns)
+    } else {
+        identifier.into()
     }
 }
 
@@ -11092,24 +11478,62 @@ fn temporal_zoned_date_time_from(
     } else {
         None
     };
-    let (_disambiguation, offset_option, overflow_option) = zoned_date_time_from_options(
-        vm,
-        context,
-        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
-    )?;
     let (epoch_nanoseconds, epoch_nanoseconds_value, time_zone_id, calendar_id) = match item {
         JsValue::String(_) => {
-            let (exact_epoch_nanoseconds, time_zone_id) = parsed_string.unwrap();
+            let (_disambiguation, offset_option, _overflow_option) = zoned_date_time_from_options(
+                vm,
+                context,
+                arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+            )?;
+            let (local_ns, supplied_offset, has_z_designator, time_zone_id, local_date_in_range) =
+                parsed_string.unwrap();
+            if matches!(offset_option.as_str(), "prefer" | "reject") && !local_date_in_range {
+                return Err(VmError::range(
+                    "Temporal.ZonedDateTime wall-clock time is out of range",
+                ));
+            }
+            let zone_offset = if time_zone_id.eq_ignore_ascii_case("UTC") {
+                Some(0)
+            } else {
+                parse_time_zone_offset_ns(&time_zone_id)
+            };
+            if offset_option == "reject"
+                && !has_z_designator
+                && let (Some(supplied), Some(zone)) = (supplied_offset, zone_offset)
+                && supplied != zone
+            {
+                return Err(VmError::range(
+                    "Temporal offset does not match the time zone",
+                ));
+            }
+            let applied_offset = match offset_option.as_str() {
+                "use" => supplied_offset.or(zone_offset).unwrap_or(0),
+                "ignore" => zone_offset.unwrap_or(0),
+                "prefer" if !has_z_designator => supplied_offset
+                    .filter(|supplied| zone_offset.is_none_or(|zone| *supplied == zone))
+                    .or(zone_offset)
+                    .unwrap_or(0),
+                _ => supplied_offset.or(zone_offset).unwrap_or(0),
+            };
+            let exact_epoch_nanoseconds = local_ns
+                .checked_sub(applied_offset)
+                .ok_or_else(|| VmError::range("Temporal.ZonedDateTime is out of range"))?;
             (
                 exact_epoch_nanoseconds as f64,
                 JsValue::BigInt(bigint::from_i128(exact_epoch_nanoseconds)),
-                time_zone_id,
+                canonicalize_temporal_time_zone_id(&time_zone_id),
                 "iso8601".into(),
             )
         }
         value => {
             let object = context.require_object(&value, "Temporal.ZonedDateTime.from")?;
             if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("ZonedDateTime") {
+                let (_disambiguation, _offset_option, _overflow_option) =
+                    zoned_date_time_from_options(
+                        vm,
+                        context,
+                        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+                    )?;
                 (
                     temporal_number_slot(context, object, "epochNanosecondsNumber"),
                     own_data_value(context, object, "epochNanoseconds")
@@ -11118,34 +11542,101 @@ fn temporal_zoned_date_time_from(
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
                 )
             } else {
-                let time_zone = temporal_get_property(vm, context, object, "timeZone")?;
-                let time_zone_id = if matches!(time_zone, JsValue::Undefined) {
-                    "UTC".into()
+                let calendar_value = temporal_get_property(vm, context, object, "calendar")?;
+                let calendar_id = if matches!(calendar_value, JsValue::Undefined) {
+                    let calendar_id_value =
+                        temporal_get_property(vm, context, object, "calendarId")?;
+                    if matches!(calendar_id_value, JsValue::Undefined) {
+                        "iso8601".into()
+                    } else {
+                        temporal_calendar_id_from_value(context, calendar_id_value)?
+                    }
                 } else {
-                    temporal_time_zone_string(vm, context, time_zone)?
+                    temporal_calendar_id_from_value(context, calendar_value)?
                 };
+                let day = temporal_partial_number(vm, context, object, "day")?;
+                let hour = temporal_object_number(vm, context, object, "hour")?;
+                let microsecond = temporal_object_number(vm, context, object, "microsecond")?;
+                let millisecond = temporal_object_number(vm, context, object, "millisecond")?;
+                let minute = temporal_object_number(vm, context, object, "minute")?;
+                let month_value = temporal_get_property(vm, context, object, "month")?;
+                let month = if matches!(month_value, JsValue::Undefined) {
+                    None
+                } else {
+                    Some(vm.to_number(month_value, context)?.trunc())
+                };
+                let month_code_value = temporal_get_property(vm, context, object, "monthCode")?;
+                let month_code = if matches!(month_code_value, JsValue::Undefined) {
+                    None
+                } else {
+                    let text = temporal_month_code_to_string(vm, context, month_code_value)?;
+                    let parsed = parse_month_code(&text)
+                        .ok_or_else(|| VmError::range("invalid Temporal monthCode"))?;
+                    Some((parsed, text.ends_with('L')))
+                };
+                let nanosecond = temporal_object_number(vm, context, object, "nanosecond")?;
                 let offset_value = temporal_get_property(vm, context, object, "offset")?;
                 let supplied_offset = if matches!(offset_value, JsValue::Undefined) {
                     None
                 } else {
-                    let text = vm.to_string_coerce(offset_value, context)?;
+                    let text = temporal_string_or_object_to_string(
+                        vm,
+                        context,
+                        offset_value,
+                        "Temporal offset property must be a string",
+                    )?;
                     Some(
                         parse_iso_time_zone_offset_ns(&text)
                             .ok_or_else(|| VmError::range("invalid Temporal offset"))?,
                     )
                 };
-                let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
-                let year = temporal_object_number(vm, context, object, "year")?;
-                let mut month =
-                    temporal_required_month_from_object(vm, context, object, Some(&calendar_id))?;
-                let mut day = temporal_object_number(vm, context, object, "day")?;
+                let second = temporal_object_number(vm, context, object, "second")?;
+                let time_zone = temporal_get_property(vm, context, object, "timeZone")?;
+                let time_zone_id = if matches!(time_zone, JsValue::Undefined) {
+                    None
+                } else {
+                    Some(temporal_time_zone_string(vm, context, time_zone)?)
+                };
+                let year = temporal_partial_number(vm, context, object, "year")?;
+                let year = year
+                    .ok_or_else(|| VmError::type_error("Temporal property `year` is required"))?;
+                let mut day =
+                    day.ok_or_else(|| VmError::type_error("Temporal property `day` is required"))?;
+                let mut month = match (month, month_code) {
+                    (Some(month), Some((month_code, _))) if month != month_code => {
+                        return Err(VmError::range("Temporal month and monthCode conflict"));
+                    }
+                    (Some(month), _) => month,
+                    (_, Some((month_code, _))) => month_code,
+                    (None, None) => {
+                        return Err(VmError::type_error(
+                            "Temporal property `month` or `monthCode` is required",
+                        ));
+                    }
+                };
+                let time_zone_id = time_zone_id.ok_or_else(|| {
+                    VmError::type_error("Temporal property `timeZone` is required")
+                })?;
+                let (_disambiguation, offset_option, overflow_option) =
+                    zoned_date_time_from_options(
+                        vm,
+                        context,
+                        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+                    )?;
+                if calendar_id == "iso8601"
+                    && month_code.is_some_and(|(parsed, leap)| parsed > 12.0 || leap)
+                {
+                    return Err(VmError::range(
+                        "Temporal monthCode is not valid for the ISO 8601 calendar",
+                    ));
+                }
                 let mut time = PlainTimeValues {
-                    hour: temporal_object_number(vm, context, object, "hour")?,
-                    minute: temporal_object_number(vm, context, object, "minute")?,
-                    second: temporal_object_number(vm, context, object, "second")?,
-                    millisecond: temporal_object_number(vm, context, object, "millisecond")?,
-                    microsecond: temporal_object_number(vm, context, object, "microsecond")?,
-                    nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
+                    hour,
+                    minute,
+                    second,
+                    millisecond,
+                    microsecond,
+                    nanosecond,
                 };
                 if ![
                     year,
@@ -11162,6 +11653,9 @@ fn temporal_zoned_date_time_from(
                 .all(f64::is_finite)
                 {
                     return Err(VmError::range("invalid Temporal.ZonedDateTime fields"));
+                }
+                if month < 1.0 || day < 1.0 {
+                    return Err(VmError::range("Temporal month and day must be positive"));
                 }
                 if overflow_option == "constrain" {
                     month = month.trunc().clamp(1.0, 12.0);
@@ -11297,6 +11791,39 @@ fn temporal_zoned_date_time_epoch_nanoseconds(
         .unwrap_or_else(|| JsValue::BigInt(bigint::from_i64(0))))
 }
 
+fn temporal_zoned_date_time_hours_in_day(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    let epoch_ns = zoned_date_time_epoch_ns(context, object);
+    let time_zone_id = own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into());
+    let offset_ns = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    let local_ns = epoch_ns
+        .checked_add(offset_ns)
+        .ok_or_else(|| VmError::range("Temporal.ZonedDateTime day is out of range"))?;
+    let local_day = local_ns.div_euclid(NS_PER_DAY_I128);
+    let today_ns = local_day
+        .checked_mul(NS_PER_DAY_I128)
+        .and_then(|value| value.checked_sub(offset_ns))
+        .ok_or_else(|| VmError::range("Temporal.ZonedDateTime day is out of range"))?;
+    let tomorrow_ns = local_day
+        .checked_add(1)
+        .and_then(|value| value.checked_mul(NS_PER_DAY_I128))
+        .and_then(|value| value.checked_sub(offset_ns))
+        .ok_or_else(|| VmError::range("Temporal.ZonedDateTime day is out of range"))?;
+    if !is_valid_instant_ns(today_ns) || !is_valid_instant_ns(tomorrow_ns) {
+        return Err(VmError::range(
+            "Temporal.ZonedDateTime day boundary is out of range",
+        ));
+    }
+    Ok(JsValue::Number(
+        (tomorrow_ns - today_ns) as f64 / NS_PER_HOUR_I128 as f64,
+    ))
+}
+
 fn temporal_zoned_date_time_to_instant(
     _vm: &mut Vm,
     context: &mut NativeContext,
@@ -11390,11 +11917,15 @@ fn temporal_zoned_date_time_equals(
         &[arguments.first().cloned().unwrap_or(JsValue::Undefined)],
     )?;
     let other_object = context.value_object(&other).unwrap();
+    let this_time_zone = own_string(context, this_object, "timeZoneId").unwrap_or_default();
+    let other_time_zone = own_string(context, other_object, "timeZoneId").unwrap_or_default();
     Ok(JsValue::Boolean(
         zoned_date_time_epoch_ns(context, this_object)
             == zoned_date_time_epoch_ns(context, other_object)
-            && own_string(context, this_object, "timeZoneId")
-                == own_string(context, other_object, "timeZoneId")
+            && (parse_time_zone_offset_ns(&this_time_zone)
+                .zip(parse_time_zone_offset_ns(&other_time_zone))
+                .is_some_and(|(left, right)| left == right)
+                || this_time_zone.eq_ignore_ascii_case(&other_time_zone))
             && own_string(context, this_object, "calendarId")
                 == own_string(context, other_object, "calendarId"),
     ))
@@ -11512,15 +12043,42 @@ fn temporal_zoned_date_time_round(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let quantum = temporal_unit_nanoseconds(&unit) * increment as i128;
-    let rounded = round_i128(zoned_date_time_epoch_ns(context, object), quantum, mode);
+    let epoch_ns = zoned_date_time_epoch_ns(context, object);
+    let time_zone_id = own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into());
+    let offset_ns = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    let local_ns = epoch_ns
+        .checked_add(offset_ns)
+        .ok_or_else(|| VmError::range("Temporal.ZonedDateTime is out of range"))?;
+    let rounded = if unit == "day" {
+        let local_day = local_ns.div_euclid(NS_PER_DAY_I128);
+        let today_ns = local_day
+            .checked_mul(NS_PER_DAY_I128)
+            .and_then(|value| value.checked_sub(offset_ns))
+            .ok_or_else(|| VmError::range("Temporal.ZonedDateTime day is out of range"))?;
+        let tomorrow_ns = local_day
+            .checked_add(1)
+            .and_then(|value| value.checked_mul(NS_PER_DAY_I128))
+            .and_then(|value| value.checked_sub(offset_ns))
+            .ok_or_else(|| VmError::range("Temporal.ZonedDateTime day is out of range"))?;
+        if !is_valid_instant_ns(today_ns) || !is_valid_instant_ns(tomorrow_ns) {
+            return Err(VmError::range(
+                "Temporal.ZonedDateTime day boundary is out of range",
+            ));
+        }
+        today_ns + round_i128(epoch_ns - today_ns, tomorrow_ns - today_ns, mode)
+    } else {
+        let quantum = temporal_unit_nanoseconds(&unit) * increment as i128;
+        round_i128(local_ns, quantum, mode)
+            .checked_sub(offset_ns)
+            .ok_or_else(|| VmError::range("Temporal.ZonedDateTime is out of range"))?
+    };
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time(
         context,
         prototype,
         JsValue::BigInt(bigint::from_i128(rounded)),
         rounded as f64,
-        own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
+        time_zone_id,
         own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
     )
 }
@@ -11564,6 +12122,101 @@ fn temporal_zoned_date_time_difference(
         * (zoned_date_time_epoch_ns(context, other_object)
             - zoned_date_time_epoch_ns(context, this_object));
     let quantum = temporal_unit_nanoseconds(&options.smallest_unit) * options.increment as i128;
+    if matches!(
+        options.largest_unit.as_str(),
+        "year" | "month" | "week" | "day"
+    ) && matches!(
+        options.smallest_unit.as_str(),
+        "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
+    ) {
+        let (start, end) = if sign > 0 {
+            (this_object, other_object)
+        } else {
+            (other_object, this_object)
+        };
+        let same_local_time = plain_time_nanoseconds_i128(plain_date_time_values(context, start))
+            == plain_time_nanoseconds_i128(plain_date_time_values(context, end));
+        if same_local_time {
+            let values = iso_date_difference_values(context, start, end, &options.largest_unit);
+            return create_duration_with_default_prototype(context, values);
+        }
+    }
+    if matches!(
+        options.smallest_unit.as_str(),
+        "year" | "month" | "week" | "day"
+    ) {
+        if options.smallest_unit == "day" {
+            let rounding_base = if sign > 0 {
+                zoned_date_time_epoch_ns(context, this_object)
+            } else {
+                zoned_date_time_epoch_ns(context, other_object)
+            };
+            let bound_delta = if delta < 0 { -quantum } else { quantum };
+            let rounded_end = rounding_base
+                .checked_add(bound_delta)
+                .ok_or_else(|| VmError::range("Temporal rounded date-time is out of range"))?;
+            if !is_valid_instant_ns(rounded_end) {
+                return Err(VmError::range("Temporal rounded date-time is out of range"));
+            }
+        }
+        let (start, end) = if sign > 0 {
+            (this_object, other_object)
+        } else {
+            (other_object, this_object)
+        };
+        let calendar_values =
+            iso_date_difference_values(context, start, end, &options.largest_unit);
+        let same_local_time = plain_time_nanoseconds_i128(plain_date_time_values(context, start))
+            == plain_time_nanoseconds_i128(plain_date_time_values(context, end));
+        let exact_larger_unit = same_local_time
+            && match options.smallest_unit.as_str() {
+                "year" => {
+                    calendar_values.months == 0.0
+                        && calendar_values.weeks == 0.0
+                        && calendar_values.days == 0.0
+                }
+                "month" => calendar_values.weeks == 0.0 && calendar_values.days == 0.0,
+                "week" => calendar_values.days == 0.0,
+                "day" => true,
+                _ => false,
+            };
+        if exact_larger_unit {
+            return create_duration_with_default_prototype(context, calendar_values);
+        }
+        let quantity =
+            relative_plain_date_time_unit_quantity(context, start, end, &options.smallest_unit);
+        let rounded = round_temporal_quantity(quantity, options.increment, options.mode);
+        let values = match options.smallest_unit.as_str() {
+            "year" => DurationValues {
+                years: rounded,
+                ..DurationValues::default()
+            },
+            "month" if options.largest_unit == "year" => DurationValues {
+                years: (rounded / 12.0).trunc(),
+                months: rounded % 12.0,
+                ..DurationValues::default()
+            },
+            "month" => DurationValues {
+                months: rounded,
+                ..DurationValues::default()
+            },
+            "week" => DurationValues {
+                weeks: rounded,
+                ..DurationValues::default()
+            },
+            "day" if options.largest_unit == "week" => DurationValues {
+                weeks: (rounded / 7.0).trunc(),
+                days: rounded % 7.0,
+                ..DurationValues::default()
+            },
+            "day" => DurationValues {
+                days: rounded,
+                ..DurationValues::default()
+            },
+            _ => unreachable!(),
+        };
+        return create_duration_with_default_prototype(context, values);
+    }
     let rounded = round_signed_i128(delta, quantum, options.mode);
     create_duration_from_nanoseconds(context, rounded, &options.largest_unit)
 }
@@ -11598,105 +12251,176 @@ fn temporal_zoned_date_time_with(
         "Temporal.ZonedDateTime.prototype.with",
     )?;
     reject_temporal_with_metadata(vm, context, replacement)?;
-    let year = temporal_date_replacement(
+    let day_value = temporal_get_property(vm, context, replacement, "day")?;
+    let day = temporal_date_replacement_from_value(
         vm,
         context,
-        replacement,
-        "year",
-        temporal_number_slot(context, this_object, "year"),
-    )?;
-    let month = temporal_month_from_object(
-        vm,
-        context,
-        replacement,
-        temporal_number_slot(context, this_object, "month"),
-    )?;
-    let day = temporal_date_replacement(
-        vm,
-        context,
-        replacement,
+        day_value.clone(),
         "day",
         temporal_number_slot(context, this_object, "day"),
     )?;
-    let mut time = PlainTimeValues {
-        hour: temporal_date_replacement(
-            vm,
-            context,
-            replacement,
-            "hour",
-            temporal_number_slot(context, this_object, "hour"),
-        )?,
-        minute: temporal_date_replacement(
-            vm,
-            context,
-            replacement,
-            "minute",
-            temporal_number_slot(context, this_object, "minute"),
-        )?,
-        second: temporal_date_replacement(
-            vm,
-            context,
-            replacement,
-            "second",
-            temporal_number_slot(context, this_object, "second"),
-        )?,
-        millisecond: temporal_date_replacement(
-            vm,
-            context,
-            replacement,
-            "millisecond",
-            temporal_number_slot(context, this_object, "millisecond"),
-        )?,
-        microsecond: temporal_date_replacement(
-            vm,
-            context,
-            replacement,
-            "microsecond",
-            temporal_number_slot(context, this_object, "microsecond"),
-        )?,
-        nanosecond: temporal_date_replacement(
-            vm,
-            context,
-            replacement,
-            "nanosecond",
-            temporal_number_slot(context, this_object, "nanosecond"),
-        )?,
-    };
-    let replacement_offset = temporal_get_property(vm, context, replacement, "offset")?;
-    if !matches!(replacement_offset, JsValue::Undefined) {
-        let JsValue::String(offset) = replacement_offset else {
-            return Err(VmError::type_error(
-                "Temporal offset property must be a string",
-            ));
-        };
-        if parse_time_zone_offset_ns(&offset).is_none() {
-            return Err(VmError::range("invalid Temporal offset string"));
-        }
-    }
-    require_temporal_with_field(
+    let hour_value = temporal_get_property(vm, context, replacement, "hour")?;
+    let hour = temporal_date_replacement_from_value(
         vm,
         context,
-        replacement,
-        &[
-            "day",
-            "hour",
-            "microsecond",
-            "millisecond",
-            "minute",
-            "month",
-            "monthCode",
-            "nanosecond",
-            "offset",
-            "second",
-            "year",
-        ],
+        hour_value.clone(),
+        "hour",
+        temporal_number_slot(context, this_object, "hour"),
     )?;
+    let microsecond_value = temporal_get_property(vm, context, replacement, "microsecond")?;
+    let microsecond = temporal_date_replacement_from_value(
+        vm,
+        context,
+        microsecond_value.clone(),
+        "microsecond",
+        temporal_number_slot(context, this_object, "microsecond"),
+    )?;
+    let millisecond_value = temporal_get_property(vm, context, replacement, "millisecond")?;
+    let millisecond = temporal_date_replacement_from_value(
+        vm,
+        context,
+        millisecond_value.clone(),
+        "millisecond",
+        temporal_number_slot(context, this_object, "millisecond"),
+    )?;
+    let minute_value = temporal_get_property(vm, context, replacement, "minute")?;
+    let minute = temporal_date_replacement_from_value(
+        vm,
+        context,
+        minute_value.clone(),
+        "minute",
+        temporal_number_slot(context, this_object, "minute"),
+    )?;
+    let month_value = temporal_get_property(vm, context, replacement, "month")?;
+    let month = if matches!(month_value, JsValue::Undefined) {
+        None
+    } else {
+        let value = vm.to_number(month_value.clone(), context)?.trunc();
+        if !value.is_finite() {
+            return Err(VmError::range("Temporal month must be a finite number"));
+        }
+        Some(value)
+    };
+    let month_code_value = temporal_get_property(vm, context, replacement, "monthCode")?;
+    let (month_code, month_code_text) = if matches!(month_code_value, JsValue::Undefined) {
+        (None, None)
+    } else {
+        let value = temporal_string_or_object_to_string(
+            vm,
+            context,
+            month_code_value.clone(),
+            "Temporal monthCode property must be a string",
+        )?;
+        (
+            Some(
+                parse_month_code(&value)
+                    .ok_or_else(|| VmError::range("invalid Temporal monthCode"))?,
+            ),
+            Some(value),
+        )
+    };
+    let month = match (month, month_code) {
+        (Some(month), Some(month_code)) if month != month_code => {
+            return Err(VmError::range("Temporal month and monthCode must agree"));
+        }
+        (Some(month), _) => month,
+        (_, Some(month_code)) => month_code,
+        (None, None) => temporal_number_slot(context, this_object, "month"),
+    };
+    let nanosecond_value = temporal_get_property(vm, context, replacement, "nanosecond")?;
+    let nanosecond = temporal_date_replacement_from_value(
+        vm,
+        context,
+        nanosecond_value.clone(),
+        "nanosecond",
+        temporal_number_slot(context, this_object, "nanosecond"),
+    )?;
+    let replacement_offset = temporal_get_property(vm, context, replacement, "offset")?;
+    let supplied_offset = if matches!(replacement_offset, JsValue::Undefined) {
+        None
+    } else {
+        let offset = temporal_string_or_object_to_string(
+            vm,
+            context,
+            replacement_offset.clone(),
+            "Temporal offset property must be a string",
+        )?;
+        Some(
+            parse_time_zone_offset_ns(&offset)
+                .ok_or_else(|| VmError::range("invalid Temporal offset string"))?,
+        )
+    };
+    let second_value = temporal_get_property(vm, context, replacement, "second")?;
+    let second = temporal_date_replacement_from_value(
+        vm,
+        context,
+        second_value.clone(),
+        "second",
+        temporal_number_slot(context, this_object, "second"),
+    )?;
+    let year_value = temporal_get_property(vm, context, replacement, "year")?;
+    let year = temporal_date_replacement_from_value(
+        vm,
+        context,
+        year_value.clone(),
+        "year",
+        temporal_number_slot(context, this_object, "year"),
+    )?;
+    if [
+        day_value,
+        hour_value,
+        microsecond_value,
+        millisecond_value,
+        minute_value,
+        month_value,
+        month_code_value,
+        nanosecond_value,
+        replacement_offset,
+        second_value,
+        year_value,
+    ]
+    .into_iter()
+    .all(|value| matches!(value, JsValue::Undefined))
+    {
+        return Err(VmError::type_error(
+            "Temporal with() property bag must contain a supported field",
+        ));
+    }
+    let mut time = PlainTimeValues {
+        hour,
+        minute,
+        second,
+        millisecond,
+        microsecond,
+        nanosecond,
+    };
+    if !year.is_finite()
+        || !month.is_finite()
+        || !day.is_finite()
+        || !time.hour.is_finite()
+        || !time.minute.is_finite()
+        || !time.second.is_finite()
+        || !time.millisecond.is_finite()
+        || !time.microsecond.is_finite()
+        || !time.nanosecond.is_finite()
+        || month < 1.0
+        || day < 1.0
+        || time.hour < 0.0
+        || time.minute < 0.0
+        || time.second < 0.0
+        || time.millisecond < 0.0
+        || time.microsecond < 0.0
+        || time.nanosecond < 0.0
+    {
+        return Err(VmError::range("invalid Temporal.ZonedDateTime fields"));
+    }
     let options = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let options_object = if matches!(options, JsValue::Undefined) {
         None
     } else {
         Some(context.require_object(&options, "Temporal.ZonedDateTime.prototype.with options")?)
     };
+    let mut offset_option = "prefer".to_string();
     if let Some(object) = options_object {
         if let Some(value) = option_string(vm, context, object, "disambiguation")?
             && !matches!(
@@ -11706,13 +12430,23 @@ fn temporal_zoned_date_time_with(
         {
             return Err(VmError::range("invalid Temporal disambiguation option"));
         }
-        if let Some(value) = option_string(vm, context, object, "offset")?
-            && !matches!(value.as_str(), "use" | "prefer" | "ignore" | "reject")
-        {
-            return Err(VmError::range("invalid Temporal offset option"));
+        if let Some(value) = option_string(vm, context, object, "offset")? {
+            if !matches!(value.as_str(), "use" | "prefer" | "ignore" | "reject") {
+                return Err(VmError::range("invalid Temporal offset option"));
+            }
+            offset_option = value;
         }
     }
     let reject_overflow = temporal_overflow_reject(vm, context, options)?;
+    if let Some(text) = month_code_text {
+        let calendar_id =
+            own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into());
+        if calendar_id == "iso8601" && (month > 12.0 || text.ends_with('L')) {
+            return Err(VmError::range(
+                "Temporal monthCode is not valid for the ISO 8601 calendar",
+            ));
+        }
+    }
     let month = if reject_overflow {
         month
     } else {
@@ -11734,6 +12468,24 @@ fn temporal_zoned_date_time_with(
     validate_plain_date(year, month, day)?;
     validate_plain_time(time)?;
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
+    let time_zone_id =
+        own_string(context, this_object, "timeZoneId").unwrap_or_else(|| "UTC".into());
+    let calendar_id =
+        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    if offset_option == "use"
+        && let Some(offset_ns) = supplied_offset
+    {
+        let exact_epoch_nanoseconds =
+            epoch_nanoseconds_i128_from_plain_parts(year, month, day, time) - offset_ns;
+        return create_zoned_date_time(
+            context,
+            prototype,
+            JsValue::BigInt(bigint::from_i128(exact_epoch_nanoseconds)),
+            exact_epoch_nanoseconds as f64,
+            time_zone_id,
+            calendar_id,
+        );
+    }
     create_zoned_date_time_from_parts(
         context,
         prototype,
@@ -11741,8 +12493,8 @@ fn temporal_zoned_date_time_with(
         month,
         day,
         time,
-        own_string(context, this_object, "timeZoneId").unwrap_or_else(|| "UTC".into()),
-        own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+        time_zone_id,
+        calendar_id,
     )
 }
 
@@ -11753,6 +12505,11 @@ fn temporal_zoned_date_time_with_calendar(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
+    if matches!(arguments.first(), None | Some(JsValue::Undefined)) {
+        return Err(VmError::type_error(
+            "Temporal.ZonedDateTime.prototype.withCalendar requires a calendar",
+        ));
+    }
     let calendar_id = temporal_calendar_from_argument(vm, context, arguments.first())?;
     let prototype = temporal_constructor_prototype(context, "ZonedDateTime")?;
     create_zoned_date_time(
@@ -11850,10 +12607,15 @@ fn temporal_zoned_date_time_get_time_zone_transition(
             "Temporal.ZonedDateTime.prototype.getTimeZoneTransition requires a direction",
         ));
     }
-    let direction_value = if let Some(object) = context.value_object(&option) {
-        temporal_get_property(vm, context, object, "direction")?
-    } else {
-        option
+    let direction_value = match option {
+        JsValue::String(_) => option,
+        value => {
+            let object = context.require_object(
+                &value,
+                "Temporal.ZonedDateTime.prototype.getTimeZoneTransition options",
+            )?;
+            temporal_get_property(vm, context, object, "direction")?
+        }
     };
     let direction = vm.to_string_coerce(direction_value, context)?;
     match direction.as_str() {
@@ -11872,19 +12634,8 @@ fn temporal_zoned_date_time_to_string(
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "ZonedDateTime")?;
     let option_value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let calendar_name = temporal_calendar_name_option(vm, context, option_value.clone())?;
-    let options = temporal_string_options(vm, context, option_value.clone())?;
-    let (offset_option, time_zone_name) = if matches!(option_value, JsValue::Undefined) {
-        ("auto".to_string(), "auto".to_string())
-    } else {
-        let option_object =
-            context.require_object(&option_value, "Temporal.ZonedDateTime toString options")?;
-        let offset =
-            option_string(vm, context, option_object, "offset")?.unwrap_or_else(|| "auto".into());
-        let time_zone = option_string(vm, context, option_object, "timeZoneName")?
-            .unwrap_or_else(|| "auto".into());
-        (offset, time_zone)
-    };
+    let (calendar_name, options, offset_option, time_zone_name) =
+        temporal_zoned_date_time_string_options(vm, context, option_value)?;
     if !matches!(offset_option.as_str(), "auto" | "never") {
         return Err(VmError::range("invalid Temporal offset display option"));
     }
@@ -11896,7 +12647,12 @@ fn temporal_zoned_date_time_to_string(
         options.quantum,
         options.mode,
     );
-    let day_number = i64::try_from(rounded.div_euclid(NS_PER_DAY_I128))
+    let zone = own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into());
+    let offset_ns = parse_time_zone_offset_ns(&zone).unwrap_or(0);
+    let local_ns = rounded
+        .checked_add(offset_ns)
+        .ok_or_else(|| VmError::range("Temporal.ZonedDateTime is out of range"))?;
+    let day_number = i64::try_from(local_ns.div_euclid(NS_PER_DAY_I128))
         .map_err(|_| VmError::range("Temporal.ZonedDateTime is out of range"))?;
     let (year, month, day) = civil_from_days(day_number);
     let date_time = format!(
@@ -11905,16 +12661,15 @@ fn temporal_zoned_date_time_to_string(
         two_digit(month),
         two_digit(day),
         format_plain_time_precision(
-            plain_time_from_nanoseconds_i128(rounded.rem_euclid(NS_PER_DAY_I128)),
+            plain_time_from_nanoseconds_i128(local_ns.rem_euclid(NS_PER_DAY_I128)),
             options.precision,
             options.minute_only,
         )
     );
-    let zone = own_string(context, object, "timeZoneId").unwrap_or_else(|| "UTC".into());
     let offset = if offset_option == "never" {
-        ""
+        String::new()
     } else {
-        "+00:00"
+        format_time_zone_offset_ns(offset_ns)
     };
     let zone_annotation = match time_zone_name.as_str() {
         "never" => String::new(),
@@ -11931,6 +12686,123 @@ fn temporal_zoned_date_time_to_string(
     Ok(JsValue::String(format!(
         "{date_time}{offset}{zone_annotation}{calendar_annotation}"
     )))
+}
+
+fn temporal_zoned_date_time_string_options(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<(String, TemporalStringOptions, String, String), VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok((
+            "auto".into(),
+            TemporalStringOptions {
+                quantum: 1,
+                precision: None,
+                minute_only: false,
+                mode: TemporalRoundMode::Trunc,
+            },
+            "auto".into(),
+            "auto".into(),
+        ));
+    }
+    let object = context.require_object(&value, "Temporal.ZonedDateTime toString options")?;
+    let calendar_name =
+        option_string(vm, context, object, "calendarName")?.unwrap_or_else(|| "auto".into());
+    if !matches!(
+        calendar_name.as_str(),
+        "auto" | "always" | "never" | "critical"
+    ) {
+        return Err(VmError::range("invalid Temporal calendarName"));
+    }
+    let fractional_value = temporal_get_property(vm, context, object, "fractionalSecondDigits")?;
+    let fractional_digits = temporal_fractional_second_digits(vm, context, fractional_value)?;
+    let offset = option_string(vm, context, object, "offset")?.unwrap_or_else(|| "auto".into());
+    let mode = temporal_round_mode(
+        option_string(vm, context, object, "roundingMode")?.unwrap_or_default(),
+        TemporalRoundMode::Trunc,
+    )?;
+    let smallest = option_string(vm, context, object, "smallestUnit")?;
+    let time_zone_name =
+        option_string(vm, context, object, "timeZoneName")?.unwrap_or_else(|| "auto".into());
+    let (precision, minute_only) = match smallest.as_deref() {
+        None => (fractional_digits, false),
+        Some("minute" | "minutes") => (Some(0), true),
+        Some("second" | "seconds") => (Some(0), false),
+        Some("millisecond" | "milliseconds") => (Some(3), false),
+        Some("microsecond" | "microseconds") => (Some(6), false),
+        Some("nanosecond" | "nanoseconds") => (Some(9), false),
+        Some(_) => return Err(VmError::range("invalid Temporal string smallestUnit")),
+    };
+    let quantum = if minute_only {
+        NS_PER_MINUTE_I128
+    } else {
+        match precision {
+            None | Some(9) => 1,
+            Some(digits) => 10_i128.pow((9 - digits) as u32),
+        }
+    };
+    Ok((
+        calendar_name,
+        TemporalStringOptions {
+            quantum,
+            precision,
+            minute_only,
+            mode,
+        },
+        offset,
+        time_zone_name,
+    ))
+}
+
+fn temporal_fractional_second_digits(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<Option<usize>, VmError> {
+    match value {
+        JsValue::Undefined => Ok(None),
+        JsValue::Number(number) => {
+            let digits = number.floor();
+            if !number.is_finite() || !(0.0..=9.0).contains(&digits) {
+                return Err(VmError::range("invalid fractionalSecondDigits"));
+            }
+            Ok(Some(digits as usize))
+        }
+        value => {
+            let text = vm.to_string_coerce(value, context)?;
+            if text == "auto" {
+                Ok(None)
+            } else {
+                Err(VmError::range("invalid fractionalSecondDigits"))
+            }
+        }
+    }
+}
+
+fn format_time_zone_offset_ns(offset_ns: i128) -> String {
+    let sign = if offset_ns < 0 { '-' } else { '+' };
+    let mut remainder = offset_ns.abs();
+    let hours = remainder / NS_PER_HOUR_I128;
+    remainder %= NS_PER_HOUR_I128;
+    let minutes = remainder / NS_PER_MINUTE_I128;
+    remainder %= NS_PER_MINUTE_I128;
+    let seconds = remainder / NS_PER_SECOND_I128;
+    let fraction = remainder % NS_PER_SECOND_I128;
+    if seconds == 0 && fraction == 0 {
+        format!("{sign}{hours:02}:{minutes:02}")
+    } else {
+        let mut text = format!("{sign}{hours:02}:{minutes:02}:{seconds:02}");
+        if fraction != 0 {
+            let mut fraction_text = format!("{fraction:09}");
+            while fraction_text.ends_with('0') {
+                fraction_text.pop();
+            }
+            text.push('.');
+            text.push_str(&fraction_text);
+        }
+        text
+    }
 }
 
 fn install_temporal_now(context: &mut NativeContext, temporal: ObjectId) -> Result<(), VmError> {
