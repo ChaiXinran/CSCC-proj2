@@ -1,6 +1,25 @@
 
 const isInBrowser = false;
-var console = { log: (...args) => print(...args) };
+const isD8 = false;
+const isSpiderMonkey = false;
+var runString = () => {
+    globalThis.loadString = (source) =>
+        new Function("top", source)(globalThis.top);
+    return globalThis;
+};
+var load = (name) => globalThis.loadString(readFile(name));
+var console = {
+    log: (...args) => print(...args),
+    assert(condition, ...args) {
+        if (!condition)
+            throw new Error(args.join(" ") || "Assertion failed");
+    },
+};
+var performance = globalThis.performance = {
+    now: Date.now.bind(Date),
+    mark(name) { return { name }; },
+    measure() {},
+};
 var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
@@ -194,7 +213,7 @@ class ShellFileLoader {
 
         // If we aren't supposed to prefetch this then return code snippet that will load the url on-demand.
         if (!JetStreamParams.prefetchResources)
-            return `load("${url}");`
+            return readFile(url);
 
         if (this.requests.has(url)) {
             return this.requests.get(url);
@@ -719,7 +738,7 @@ class Scripts {
                     throw new Error(name + "." + property + " is not defined.");
                 }
             });
-            globalThis.JetStream = {
+            const JetStream = globalThis.JetStream = {
                 __proto__: throwOnAccess("JetStream"),
                 preload: {
                     __proto__: throwOnAccess("JetStream.preload"),
@@ -791,49 +810,15 @@ class ShellScripts extends Scripts {
     }
 
     run() {
-        let globalObject;
-        let realm;
-        if (isD8) {
-            realm = Realm.createAllowCrossRealmAccess();
-            globalObject = Realm.global(realm);
-            globalObject.loadString = function(s) {
-                return Realm.eval(realm, s);
-            };
-            globalObject.readFile = read;
-        } else if (isSpiderMonkey) {
-            globalObject = newGlobal();
-            globalObject.loadString = globalObject.evaluate;
-            globalObject.readFile = globalObject.readRelativeToScript;
-        } else
-            globalObject = runString("");
-
-        // Expose console copy in the realm so we don't accidentally modify
-        // the original object.
-        globalObject.console = Object.assign({}, console);
-        globalObject.self = globalObject;
-        globalObject.top = {
+        globalThis.console = Object.assign({}, console);
+        globalThis.self = globalThis;
+        globalThis.top = {
             currentResolve,
             currentReject
         };
-
-        // Pass the prefetched resources to the benchmark global.
-        if (JetStreamParams.prefetchResources) {
-            // Pass the 'TextDecoder' polyfill into the benchmark global. Don't
-            // use 'TextDecoder' as that will get picked up in the kotlin test
-            // without full support.
-            globalObject.ShellTextDecoder = TextDecoder;
-            // Store shellPrefetchedResources on ShellPrefetchedResources so that
-            // getBinary and getString can find them.
-            globalObject.ShellPrefetchedResources = this.prefetchedResources;
-        } else {
-            console.assert(Object.values(this.prefetchedResources).length === 0, "Unexpected prefetched resources");
-        }
-
-        globalObject.performance ??= performance;
-        for (const script of this.scripts)
-            globalObject.loadString(script);
-
-        return isD8 ? realm : globalObject;
+        globalThis.performance ??= performance;
+        new Function("top", this.scripts.join("\n"))(globalThis.top);
+        return globalThis;
     }
 
     addPrefetchedResources(prefetchedResources) {
@@ -884,15 +869,7 @@ class BrowserScripts extends Scripts {
 }
 
 
-function initializeJetStreamBenchmark(target, plan) {
-    target.plan = plan;
-    target.iterations = testIterationCount || plan.iterations || defaultIterationCount;
-    target.isAsync = !!plan.isAsync;
-    target.scripts = plan.files.map((file) => readFile(file));
-    target._resourcesPromise = Promise.resolve();
-}
-
-class JetStreamBenchmarkBase {
+class Benchmark {
     constructor({
             name, 
             files,
@@ -1505,7 +1482,7 @@ class GroupedBenchmark extends Benchmark {
     }
 };
 
-class DefaultBenchmark {
+class DefaultBenchmark extends Benchmark {
     constructor({worstCaseCount, ...args}) {
         super(args);
 
@@ -1564,14 +1541,7 @@ class DefaultBenchmark {
     }
 }
 
-class AsyncBenchmark {
-    constructor(plan) {
-        initializeJetStreamBenchmark(this, plan);
-        this.worstCaseCount = plan.worstCaseCount || defaultWorstCaseCount;
-        this.firstIteration = null;
-        this.worst4 = null;
-        this.average = null;
-    }
+class AsyncBenchmark extends DefaultBenchmark {
     get prerunCode() {
         let str = "";
         // FIXME: It would be nice if these were available to any benchmark not just async ones but since these functions
@@ -1606,7 +1576,7 @@ class AsyncBenchmark {
                     if ("ShellPrefetchedResources" in globalThis) {
                         return new ShellTextDecoder().decode(ShellPrefetchedResources[path]);
                     }
-                    return read(path);
+                    return readFile(path);
                 };
 
                 JetStream.dynamicImport = async function(path) {
@@ -1696,7 +1666,7 @@ class WasmEMCCBenchmark extends AsyncBenchmark {
     }
 };
 
-class WSLBenchmark {
+class WSLBenchmark extends Benchmark {
     constructor(plan) {
         super(plan);
 
@@ -3304,7 +3274,7 @@ if (JetStreamParams.testList.length) {
     benchmarks = findBenchmarksByTag("Default", defaultDisabledTags)
 }
 
-this.JetStream = new Driver(benchmarks);
+let JetStream = new Driver(benchmarks);
 
 
 JetStream.initialize()

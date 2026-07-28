@@ -1,34 +1,30 @@
 
 const isInBrowser = false;
-globalThis.document = {
+const jetStreamHostPrint = typeof globalThis.print === "function"
+    ? globalThis.print
+    : (...args) => globalThis.console.log(...args);
+globalThis.print = jetStreamHostPrint;
+var console = { log: (...args) => jetStreamHostPrint(...args) };
+var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
-globalThis.testList = "splay";
-globalThis.testIterationCount = undefined;
-globalThis.RAMification = false;
-globalThis.__jetstreamResources = {"./Octane/splay.js":"// Copyright 2009 the V8 project authors. All rights reserved.\r\n// Copyright (C) 2015 Apple Inc. All rights reserved.\r\n// Redistribution and use in source and binary forms, with or without\r\n// modification, are permitted provided that the following conditions are\r\n// met:\r\n//\r\n//     * Redistributions of source code must retain the above copyright\r\n//       notice, this list of conditions and the following disclaimer.\r\n//     * Redistributions in binary form must reproduce the above\r\n//       copyright notice, this list of conditions and the following\r\n//       disclaimer in the documentation and/or other materials provided\r\n//       with the distribution.\r\n//     * Neither the name of Google Inc. nor the names of its\r\n//       contributors may be used to endorse or promote products derived\r\n//       from this software without specific prior written permission.\r\n//\r\n// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\r\n// \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\r\n// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\r\n// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\r\n// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\r\n// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\r\n// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\r\n// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\r\n// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\r\n// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\r\n// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\r\n\r\n// This benchmark is based on a JavaScript log processing module used\r\n// by the V8 profiler to generate execution time profiles for runs of\r\n// JavaScript applications, and it effectively measures how fast the\r\n// JavaScript engine is at allocating nodes and reclaiming the memory\r\n// used for old nodes. Because of the way splay trees work, the engine\r\n// also has to deal with a lot of changes to the large tree object\r\n// graph.\r\n\r\n// Configuration.\r\nvar kSplayTreeSize = 8000;\r\nvar kSplayTreeModifications = 80;\r\nvar kSplayTreePayloadDepth = 5;\r\n\r\nvar splayTree = null;\r\nvar splaySampleTimeStart = 0.0;\r\n\r\nfunction GeneratePayloadTree(depth, tag) {\r\n  if (depth == 0) {\r\n    return {\r\n      array  : [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],\r\n      string : 'String for key ' + tag + ' in leaf node'\r\n    };\r\n  } else {\r\n    return {\r\n      left:  GeneratePayloadTree(depth - 1, tag),\r\n      right: GeneratePayloadTree(depth - 1, tag)\r\n    };\r\n  }\r\n}\r\n\r\n\r\nfunction GenerateKey() {\r\n  // The benchmark framework guarantees that Math.random is\r\n  // deterministic; see base.js.\r\n  return Math.random();\r\n}\r\n\r\nvar splaySamples = [];\r\n\r\nfunction SplayLatency() {\r\n  return splaySamples;\r\n}\r\n\r\nfunction SplayUpdateStats(time) {\r\n  var pause = time - splaySampleTimeStart;\r\n  splaySampleTimeStart = time;\r\n  splaySamples.push(pause);\r\n}\r\n\r\nfunction InsertNewNode() {\r\n  // Insert new node with a unique key.\r\n  var key;\r\n  do {\r\n    key = GenerateKey();\r\n  } while (splayTree.find(key) != null);\r\n  var payload = GeneratePayloadTree(kSplayTreePayloadDepth, String(key));\r\n  splayTree.insert(key, payload);\r\n  return key;\r\n}\r\n\r\n\r\nfunction SplaySetup() {\r\n  // Check if the platform has the performance.now high resolution timer.\r\n  // If not, throw exception and quit.\r\n  if (!performance.now) {\r\n    throw \"PerformanceNowUnsupported\";\r\n  }\r\n\r\n  splayTree = new SplayTree();\r\n  splaySampleTimeStart = performance.now()\r\n  for (var i = 0; i < kSplayTreeSize; i++) {\r\n    InsertNewNode();\r\n    if ((i+1) % 20 == 19) {\r\n      SplayUpdateStats(performance.now());\r\n    }\r\n  }\r\n}\r\n\r\n\r\nfunction SplayTearDown() {\r\n  // Allow the garbage collector to reclaim the memory\r\n  // used by the splay tree no matter how we exit the\r\n  // tear down function.\r\n  var keys = splayTree.exportKeys();\r\n  splayTree = null;\r\n\r\n  splaySamples = [];\r\n\r\n  // Verify that the splay tree has the right size.\r\n  var length = keys.length;\r\n  if (length != kSplayTreeSize) {\r\n    throw new Error(\"Splay tree has wrong size\");\r\n  }\r\n\r\n  // Verify that the splay tree has sorted, unique keys.\r\n  for (var i = 0; i < length - 1; i++) {\r\n    if (keys[i] >= keys[i + 1]) {\r\n      throw new Error(\"Splay tree not sorted\");\r\n    }\r\n  }\r\n}\r\n\r\n\r\nfunction SplayRun() {\r\n  // Replace a few nodes in the splay tree.\r\n  for (var i = 0; i < kSplayTreeModifications; i++) {\r\n    var key = InsertNewNode();\r\n    var greatest = splayTree.findGreatestLessThan(key);\r\n    if (greatest == null) splayTree.remove(key);\r\n    else splayTree.remove(greatest.key);\r\n  }\r\n  SplayUpdateStats(performance.now());\r\n}\r\n\r\n\r\n/**\r\n * Constructs a Splay tree.  A splay tree is a self-balancing binary\r\n * search tree with the additional property that recently accessed\r\n * elements are quick to access again. It performs basic operations\r\n * such as insertion, look-up and removal in O(log(n)) amortized time.\r\n *\r\n * @constructor\r\n */\r\nfunction SplayTree() {\r\n};\r\n\r\n\r\n/**\r\n * Pointer to the root node of the tree.\r\n *\r\n * @type {SplayTree.Node}\r\n * @private\r\n */\r\nSplayTree.prototype.root_ = null;\r\n\r\n\r\n/**\r\n * @return {boolean} Whether the tree is empty.\r\n */\r\nSplayTree.prototype.isEmpty = function() {\r\n  return !this.root_;\r\n};\r\n\r\n\r\n/**\r\n * Inserts a node into the tree with the specified key and value if\r\n * the tree does not already contain a node with the specified key. If\r\n * the value is inserted, it becomes the root of the tree.\r\n *\r\n * @param {number} key Key to insert into the tree.\r\n * @param {*} value Value to insert into the tree.\r\n */\r\nSplayTree.prototype.insert = function(key, value) {\r\n  if (this.isEmpty()) {\r\n    this.root_ = new SplayTree.Node(key, value);\r\n    return;\r\n  }\r\n  // Splay on the key to move the last node on the search path for\r\n  // the key to the root of the tree.\r\n  this.splay_(key);\r\n  if (this.root_.key == key) {\r\n    return;\r\n  }\r\n  var node = new SplayTree.Node(key, value);\r\n  if (key > this.root_.key) {\r\n    node.left = this.root_;\r\n    node.right = this.root_.right;\r\n    this.root_.right = null;\r\n  } else {\r\n    node.right = this.root_;\r\n    node.left = this.root_.left;\r\n    this.root_.left = null;\r\n  }\r\n  this.root_ = node;\r\n};\r\n\r\n\r\n/**\r\n * Removes a node with the specified key from the tree if the tree\r\n * contains a node with this key. The removed node is returned. If the\r\n * key is not found, an exception is thrown.\r\n *\r\n * @param {number} key Key to find and remove from the tree.\r\n * @return {SplayTree.Node} The removed node.\r\n */\r\nSplayTree.prototype.remove = function(key) {\r\n  if (this.isEmpty()) {\r\n    throw Error('Key not found: ' + key);\r\n  }\r\n  this.splay_(key);\r\n  if (this.root_.key != key) {\r\n    throw Error('Key not found: ' + key);\r\n  }\r\n  var removed = this.root_;\r\n  if (!this.root_.left) {\r\n    this.root_ = this.root_.right;\r\n  } else {\r\n    var right = this.root_.right;\r\n    this.root_ = this.root_.left;\r\n    // Splay to make sure that the new root has an empty right child.\r\n    this.splay_(key);\r\n    // Insert the original right child as the right child of the new\r\n    // root.\r\n    this.root_.right = right;\r\n  }\r\n  return removed;\r\n};\r\n\r\n\r\n/**\r\n * Returns the node having the specified key or null if the tree doesn't contain\r\n * a node with the specified key.\r\n *\r\n * @param {number} key Key to find in the tree.\r\n * @return {SplayTree.Node} Node having the specified key.\r\n */\r\nSplayTree.prototype.find = function(key) {\r\n  if (this.isEmpty()) {\r\n    return null;\r\n  }\r\n  this.splay_(key);\r\n  return this.root_.key == key ? this.root_ : null;\r\n};\r\n\r\n\r\n/**\r\n * @return {SplayTree.Node} Node having the maximum key value.\r\n */\r\nSplayTree.prototype.findMax = function(opt_startNode) {\r\n  if (this.isEmpty()) {\r\n    return null;\r\n  }\r\n  var current = opt_startNode || this.root_;\r\n  while (current.right) {\r\n    current = current.right;\r\n  }\r\n  return current;\r\n};\r\n\r\n\r\n/**\r\n * @return {SplayTree.Node} Node having the maximum key value that\r\n *     is less than the specified key value.\r\n */\r\nSplayTree.prototype.findGreatestLessThan = function(key) {\r\n  if (this.isEmpty()) {\r\n    return null;\r\n  }\r\n  // Splay on the key to move the node with the given key or the last\r\n  // node on the search path to the top of the tree.\r\n  this.splay_(key);\r\n  // Now the result is either the root node or the greatest node in\r\n  // the left subtree.\r\n  if (this.root_.key < key) {\r\n    return this.root_;\r\n  } else if (this.root_.left) {\r\n    return this.findMax(this.root_.left);\r\n  } else {\r\n    return null;\r\n  }\r\n};\r\n\r\n\r\n/**\r\n * @return {Array<*>} An array containing all the keys of tree's nodes.\r\n */\r\nSplayTree.prototype.exportKeys = function() {\r\n  var result = [];\r\n  if (!this.isEmpty()) {\r\n    this.root_.traverse_(function(node) { result.push(node.key); });\r\n  }\r\n  return result;\r\n};\r\n\r\n\r\n/**\r\n * Perform the splay operation for the given key. Moves the node with\r\n * the given key to the top of the tree.  If no node has the given\r\n * key, the last node on the search path is moved to the top of the\r\n * tree. This is the simplified top-down splaying algorithm from:\r\n * \"Self-adjusting Binary Search Trees\" by Sleator and Tarjan\r\n *\r\n * @param {number} key Key to splay the tree on.\r\n * @private\r\n */\r\nSplayTree.prototype.splay_ = function(key) {\r\n  if (this.isEmpty()) {\r\n    return;\r\n  }\r\n  // Create a dummy node.  The use of the dummy node is a bit\r\n  // counter-intuitive: The right child of the dummy node will hold\r\n  // the L tree of the algorithm.  The left child of the dummy node\r\n  // will hold the R tree of the algorithm.  Using a dummy node, left\r\n  // and right will always be nodes and we avoid special cases.\r\n  var dummy, left, right;\r\n  dummy = left = right = new SplayTree.Node(null, null);\r\n  var current = this.root_;\r\n  while (true) {\r\n    if (key < current.key) {\r\n      if (!current.left) {\r\n        break;\r\n      }\r\n      if (key < current.left.key) {\r\n        // Rotate right.\r\n        var tmp = current.left;\r\n        current.left = tmp.right;\r\n        tmp.right = current;\r\n        current = tmp;\r\n        if (!current.left) {\r\n          break;\r\n        }\r\n      }\r\n      // Link right.\r\n      right.left = current;\r\n      right = current;\r\n      current = current.left;\r\n    } else if (key > current.key) {\r\n      if (!current.right) {\r\n        break;\r\n      }\r\n      if (key > current.right.key) {\r\n        // Rotate left.\r\n        var tmp = current.right;\r\n        current.right = tmp.left;\r\n        tmp.left = current;\r\n        current = tmp;\r\n        if (!current.right) {\r\n          break;\r\n        }\r\n      }\r\n      // Link left.\r\n      left.right = current;\r\n      left = current;\r\n      current = current.right;\r\n    } else {\r\n      break;\r\n    }\r\n  }\r\n  // Assemble.\r\n  left.right = current.left;\r\n  right.left = current.right;\r\n  current.left = dummy.right;\r\n  current.right = dummy.left;\r\n  this.root_ = current;\r\n};\r\n\r\n\r\n/**\r\n * Constructs a Splay tree node.\r\n *\r\n * @param {number} key Key.\r\n * @param {*} value Value.\r\n */\r\nSplayTree.Node = function(key, value) {\r\n  this.key = key;\r\n  this.value = value;\r\n};\r\n\r\n\r\n/**\r\n * @type {SplayTree.Node}\r\n */\r\nSplayTree.Node.prototype.left = null;\r\n\r\n\r\n/**\r\n * @type {SplayTree.Node}\r\n */\r\nSplayTree.Node.prototype.right = null;\r\n\r\n\r\n/**\r\n * Performs an ordered traversal of the subtree starting at\r\n * this SplayTree.Node.\r\n *\r\n * @param {function(SplayTree.Node)} f Visitor function.\r\n * @private\r\n */\r\nSplayTree.Node.prototype.traverse_ = function(f) {\r\n  var current = this;\r\n  while (current) {\r\n    var left = current.left;\r\n    if (left) left.traverse_(f);\r\n    f(current);\r\n    current = current.right;\r\n  }\r\n};\r\n\r\nclass Benchmark {\r\n    runIteration() {\r\n        for (let i = 0; i < 50; ++i)\r\n            SplayRun();\r\n    }\r\n}\r\n\r\nSplaySetup();\r\n"};
-globalThis.readFile = function (name) {
+var testList = "splay";
+var testIterationCount = 1;
+var RAMification = false;
+var JetStreamParams = {
+    prefetchResources: false,
+    forceGC: false,
+    dumpJSONResults: false,
+    testIterationCountMap: {},
+    testWorstCaseCountMap: {},
+    testList: "splay",
+};
+var __jetstreamResources = {"./Octane/splay.js":"// Copyright 2009 the V8 project authors. All rights reserved.\r\n// Copyright (C) 2015 Apple Inc. All rights reserved.\r\n// Redistribution and use in source and binary forms, with or without\r\n// modification, are permitted provided that the following conditions are\r\n// met:\r\n//\r\n//     * Redistributions of source code must retain the above copyright\r\n//       notice, this list of conditions and the following disclaimer.\r\n//     * Redistributions in binary form must reproduce the above\r\n//       copyright notice, this list of conditions and the following\r\n//       disclaimer in the documentation and/or other materials provided\r\n//       with the distribution.\r\n//     * Neither the name of Google Inc. nor the names of its\r\n//       contributors may be used to endorse or promote products derived\r\n//       from this software without specific prior written permission.\r\n//\r\n// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\r\n// \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\r\n// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\r\n// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\r\n// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\r\n// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\r\n// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\r\n// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\r\n// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\r\n// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\r\n// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\r\n\r\n// This benchmark is based on a JavaScript log processing module used\r\n// by the V8 profiler to generate execution time profiles for runs of\r\n// JavaScript applications, and it effectively measures how fast the\r\n// JavaScript engine is at allocating nodes and reclaiming the memory\r\n// used for old nodes. Because of the way splay trees work, the engine\r\n// also has to deal with a lot of changes to the large tree object\r\n// graph.\r\n\r\n// Configuration.\r\nvar kSplayTreeSize = 8000;\r\nvar kSplayTreeModifications = 80;\r\nvar kSplayTreePayloadDepth = 5;\r\n\r\nvar splayTree = null;\r\nvar splaySampleTimeStart = 0.0;\r\n\r\nfunction GeneratePayloadTree(depth, tag) {\r\n  if (depth == 0) {\r\n    return {\r\n      array  : [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],\r\n      string : 'String for key ' + tag + ' in leaf node'\r\n    };\r\n  } else {\r\n    return {\r\n      left:  GeneratePayloadTree(depth - 1, tag),\r\n      right: GeneratePayloadTree(depth - 1, tag)\r\n    };\r\n  }\r\n}\r\n\r\n\r\nfunction GenerateKey() {\r\n  // The benchmark framework guarantees that Math.random is\r\n  // deterministic; see base.js.\r\n  return Math.random();\r\n}\r\n\r\nvar splaySamples = [];\r\n\r\nfunction SplayLatency() {\r\n  return splaySamples;\r\n}\r\n\r\nfunction SplayUpdateStats(time) {\r\n  var pause = time - splaySampleTimeStart;\r\n  splaySampleTimeStart = time;\r\n  splaySamples.push(pause);\r\n}\r\n\r\nfunction InsertNewNode() {\r\n  // Insert new node with a unique key.\r\n  var key;\r\n  do {\r\n    key = GenerateKey();\r\n  } while (splayTree.find(key) != null);\r\n  var payload = GeneratePayloadTree(kSplayTreePayloadDepth, String(key));\r\n  splayTree.insert(key, payload);\r\n  return key;\r\n}\r\n\r\n\r\nfunction SplaySetup() {\r\n  // Check if the platform has the performance.now high resolution timer.\r\n  // If not, throw exception and quit.\r\n  if (!performance.now) {\r\n    throw \"PerformanceNowUnsupported\";\r\n  }\r\n\r\n  splayTree = new SplayTree();\r\n  splaySampleTimeStart = performance.now()\r\n  for (var i = 0; i < kSplayTreeSize; i++) {\r\n    InsertNewNode();\r\n    if ((i+1) % 20 == 19) {\r\n      SplayUpdateStats(performance.now());\r\n    }\r\n  }\r\n}\r\n\r\n\r\nfunction SplayTearDown() {\r\n  // Allow the garbage collector to reclaim the memory\r\n  // used by the splay tree no matter how we exit the\r\n  // tear down function.\r\n  var keys = splayTree.exportKeys();\r\n  splayTree = null;\r\n\r\n  splaySamples = [];\r\n\r\n  // Verify that the splay tree has the right size.\r\n  var length = keys.length;\r\n  if (length != kSplayTreeSize) {\r\n    throw new Error(\"Splay tree has wrong size\");\r\n  }\r\n\r\n  // Verify that the splay tree has sorted, unique keys.\r\n  for (var i = 0; i < length - 1; i++) {\r\n    if (keys[i] >= keys[i + 1]) {\r\n      throw new Error(\"Splay tree not sorted\");\r\n    }\r\n  }\r\n}\r\n\r\n\r\nfunction SplayRun() {\r\n  // Replace a few nodes in the splay tree.\r\n  for (var i = 0; i < kSplayTreeModifications; i++) {\r\n    var key = InsertNewNode();\r\n    var greatest = splayTree.findGreatestLessThan(key);\r\n    if (greatest == null) splayTree.remove(key);\r\n    else splayTree.remove(greatest.key);\r\n  }\r\n  SplayUpdateStats(performance.now());\r\n}\r\n\r\n\r\n/**\r\n * Constructs a Splay tree.  A splay tree is a self-balancing binary\r\n * search tree with the additional property that recently accessed\r\n * elements are quick to access again. It performs basic operations\r\n * such as insertion, look-up and removal in O(log(n)) amortized time.\r\n *\r\n * @constructor\r\n */\r\nfunction SplayTree() {\r\n};\r\n\r\n\r\n/**\r\n * Pointer to the root node of the tree.\r\n *\r\n * @type {SplayTree.Node}\r\n * @private\r\n */\r\nSplayTree.prototype.root_ = null;\r\n\r\n\r\n/**\r\n * @return {boolean} Whether the tree is empty.\r\n */\r\nSplayTree.prototype.isEmpty = function() {\r\n  return !this.root_;\r\n};\r\n\r\n\r\n/**\r\n * Inserts a node into the tree with the specified key and value if\r\n * the tree does not already contain a node with the specified key. If\r\n * the value is inserted, it becomes the root of the tree.\r\n *\r\n * @param {number} key Key to insert into the tree.\r\n * @param {*} value Value to insert into the tree.\r\n */\r\nSplayTree.prototype.insert = function(key, value) {\r\n  if (this.isEmpty()) {\r\n    this.root_ = new SplayTree.Node(key, value);\r\n    return;\r\n  }\r\n  // Splay on the key to move the last node on the search path for\r\n  // the key to the root of the tree.\r\n  this.splay_(key);\r\n  if (this.root_.key == key) {\r\n    return;\r\n  }\r\n  var node = new SplayTree.Node(key, value);\r\n  if (key > this.root_.key) {\r\n    node.left = this.root_;\r\n    node.right = this.root_.right;\r\n    this.root_.right = null;\r\n  } else {\r\n    node.right = this.root_;\r\n    node.left = this.root_.left;\r\n    this.root_.left = null;\r\n  }\r\n  this.root_ = node;\r\n};\r\n\r\n\r\n/**\r\n * Removes a node with the specified key from the tree if the tree\r\n * contains a node with this key. The removed node is returned. If the\r\n * key is not found, an exception is thrown.\r\n *\r\n * @param {number} key Key to find and remove from the tree.\r\n * @return {SplayTree.Node} The removed node.\r\n */\r\nSplayTree.prototype.remove = function(key) {\r\n  if (this.isEmpty()) {\r\n    throw Error('Key not found: ' + key);\r\n  }\r\n  this.splay_(key);\r\n  if (this.root_.key != key) {\r\n    throw Error('Key not found: ' + key);\r\n  }\r\n  var removed = this.root_;\r\n  if (!this.root_.left) {\r\n    this.root_ = this.root_.right;\r\n  } else {\r\n    var right = this.root_.right;\r\n    this.root_ = this.root_.left;\r\n    // Splay to make sure that the new root has an empty right child.\r\n    this.splay_(key);\r\n    // Insert the original right child as the right child of the new\r\n    // root.\r\n    this.root_.right = right;\r\n  }\r\n  return removed;\r\n};\r\n\r\n\r\n/**\r\n * Returns the node having the specified key or null if the tree doesn't contain\r\n * a node with the specified key.\r\n *\r\n * @param {number} key Key to find in the tree.\r\n * @return {SplayTree.Node} Node having the specified key.\r\n */\r\nSplayTree.prototype.find = function(key) {\r\n  if (this.isEmpty()) {\r\n    return null;\r\n  }\r\n  this.splay_(key);\r\n  return this.root_.key == key ? this.root_ : null;\r\n};\r\n\r\n\r\n/**\r\n * @return {SplayTree.Node} Node having the maximum key value.\r\n */\r\nSplayTree.prototype.findMax = function(opt_startNode) {\r\n  if (this.isEmpty()) {\r\n    return null;\r\n  }\r\n  var current = opt_startNode || this.root_;\r\n  while (current.right) {\r\n    current = current.right;\r\n  }\r\n  return current;\r\n};\r\n\r\n\r\n/**\r\n * @return {SplayTree.Node} Node having the maximum key value that\r\n *     is less than the specified key value.\r\n */\r\nSplayTree.prototype.findGreatestLessThan = function(key) {\r\n  if (this.isEmpty()) {\r\n    return null;\r\n  }\r\n  // Splay on the key to move the node with the given key or the last\r\n  // node on the search path to the top of the tree.\r\n  this.splay_(key);\r\n  // Now the result is either the root node or the greatest node in\r\n  // the left subtree.\r\n  if (this.root_.key < key) {\r\n    return this.root_;\r\n  } else if (this.root_.left) {\r\n    return this.findMax(this.root_.left);\r\n  } else {\r\n    return null;\r\n  }\r\n};\r\n\r\n\r\n/**\r\n * @return {Array<*>} An array containing all the keys of tree's nodes.\r\n */\r\nSplayTree.prototype.exportKeys = function() {\r\n  var result = [];\r\n  if (!this.isEmpty()) {\r\n    this.root_.traverse_(function(node) { result.push(node.key); });\r\n  }\r\n  return result;\r\n};\r\n\r\n\r\n/**\r\n * Perform the splay operation for the given key. Moves the node with\r\n * the given key to the top of the tree.  If no node has the given\r\n * key, the last node on the search path is moved to the top of the\r\n * tree. This is the simplified top-down splaying algorithm from:\r\n * \"Self-adjusting Binary Search Trees\" by Sleator and Tarjan\r\n *\r\n * @param {number} key Key to splay the tree on.\r\n * @private\r\n */\r\nSplayTree.prototype.splay_ = function(key) {\r\n  if (this.isEmpty()) {\r\n    return;\r\n  }\r\n  // Create a dummy node.  The use of the dummy node is a bit\r\n  // counter-intuitive: The right child of the dummy node will hold\r\n  // the L tree of the algorithm.  The left child of the dummy node\r\n  // will hold the R tree of the algorithm.  Using a dummy node, left\r\n  // and right will always be nodes and we avoid special cases.\r\n  var dummy, left, right;\r\n  dummy = left = right = new SplayTree.Node(null, null);\r\n  var current = this.root_;\r\n  while (true) {\r\n    if (key < current.key) {\r\n      if (!current.left) {\r\n        break;\r\n      }\r\n      if (key < current.left.key) {\r\n        // Rotate right.\r\n        var tmp = current.left;\r\n        current.left = tmp.right;\r\n        tmp.right = current;\r\n        current = tmp;\r\n        if (!current.left) {\r\n          break;\r\n        }\r\n      }\r\n      // Link right.\r\n      right.left = current;\r\n      right = current;\r\n      current = current.left;\r\n    } else if (key > current.key) {\r\n      if (!current.right) {\r\n        break;\r\n      }\r\n      if (key > current.right.key) {\r\n        // Rotate left.\r\n        var tmp = current.right;\r\n        current.right = tmp.left;\r\n        tmp.left = current;\r\n        current = tmp;\r\n        if (!current.right) {\r\n          break;\r\n        }\r\n      }\r\n      // Link left.\r\n      left.right = current;\r\n      left = current;\r\n      current = current.right;\r\n    } else {\r\n      break;\r\n    }\r\n  }\r\n  // Assemble.\r\n  left.right = current.left;\r\n  right.left = current.right;\r\n  current.left = dummy.right;\r\n  current.right = dummy.left;\r\n  this.root_ = current;\r\n};\r\n\r\n\r\n/**\r\n * Constructs a Splay tree node.\r\n *\r\n * @param {number} key Key.\r\n * @param {*} value Value.\r\n */\r\nSplayTree.Node = function(key, value) {\r\n  this.key = key;\r\n  this.value = value;\r\n};\r\n\r\n\r\n/**\r\n * @type {SplayTree.Node}\r\n */\r\nSplayTree.Node.prototype.left = null;\r\n\r\n\r\n/**\r\n * @type {SplayTree.Node}\r\n */\r\nSplayTree.Node.prototype.right = null;\r\n\r\n\r\n/**\r\n * Performs an ordered traversal of the subtree starting at\r\n * this SplayTree.Node.\r\n *\r\n * @param {function(SplayTree.Node)} f Visitor function.\r\n * @private\r\n */\r\nSplayTree.Node.prototype.traverse_ = function(f) {\r\n  var current = this;\r\n  while (current) {\r\n    var left = current.left;\r\n    if (left) left.traverse_(f);\r\n    f(current);\r\n    current = current.right;\r\n  }\r\n};\r\n\r\nclass Benchmark {\r\n    runIteration() {\r\n        for (let i = 0; i < 50; ++i)\r\n            SplayRun();\r\n    }\r\n}\r\n\r\nSplaySetup();\r\n"};
+var readFile = function (name) {
     const normalized = String(name).replaceAll("\\", "/");
     if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
         throw new Error("JetStream resource not embedded: " + normalized);
     return __jetstreamResources[normalized];
-};
-globalThis.runString = function (source) {
-    if (source)
-        __agentjsLoadString(source);
-    const shellRealm = {
-        print,
-        loadString(text) { return __agentjsLoadString(text); }
-    };
-    Object.defineProperty(shellRealm, "console", {
-        get() { return globalThis.console; },
-        set(_) {}
-    });
-    Object.defineProperty(shellRealm, "top", {
-        get() { return globalThis.top; },
-        set(value) { globalThis.top = value; }
-    });
-    return shellRealm;
 };
 
 "use strict";
@@ -68,8 +64,8 @@ if (typeof testIterationCount === "undefined")
     var testIterationCount = undefined;
 
 // Used for the promise representing the current benchmark run.
-this.currentResolve = null;
-this.currentReject = null;
+var currentResolve = null;
+var currentReject = null;
 
 const defaultIterationCount = 120;
 const defaultWorstCaseCount = 4;
@@ -200,7 +196,7 @@ class Driver {
 
         await updateUI();
 
-        let start = Date.now();
+        let __jetstreamSuiteStart = Date.now();
         for (let benchmark of this.benchmarks) {
             benchmark.updateUIBeforeRun();
 
@@ -217,7 +213,7 @@ class Driver {
             benchmark.updateUIAfterRun();
         }
 
-        let totalTime = Date.now() - start;
+        let totalTime = Date.now() - __jetstreamSuiteStart;
         if (measureTotalTimeAsSubtest) {
             if (isInBrowser)
                 document.getElementById("benchmark-total-time-score").innerHTML = uiFriendlyNumber(totalTime);
@@ -243,16 +239,9 @@ class Driver {
     runCode(string)
     {
         if (!isInBrowser) {
-            let scripts = string;
-            let globalObject = runString("");
-            globalObject.console = {log:globalObject.print}
-            globalObject.top = {
-                currentResolve,
-                currentReject
-            };
-            for (let script of scripts)
-                globalObject.loadString(script);
-            return globalObject;
+            let top = { currentResolve, currentReject };
+            new Function("top", string.join("\n"))(top);
+            return globalThis;
         }
 
         var magic = document.getElementById("magic");
@@ -382,7 +371,7 @@ class Driver {
     }
 };
 
-class JetStreamBenchmarkBase {
+class Benchmark {
     constructor(plan)
     {
         this.plan = plan;
@@ -391,8 +380,8 @@ class JetStreamBenchmarkBase {
 
         this.scripts = null;
 
-        this._resourcesPromise = null;
-        this.fetchResources();
+        this._resourcesPromise = Promise.resolve();
+        this.scripts = this.plan.files.map((file) => readFile(file));
     }
 
     get name() { return this.plan.name; }
@@ -405,11 +394,11 @@ class JetStreamBenchmarkBase {
                 if (__benchmark.prepareForNextIteration)
                     __benchmark.prepareForNextIteration();
 
-                let start = Date.now();
+                let __jetstreamIterationStart = Date.now();
                 __benchmark.runIteration();
-                let end = Date.now();
+                let __jetstreamIterationEnd = Date.now();
 
-                results.push(Math.max(1, end - start));
+                results.push(Math.max(1, __jetstreamIterationEnd - __jetstreamIterationStart));
             }
             if (__benchmark.validate)
                 __benchmark.validate();
@@ -447,7 +436,7 @@ class JetStreamBenchmarkBase {
                 assert(false, "Should not reach here in CLI");
         };
 
-        addScript(`globalThis.performance = {now: Date.now.bind(Date)};`);
+        addScript(`var performance = globalThis.performance = {now: Date.now.bind(Date)};`);
 
         if (!!this.plan.deterministicRandom) {
             addScript(`
@@ -500,7 +489,7 @@ class JetStreamBenchmarkBase {
                 ${code}
             `;
         }
-        addScript(this.runnerCode);
+        addScript("(() => {\n" + this.runnerCode + "\n})();");
 
         this.startTime = new Date();
 
@@ -607,7 +596,7 @@ class JetStreamBenchmarkBase {
     }
 };
 
-class DefaultBenchmark extends JetStreamBenchmarkBase {
+class DefaultBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -703,7 +692,7 @@ class AsyncBenchmark extends DefaultBenchmark {
     }
 };
 
-class WSLBenchmark extends JetStreamBenchmarkBase {
+class WSLBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -776,7 +765,7 @@ class WSLBenchmark extends JetStreamBenchmarkBase {
     }
 };
 
-class WasmBenchmark extends JetStreamBenchmarkBase {
+class WasmBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -1520,7 +1509,7 @@ for (let plan of testPlans) {
         testsByGroup.set(group, [testName]);
 }
 
-this.JetStream = new Driver();
+var JetStream = new Driver();
 
 function addTestByName(testName)
 {

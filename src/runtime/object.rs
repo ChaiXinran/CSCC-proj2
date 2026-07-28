@@ -104,6 +104,12 @@ pub enum ObjectKind {
     Proxy {
         record: ProxyRecord,
     },
+    WeakRef {
+        target: JsValue,
+    },
+    FinalizationRegistry {
+        unregister_tokens: Vec<Option<JsValue>>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -532,6 +538,24 @@ impl JsObject {
         }
     }
 
+    #[must_use]
+    pub fn weak_ref(target: JsValue) -> Self {
+        Self {
+            kind: ObjectKind::WeakRef { target },
+            ..Self::default()
+        }
+    }
+
+    #[must_use]
+    pub fn finalization_registry() -> Self {
+        Self {
+            kind: ObjectKind::FinalizationRegistry {
+                unregister_tokens: Vec::new(),
+            },
+            ..Self::default()
+        }
+    }
+
     pub fn define_property(&mut self, name: impl Into<String>, descriptor: PropertyDescriptor) {
         self.properties.define(name, descriptor);
     }
@@ -737,7 +761,9 @@ impl JsObject {
             | ObjectKind::Iterator { .. }
             | ObjectKind::Generator { .. }
             | ObjectKind::Promise { .. }
-            | ObjectKind::Proxy { .. } => None,
+            | ObjectKind::Proxy { .. }
+            | ObjectKind::WeakRef { .. }
+            | ObjectKind::FinalizationRegistry { .. } => None,
         }
     }
 
@@ -756,7 +782,9 @@ impl JsObject {
             | ObjectKind::Iterator { .. }
             | ObjectKind::Generator { .. }
             | ObjectKind::Promise { .. }
-            | ObjectKind::Proxy { .. } => None,
+            | ObjectKind::Proxy { .. }
+            | ObjectKind::WeakRef { .. }
+            | ObjectKind::FinalizationRegistry { .. } => None,
         }
     }
 
@@ -1020,6 +1048,12 @@ impl Trace for JsObject {
                 record.target.trace(tracer);
                 record.handler.trace(tracer);
             }
+            ObjectKind::WeakRef { target } => target.trace(tracer),
+            ObjectKind::FinalizationRegistry { unregister_tokens } => {
+                for token in unregister_tokens.iter().flatten() {
+                    token.trace(tracer);
+                }
+            }
             ObjectKind::Iterator { record } => {
                 // Trace the backing iterable/iterator so GC doesn't collect it.
                 match &record.kind {
@@ -1142,6 +1176,15 @@ impl JsObject {
                 ),
             ObjectKind::Promise { .. } => std::mem::size_of::<PromiseId>(),
             ObjectKind::Proxy { .. } => std::mem::size_of::<ProxyRecord>(),
+            ObjectKind::WeakRef { target } => target.estimated_bytes(),
+            ObjectKind::FinalizationRegistry { unregister_tokens } => unregister_tokens
+                .iter()
+                .flatten()
+                .map(JsValue::estimated_bytes)
+                .sum::<usize>()
+                .saturating_add(
+                    unregister_tokens.capacity() * std::mem::size_of::<Option<JsValue>>(),
+                ),
         };
         std::mem::size_of::<Self>()
             .saturating_add(kind_bytes)

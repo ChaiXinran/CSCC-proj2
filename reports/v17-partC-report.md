@@ -68,3 +68,182 @@ rustfmt --edition 2024 --check src/builtins/date_intl.rs
 - `cargo fmt --all -- --check` passes.
 - `cargo clippy --all-targets -- -D warnings` passes.
 - `cargo test --no-default-features --test native_test262` passes (15/15).
+# WeakRef / FinalizationRegistry correctness follow-up
+
+- Added the missing `WeakRef` constructor/prototype surface, target validation,
+  `deref`, custom `new.target.prototype` handling, and `Symbol.toStringTag`.
+- Added the missing `FinalizationRegistry` constructor/prototype surface with
+  cleanup-callback validation, `register`/`unregister`, weak-target/token
+  validation, token identity removal, and descriptor-visible builtin shape.
+- The current collector does not yet enqueue cleanup callbacks. The
+  implementation deliberately covers deterministic ECMAScript observability;
+  nondeterministic collection scheduling remains deferred.
+
+Validation:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `test/built-ins/WeakRef` | 0 / 29 | 25 / 29 | +25 |
+| `test/built-ins/FinalizationRegistry` | 0 / 47 | 43 / 47 | +43 |
+| Full Test262 | 45,654 / 53,379 | 45,725 / 53,379 | +71 |
+
+Full conformance moved from **85.5280%** to **85.6610%** (+0.1330 percentage
+points), with failures decreasing from 7,723 to 7,652 and skips unchanged at
+2. The focused suites account for +68 passes; the full scan records a further
++3 net cross-suite improvement.
+
+Commands:
+
+```powershell
+cargo test --locked --test native_weak_refs
+cargo check --locked --all-targets
+cargo test --locked --all-targets
+target\release\agentjs.exe test262 --backend native --root test262 --suite test\built-ins\WeakRef --jobs 4
+target\release\agentjs.exe test262 --backend native --root test262 --suite test\built-ins\FinalizationRegistry --jobs 4
+target\release\agentjs.exe test262 --backend native --root test262 --jobs 4 --progress --json reports\full-test262-summary.json
+```
+
+## Temporal relative calendar-unit rounding
+
+- Replaced fixed 365-day/30-day rounding for `Temporal.PlainDate` and
+  `Temporal.PlainDateTime` differences with quantities measured relative to
+  the receiver date.
+- Added correct `roundingIncrement` handling and all Temporal rounding modes
+  for year, month, week, and day smallest units.
+- PlainDateTime calculations include the time-of-day fraction when choosing a
+  calendar-unit boundary.
+- Negative differences round relative to the correct directional calendar
+  boundary; half-even ties select the even increment.
+
+Focused results:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `Temporal/PlainDate/prototype/until` | 62 / 86 | 77 / 86 | +15 |
+| `Temporal/PlainDate/prototype/since` | 61 / 87 | 75 / 87 | +14 |
+| `Temporal/PlainDateTime/prototype/until` | 74 / 98 | 80 / 98 | +6 |
+| `Temporal/PlainDateTime/prototype/since` | 72 / 95 | 77 / 95 | +5 |
+| Full Test262 | 45,725 / 53,379 | 45,771 / 53,379 | +46 |
+
+The full conformance rate moved from **85.6610%** to **85.7472%** (+0.0862
+percentage points). Relative to the original 85.5280% baseline used for this
+correctness pass, the cumulative result is **+117 passes** and **+0.2192
+percentage points**.
+
+## Temporal add/subtract range and time balancing
+
+- Reject date arithmetic before `civil_from_days` can clamp an out-of-range
+  intermediate back to a valid boundary date.
+- Use the exact asymmetric Temporal day-number interval
+  `[-100000001, 100000000]`, including the earliest `PlainDate`.
+- Convert the time portion of a duration to whole days with truncation toward
+  zero for `PlainDate`, fixing negative fractional-hour/minute additions.
+- Validate final `PlainDate` and `PlainDateTime` results after date and time
+  balancing, including the one-nanosecond lower `PlainDateTime` boundary.
+- Added focused integration coverage for both ISO range ends.
+
+Focused results:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `Temporal/PlainDate/prototype/add` | 31 / 39 | 35 / 39 | +4 |
+| `Temporal/PlainDate/prototype/subtract` | 30 / 38 | 34 / 38 | +4 |
+| `Temporal/PlainDateTime/prototype/add` | 34 / 42 | 37 / 42 | +3 |
+| `Temporal/PlainDateTime/prototype/subtract` | 34 / 42 | 37 / 42 | +3 |
+| Full Test262 | 45,771 / 53,379 | 45,795 / 53,379 | +24 |
+
+Full conformance is now **85.7922%**, an increase of **0.0450 percentage
+points** in this batch. Relative to the original 85.5280% baseline, the
+cumulative improvement is **+141 passes** and **+0.2642 percentage points**.
+
+Validation:
+
+```powershell
+cargo test --locked --test native_temporal_rounding
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --all -- --check
+target\release\agentjs.exe test262 --root test262 --suite test --jobs 4 --json reports\full-test262-summary.json
+```
+
+## Temporal.Duration calendar-unit arithmetic guard
+
+- `Temporal.Duration.prototype.add` and `subtract` now reject nonzero years,
+  months, or weeks in either operand when no `relativeTo` calendar context is
+  available.
+- Added focused integration coverage for receiver, property-bag, and duration
+  string operands.
+
+Focused results:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `Temporal/Duration/prototype/add` | 21 / 34 | 22 / 34 | +1 |
+| `Temporal/Duration/prototype/subtract` | 20 / 34 | 21 / 34 | +1 |
+
+## Temporal correctness sweep: +103 focused passes
+
+- Fixed `Temporal.PlainYearMonth.prototype.until` and `since` so omitted or
+  `auto` `largestUnit` defaults to `year`, restoring year/month balancing
+  across default options and rounding modes.
+- Fixed `Temporal.ZonedDateTime.prototype.until` and `since` so their default
+  largest unit is `hour`, rather than leaking whole days into the result.
+- Replaced floating-point time balancing with exact `i128` nanosecond
+  arithmetic in PlainTime, PlainDateTime, ZonedDateTime, and Duration
+  arithmetic paths.
+- Duration addition/subtraction now balances only as high as the largest input
+  unit. For example, `-PT24.5H` remains an hour-based duration rather than
+  becoming a mixed day/time result.
+- PlainYearMonth addition/subtraction now rejects weeks and lower units and
+  validates the overflow options object before arithmetic.
+- Temporal `toLocaleString(locale)` no longer treats the locale argument as a
+  Temporal `toString` options object.
+
+Focused type results:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `Temporal/Duration` | 367 / 540 | 378 / 540 | +11 |
+| `Temporal/Instant` | 433 / 465 | 434 / 465 | +1 |
+| `Temporal/PlainDateTime` | 661 / 773 | 664 / 773 | +3 |
+| `Temporal/PlainTime` | 429 / 493 | 436 / 493 | +7 |
+| `Temporal/PlainYearMonth` | 386 / 509 | 432 / 509 | +46 |
+| `Temporal/ZonedDateTime` | 728 / 901 | 763 / 901 | +35 |
+| **Complete `test/built-ins/Temporal`** | **3,793 / 4,603** | **3,896 / 4,603** | **+103** |
+
+The complete Temporal built-ins suite moved from **82.40%** to **84.64%**
+(+2.24 percentage points). The full-suite runner was attempted with both
+120-second and 300-second limits but did not finish within either limit; no
+full-suite result is claimed for this batch.
+
+Validation:
+
+```powershell
+cargo test --locked --test native_temporal_rounding
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --all -- --check
+target\release\agentjs.exe test262 --root test262 --suite test\built-ins\Temporal --jobs 4 --json reports\.native-test262-tmp\temporal-plus-103-summary.json
+```
+
+## JetStream RegExp compatibility follow-up
+
+- Translate JavaScript control-letter escapes such as `\cX` to the
+  corresponding control code before compiling with the Rust regex backend.
+- Install the `RegExp` `Symbol.toStringTag`, allowing validatorjs to recognize
+  regular expressions through `Object.prototype.toString.call(value)`.
+- Added focused tests for control escapes and both literal/constructed RegExp
+  branding.
+
+Validation:
+
+| Suite | Result |
+|---|---:|
+| `test/built-ins/RegExp` | 1464/1879, 0 skipped |
+| control-letter translation unit test | pass |
+| RegExp branding integration test | pass |
+
+validatorjs now executes its assertion corpus until it reaches a pattern with
+numeric backreferences. The current Rust `regex` backend does not support
+backreferences; resolving that remaining item requires a backtracking-capable
+backend or a separate compatibility execution path.

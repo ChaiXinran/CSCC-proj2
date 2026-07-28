@@ -1,6 +1,10 @@
 
 const isInBrowser = false;
-var console = { log: (...args) => print(...args) };
+const jetStreamHostPrint = typeof globalThis.print === "function"
+    ? globalThis.print
+    : (...args) => globalThis.console.log(...args);
+globalThis.print = jetStreamHostPrint;
+var console = { log: (...args) => jetStreamHostPrint(...args) };
 var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
@@ -367,15 +371,7 @@ class Driver {
     }
 };
 
-function initializeJetStreamBenchmark(target, plan) {
-    target.plan = plan;
-    target.iterations = testIterationCount || plan.iterations || defaultIterationCount;
-    target.isAsync = !!plan.isAsync;
-    target.scripts = plan.files.map((file) => readFile(file));
-    target._resourcesPromise = Promise.resolve();
-}
-
-class JetStreamBenchmarkBase {
+class Benchmark {
     constructor(plan)
     {
         this.plan = plan;
@@ -600,9 +596,9 @@ class JetStreamBenchmarkBase {
     }
 };
 
-class DefaultBenchmark {
-    constructor(plan) {
-        initializeJetStreamBenchmark(this, plan);
+class DefaultBenchmark extends Benchmark {
+    constructor(...args) {
+        super(...args);
 
         this.worstCaseCount = this.plan.worstCaseCount || defaultWorstCaseCount;
         this.firstIteration = null;
@@ -654,7 +650,7 @@ class DefaultBenchmark {
     }
 
     updateUIAfterRun() {
-        JetStreamBenchmarkBase.prototype.updateUIAfterRun.call(this);
+        super.updateUIAfterRun();
 
         if (isInBrowser) {
             document.getElementById(firstID(this)).innerHTML = uiFriendlyNumber(this.firstIteration);
@@ -676,14 +672,7 @@ class DefaultBenchmark {
     }
 }
 
-class AsyncBenchmark {
-    constructor(plan) {
-        initializeJetStreamBenchmark(this, plan);
-        this.worstCaseCount = plan.worstCaseCount || defaultWorstCaseCount;
-        this.firstIteration = null;
-        this.worst4 = null;
-        this.average = null;
-    }
+class AsyncBenchmark extends DefaultBenchmark {
     get runnerCode() {
         return `
         async function doRun() {
@@ -703,9 +692,9 @@ class AsyncBenchmark {
     }
 };
 
-class WSLBenchmark {
-    constructor(plan) {
-        initializeJetStreamBenchmark(this, plan);
+class WSLBenchmark extends Benchmark {
+    constructor(...args) {
+        super(...args);
 
         this.stdlib = null;
         this.mainRun = null;
@@ -756,7 +745,7 @@ class WSLBenchmark {
     }
 
     updateUIAfterRun() {
-        JetStreamBenchmarkBase.prototype.updateUIAfterRun.call(this);
+        super.updateUIAfterRun();
 
         if (isInBrowser) {
             document.getElementById("wsl-stdlib-score").innerHTML = uiFriendlyNumber(this.stdlib);
@@ -776,9 +765,9 @@ class WSLBenchmark {
     }
 };
 
-class WasmBenchmark {
-    constructor(plan) {
-        initializeJetStreamBenchmark(this, plan);
+class WasmBenchmark extends Benchmark {
+    constructor(...args) {
+        super(...args);
 
         this.startupTime = null;
         this.runTime = null;
@@ -913,7 +902,7 @@ class WasmBenchmark {
     }
 
     updateUIAfterRun() {
-        JetStreamBenchmarkBase.prototype.updateUIAfterRun.call(this);
+        super.updateUIAfterRun();
 
         if (isInBrowser) {
             document.getElementById(this.startupID).innerHTML = uiFriendlyNumber(this.startupTime);
@@ -930,13 +919,6 @@ class WasmBenchmark {
         print("    Score:", uiFriendlyNumber(this.score));
     }
 };
-
-const Benchmark = JetStreamBenchmarkBase;
-        Object.setPrototypeOf(DefaultBenchmark.prototype, JetStreamBenchmarkBase.prototype);
-Object.setPrototypeOf(AsyncBenchmark.prototype, DefaultBenchmark.prototype);
-Object.setPrototypeOf(AsyncBenchmark, DefaultBenchmark);
-Object.setPrototypeOf(WSLBenchmark.prototype, JetStreamBenchmarkBase.prototype);
-Object.setPrototypeOf(WasmBenchmark.prototype, JetStreamBenchmarkBase.prototype);
 
 const ARESGroup = Symbol.for("ARES");
 const CDJSGroup = Symbol.for("CDJS");

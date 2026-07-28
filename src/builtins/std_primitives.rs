@@ -1658,10 +1658,10 @@ fn compile_cached_regexp(
     context: &mut NativeContext,
     pattern: &str,
     flags: &str,
-) -> Result<regex::Regex, VmError> {
+) -> Result<fancy_regex::Regex, VmError> {
     context
         .cached_regexp(pattern, flags, regexp::compile_regex)
-        .map_err(|e| VmError::type_error(format!("invalid regex: {e}")))
+        .map_err(|error| VmError::type_error(format!("invalid regex /{pattern}/{flags}: {error}")))
 }
 
 fn regexp_last_index_is_writable(context: &NativeContext, value: &JsValue) -> bool {
@@ -1983,7 +1983,7 @@ fn apply_replace_fn(
     vm: &mut Vm,
     context: &mut NativeContext,
     text: &str,
-    re: &regex::Regex,
+    re: &fancy_regex::Regex,
     global: bool,
     replace_fn: JsValue,
 ) -> Result<JsValue, VmError> {
@@ -2350,6 +2350,9 @@ fn invoke_regexp_match_all_fallback(
     let mut indexed_byte = 0usize;
     let mut indexed_utf16 = 0usize;
     for caps in re.captures_iter(&string) {
+        let caps = caps.map_err(|error| {
+            VmError::runtime(format!("regular expression execution failed: {error}"))
+        })?;
         let m = caps.get(0).unwrap();
         let index = if string.is_ascii() {
             m.start()
@@ -3821,7 +3824,10 @@ fn regexp_test(
         }
     };
     let re = compile_cached_regexp(context, &pattern, &flags)?;
-    Ok(JsValue::Boolean(re.is_match(&text)))
+    let matched = re.is_match(&text).map_err(|error| {
+        VmError::runtime(format!("regular expression execution failed: {error}"))
+    })?;
+    Ok(JsValue::Boolean(matched))
 }
 
 fn regexp_exec(
@@ -3990,6 +3996,9 @@ fn regexp_symbol_match_all(
     let re = compile_cached_regexp(context, &pattern, &flags)?;
     let mut entries = Vec::new();
     for caps in re.captures_iter(&string) {
+        let caps = caps.map_err(|error| {
+            VmError::runtime(format!("regular expression execution failed: {error}"))
+        })?;
         let m = caps.get(0).unwrap();
         let index = string[..m.start()].encode_utf16().count();
         let elements: Vec<JsValue> = (0..caps.len())
@@ -4579,6 +4588,7 @@ fn install_to_string_tags(
     push_proto!(number_prototype, "Number");
     push_proto!(boolean_prototype, "Boolean");
     push_proto!(error_prototype, "Error");
+    push_proto!(regexp_prototype, "RegExp");
 
     // Sub-error prototypes (TypeError, RangeError, etc.) get their own tag.
     for name in [

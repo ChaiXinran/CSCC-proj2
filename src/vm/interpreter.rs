@@ -919,7 +919,7 @@ impl Vm {
                             // Properties set via `this.x = v` are reachable as global identifiers.
                             let global_id = context.global_object();
                             let name_s = name.to_string();
-                            if context.get_own_property(global_id, &name_s).is_some() {
+                            if context.has_property(global_id, &name_s)? {
                                 let global_obj = context.global_this_value();
                                 match context.get_property(global_obj, &name_s) {
                                     Ok(value) => self.stack.push(value),
@@ -1707,7 +1707,12 @@ impl Vm {
                     let mut properties = Vec::with_capacity(count as usize);
                     for _ in 0..count {
                         let value = self.pop_value()?;
-                        let key = to_property_key(&self.pop_value()?)?;
+                        let key_value = self.pop_value()?;
+                        let key = to_property_key(&key_value).map_err(|error| {
+                            VmError::type_error(format!(
+                                "{error}; object literal key {key_value} at instruction {current_instruction}"
+                            ))
+                        })?;
                         // ObjectCreate only handles string keys (non-computed
                         // property names in object literals). Computed symbol
                         // keys use SetElement at runtime instead.
@@ -2920,7 +2925,11 @@ impl Vm {
                     }
                 }
                 Instruction::DeleteElement => {
-                    let key = self.pop_value()?;
+                    let raw_key = self.pop_value()?;
+                    self.stack.push(raw_key.clone());
+                    let key_result = self.to_property_key_from_builtin(raw_key, context);
+                    self.stack.pop();
+                    let key = key_result?;
                     let value = self.pop_value()?;
                     match context.property_lookup_object(&value) {
                         Ok(object) => {
@@ -2967,7 +2976,13 @@ impl Vm {
                 Instruction::HasProperty => {
                     let value = self.pop_value()?;
                     context.require_object(&value, "test property")?;
-                    let key = self.pop_value()?;
+                    let raw_key = self.pop_value()?;
+                    self.stack.push(value.clone());
+                    self.stack.push(raw_key.clone());
+                    let key_result = self.to_property_key_from_builtin(raw_key, context);
+                    self.stack.pop();
+                    self.stack.pop();
+                    let key = key_result?;
                     let property_key = to_property_key(&key)?;
                     let result = proxy::internal_has_property(self, context, value, &property_key);
                     match result {
@@ -3795,7 +3810,12 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        match callee {
+        let root_base = context.push_temporary_roots(
+            std::iter::once(callee.clone())
+                .chain(std::iter::once(this_value.clone()))
+                .chain(arguments.iter().cloned()),
+        );
+        let result = match callee {
             JsValue::Object(object) if context.is_function_prototype_object(object) => {
                 Ok(OperationResult::Value(JsValue::Undefined))
             }
@@ -3945,7 +3965,9 @@ impl Vm {
             other => Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error(format!("{other} is not callable")),
             ))),
-        }
+        };
+        context.truncate_temporary_roots(root_base);
+        result
     }
 
     /// Constructor-call half of `super()`: unlike an ordinary call, preserve
@@ -6320,7 +6342,7 @@ impl Vm {
             context,
             JsValue::Object(super_base),
             &property_key,
-            receiver,
+            receiver.clone(),
         ) {
             Ok(value) => Ok(OperationResult::Value(value)),
             Err(error) => self.error_to_operation_result(error),
@@ -6516,9 +6538,12 @@ impl Vm {
             receiver.clone(),
             &property_key,
             value.clone(),
-            receiver,
+            receiver.clone(),
         ) {
-            Ok(true) => Ok(OperationResult::Value(value)),
+            Ok(true) => {
+                context.synchronize_global_object_binding(&receiver, key, value.clone())?;
+                Ok(OperationResult::Value(value))
+            }
             Ok(false) if context.is_strict_code() => Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error("cannot write property"),
             ))),
@@ -6937,15 +6962,6 @@ impl Vm {
             }
         }
         Ok(OperationResult::Value(promise_object))
-    }
-
-    fn construct_value(
-        &mut self,
-        constructor: JsValue,
-        arguments: Vec<JsValue>,
-        context: &mut NativeContext,
-    ) -> Result<OperationResult, VmError> {
-        self.construct_value_with_new_target(constructor.clone(), arguments, constructor, context)
     }
 
     pub(super) fn construct_value_with_new_target(

@@ -1,34 +1,30 @@
 
 const isInBrowser = false;
-globalThis.document = {
+const jetStreamHostPrint = typeof globalThis.print === "function"
+    ? globalThis.print
+    : (...args) => globalThis.console.log(...args);
+globalThis.print = jetStreamHostPrint;
+var console = { log: (...args) => jetStreamHostPrint(...args) };
+var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
-globalThis.testList = "navier-stokes";
-globalThis.testIterationCount = undefined;
-globalThis.RAMification = false;
-globalThis.__jetstreamResources = {"./Octane/navier-stokes.js":"/**\r\n * Copyright 2013 the V8 project authors. All rights reserved.\r\n * Copyright 2009 Oliver Hunt <http://nerget.com>\r\n *\r\n * Permission is hereby granted, free of charge, to any person\r\n * obtaining a copy of this software and associated documentation\r\n * files (the \"Software\"), to deal in the Software without\r\n * restriction, including without limitation the rights to use,\r\n * copy, modify, merge, publish, distribute, sublicense, and/or sell\r\n * copies of the Software, and to permit persons to whom the\r\n * Software is furnished to do so, subject to the following\r\n * conditions:\r\n *\r\n * The above copyright notice and this permission notice shall be\r\n * included in all copies or substantial portions of the Software.\r\n *\r\n * THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\r\n * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES\r\n * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\r\n * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT\r\n * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\r\n * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\r\n * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR\r\n * OTHER DEALINGS IN THE SOFTWARE.\r\n *\r\n * Update 10/21/2013: fixed loop variables at line 119\r\n */\r\n\r\nvar solver = null;\r\nvar nsFrameCounter = 0;\r\n\r\nfunction runNavierStokes()\r\n{\r\n    solver.update();\r\n    nsFrameCounter++;\r\n\r\n    if(nsFrameCounter==15)\r\n        checkResult(solver.getDens());\r\n}\r\n\r\nfunction checkResult(dens) {\r\n\r\n    this.result = 0;\r\n    for (var i=7000;i<7100;i++) {\r\n        this.result+=~~((dens[i]*10));\r\n    }\r\n\r\n    if (this.result!=77) {\r\n        throw(new Error(\"checksum failed\"));\r\n    }\r\n}\r\n\r\nfunction setupNavierStokes()\r\n{\r\n    solver = new FluidField(null);\r\n    solver.setResolution(128, 128);\r\n    solver.setIterations(20);\r\n    solver.setDisplayFunction(function(){});\r\n    solver.setUICallback(prepareFrame);\r\n    solver.reset();\r\n}\r\n\r\nfunction tearDownNavierStokes()\r\n{\r\n    solver = null;\r\n}\r\n\r\nfunction addPoints(field) {\r\n    var n = 64;\r\n    for (var i = 1; i <= n; i++) {\r\n        field.setVelocity(i, i, n, n);\r\n        field.setDensity(i, i, 5);\r\n        field.setVelocity(i, n - i, -n, -n);\r\n        field.setDensity(i, n - i, 20);\r\n        field.setVelocity(128 - i, n + i, -n, -n);\r\n        field.setDensity(128 - i, n + i, 30);\r\n    }\r\n}\r\n\r\nvar framesTillAddingPoints = 0;\r\nvar framesBetweenAddingPoints = 5;\r\n\r\nfunction prepareFrame(field)\r\n{\r\n    if (framesTillAddingPoints == 0) {\r\n        addPoints(field);\r\n        framesTillAddingPoints = framesBetweenAddingPoints;\r\n        framesBetweenAddingPoints++;\r\n    } else {\r\n        framesTillAddingPoints--;\r\n    }\r\n}\r\n\r\n// Code from Oliver Hunt (http://nerget.com/fluidSim/pressure.js) starts here.\r\nfunction FluidField(canvas) {\r\n    function addFields(x, s, dt)\r\n    {\r\n        for (var i=0; i<size ; i++ ) x[i] += dt*s[i];\r\n    }\r\n\r\n    function set_bnd(b, x)\r\n    {\r\n        if (b===1) {\r\n            for (var i = 1; i <= width; i++) {\r\n                x[i] =  x[i + rowSize];\r\n                x[i + (height+1) *rowSize] = x[i + height * rowSize];\r\n            }\r\n\r\n            for (var j = 1; j <= height; j++) {\r\n                x[j * rowSize] = -x[1 + j * rowSize];\r\n                x[(width + 1) + j * rowSize] = -x[width + j * rowSize];\r\n            }\r\n        } else if (b === 2) {\r\n            for (var i = 1; i <= width; i++) {\r\n                x[i] = -x[i + rowSize];\r\n                x[i + (height + 1) * rowSize] = -x[i + height * rowSize];\r\n            }\r\n\r\n            for (var j = 1; j <= height; j++) {\r\n                x[j * rowSize] =  x[1 + j * rowSize];\r\n                x[(width + 1) + j * rowSize] =  x[width + j * rowSize];\r\n            }\r\n        } else {\r\n            for (var i = 1; i <= width; i++) {\r\n                x[i] =  x[i + rowSize];\r\n                x[i + (height + 1) * rowSize] = x[i + height * rowSize];\r\n            }\r\n\r\n            for (var j = 1; j <= height; j++) {\r\n                x[j * rowSize] =  x[1 + j * rowSize];\r\n                x[(width + 1) + j * rowSize] =  x[width + j * rowSize];\r\n            }\r\n        }\r\n        var maxEdge = (height + 1) * rowSize;\r\n        x[0]                 = 0.5 * (x[1] + x[rowSize]);\r\n        x[maxEdge]           = 0.5 * (x[1 + maxEdge] + x[height * rowSize]);\r\n        x[(width+1)]         = 0.5 * (x[width] + x[(width + 1) + rowSize]);\r\n        x[(width+1)+maxEdge] = 0.5 * (x[width + maxEdge] + x[(width + 1) + height * rowSize]);\r\n    }\r\n\r\n    function lin_solve(b, x, x0, a, c)\r\n    {\r\n        if (a === 0 && c === 1) {\r\n            for (var j=1 ; j<=height; j++) {\r\n                var currentRow = j * rowSize;\r\n                ++currentRow;\r\n                for (var i = 0; i < width; i++) {\r\n                    x[currentRow] = x0[currentRow];\r\n                    ++currentRow;\r\n                }\r\n            }\r\n            set_bnd(b, x);\r\n        } else {\r\n            var invC = 1 / c;\r\n            for (var k=0 ; k<iterations; k++) {\r\n                for (var j=1 ; j<=height; j++) {\r\n                    var lastRow = (j - 1) * rowSize;\r\n                    var currentRow = j * rowSize;\r\n                    var nextRow = (j + 1) * rowSize;\r\n                    var lastX = x[currentRow];\r\n                    ++currentRow;\r\n                    for (var i=1; i<=width; i++)\r\n                        lastX = x[currentRow] = (x0[currentRow] + a*(lastX+x[++currentRow]+x[++lastRow]+x[++nextRow])) * invC;\r\n                }\r\n                set_bnd(b, x);\r\n            }\r\n        }\r\n    }\r\n\r\n    function diffuse(b, x, x0, dt)\r\n    {\r\n        var a = 0;\r\n        lin_solve(b, x, x0, a, 1 + 4*a);\r\n    }\r\n\r\n    function lin_solve2(x, x0, y, y0, a, c)\r\n    {\r\n        if (a === 0 && c === 1) {\r\n            for (var j=1 ; j <= height; j++) {\r\n                var currentRow = j * rowSize;\r\n                ++currentRow;\r\n                for (var i = 0; i < width; i++) {\r\n                    x[currentRow] = x0[currentRow];\r\n                    y[currentRow] = y0[currentRow];\r\n                    ++currentRow;\r\n                }\r\n            }\r\n            set_bnd(1, x);\r\n            set_bnd(2, y);\r\n        } else {\r\n            var invC = 1/c;\r\n            for (var k=0 ; k<iterations; k++) {\r\n                for (var j=1 ; j <= height; j++) {\r\n                    var lastRow = (j - 1) * rowSize;\r\n                    var currentRow = j * rowSize;\r\n                    var nextRow = (j + 1) * rowSize;\r\n                    var lastX = x[currentRow];\r\n                    var lastY = y[currentRow];\r\n                    ++currentRow;\r\n                    for (var i = 1; i <= width; i++) {\r\n                        lastX = x[currentRow] = (x0[currentRow] + a * (lastX + x[currentRow] + x[lastRow] + x[nextRow])) * invC;\r\n                        lastY = y[currentRow] = (y0[currentRow] + a * (lastY + y[++currentRow] + y[++lastRow] + y[++nextRow])) * invC;\r\n                    }\r\n                }\r\n                set_bnd(1, x);\r\n                set_bnd(2, y);\r\n            }\r\n        }\r\n    }\r\n\r\n    function diffuse2(x, x0, y, y0, dt)\r\n    {\r\n        var a = 0;\r\n        lin_solve2(x, x0, y, y0, a, 1 + 4 * a);\r\n    }\r\n\r\n    function advect(b, d, d0, u, v, dt)\r\n    {\r\n        var Wdt0 = dt * width;\r\n        var Hdt0 = dt * height;\r\n        var Wp5 = width + 0.5;\r\n        var Hp5 = height + 0.5;\r\n        for (var j = 1; j<= height; j++) {\r\n            var pos = j * rowSize;\r\n            for (var i = 1; i <= width; i++) {\r\n                var x = i - Wdt0 * u[++pos];\r\n                var y = j - Hdt0 * v[pos];\r\n                if (x < 0.5)\r\n                    x = 0.5;\r\n                else if (x > Wp5)\r\n                    x = Wp5;\r\n                var i0 = x | 0;\r\n                var i1 = i0 + 1;\r\n                if (y < 0.5)\r\n                    y = 0.5;\r\n                else if (y > Hp5)\r\n                    y = Hp5;\r\n                var j0 = y | 0;\r\n                var j1 = j0 + 1;\r\n                var s1 = x - i0;\r\n                var s0 = 1 - s1;\r\n                var t1 = y - j0;\r\n                var t0 = 1 - t1;\r\n                var row1 = j0 * rowSize;\r\n                var row2 = j1 * rowSize;\r\n                d[pos] = s0 * (t0 * d0[i0 + row1] + t1 * d0[i0 + row2]) + s1 * (t0 * d0[i1 + row1] + t1 * d0[i1 + row2]);\r\n            }\r\n        }\r\n        set_bnd(b, d);\r\n    }\r\n\r\n    function project(u, v, p, div)\r\n    {\r\n        var h = -0.5 / Math.sqrt(width * height);\r\n        for (var j = 1 ; j <= height; j++ ) {\r\n            var row = j * rowSize;\r\n            var previousRow = (j - 1) * rowSize;\r\n            var prevValue = row - 1;\r\n            var currentRow = row;\r\n            var nextValue = row + 1;\r\n            var nextRow = (j + 1) * rowSize;\r\n            for (var i = 1; i <= width; i++ ) {\r\n                div[++currentRow] = h * (u[++nextValue] - u[++prevValue] + v[++nextRow] - v[++previousRow]);\r\n                p[currentRow] = 0;\r\n            }\r\n        }\r\n        set_bnd(0, div);\r\n        set_bnd(0, p);\r\n\r\n        lin_solve(0, p, div, 1, 4 );\r\n        var wScale = 0.5 * width;\r\n        var hScale = 0.5 * height;\r\n        for (var j = 1; j<= height; j++ ) {\r\n            var prevPos = j * rowSize - 1;\r\n            var currentPos = j * rowSize;\r\n            var nextPos = j * rowSize + 1;\r\n            var prevRow = (j - 1) * rowSize;\r\n            var currentRow = j * rowSize;\r\n            var nextRow = (j + 1) * rowSize;\r\n\r\n            for (var i = 1; i<= width; i++) {\r\n                u[++currentPos] -= wScale * (p[++nextPos] - p[++prevPos]);\r\n                v[currentPos]   -= hScale * (p[++nextRow] - p[++prevRow]);\r\n            }\r\n        }\r\n        set_bnd(1, u);\r\n        set_bnd(2, v);\r\n    }\r\n\r\n    function dens_step(x, x0, u, v, dt)\r\n    {\r\n        addFields(x, x0, dt);\r\n        diffuse(0, x0, x, dt );\r\n        advect(0, x, x0, u, v, dt );\r\n    }\r\n\r\n    function vel_step(u, v, u0, v0, dt)\r\n    {\r\n        addFields(u, u0, dt );\r\n        addFields(v, v0, dt );\r\n        var temp = u0; u0 = u; u = temp;\r\n        var temp = v0; v0 = v; v = temp;\r\n        diffuse2(u,u0,v,v0, dt);\r\n        project(u, v, u0, v0);\r\n        var temp = u0; u0 = u; u = temp;\r\n        var temp = v0; v0 = v; v = temp;\r\n        advect(1, u, u0, u0, v0, dt);\r\n        advect(2, v, v0, u0, v0, dt);\r\n        project(u, v, u0, v0 );\r\n    }\r\n    var uiCallback = function(d,u,v) {};\r\n\r\n    function Field(dens, u, v) {\r\n        // Just exposing the fields here rather than using accessors is a measurable win during display (maybe 5%)\r\n        // but makes the code ugly.\r\n        this.setDensity = function(x, y, d) {\r\n             dens[(x + 1) + (y + 1) * rowSize] = d;\r\n        }\r\n        this.getDensity = function(x, y) {\r\n             return dens[(x + 1) + (y + 1) * rowSize];\r\n        }\r\n        this.setVelocity = function(x, y, xv, yv) {\r\n             u[(x + 1) + (y + 1) * rowSize] = xv;\r\n             v[(x + 1) + (y + 1) * rowSize] = yv;\r\n        }\r\n        this.getXVelocity = function(x, y) {\r\n             return u[(x + 1) + (y + 1) * rowSize];\r\n        }\r\n        this.getYVelocity = function(x, y) {\r\n             return v[(x + 1) + (y + 1) * rowSize];\r\n        }\r\n        this.width = function() { return width; }\r\n        this.height = function() { return height; }\r\n    }\r\n    function queryUI(d, u, v)\r\n    {\r\n        for (var i = 0; i < size; i++)\r\n            u[i] = v[i] = d[i] = 0.0;\r\n        uiCallback(new Field(d, u, v));\r\n    }\r\n\r\n    this.update = function () {\r\n        queryUI(dens_prev, u_prev, v_prev);\r\n        vel_step(u, v, u_prev, v_prev, dt);\r\n        dens_step(dens, dens_prev, u, v, dt);\r\n        displayFunc(new Field(dens, u, v));\r\n    }\r\n    this.setDisplayFunction = function(func) {\r\n        displayFunc = func;\r\n    }\r\n\r\n    this.iterations = function() { return iterations; }\r\n    this.setIterations = function(iters) {\r\n        if (iters > 0 && iters <= 100)\r\n           iterations = iters;\r\n    }\r\n    this.setUICallback = function(callback) {\r\n        uiCallback = callback;\r\n    }\r\n    var iterations = 10;\r\n    var visc = 0.5;\r\n    var dt = 0.1;\r\n    var dens;\r\n    var dens_prev;\r\n    var u;\r\n    var u_prev;\r\n    var v;\r\n    var v_prev;\r\n    var width;\r\n    var height;\r\n    var rowSize;\r\n    var size;\r\n    var displayFunc;\r\n    function reset()\r\n    {\r\n        rowSize = width + 2;\r\n        size = (width+2)*(height+2);\r\n        dens = new Array(size);\r\n        dens_prev = new Array(size);\r\n        u = new Array(size);\r\n        u_prev = new Array(size);\r\n        v = new Array(size);\r\n        v_prev = new Array(size);\r\n        for (var i = 0; i < size; i++)\r\n            dens_prev[i] = u_prev[i] = v_prev[i] = dens[i] = u[i] = v[i] = 0;\r\n    }\r\n    this.reset = reset;\r\n    this.getDens = function()\r\n    {\r\n        return dens;\r\n    }\r\n    this.setResolution = function (hRes, wRes)\r\n    {\r\n        var res = wRes * hRes;\r\n        if (res > 0 && res < 1000000 && (wRes != width || hRes != height)) {\r\n            width = wRes;\r\n            height = hRes;\r\n            reset();\r\n            return true;\r\n        }\r\n        return false;\r\n    }\r\n    this.setResolution(64, 64);\r\n}\r\n\r\nclass Benchmark {\r\n    runIteration() {\r\n        runNavierStokes();\r\n    }\r\n}\r\n\r\nsetupNavierStokes();\r\n"};
-globalThis.readFile = function (name) {
+var testList = "navier-stokes";
+var testIterationCount = 1;
+var RAMification = false;
+var JetStreamParams = {
+    prefetchResources: false,
+    forceGC: false,
+    dumpJSONResults: false,
+    testIterationCountMap: {},
+    testWorstCaseCountMap: {},
+    testList: "navier-stokes",
+};
+var __jetstreamResources = {"./Octane/navier-stokes.js":"/**\r\n * Copyright 2013 the V8 project authors. All rights reserved.\r\n * Copyright 2009 Oliver Hunt <http://nerget.com>\r\n *\r\n * Permission is hereby granted, free of charge, to any person\r\n * obtaining a copy of this software and associated documentation\r\n * files (the \"Software\"), to deal in the Software without\r\n * restriction, including without limitation the rights to use,\r\n * copy, modify, merge, publish, distribute, sublicense, and/or sell\r\n * copies of the Software, and to permit persons to whom the\r\n * Software is furnished to do so, subject to the following\r\n * conditions:\r\n *\r\n * The above copyright notice and this permission notice shall be\r\n * included in all copies or substantial portions of the Software.\r\n *\r\n * THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND,\r\n * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES\r\n * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND\r\n * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT\r\n * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,\r\n * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\r\n * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR\r\n * OTHER DEALINGS IN THE SOFTWARE.\r\n *\r\n * Update 10/21/2013: fixed loop variables at line 119\r\n */\r\n\r\nvar solver = null;\r\nvar nsFrameCounter = 0;\r\n\r\nfunction runNavierStokes()\r\n{\r\n    solver.update();\r\n    nsFrameCounter++;\r\n\r\n    if(nsFrameCounter==15)\r\n        checkResult(solver.getDens());\r\n}\r\n\r\nfunction checkResult(dens) {\r\n\r\n    this.result = 0;\r\n    for (var i=7000;i<7100;i++) {\r\n        this.result+=~~((dens[i]*10));\r\n    }\r\n\r\n    if (this.result!=77) {\r\n        throw(new Error(\"checksum failed\"));\r\n    }\r\n}\r\n\r\nfunction setupNavierStokes()\r\n{\r\n    solver = new FluidField(null);\r\n    solver.setResolution(128, 128);\r\n    solver.setIterations(20);\r\n    solver.setDisplayFunction(function(){});\r\n    solver.setUICallback(prepareFrame);\r\n    solver.reset();\r\n}\r\n\r\nfunction tearDownNavierStokes()\r\n{\r\n    solver = null;\r\n}\r\n\r\nfunction addPoints(field) {\r\n    var n = 64;\r\n    for (var i = 1; i <= n; i++) {\r\n        field.setVelocity(i, i, n, n);\r\n        field.setDensity(i, i, 5);\r\n        field.setVelocity(i, n - i, -n, -n);\r\n        field.setDensity(i, n - i, 20);\r\n        field.setVelocity(128 - i, n + i, -n, -n);\r\n        field.setDensity(128 - i, n + i, 30);\r\n    }\r\n}\r\n\r\nvar framesTillAddingPoints = 0;\r\nvar framesBetweenAddingPoints = 5;\r\n\r\nfunction prepareFrame(field)\r\n{\r\n    if (framesTillAddingPoints == 0) {\r\n        addPoints(field);\r\n        framesTillAddingPoints = framesBetweenAddingPoints;\r\n        framesBetweenAddingPoints++;\r\n    } else {\r\n        framesTillAddingPoints--;\r\n    }\r\n}\r\n\r\n// Code from Oliver Hunt (http://nerget.com/fluidSim/pressure.js) starts here.\r\nfunction FluidField(canvas) {\r\n    function addFields(x, s, dt)\r\n    {\r\n        for (var i=0; i<size ; i++ ) x[i] += dt*s[i];\r\n    }\r\n\r\n    function set_bnd(b, x)\r\n    {\r\n        if (b===1) {\r\n            for (var i = 1; i <= width; i++) {\r\n                x[i] =  x[i + rowSize];\r\n                x[i + (height+1) *rowSize] = x[i + height * rowSize];\r\n            }\r\n\r\n            for (var j = 1; j <= height; j++) {\r\n                x[j * rowSize] = -x[1 + j * rowSize];\r\n                x[(width + 1) + j * rowSize] = -x[width + j * rowSize];\r\n            }\r\n        } else if (b === 2) {\r\n            for (var i = 1; i <= width; i++) {\r\n                x[i] = -x[i + rowSize];\r\n                x[i + (height + 1) * rowSize] = -x[i + height * rowSize];\r\n            }\r\n\r\n            for (var j = 1; j <= height; j++) {\r\n                x[j * rowSize] =  x[1 + j * rowSize];\r\n                x[(width + 1) + j * rowSize] =  x[width + j * rowSize];\r\n            }\r\n        } else {\r\n            for (var i = 1; i <= width; i++) {\r\n                x[i] =  x[i + rowSize];\r\n                x[i + (height + 1) * rowSize] = x[i + height * rowSize];\r\n            }\r\n\r\n            for (var j = 1; j <= height; j++) {\r\n                x[j * rowSize] =  x[1 + j * rowSize];\r\n                x[(width + 1) + j * rowSize] =  x[width + j * rowSize];\r\n            }\r\n        }\r\n        var maxEdge = (height + 1) * rowSize;\r\n        x[0]                 = 0.5 * (x[1] + x[rowSize]);\r\n        x[maxEdge]           = 0.5 * (x[1 + maxEdge] + x[height * rowSize]);\r\n        x[(width+1)]         = 0.5 * (x[width] + x[(width + 1) + rowSize]);\r\n        x[(width+1)+maxEdge] = 0.5 * (x[width + maxEdge] + x[(width + 1) + height * rowSize]);\r\n    }\r\n\r\n    function lin_solve(b, x, x0, a, c)\r\n    {\r\n        if (a === 0 && c === 1) {\r\n            for (var j=1 ; j<=height; j++) {\r\n                var currentRow = j * rowSize;\r\n                ++currentRow;\r\n                for (var i = 0; i < width; i++) {\r\n                    x[currentRow] = x0[currentRow];\r\n                    ++currentRow;\r\n                }\r\n            }\r\n            set_bnd(b, x);\r\n        } else {\r\n            var invC = 1 / c;\r\n            for (var k=0 ; k<iterations; k++) {\r\n                for (var j=1 ; j<=height; j++) {\r\n                    var lastRow = (j - 1) * rowSize;\r\n                    var currentRow = j * rowSize;\r\n                    var nextRow = (j + 1) * rowSize;\r\n                    var lastX = x[currentRow];\r\n                    ++currentRow;\r\n                    for (var i=1; i<=width; i++)\r\n                        lastX = x[currentRow] = (x0[currentRow] + a*(lastX+x[++currentRow]+x[++lastRow]+x[++nextRow])) * invC;\r\n                }\r\n                set_bnd(b, x);\r\n            }\r\n        }\r\n    }\r\n\r\n    function diffuse(b, x, x0, dt)\r\n    {\r\n        var a = 0;\r\n        lin_solve(b, x, x0, a, 1 + 4*a);\r\n    }\r\n\r\n    function lin_solve2(x, x0, y, y0, a, c)\r\n    {\r\n        if (a === 0 && c === 1) {\r\n            for (var j=1 ; j <= height; j++) {\r\n                var currentRow = j * rowSize;\r\n                ++currentRow;\r\n                for (var i = 0; i < width; i++) {\r\n                    x[currentRow] = x0[currentRow];\r\n                    y[currentRow] = y0[currentRow];\r\n                    ++currentRow;\r\n                }\r\n            }\r\n            set_bnd(1, x);\r\n            set_bnd(2, y);\r\n        } else {\r\n            var invC = 1/c;\r\n            for (var k=0 ; k<iterations; k++) {\r\n                for (var j=1 ; j <= height; j++) {\r\n                    var lastRow = (j - 1) * rowSize;\r\n                    var currentRow = j * rowSize;\r\n                    var nextRow = (j + 1) * rowSize;\r\n                    var lastX = x[currentRow];\r\n                    var lastY = y[currentRow];\r\n                    ++currentRow;\r\n                    for (var i = 1; i <= width; i++) {\r\n                        lastX = x[currentRow] = (x0[currentRow] + a * (lastX + x[currentRow] + x[lastRow] + x[nextRow])) * invC;\r\n                        lastY = y[currentRow] = (y0[currentRow] + a * (lastY + y[++currentRow] + y[++lastRow] + y[++nextRow])) * invC;\r\n                    }\r\n                }\r\n                set_bnd(1, x);\r\n                set_bnd(2, y);\r\n            }\r\n        }\r\n    }\r\n\r\n    function diffuse2(x, x0, y, y0, dt)\r\n    {\r\n        var a = 0;\r\n        lin_solve2(x, x0, y, y0, a, 1 + 4 * a);\r\n    }\r\n\r\n    function advect(b, d, d0, u, v, dt)\r\n    {\r\n        var Wdt0 = dt * width;\r\n        var Hdt0 = dt * height;\r\n        var Wp5 = width + 0.5;\r\n        var Hp5 = height + 0.5;\r\n        for (var j = 1; j<= height; j++) {\r\n            var pos = j * rowSize;\r\n            for (var i = 1; i <= width; i++) {\r\n                var x = i - Wdt0 * u[++pos];\r\n                var y = j - Hdt0 * v[pos];\r\n                if (x < 0.5)\r\n                    x = 0.5;\r\n                else if (x > Wp5)\r\n                    x = Wp5;\r\n                var i0 = x | 0;\r\n                var i1 = i0 + 1;\r\n                if (y < 0.5)\r\n                    y = 0.5;\r\n                else if (y > Hp5)\r\n                    y = Hp5;\r\n                var j0 = y | 0;\r\n                var j1 = j0 + 1;\r\n                var s1 = x - i0;\r\n                var s0 = 1 - s1;\r\n                var t1 = y - j0;\r\n                var t0 = 1 - t1;\r\n                var row1 = j0 * rowSize;\r\n                var row2 = j1 * rowSize;\r\n                d[pos] = s0 * (t0 * d0[i0 + row1] + t1 * d0[i0 + row2]) + s1 * (t0 * d0[i1 + row1] + t1 * d0[i1 + row2]);\r\n            }\r\n        }\r\n        set_bnd(b, d);\r\n    }\r\n\r\n    function project(u, v, p, div)\r\n    {\r\n        var h = -0.5 / Math.sqrt(width * height);\r\n        for (var j = 1 ; j <= height; j++ ) {\r\n            var row = j * rowSize;\r\n            var previousRow = (j - 1) * rowSize;\r\n            var prevValue = row - 1;\r\n            var currentRow = row;\r\n            var nextValue = row + 1;\r\n            var nextRow = (j + 1) * rowSize;\r\n            for (var i = 1; i <= width; i++ ) {\r\n                div[++currentRow] = h * (u[++nextValue] - u[++prevValue] + v[++nextRow] - v[++previousRow]);\r\n                p[currentRow] = 0;\r\n            }\r\n        }\r\n        set_bnd(0, div);\r\n        set_bnd(0, p);\r\n\r\n        lin_solve(0, p, div, 1, 4 );\r\n        var wScale = 0.5 * width;\r\n        var hScale = 0.5 * height;\r\n        for (var j = 1; j<= height; j++ ) {\r\n            var prevPos = j * rowSize - 1;\r\n            var currentPos = j * rowSize;\r\n            var nextPos = j * rowSize + 1;\r\n            var prevRow = (j - 1) * rowSize;\r\n            var currentRow = j * rowSize;\r\n            var nextRow = (j + 1) * rowSize;\r\n\r\n            for (var i = 1; i<= width; i++) {\r\n                u[++currentPos] -= wScale * (p[++nextPos] - p[++prevPos]);\r\n                v[currentPos]   -= hScale * (p[++nextRow] - p[++prevRow]);\r\n            }\r\n        }\r\n        set_bnd(1, u);\r\n        set_bnd(2, v);\r\n    }\r\n\r\n    function dens_step(x, x0, u, v, dt)\r\n    {\r\n        addFields(x, x0, dt);\r\n        diffuse(0, x0, x, dt );\r\n        advect(0, x, x0, u, v, dt );\r\n    }\r\n\r\n    function vel_step(u, v, u0, v0, dt)\r\n    {\r\n        addFields(u, u0, dt );\r\n        addFields(v, v0, dt );\r\n        var temp = u0; u0 = u; u = temp;\r\n        var temp = v0; v0 = v; v = temp;\r\n        diffuse2(u,u0,v,v0, dt);\r\n        project(u, v, u0, v0);\r\n        var temp = u0; u0 = u; u = temp;\r\n        var temp = v0; v0 = v; v = temp;\r\n        advect(1, u, u0, u0, v0, dt);\r\n        advect(2, v, v0, u0, v0, dt);\r\n        project(u, v, u0, v0 );\r\n    }\r\n    var uiCallback = function(d,u,v) {};\r\n\r\n    function Field(dens, u, v) {\r\n        // Just exposing the fields here rather than using accessors is a measurable win during display (maybe 5%)\r\n        // but makes the code ugly.\r\n        this.setDensity = function(x, y, d) {\r\n             dens[(x + 1) + (y + 1) * rowSize] = d;\r\n        }\r\n        this.getDensity = function(x, y) {\r\n             return dens[(x + 1) + (y + 1) * rowSize];\r\n        }\r\n        this.setVelocity = function(x, y, xv, yv) {\r\n             u[(x + 1) + (y + 1) * rowSize] = xv;\r\n             v[(x + 1) + (y + 1) * rowSize] = yv;\r\n        }\r\n        this.getXVelocity = function(x, y) {\r\n             return u[(x + 1) + (y + 1) * rowSize];\r\n        }\r\n        this.getYVelocity = function(x, y) {\r\n             return v[(x + 1) + (y + 1) * rowSize];\r\n        }\r\n        this.width = function() { return width; }\r\n        this.height = function() { return height; }\r\n    }\r\n    function queryUI(d, u, v)\r\n    {\r\n        for (var i = 0; i < size; i++)\r\n            u[i] = v[i] = d[i] = 0.0;\r\n        uiCallback(new Field(d, u, v));\r\n    }\r\n\r\n    this.update = function () {\r\n        queryUI(dens_prev, u_prev, v_prev);\r\n        vel_step(u, v, u_prev, v_prev, dt);\r\n        dens_step(dens, dens_prev, u, v, dt);\r\n        displayFunc(new Field(dens, u, v));\r\n    }\r\n    this.setDisplayFunction = function(func) {\r\n        displayFunc = func;\r\n    }\r\n\r\n    this.iterations = function() { return iterations; }\r\n    this.setIterations = function(iters) {\r\n        if (iters > 0 && iters <= 100)\r\n           iterations = iters;\r\n    }\r\n    this.setUICallback = function(callback) {\r\n        uiCallback = callback;\r\n    }\r\n    var iterations = 10;\r\n    var visc = 0.5;\r\n    var dt = 0.1;\r\n    var dens;\r\n    var dens_prev;\r\n    var u;\r\n    var u_prev;\r\n    var v;\r\n    var v_prev;\r\n    var width;\r\n    var height;\r\n    var rowSize;\r\n    var size;\r\n    var displayFunc;\r\n    function reset()\r\n    {\r\n        rowSize = width + 2;\r\n        size = (width+2)*(height+2);\r\n        dens = new Array(size);\r\n        dens_prev = new Array(size);\r\n        u = new Array(size);\r\n        u_prev = new Array(size);\r\n        v = new Array(size);\r\n        v_prev = new Array(size);\r\n        for (var i = 0; i < size; i++)\r\n            dens_prev[i] = u_prev[i] = v_prev[i] = dens[i] = u[i] = v[i] = 0;\r\n    }\r\n    this.reset = reset;\r\n    this.getDens = function()\r\n    {\r\n        return dens;\r\n    }\r\n    this.setResolution = function (hRes, wRes)\r\n    {\r\n        var res = wRes * hRes;\r\n        if (res > 0 && res < 1000000 && (wRes != width || hRes != height)) {\r\n            width = wRes;\r\n            height = hRes;\r\n            reset();\r\n            return true;\r\n        }\r\n        return false;\r\n    }\r\n    this.setResolution(64, 64);\r\n}\r\n\r\nclass Benchmark {\r\n    runIteration() {\r\n        runNavierStokes();\r\n    }\r\n}\r\n\r\nsetupNavierStokes();\r\n"};
+var readFile = function (name) {
     const normalized = String(name).replaceAll("\\", "/");
     if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
         throw new Error("JetStream resource not embedded: " + normalized);
     return __jetstreamResources[normalized];
-};
-globalThis.runString = function (source) {
-    if (source)
-        __agentjsLoadString(source);
-    const shellRealm = {
-        print,
-        loadString(text) { return __agentjsLoadString(text); }
-    };
-    Object.defineProperty(shellRealm, "console", {
-        get() { return globalThis.console; },
-        set(_) {}
-    });
-    Object.defineProperty(shellRealm, "top", {
-        get() { return globalThis.top; },
-        set(value) { globalThis.top = value; }
-    });
-    return shellRealm;
 };
 
 "use strict";
@@ -68,8 +64,8 @@ if (typeof testIterationCount === "undefined")
     var testIterationCount = undefined;
 
 // Used for the promise representing the current benchmark run.
-this.currentResolve = null;
-this.currentReject = null;
+var currentResolve = null;
+var currentReject = null;
 
 const defaultIterationCount = 120;
 const defaultWorstCaseCount = 4;
@@ -200,7 +196,7 @@ class Driver {
 
         await updateUI();
 
-        let start = Date.now();
+        let __jetstreamSuiteStart = Date.now();
         for (let benchmark of this.benchmarks) {
             benchmark.updateUIBeforeRun();
 
@@ -217,7 +213,7 @@ class Driver {
             benchmark.updateUIAfterRun();
         }
 
-        let totalTime = Date.now() - start;
+        let totalTime = Date.now() - __jetstreamSuiteStart;
         if (measureTotalTimeAsSubtest) {
             if (isInBrowser)
                 document.getElementById("benchmark-total-time-score").innerHTML = uiFriendlyNumber(totalTime);
@@ -243,16 +239,9 @@ class Driver {
     runCode(string)
     {
         if (!isInBrowser) {
-            let scripts = string;
-            let globalObject = runString("");
-            globalObject.console = {log:globalObject.print}
-            globalObject.top = {
-                currentResolve,
-                currentReject
-            };
-            for (let script of scripts)
-                globalObject.loadString(script);
-            return globalObject;
+            let top = { currentResolve, currentReject };
+            new Function("top", string.join("\n"))(top);
+            return globalThis;
         }
 
         var magic = document.getElementById("magic");
@@ -382,7 +371,7 @@ class Driver {
     }
 };
 
-class JetStreamBenchmarkBase {
+class Benchmark {
     constructor(plan)
     {
         this.plan = plan;
@@ -391,8 +380,8 @@ class JetStreamBenchmarkBase {
 
         this.scripts = null;
 
-        this._resourcesPromise = null;
-        this.fetchResources();
+        this._resourcesPromise = Promise.resolve();
+        this.scripts = this.plan.files.map((file) => readFile(file));
     }
 
     get name() { return this.plan.name; }
@@ -405,11 +394,11 @@ class JetStreamBenchmarkBase {
                 if (__benchmark.prepareForNextIteration)
                     __benchmark.prepareForNextIteration();
 
-                let start = Date.now();
+                let __jetstreamIterationStart = Date.now();
                 __benchmark.runIteration();
-                let end = Date.now();
+                let __jetstreamIterationEnd = Date.now();
 
-                results.push(Math.max(1, end - start));
+                results.push(Math.max(1, __jetstreamIterationEnd - __jetstreamIterationStart));
             }
             if (__benchmark.validate)
                 __benchmark.validate();
@@ -447,7 +436,7 @@ class JetStreamBenchmarkBase {
                 assert(false, "Should not reach here in CLI");
         };
 
-        addScript(`globalThis.performance = {now: Date.now.bind(Date)};`);
+        addScript(`var performance = globalThis.performance = {now: Date.now.bind(Date)};`);
 
         if (!!this.plan.deterministicRandom) {
             addScript(`
@@ -500,7 +489,7 @@ class JetStreamBenchmarkBase {
                 ${code}
             `;
         }
-        addScript(this.runnerCode);
+        addScript("(() => {\n" + this.runnerCode + "\n})();");
 
         this.startTime = new Date();
 
@@ -607,7 +596,7 @@ class JetStreamBenchmarkBase {
     }
 };
 
-class DefaultBenchmark extends JetStreamBenchmarkBase {
+class DefaultBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -703,7 +692,7 @@ class AsyncBenchmark extends DefaultBenchmark {
     }
 };
 
-class WSLBenchmark extends JetStreamBenchmarkBase {
+class WSLBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -776,7 +765,7 @@ class WSLBenchmark extends JetStreamBenchmarkBase {
     }
 };
 
-class WasmBenchmark extends JetStreamBenchmarkBase {
+class WasmBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -1520,7 +1509,7 @@ for (let plan of testPlans) {
         testsByGroup.set(group, [testName]);
 }
 
-this.JetStream = new Driver();
+var JetStream = new Driver();
 
 function addTestByName(testName)
 {

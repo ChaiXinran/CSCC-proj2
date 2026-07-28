@@ -391,10 +391,14 @@ fn compile_cached_regexp(
     context: &mut NativeContext,
     pattern: &str,
     flags: &str,
-) -> Result<regex::Regex, VmError> {
+) -> Result<fancy_regex::Regex, VmError> {
     context
         .cached_regexp(pattern, flags, regexp::compile_regex)
-        .map_err(|error| VmError::syntax_error(format!("invalid regular expression: {error}")))
+        .map_err(|error| {
+            VmError::syntax_error(format!(
+                "invalid regular expression /{pattern}/{flags}: {error}"
+            ))
+        })
 }
 
 fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, String, String)> {
@@ -410,7 +414,9 @@ fn regexp_data(context: &NativeContext, value: &JsValue) -> Option<(ObjectId, St
         | ObjectKind::Iterator { .. }
         | ObjectKind::Generator { .. }
         | ObjectKind::Promise { .. }
-        | ObjectKind::Proxy { .. } => None,
+        | ObjectKind::Proxy { .. }
+        | ObjectKind::WeakRef { .. }
+        | ObjectKind::FinalizationRegistry { .. } => None,
     }
 }
 
@@ -628,7 +634,10 @@ fn regexp_exec_value(
         }
         return Ok(JsValue::Null);
     };
-    let Some(captures) = re.captures(&string[byte_start..]) else {
+    let Some(captures) = re.captures(&string[byte_start..]).map_err(|error| {
+        VmError::runtime(format!("regular expression execution failed: {error}"))
+    })?
+    else {
         if global_or_sticky {
             set_last_index(vm, context, this_value, 0)?;
         }
@@ -694,8 +703,8 @@ fn regexp_exec_value(
 
 fn create_regexp_indices_object(
     context: &mut NativeContext,
-    regex: &regex::Regex,
-    captures: &regex::Captures<'_>,
+    regex: &fancy_regex::Regex,
+    captures: &fancy_regex::Captures<'_>,
     input: &str,
     byte_start: usize,
 ) -> Result<JsValue, VmError> {
@@ -775,8 +784,8 @@ fn create_regexp_indices_object(
 
 fn create_regexp_groups_object(
     context: &mut NativeContext,
-    regex: &regex::Regex,
-    captures: &regex::Captures<'_>,
+    regex: &fancy_regex::Regex,
+    captures: &fancy_regex::Captures<'_>,
 ) -> Result<JsValue, VmError> {
     let names: Vec<(usize, String)> = regex
         .capture_names()

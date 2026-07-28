@@ -85,6 +85,14 @@ fn dynamic_function_uses_global_scope_and_honors_strict_directive() {
 }
 
 #[test]
+fn dynamic_function_observes_finalized_global_builtins() {
+    assert_eq!(
+        eval("Function('return typeof RegExp.escape')()"),
+        "function"
+    );
+}
+
+#[test]
 fn dynamic_function_has_expected_metadata_and_is_constructable() {
     assert_eq!(
         eval(
@@ -166,5 +174,106 @@ fn function_subclass_instances_use_the_subclass_prototype() {
              (fn instanceof DerivedFunction) + ':' + fn(2);"
         ),
         "true:true:3"
+    );
+}
+
+#[test]
+fn global_object_writes_update_global_var_bindings() {
+    assert_eq!(
+        eval(
+            "var marker = { value: 1 };
+             globalThis.marker = { value: 2 };
+             marker.value + ':' + Function('return marker.value')();"
+        ),
+        "2:2"
+    );
+}
+
+#[test]
+fn dynamic_function_resolves_properties_added_to_the_global_object() {
+    assert_eq!(
+        eval(
+            "var fn = Function(
+                 '(function (global, factory) { global.DynamicExport = factory(); })' +
+                 '(globalThis, function () { return { value: 7 }; });' +
+                 'return DynamicExport.value;'
+             );
+             fn();"
+        ),
+        "7"
+    );
+}
+
+#[test]
+fn dynamic_function_accepts_asi_return_before_a_closing_brace() {
+    assert_eq!(
+        eval(
+            "Function(
+                 'function nested() { if (true) return} return nested();'
+             )() === undefined;"
+        ),
+        "true"
+    );
+}
+
+#[test]
+fn global_object_inherits_object_prototype_bindings() {
+    assert_eq!(
+        eval(
+            "(Object.getPrototypeOf(globalThis) === Object.prototype) + ':' +
+             (toString === Object.prototype.toString) + ':' +
+             Function('return toString === Object.prototype.toString')();"
+        ),
+        "true:true:true"
+    );
+}
+
+#[test]
+fn object_to_string_identifies_regexp_instances() {
+    assert_eq!(
+        eval(
+            "Object.prototype.toString.call(/x/) + ':' +
+             Object.prototype.toString.call(new RegExp('x'));"
+        ),
+        "[object RegExp]:[object RegExp]"
+    );
+}
+
+#[test]
+fn regexp_backreferences_work_through_test_and_dynamic_function() {
+    assert_eq!(
+        eval(
+            "var direct = /^(ab)\\1$/.test('abab');
+             var dynamic = Function(
+                 'return new RegExp(\"^(ab)\\\\\\\\1$\").test(\"abab\")'
+             )();
+             direct + ':' + dynamic;"
+        ),
+        "true:true"
+    );
+}
+
+#[test]
+fn in_operator_coerces_object_property_keys() {
+    assert_eq!(
+        eval(
+            "var calls = 0;
+             var key = { toString() { calls += 1; return 'present'; } };
+             (key in { present: 1 }) + ':' + calls;"
+        ),
+        "true:1"
+    );
+}
+
+#[test]
+fn date_parse_accepts_date_to_string_and_utc_string_output() {
+    assert_eq!(
+        eval(
+            "var date = new Date(2011, 8, 10);
+             (Date.parse(date.toString()) === date.getTime()) + ':' +
+             (Date.parse(date.toUTCString()) === date.getTime()) + ':' +
+             (new Date(date.toString()).getTime() === date.getTime());"
+        ),
+        "true:true:true"
     );
 }
