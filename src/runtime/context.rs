@@ -9,14 +9,14 @@ use fancy_regex::Regex;
 
 use super::{
     ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction, BuiltinId,
-    CollectionStats, Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId,
-    Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue,
-    ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue, NativeJob,
-    ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot, PromiseCallbackJob,
-    PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState, PromiseThenReaction,
-    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, ProxyRecord, RootSet,
-    SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
-    WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
+    CollectionStats, Collector, DataViewId, DataViewRecord, Environment,
+    EnvironmentId, FunctionId, Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue,
+    JsFunction, JsObject, JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
+    NativeErrorValue, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
+    PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
+    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind,
+    ProxyRecord, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
+    TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
 };
 use crate::builtins::string;
 use crate::vm::{CallFrame, Vm, VmError};
@@ -2155,6 +2155,33 @@ impl NativeContext {
             current = environment.outer;
         }
         Ok(None)
+    }
+
+    /// Ordered environment records used by the VM to resolve an identifier.
+    ///
+    /// Object environment records are returned without invoking [[HasProperty]]
+    /// so the VM can perform that observable operation through the Proxy/call
+    /// path. `has_binding` marks the first declarative record that terminates
+    /// the search when no preceding object record provides the name.
+    pub(crate) fn name_resolution_chain(
+        &self,
+        name: &str,
+    ) -> Result<Vec<(Option<ObjectId>, bool)>, VmError> {
+        let mut chain = Vec::new();
+        let mut current = Some(self.current_environment);
+        while let Some(id) = current {
+            let environment = self
+                .heap
+                .environment(id)
+                .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
+            let has_binding = environment.has_binding(name);
+            chain.push((environment.with_object, has_binding));
+            if has_binding {
+                break;
+            }
+            current = environment.outer;
+        }
+        Ok(chain)
     }
 
     pub fn set_binding(&mut self, name: &str, value: JsValue) -> Result<(), VmError> {

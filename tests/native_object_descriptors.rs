@@ -107,3 +107,33 @@ fn to_string_tag_can_override_ordinary_and_primitive_prototypes() {
         "[object Custom]|[object Flag]"
     );
 }
+
+#[test]
+fn object_set_prototype_of_preserves_primitives_and_validates_arguments() {
+    assert_eq!(
+        run(
+            "let count = 0; for (let value of [true, 1, 1n, 'x', Symbol('x')]) count += Object.setPrototypeOf(value, null) === value; try { Object.setPrototypeOf(null, null); } catch (e) { count += e instanceof TypeError; } try { Object.setPrototypeOf(1, 1); } catch (e) { count += e instanceof TypeError; } count"
+        ),
+        "7"
+    );
+}
+
+#[test]
+fn object_create_coerces_primitive_property_bags() {
+    assert_eq!(
+        run(
+            "let count = 0; for (let properties of [false, 1, 1n, '']) count += Object.getPrototypeOf(Object.create(null, properties)) === null; count"
+        ),
+        "4"
+    );
+}
+
+#[test]
+fn with_environment_compound_assignment_keeps_the_original_reference() {
+    assert_eq!(
+        run(
+            "let outer = 0; let scope = { get outer() { delete this.outer; return 2; } }; with (scope) { outer *= 3; } [scope.outer, outer].join(',')"
+        ),
+        "6,0"
+    );
+}

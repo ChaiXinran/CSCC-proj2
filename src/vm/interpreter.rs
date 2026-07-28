@@ -609,6 +609,7 @@ pub struct Vm {
     stack: Vec<JsValue>,
     pending_exception: Option<JsValue>,
     finally_stack: Vec<Completion>,
+    name_references: HashMap<String, Vec<JsValue>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -680,6 +681,7 @@ impl Vm {
         self.stack.clear();
         self.pending_exception = None;
         self.finally_stack.clear();
+        self.name_references.clear();
         chunk
             .validate()
             .map_err(|error| VmError::runtime(format!("invalid bytecode chunk: {error}")))?;
@@ -883,6 +885,11 @@ impl Vm {
                 }
                 Instruction::Pop => {
                     self.pop_value()?;
+                    // Name references are only needed until the enclosing
+                    // assignment expression completes. Statement-result Pop
+                    // is the bytecode boundary after which retaining a with-
+                    // environment reference could affect a later assignment.
+                    self.name_references.clear();
                 }
                 Instruction::DeclareGlobal(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
@@ -1635,19 +1642,77 @@ impl Vm {
                     )?;
                 }
                 Instruction::LoadName(index) => {
-                    let name = self.constant_string(chunk, index, current_instruction)?;
-                    match context.resolve_binding_value(name) {
-                        Ok(Some((_, value))) => self.stack.push(value),
-                        Ok(None) => {
-                            let error = VmError::reference(format!(
-                                "{name} is not defined at instruction {current_instruction}"
-                            ));
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let key = PropertyKey::String(name.clone());
+                    let mut object_resolution = None;
+                    for (with_object, has_binding) in context.name_resolution_chain(&name)? {
+                        if let Some(object) = with_object {
+                            let receiver = context.object_value(object);
+                            match proxy::internal_has_property(
+                                self,
+                                context,
+                                receiver.clone(),
+                                &key,
+                            ) {
+                                Ok(true) => {
+                                    object_resolution = Some(receiver);
+                                    break;
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    match self.error_to_operation_result(error)? {
+                                        OperationResult::Throw(value) => {
+                                            abrupt = Some(Completion::Throw(value));
+                                            discard_saved_finally = true;
+                                        }
+                                        OperationResult::Value(_) => unreachable!(),
+                                    }
+                                    break;
+                                }
+                            }
                         }
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                        if has_binding {
+                            break;
+                        }
+                    }
+                    if abrupt.is_none() {
+                        if let Some(receiver) = object_resolution {
+                            match proxy::internal_get(
+                                self,
+                                context,
+                                receiver.clone(),
+                                &key,
+                                receiver.clone(),
+                            ) {
+                                Ok(value) => {
+                                    self.name_references.entry(name).or_default().push(receiver);
+                                    self.stack.push(value);
+                                }
+                                Err(error) => match self.error_to_operation_result(error)? {
+                                    OperationResult::Throw(value) => {
+                                        abrupt = Some(Completion::Throw(value));
+                                        discard_saved_finally = true;
+                                    }
+                                    OperationResult::Value(_) => unreachable!(),
+                                },
+                            }
+                        } else {
+                            match context.resolve_binding_value(&name) {
+                                Ok(Some((_, value))) => self.stack.push(value),
+                                Ok(None) => {
+                                    let error = VmError::reference(format!(
+                                        "{name} is not defined at instruction {current_instruction}"
+                                    ));
+                                    abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                    discard_saved_finally = true;
+                                }
+                                Err(error) => {
+                                    abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -1667,13 +1732,44 @@ impl Vm {
                     }
                 }
                 Instruction::StoreName(index) => {
-                    let name = self.constant_string(chunk, index, current_instruction)?;
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
                     let value = self.pop_value()?;
-                    match context.set_binding(name, value.clone()) {
-                        Ok(()) => self.stack.push(value),
-                        Err(error) => {
-                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                            discard_saved_finally = true;
+                    let reference = self.name_references.get_mut(&name).and_then(Vec::pop);
+                    if let Some(receiver) = reference {
+                        let key = PropertyKey::String(name);
+                        match proxy::internal_set(
+                            self,
+                            context,
+                            receiver.clone(),
+                            &key,
+                            value.clone(),
+                            receiver,
+                        ) {
+                            Ok(true) => self.stack.push(value),
+                            Ok(false) if context.is_strict_code() => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(
+                                    VmError::type_error("cannot assign to property"),
+                                )));
+                                discard_saved_finally = true;
+                            }
+                            Ok(false) => self.stack.push(value),
+                            Err(error) => match self.error_to_operation_result(error)? {
+                                OperationResult::Throw(value) => {
+                                    abrupt = Some(Completion::Throw(value));
+                                    discard_saved_finally = true;
+                                }
+                                OperationResult::Value(_) => unreachable!(),
+                            },
+                        }
+                    } else {
+                        match context.set_binding(&name, value.clone()) {
+                            Ok(()) => self.stack.push(value),
+                            Err(error) => {
+                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                discard_saved_finally = true;
+                            }
                         }
                     }
                 }

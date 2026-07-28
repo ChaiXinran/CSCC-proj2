@@ -63,7 +63,7 @@ pub fn install_object(context: &mut NativeContext) {
         ),
         ("keys", 1, object_keys as crate::runtime::NativeCall),
         ("values", 1, object_values as crate::runtime::NativeCall),
-        ("entries", 2, object_entries as crate::runtime::NativeCall),
+        ("entries", 1, object_entries as crate::runtime::NativeCall),
         (
             "fromEntries",
             1,
@@ -213,8 +213,8 @@ fn object_create(
     if let Some(properties) = arguments.get(1)
         && !matches!(properties, JsValue::Undefined)
     {
-        let properties = context.require_object(properties, "read property descriptors")?;
-        let properties_value = JsValue::Object(properties);
+        let properties = vm.to_object(properties.clone(), context)?;
+        let properties_value = context.object_value(properties);
         let keys = proxy::internal_own_property_keys(vm, context, properties_value.clone())?;
         for key in keys {
             if !proxy::internal_get_own_property(vm, context, properties_value.clone(), &key)?
@@ -370,11 +370,20 @@ fn object_set_prototype_of(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    context.require_object(&target, "set prototype")?;
+    if matches!(target, JsValue::Undefined | JsValue::Null) {
+        return Err(VmError::type_error(
+            "Object.setPrototypeOf target is null or undefined",
+        ));
+    }
     let prototype = match arguments.get(1).cloned().unwrap_or(JsValue::Undefined) {
         JsValue::Null => None,
         value => Some(context.require_object(&value, "set prototype")?),
     };
+    // Object.setPrototypeOf returns non-object primitives unchanged after
+    // validating the prototype argument.
+    if context.value_object(&target).is_none() {
+        return Ok(target);
+    }
     if proxy::internal_set_prototype_of(vm, context, target.clone(), prototype)? {
         Ok(target)
     } else {
