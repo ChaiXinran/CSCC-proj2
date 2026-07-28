@@ -3,7 +3,6 @@
 /target-linux/
 
 # Generated benchmark runners and raw measurements
-/benchmarks/generated/
 /reports/
 !/reports/
 /reports/*
