@@ -1995,23 +1995,8 @@ fn apply_replace_fn(
     let mut result = String::new();
     let mut last_end_utf8 = 0;
 
-    // We need byte positions too: re-iterate to track them.
-    let mut byte_matches: Vec<(usize, usize)> = Vec::new();
-    {
-        let mut iter = re.find_iter(text);
-        for _ in &details {
-            if let Some(m) = iter.next() {
-                byte_matches.push((m.start(), m.end()));
-            }
-        }
-        if !global {
-            // Only first match.
-            byte_matches.truncate(1);
-        }
-    }
-
-    for (detail, (byte_start, byte_end)) in details.iter().zip(byte_matches.iter()) {
-        result.push_str(&text[last_end_utf8..*byte_start]);
+    for detail in &details {
+        result.push_str(&text[last_end_utf8..detail.byte_start]);
 
         // Build args: (match, p1, p2, ..., offset, inputString)
         let mut args = vec![JsValue::String(detail.full_match.clone())];
@@ -2029,7 +2014,7 @@ fn apply_replace_fn(
             vm.call_value_from_builtin(replace_fn.clone(), JsValue::Undefined, args, context)?;
         let repl = vm.to_string_coerce(repl_val, context)?;
         result.push_str(&repl);
-        last_end_utf8 = *byte_end;
+        last_end_utf8 = detail.byte_end;
     }
     result.push_str(&text[last_end_utf8..]);
     Ok(JsValue::String(result))
@@ -2362,9 +2347,17 @@ fn invoke_regexp_match_all_fallback(
     let re = compile_cached_regexp(context, &pattern, &engine_flags)?;
 
     let mut entries = Vec::new();
+    let mut indexed_byte = 0usize;
+    let mut indexed_utf16 = 0usize;
     for caps in re.captures_iter(&string) {
         let m = caps.get(0).unwrap();
-        let index = string[..m.start()].encode_utf16().count();
+        let index = if string.is_ascii() {
+            m.start()
+        } else {
+            indexed_utf16 += string[indexed_byte..m.start()].encode_utf16().count();
+            indexed_byte = m.start();
+            indexed_utf16
+        };
         let elements: Vec<JsValue> = (0..caps.len())
             .map(|i| {
                 caps.get(i).map_or(JsValue::Undefined, |c| {

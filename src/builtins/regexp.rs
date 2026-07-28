@@ -96,9 +96,13 @@ pub fn is_global(flags: &str) -> bool {
 /// Returns the index (in UTF-16 code units) of the first match of `regex` in
 /// `text`, or `None` if there is no match. Used by `String.prototype.search`.
 pub fn search(regex: &Regex, text: &str) -> Option<usize> {
-    regex
-        .find(text)
-        .map(|m| text[..m.start()].encode_utf16().count())
+    regex.find(text).map(|m| {
+        if text.is_ascii() {
+            m.start()
+        } else {
+            text[..m.start()].encode_utf16().count()
+        }
+    })
 }
 
 /// Returns the captures for the first match of `regex` in `text`.
@@ -306,15 +310,26 @@ pub struct MatchDetail {
     pub captures: Vec<Option<String>>,
     /// UTF-16 start index of the match in the original string.
     pub index: usize,
+    /// UTF-8 byte range of the match in the original string.
+    pub byte_start: usize,
+    pub byte_end: usize,
 }
 
 /// Iterates all (non-overlapping) matches of `regex` in `text`, returning
 /// [`MatchDetail`] entries. Used by builtin replace with function callback.
 pub fn matches_with_detail(regex: &Regex, text: &str, global: bool) -> Vec<MatchDetail> {
     let mut out = Vec::new();
+    let mut indexed_byte = 0usize;
+    let mut indexed_utf16 = 0usize;
     for caps in regex.captures_iter(text) {
         let m = caps.get(0).unwrap();
-        let index = text[..m.start()].encode_utf16().count();
+        let index = if text.is_ascii() {
+            m.start()
+        } else {
+            indexed_utf16 += text[indexed_byte..m.start()].encode_utf16().count();
+            indexed_byte = m.start();
+            indexed_utf16
+        };
         let full_match = m.as_str().to_owned();
         let captures = (0..caps.len())
             .map(|i| caps.get(i).map(|c| c.as_str().to_owned()))
@@ -323,6 +338,8 @@ pub fn matches_with_detail(regex: &Regex, text: &str, global: bool) -> Vec<Match
             full_match,
             captures,
             index,
+            byte_start: m.start(),
+            byte_end: m.end(),
         });
         if !global {
             break;

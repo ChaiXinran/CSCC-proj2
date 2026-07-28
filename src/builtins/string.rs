@@ -220,8 +220,12 @@ pub(crate) fn utf16_slice(value: &str, start: usize, end: usize) -> String {
         let end = end.min(value.len()).max(start);
         return value[start..end].to_string();
     }
-    let units = utf16_units(value);
-    decode_utf16(&units[start.min(units.len())..end.min(units.len()).max(start.min(units.len()))])
+    let length = utf16_length(value);
+    utf16_slice_units(
+        value,
+        start.min(length),
+        end.min(length).max(start.min(length)),
+    )
 }
 
 pub(crate) fn char_at(value: &str, index: i64) -> String {
@@ -238,9 +242,8 @@ pub(crate) fn char_code_at(value: &str, index: i64) -> Option<u16> {
 }
 
 pub(crate) fn at(value: &str, index: i64) -> Option<String> {
-    let units = utf16_units(value);
-    let index = relative_index(index, units.len())?;
-    Some(decode_utf16(&[units[index]]))
+    let index = relative_index(index, utf16_length(value))?;
+    utf16_code_unit_at(value, index).map(|unit| decode_utf16(&[unit]))
 }
 
 pub(crate) fn concat(value: &str, values: &[&str]) -> String {
@@ -269,6 +272,17 @@ pub(crate) fn index_of(value: &str, search: &str, position: i64) -> Option<usize
 }
 
 pub(crate) fn last_index_of(value: &str, search: &str, position: Option<i64>) -> Option<usize> {
+    if value.is_ascii() && search.is_ascii() {
+        let start = position.map_or(value.len(), |position| clamp_index(position, value.len()));
+        if search.is_empty() {
+            return Some(start.min(value.len()));
+        }
+        if search.len() > value.len() {
+            return None;
+        }
+        let last_start = start.min(value.len() - search.len());
+        return value[..last_start + search.len()].rfind(search);
+    }
     let source = utf16_units(value);
     let search = utf16_units(search);
     let start = position.map_or(source.len(), |position| clamp_index(position, source.len()));
@@ -276,39 +290,71 @@ pub(crate) fn last_index_of(value: &str, search: &str, position: Option<i64>) ->
 }
 
 pub(crate) fn slice(value: &str, start: i64, end: Option<i64>) -> String {
-    let units = utf16_units(value);
-    let start = normalize_relative_bound(start, units.len());
-    let end = end.map_or(units.len(), |end| {
-        normalize_relative_bound(end, units.len())
-    });
+    if value.is_ascii() {
+        let start = normalize_relative_bound(start, value.len());
+        let end = end.map_or(value.len(), |end| {
+            normalize_relative_bound(end, value.len())
+        });
+        return if end <= start {
+            String::new()
+        } else {
+            value[start..end].to_string()
+        };
+    }
+    let length = utf16_length(value);
+    let start = normalize_relative_bound(start, length);
+    let end = end.map_or(length, |end| normalize_relative_bound(end, length));
     if end <= start {
         String::new()
     } else {
-        decode_utf16(&units[start..end])
+        utf16_slice_units(value, start, end)
     }
 }
 
 pub(crate) fn substring(value: &str, start: i64, end: Option<i64>) -> String {
-    let units = utf16_units(value);
-    let mut start = clamp_index(start, units.len());
-    let mut end = end.map_or(units.len(), |end| clamp_index(end, units.len()));
+    if value.is_ascii() {
+        let mut start = clamp_index(start, value.len());
+        let mut end = end.map_or(value.len(), |end| clamp_index(end, value.len()));
+        if start > end {
+            std::mem::swap(&mut start, &mut end);
+        }
+        return value[start..end].to_string();
+    }
+    let length = utf16_length(value);
+    let mut start = clamp_index(start, length);
+    let mut end = end.map_or(length, |end| clamp_index(end, length));
     if start > end {
         std::mem::swap(&mut start, &mut end);
     }
-    decode_utf16(&units[start..end])
+    utf16_slice_units(value, start, end)
 }
 
 pub(crate) fn substr(value: &str, start: i64, length: Option<i64>) -> String {
-    let units = utf16_units(value);
-    let start = normalize_relative_bound(start, units.len());
-    let count = length.map_or(units.len().saturating_sub(start), |length| {
+    if value.is_ascii() {
+        let start = normalize_relative_bound(start, value.len());
+        let count = length.map_or(value.len().saturating_sub(start), |length| {
+            usize::try_from(length.max(0)).unwrap_or(usize::MAX)
+        });
+        let end = start.saturating_add(count).min(value.len());
+        return value[start..end].to_string();
+    }
+    let value_length = utf16_length(value);
+    let start = normalize_relative_bound(start, value_length);
+    let count = length.map_or(value_length.saturating_sub(start), |length| {
         usize::try_from(length.max(0)).unwrap_or(usize::MAX)
     });
-    let end = start.saturating_add(count).min(units.len());
-    decode_utf16(&units[start..end])
+    let end = start.saturating_add(count).min(value_length);
+    utf16_slice_units(value, start, end)
 }
 
 pub(crate) fn starts_with(value: &str, search: &str, position: i64) -> bool {
+    if value.is_ascii() && search.is_ascii() {
+        let start = clamp_index(position, value.len());
+        return value
+            .as_bytes()
+            .get(start..start.saturating_add(search.len()))
+            .is_some_and(|candidate| candidate == search.as_bytes());
+    }
     let source = utf16_units(value);
     let search = utf16_units(search);
     let start = clamp_index(position, source.len());
@@ -318,6 +364,16 @@ pub(crate) fn starts_with(value: &str, search: &str, position: i64) -> bool {
 }
 
 pub(crate) fn ends_with(value: &str, search: &str, end_position: Option<i64>) -> bool {
+    if value.is_ascii() && search.is_ascii() {
+        let end = end_position.map_or(value.len(), |end| clamp_index(end, value.len()));
+        let Some(start) = end.checked_sub(search.len()) else {
+            return false;
+        };
+        return value
+            .as_bytes()
+            .get(start..end)
+            .is_some_and(|candidate| candidate == search.as_bytes());
+    }
     let source = utf16_units(value);
     let search = utf16_units(search);
     let end = end_position.map_or(source.len(), |end| clamp_index(end, source.len()));
@@ -386,14 +442,13 @@ pub(crate) fn to_upper_case(value: &str) -> String {
 
 #[allow(dead_code)]
 pub(crate) fn code_point_at(value: &str, index: i64) -> Option<u32> {
-    let units = utf16_units(value);
     let index = usize::try_from(index).ok()?;
-    let first = *units.get(index)?;
+    let first = utf16_code_unit_at(value, index)?;
     if (0xD800..=0xDBFF).contains(&first)
-        && let Some(second) = units.get(index + 1)
-        && (0xDC00..=0xDFFF).contains(second)
+        && let Some(second) = utf16_code_unit_at(value, index + 1)
+        && (0xDC00..=0xDFFF).contains(&second)
     {
-        return Some(0x10000 + ((u32::from(first) - 0xD800) << 10) + (u32::from(*second) - 0xDC00));
+        return Some(0x10000 + ((u32::from(first) - 0xD800) << 10) + (u32::from(second) - 0xDC00));
     }
     Some(u32::from(first))
 }
@@ -431,6 +486,31 @@ pub(crate) fn split(value: &str, separator: Option<&str>, limit: u32) -> Vec<Str
         return vec![value.to_string()];
     };
     let limit = limit as usize;
+    if value.is_ascii() && separator.is_ascii() {
+        if separator.is_empty() {
+            return value
+                .as_bytes()
+                .iter()
+                .take(limit)
+                .map(|unit| (*unit as char).to_string())
+                .collect();
+        }
+
+        let mut result = Vec::new();
+        let mut start = 0usize;
+        while result.len() < limit {
+            let Some(relative) = value[start..].find(separator) else {
+                break;
+            };
+            let index = start + relative;
+            result.push(value[start..index].to_string());
+            start = index + separator.len();
+        }
+        if result.len() < limit {
+            result.push(value[start..].to_string());
+        }
+        return result;
+    }
     if separator.is_empty() {
         return utf16_units(value)
             .into_iter()
@@ -463,6 +543,21 @@ pub(crate) fn search(value: &str, search: &str) -> i64 {
 
 #[allow(dead_code)]
 pub(crate) fn replace(value: &str, search: &str, replacement: &str) -> String {
+    if value.is_ascii() && search.is_ascii() {
+        let Some(index) = value.find(search) else {
+            return value.to_string();
+        };
+        let mut result = String::with_capacity(
+            value
+                .len()
+                .saturating_sub(search.len())
+                .saturating_add(replacement.len()),
+        );
+        result.push_str(&value[..index]);
+        result.push_str(replacement);
+        result.push_str(&value[index + search.len()..]);
+        return result;
+    }
     let source = utf16_units(value);
     let needle = utf16_units(search);
     let replacement = utf16_units(replacement);
@@ -479,6 +574,27 @@ pub(crate) fn replace(value: &str, search: &str, replacement: &str) -> String {
 
 #[allow(dead_code)]
 pub(crate) fn replace_all(value: &str, search: &str, replacement: &str) -> String {
+    if value.is_ascii() && search.is_ascii() {
+        if search.is_empty() {
+            let mut result = String::new();
+            result.push_str(replacement);
+            for ch in value.bytes() {
+                result.push(ch as char);
+                result.push_str(replacement);
+            }
+            return result;
+        }
+
+        let mut result = String::with_capacity(value.len());
+        let mut start = 0usize;
+        for (index, _) in value.match_indices(search) {
+            result.push_str(&value[start..index]);
+            result.push_str(replacement);
+            start = index + search.len();
+        }
+        result.push_str(&value[start..]);
+        return result;
+    }
     let source = utf16_units(value);
     let needle = utf16_units(search);
     let replacement = utf16_units(replacement);
@@ -540,6 +656,25 @@ fn pad(
     fill: &str,
     at_start: bool,
 ) -> Result<String, StringBuiltinError> {
+    if value.is_ascii() && fill.is_ascii() {
+        if target_length <= value.len() || fill.is_empty() {
+            return Ok(value.to_string());
+        }
+        if target_length > MAX_STRING_CODE_UNITS {
+            return Err(StringBuiltinError::AllocationLimit);
+        }
+        let required = target_length - value.len();
+        let mut result = String::with_capacity(target_length);
+        if at_start {
+            push_ascii_padding(&mut result, fill, required);
+            result.push_str(value);
+        } else {
+            result.push_str(value);
+            push_ascii_padding(&mut result, fill, required);
+        }
+        return Ok(result);
+    }
+
     let value_units = utf16_units(value);
     if target_length <= value_units.len() || fill.is_empty() {
         return Ok(value.to_string());
@@ -565,6 +700,31 @@ fn pad(
         result.extend(padding);
     }
     Ok(decode_utf16(&result))
+}
+
+fn push_ascii_padding(result: &mut String, fill: &str, required: usize) {
+    let full_repeats = required / fill.len();
+    let partial = required % fill.len();
+    for _ in 0..full_repeats {
+        result.push_str(fill);
+    }
+    result.push_str(&fill[..partial]);
+}
+
+fn utf16_slice_units(value: &str, start: usize, end: usize) -> String {
+    if end <= start {
+        return String::new();
+    }
+    let mut units = Vec::with_capacity(end - start);
+    for (index, unit) in value.encode_utf16().enumerate() {
+        if index >= end {
+            break;
+        }
+        if index >= start {
+            units.push(unit);
+        }
+    }
+    decode_utf16(&units)
 }
 
 fn find_units(source: &[u16], search: &[u16], start: usize) -> Option<usize> {

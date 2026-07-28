@@ -1,5 +1,7 @@
 //! JavaScript objects and prototype links.
 
+use crate::builtins::string;
+
 use super::iterator::IteratorKind;
 use super::{
     ArrayBufferId, BigIntValue, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsValue,
@@ -681,7 +683,7 @@ impl JsObject {
                 return true;
             }
             if let Some(index) = array_index(name) {
-                return index < value.encode_utf16().count();
+                return index < string::utf16_length(value);
             }
         }
         if let ObjectKind::Array {
@@ -948,7 +950,7 @@ impl JsObject {
             push_dense_keys(&mut keys, elements, element_descriptors, dense_segments);
             keys.push("length".into());
         } else if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &self.kind {
-            keys.extend((0..value.encode_utf16().count()).map(|index| index.to_string()));
+            keys.extend((0..string::utf16_length(value)).map(|index| index.to_string()));
             keys.push("length".into());
         } else if let ObjectKind::TypedArray { length, .. } = &self.kind {
             keys.extend((0..(*length).min(MAX_DENSE_SIZE)).map(|index| index.to_string()));
@@ -971,7 +973,7 @@ impl JsObject {
         {
             push_dense_keys(&mut keys, elements, element_descriptors, dense_segments);
         } else if let ObjectKind::PrimitiveWrapper(PrimitiveValue::String(value)) = &self.kind {
-            keys.extend((0..value.encode_utf16().count()).map(|index| index.to_string()));
+            keys.extend((0..string::utf16_length(value)).map(|index| index.to_string()));
         } else if let ObjectKind::TypedArray { length, .. } = &self.kind {
             keys.extend((0..(*length).min(MAX_DENSE_SIZE)).map(|index| index.to_string()));
         }

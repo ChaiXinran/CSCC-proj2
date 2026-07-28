@@ -1724,16 +1724,25 @@ impl Vm {
                 Instruction::GetElement => {
                     let key = self.pop_value()?;
                     let object = self.pop_value()?;
-                    // Fast path: non-negative integer key on Array / TypedArray.
+                    // Fast path: non-negative integer key on String / Array / TypedArray.
                     'fast: {
                         let JsValue::Number(n) = key else { break 'fast };
                         if n.fract() != 0.0 || !(0.0..4_294_967_295.0).contains(&n) {
                             break 'fast;
                         }
+                        let idx = n as usize;
+                        if let Some(result) = Self::fast_get_string_element(&object, idx, context) {
+                            match result {
+                                Ok(value) => {
+                                    self.stack.push(value);
+                                    continue 'dispatch;
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
                         let JsValue::Object(obj_id) = object else {
                             break 'fast;
                         };
-                        let idx = n as usize;
                         let Some(result) = Self::fast_get_element(obj_id, idx, context) else {
                             break 'fast;
                         };
@@ -5995,6 +6004,25 @@ impl Vm {
         }
     }
 
+    fn fast_get_string_element(
+        receiver: &JsValue,
+        idx: usize,
+        context: &NativeContext,
+    ) -> Option<Result<JsValue, VmError>> {
+        let value = match receiver {
+            JsValue::String(value) => value,
+            JsValue::Object(obj_id) => match context.primitive_value(*obj_id) {
+                Some(PrimitiveValue::String(value)) => value,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        Some(Ok(string::utf16_code_unit_at(value, idx)
+            .map_or(JsValue::Undefined, |unit| {
+                JsValue::String(string::decode_utf16(&[unit]))
+            })))
+    }
+
     /// Fast path: numeric key write on Array/TypedArray without string conversion.
     /// Returns `Some(Ok(()))` on success, `Some(Err(...))` on fatal error, `None` to fall through.
     fn fast_set_element(
@@ -6194,6 +6222,9 @@ impl Vm {
                         JsValue::String(string::decode_utf16(&[unit]))
                     }),
                 ));
+            }
+            if let Some(value) = context.cached_string_prototype_property(key)? {
+                return Ok(OperationResult::Value(value));
             }
         }
         // Primitive String/Number/Boolean receivers resolve property lookups on

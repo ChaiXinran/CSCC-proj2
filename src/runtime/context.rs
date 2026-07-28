@@ -159,6 +159,33 @@ impl ExecutionBudget {
 
 /// Per-isolate language state passed to the bytecode executor.
 #[derive(Debug)]
+struct StringPrototypePropertyCache {
+    char_code_at: Option<JsValue>,
+    index_of: Option<JsValue>,
+    slice: Option<JsValue>,
+    replace_all: Option<JsValue>,
+    to_lower_case: Option<JsValue>,
+}
+
+impl StringPrototypePropertyCache {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
+impl Default for StringPrototypePropertyCache {
+    fn default() -> Self {
+        Self {
+            char_code_at: None,
+            index_of: None,
+            slice: None,
+            replace_all: None,
+            to_lower_case: None,
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct NativeContext {
     heap: Heap,
     global_environment: EnvironmentId,
@@ -193,6 +220,7 @@ pub struct NativeContext {
     builtin_registry: Vec<BuiltinFunction>,
     builtin_realm_globals: HashMap<BuiltinId, ObjectId>,
     current_builtin_stack: Vec<BuiltinId>,
+    string_prototype_property_cache: StringPrototypePropertyCache,
     intrinsics: Option<Intrinsics>,
     array_iterator_prototype: Option<ObjectId>,
     function_prototype_call: Option<BuiltinId>,
@@ -283,6 +311,7 @@ impl NativeContext {
             builtin_registry: Vec::new(),
             builtin_realm_globals: HashMap::new(),
             current_builtin_stack: Vec::new(),
+            string_prototype_property_cache: StringPrototypePropertyCache::default(),
             intrinsics: None,
             array_iterator_prototype: None,
             function_prototype_call: None,
@@ -705,6 +734,104 @@ impl NativeContext {
             .enumerate()
             .find(|(_, bf)| bf.name == name)
             .map(|(i, _)| JsValue::BuiltinFunction(BuiltinId(i as u16)))
+    }
+
+    pub fn cached_string_prototype_property(
+        &mut self,
+        key: &str,
+    ) -> Result<Option<JsValue>, VmError> {
+        match key {
+            "charCodeAt" => {
+                if let Some(value) = self.string_prototype_property_cache.char_code_at.clone() {
+                    return Ok(Some(value));
+                }
+                let Some(prototype) = self.string_prototype() else {
+                    return Ok(None);
+                };
+                let Some(descriptor) = self.get_own_property_descriptor(prototype, key) else {
+                    return Ok(None);
+                };
+                if let PropertyKind::Data { value, .. } = descriptor.kind {
+                    self.string_prototype_property_cache.char_code_at = Some(value.clone());
+                    Ok(Some(value))
+                } else {
+                    Ok(None)
+                }
+            }
+            "indexOf" => {
+                if let Some(value) = self.string_prototype_property_cache.index_of.clone() {
+                    return Ok(Some(value));
+                }
+                let Some(prototype) = self.string_prototype() else {
+                    return Ok(None);
+                };
+                let Some(descriptor) = self.get_own_property_descriptor(prototype, key) else {
+                    return Ok(None);
+                };
+                if let PropertyKind::Data { value, .. } = descriptor.kind {
+                    self.string_prototype_property_cache.index_of = Some(value.clone());
+                    Ok(Some(value))
+                } else {
+                    Ok(None)
+                }
+            }
+            "slice" => {
+                if let Some(value) = self.string_prototype_property_cache.slice.clone() {
+                    return Ok(Some(value));
+                }
+                let Some(prototype) = self.string_prototype() else {
+                    return Ok(None);
+                };
+                let Some(descriptor) = self.get_own_property_descriptor(prototype, key) else {
+                    return Ok(None);
+                };
+                if let PropertyKind::Data { value, .. } = descriptor.kind {
+                    self.string_prototype_property_cache.slice = Some(value.clone());
+                    Ok(Some(value))
+                } else {
+                    Ok(None)
+                }
+            }
+            "replaceAll" => {
+                if let Some(value) = self.string_prototype_property_cache.replace_all.clone() {
+                    return Ok(Some(value));
+                }
+                let Some(prototype) = self.string_prototype() else {
+                    return Ok(None);
+                };
+                let Some(descriptor) = self.get_own_property_descriptor(prototype, key) else {
+                    return Ok(None);
+                };
+                if let PropertyKind::Data { value, .. } = descriptor.kind {
+                    self.string_prototype_property_cache.replace_all = Some(value.clone());
+                    Ok(Some(value))
+                } else {
+                    Ok(None)
+                }
+            }
+            "toLowerCase" => {
+                if let Some(value) = self.string_prototype_property_cache.to_lower_case.clone() {
+                    return Ok(Some(value));
+                }
+                let Some(prototype) = self.string_prototype() else {
+                    return Ok(None);
+                };
+                let Some(descriptor) = self.get_own_property_descriptor(prototype, key) else {
+                    return Ok(None);
+                };
+                if let PropertyKind::Data { value, .. } = descriptor.kind {
+                    self.string_prototype_property_cache.to_lower_case = Some(value.clone());
+                    Ok(Some(value))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+
+    fn clear_string_prototype_property_cache(&mut self) {
+        self.string_prototype_property_cache.clear();
     }
 
     #[must_use]
@@ -2403,6 +2530,9 @@ impl NativeContext {
         key: String,
         descriptor: PropertyDescriptor,
     ) -> Result<bool, VmError> {
+        let clear_string_prototype_cache = self
+            .string_prototype()
+            .is_some_and(|prototype| prototype == object);
         if let Some(index) = array_index(&key)
             && let Some((view, length)) = self.typed_array_indexed_view(object)
         {
@@ -2436,6 +2566,9 @@ impl NativeContext {
             .object_mut(object)
             .ok_or_else(|| VmError::runtime("missing object"))?;
         object.define_property(key, descriptor);
+        if clear_string_prototype_cache {
+            self.clear_string_prototype_property_cache();
+        }
         Ok(true)
     }
 
@@ -2562,6 +2695,9 @@ impl NativeContext {
         key: &str,
         strict: bool,
     ) -> Result<bool, VmError> {
+        let clear_string_prototype_cache = self
+            .string_prototype()
+            .is_some_and(|prototype| prototype == object);
         if key == "length" && self.is_array_object(object)? {
             return strict_error_or_false(strict, "cannot delete array length");
         }
@@ -2585,7 +2721,11 @@ impl NativeContext {
         if !object.has_own_property(key) {
             return Ok(true);
         }
-        Ok(object.delete_own_property(key).is_some())
+        let removed = object.delete_own_property(key).is_some();
+        if removed && clear_string_prototype_cache {
+            self.clear_string_prototype_property_cache();
+        }
+        Ok(removed)
     }
 
     pub fn has_property(&self, object: ObjectId, key: &str) -> Result<bool, VmError> {

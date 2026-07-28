@@ -647,8 +647,10 @@ fn regexp_exec_value(
 
     let absolute_start = byte_start + full_match.start();
     let absolute_end = byte_start + full_match.end();
-    let match_index = string[..absolute_start].encode_utf16().count();
-    let match_end = string[..absolute_end].encode_utf16().count();
+    let match_index =
+        start_index + utf16_len_between_byte_indices(&string, byte_start, absolute_start);
+    let match_end =
+        match_index + utf16_len_between_byte_indices(&string, absolute_start, absolute_end);
     if global_or_sticky {
         set_last_index(vm, context, this_value.clone(), match_end)?;
     }
@@ -697,11 +699,27 @@ fn create_regexp_indices_object(
     input: &str,
     byte_start: usize,
 ) -> Result<JsValue, VmError> {
+    let mut byte_spans = Vec::with_capacity(captures.len());
+    let mut byte_offsets = Vec::with_capacity(captures.len().saturating_mul(2));
+    for index in 0..captures.len() {
+        if let Some(capture) = captures.get(index) {
+            let start = byte_start + capture.start();
+            let end = byte_start + capture.end();
+            let start_offset = byte_offsets.len();
+            byte_offsets.push(start);
+            byte_offsets.push(end);
+            byte_spans.push(Some((start_offset, start_offset + 1)));
+        } else {
+            byte_spans.push(None);
+        }
+    }
+    let utf16_offsets = utf16_indices_for_byte_offsets(input, &byte_offsets);
+
     let mut elements = Vec::with_capacity(captures.len());
     for index in 0..captures.len() {
-        let value = if let Some(capture) = captures.get(index) {
-            let start = input[..byte_start + capture.start()].encode_utf16().count();
-            let end = input[..byte_start + capture.end()].encode_utf16().count();
+        let value = if let Some((start_offset, end_offset)) = byte_spans[index] {
+            let start = utf16_offsets[start_offset];
+            let end = utf16_offsets[end_offset];
             context.create_array(vec![
                 JsValue::Number(start as f64),
                 JsValue::Number(end as f64),
@@ -728,16 +746,17 @@ fn create_regexp_indices_object(
             .allocate_object(JsObject::ordinary())
             .ok_or_else(|| VmError::runtime_limit("object arena exhausted"))?;
         for (index, name) in names {
-            let value = captures
-                .get(index)
-                .map_or(Ok(JsValue::Undefined), |capture| {
-                    let start = input[..byte_start + capture.start()].encode_utf16().count();
-                    let end = input[..byte_start + capture.end()].encode_utf16().count();
+            let value = byte_spans[index].map_or(
+                Ok(JsValue::Undefined),
+                |(start_offset, end_offset)| {
+                    let start = utf16_offsets[start_offset];
+                    let end = utf16_offsets[end_offset];
                     context.create_array(vec![
                         JsValue::Number(start as f64),
                         JsValue::Number(end as f64),
                     ])
-                })?;
+                },
+            )?;
             context.define_own_property(
                 object,
                 name,
@@ -789,6 +808,9 @@ fn to_length(value: f64) -> usize {
 }
 
 fn byte_index_from_utf16(text: &str, utf16_index: usize) -> Option<usize> {
+    if text.is_ascii() {
+        return (utf16_index <= text.len()).then_some(utf16_index);
+    }
     let mut units = 0usize;
     for (byte_index, ch) in text.char_indices() {
         if units >= utf16_index {
@@ -797,6 +819,46 @@ fn byte_index_from_utf16(text: &str, utf16_index: usize) -> Option<usize> {
         units = units.saturating_add(ch.len_utf16());
     }
     (units >= utf16_index).then_some(text.len())
+}
+
+fn utf16_len_between_byte_indices(text: &str, start: usize, end: usize) -> usize {
+    if text.is_ascii() {
+        end.saturating_sub(start)
+    } else {
+        text[start..end].encode_utf16().count()
+    }
+}
+
+fn utf16_indices_for_byte_offsets(text: &str, byte_offsets: &[usize]) -> Vec<usize> {
+    if text.is_ascii() {
+        return byte_offsets
+            .iter()
+            .map(|offset| (*offset).min(text.len()))
+            .collect();
+    }
+
+    let mut indexed_offsets = byte_offsets
+        .iter()
+        .copied()
+        .enumerate()
+        .collect::<Vec<(usize, usize)>>();
+    indexed_offsets.sort_by_key(|&(_, offset)| offset);
+
+    let mut result = vec![0; byte_offsets.len()];
+    let mut next_offset = 0usize;
+    let mut units = 0usize;
+    for (byte_index, ch) in text.char_indices() {
+        while next_offset < indexed_offsets.len() && indexed_offsets[next_offset].1 <= byte_index {
+            result[indexed_offsets[next_offset].0] = units;
+            next_offset += 1;
+        }
+        units = units.saturating_add(ch.len_utf16());
+    }
+    while next_offset < indexed_offsets.len() {
+        result[indexed_offsets[next_offset].0] = units;
+        next_offset += 1;
+    }
+    result
 }
 
 fn set_last_index(
@@ -1140,6 +1202,11 @@ fn regexp_symbol_replace(
         set_last_index_number(vm, context, this_value.clone(), 0.0)?;
     }
 
+    let string_utf16_len = if string.is_ascii() {
+        string.len()
+    } else {
+        string.encode_utf16().count()
+    };
     let mut results = Vec::new();
     loop {
         let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
@@ -1150,8 +1217,7 @@ fn regexp_symbol_replace(
         let matched_value = get_property(vm, context, result_value.clone(), "0")?;
         let matched = vm.to_string_coerce(matched_value, context)?;
         let index_value = get_property(vm, context, result_value.clone(), "index")?;
-        let position =
-            to_length(vm.to_number(index_value, context)?).min(string.encode_utf16().count());
+        let position = to_length(vm.to_number(index_value, context)?).min(string_utf16_len);
         let length_value = get_property(vm, context, result_value.clone(), "length")?;
         let length = to_length(vm.to_number(length_value, context)?);
         let mut captures = Vec::new();
@@ -1488,6 +1554,11 @@ fn to_uint32(value: f64) -> u32 {
 }
 
 fn utf16_substring(value: &str, start: usize, end: usize) -> String {
+    if value.is_ascii() {
+        let start = start.min(value.len());
+        let end = end.min(value.len()).max(start);
+        return value[start..end].to_string();
+    }
     let start = byte_index_from_utf16(value, start).unwrap_or(value.len());
     let end = byte_index_from_utf16(value, end).unwrap_or(value.len());
     value[start.min(value.len())..end.min(value.len()).max(start.min(value.len()))].to_string()
