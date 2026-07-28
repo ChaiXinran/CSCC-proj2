@@ -264,7 +264,11 @@ impl ModuleRegistry {
     /// Transition a module through its lifecycle states.
     /// Returns an error if the transition is invalid.
     pub fn transition_to(&mut self, id: ModuleId, new_status: ModuleStatus) -> Result<(), String> {
-        let current = self.statuses.get(&id).copied().unwrap_or(ModuleStatus::Unlinked);
+        let current = self
+            .statuses
+            .get(&id)
+            .copied()
+            .unwrap_or(ModuleStatus::Unlinked);
         let valid = match (current, new_status) {
             (ModuleStatus::Unlinked, ModuleStatus::Linking) => true,
             (ModuleStatus::Linking, ModuleStatus::Linked) => true,

@@ -378,12 +378,9 @@ fn initialize_set_like(
         if weak {
             require_object_key(context, &value, "WeakSet")?;
         }
-        if let Err(e) = vm.call_value_from_builtin(
-            adder.clone(),
-            target_value.clone(),
-            vec![value],
-            context,
-        ) {
+        if let Err(e) =
+            vm.call_value_from_builtin(adder.clone(), target_value.clone(), vec![value], context)
+        {
             let _ = context.iterator_close(&mut iterator);
             return Err(e);
         }
@@ -2547,7 +2544,13 @@ fn install_map(context: &mut NativeContext, iterator: IteratorIntrinsic) -> Resu
     )?;
     define_method(context, prototype, "forEach", 1, map_for_each)?;
     define_method(context, prototype, "getOrInsert", 2, map_get_or_insert)?;
-    define_method(context, prototype, "getOrInsertComputed", 2, map_get_or_insert_computed)?;
+    define_method(
+        context,
+        prototype,
+        "getOrInsertComputed",
+        2,
+        map_get_or_insert_computed,
+    )?;
     context.define_symbol_own_property(
         prototype,
         context.well_known_symbols().to_string_tag,
@@ -2825,10 +2828,11 @@ fn map_get_or_insert(
     let map = require_collection(context, &this_value, "Map")?;
     let mut key = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     // CanonicalizeKeyedCollectionKey: -0 → +0
-    if let JsValue::Number(n) = &key {
-        if *n == 0.0 && n.is_sign_negative() {
-            key = JsValue::Number(0.0);
-        }
+    if let JsValue::Number(n) = &key
+        && *n == 0.0
+        && n.is_sign_negative()
+    {
+        key = JsValue::Number(0.0);
     }
     if let Some(index) = find_entry(context, map, &key) {
         return collection_entry_value(context, map, index)
@@ -2855,16 +2859,18 @@ fn map_get_or_insert_computed(
         ));
     }
     // CanonicalizeKeyedCollectionKey: -0 → +0
-    if let JsValue::Number(n) = &key {
-        if *n == 0.0 && n.is_sign_negative() {
-            key = JsValue::Number(0.0);
-        }
+    if let JsValue::Number(n) = &key
+        && *n == 0.0
+        && n.is_sign_negative()
+    {
+        key = JsValue::Number(0.0);
     }
     if let Some(index) = find_entry(context, map, &key) {
         return collection_entry_value(context, map, index)
             .ok_or_else(|| VmError::runtime("Map entry value missing"));
     }
-    let value = vm.call_value_from_builtin(callback, JsValue::Undefined, vec![key.clone()], context)?;
+    let value =
+        vm.call_value_from_builtin(callback, JsValue::Undefined, vec![key.clone()], context)?;
     set_collection_entry(context, map, key, value.clone())?;
     Ok(value)
 }
@@ -3127,10 +3133,7 @@ fn set_like_values(
         return Ok(set_values_from_collection(context, set));
     }
     // GetSetRecord(obj):
-    let object = context.require_object(&value, "Set method argument")?;
-    let obj_id = context
-        .value_object(&value)
-        .ok_or_else(|| VmError::type_error("Set method argument is not an object"))?;
+    context.require_object(&value, "Set method argument")?;
     // 1. Let size be ? Get(obj, "size").
     let size_value = vm.get_property_value(value.clone(), "size", context)?;
     // 2. Let has be ? Get(obj, "has").
@@ -3143,7 +3146,9 @@ fn set_like_values(
     }
     // 5. If IsCallable(keys) is false, throw TypeError.
     if !is_callable_with_context(context, &keys) {
-        return Err(VmError::type_error("set-like 'keys' method is not callable"));
+        return Err(VmError::type_error(
+            "set-like 'keys' method is not callable",
+        ));
     }
     // 6. Let numberSize be ? ToNumber(size). (Side-effect: throws for NaN/undefined)
     let _number_size = vm.to_number(size_value, context)?;

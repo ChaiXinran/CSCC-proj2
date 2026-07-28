@@ -167,7 +167,11 @@ pub(super) fn install(context: &mut NativeContext) -> Result<(), VmError> {
     context.declare_global("Promise", constructor.clone());
     // Override property descriptor: built-in globals must be non-enumerable (17 ECMAScript Standard Built-in Objects).
     let global = context.global_object();
-    context.define_own_property(global, "Promise".into(), PropertyDescriptor::data_with(constructor, true, false, true))?;
+    context.define_own_property(
+        global,
+        "Promise".into(),
+        PropertyDescriptor::data_with(constructor, true, false, true),
+    )?;
     Ok(())
 }
 
@@ -533,15 +537,15 @@ fn promise_keyed_combinator(
             }
             index += 1;
         }
-        if decrement_aggregate_remaining(context, state.clone())? {
-            if let Err(reason) = vm.call_value_catching_from_builtin(
+        if decrement_aggregate_remaining(context, state.clone())?
+            && let Err(reason) = vm.call_value_catching_from_builtin(
                 capability.resolve.clone(),
                 JsValue::Undefined,
                 vec![result],
                 context,
-            )? {
-                return Ok(Err(reason));
-            }
+            )?
+        {
+            return Ok(Err(reason));
         }
         Ok(Ok(()))
     })?;

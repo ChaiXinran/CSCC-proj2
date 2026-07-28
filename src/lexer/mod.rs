@@ -974,7 +974,7 @@ impl<'source> Lexer<'source> {
                 self.cursor.bump();
             }
             return Ok(Token::new(
-                TokenKind::Operator(*operator),
+                TokenKind::Operator(operator),
                 Span::new(start, self.cursor.offset()),
             ));
         }

@@ -1153,6 +1153,19 @@ impl JsObject {
     }
 }
 
+pub(crate) fn array_index(name: &str) -> Option<usize> {
+    if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let index = name.parse::<u32>().ok()?;
+    if index == u32::MAX {
+        return None;
+    }
+    (index.to_string() == name)
+        .then_some(index)
+        .map(|index| index as usize)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1203,17 +1216,4 @@ mod tests {
         );
         assert_eq!(array.get_own_property_value("70001"), None);
     }
-}
-
-pub(crate) fn array_index(name: &str) -> Option<usize> {
-    if name.is_empty() || !name.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    let index = name.parse::<u32>().ok()?;
-    if index == u32::MAX {
-        return None;
-    }
-    (index.to_string() == name)
-        .then_some(index)
-        .map(|index| index as usize)
 }

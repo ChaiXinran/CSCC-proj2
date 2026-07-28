@@ -31,16 +31,11 @@ use crate::{
 /// V12 removed the embedded Boa dispatch path. Only the native self-developed
 /// engine remains in-tree. Boa is still available as an external reference
 /// engine built from the pinned submodule.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BackendKind {
     /// AgentJS's self-developed backend.
+    #[default]
     Native,
-}
-
-impl Default for BackendKind {
-    fn default() -> Self {
-        BackendKind::Native
-    }
 }
 
 /// Backend-neutral result produced by one evaluation.

@@ -309,10 +309,10 @@ fn collect_eval_declaration_names(
                 if let Statement::Block(inner) = consequent.as_ref() {
                     collect_eval_declaration_names(inner, var_names, lex_names);
                 }
-                if let Some(alt) = alternate {
-                    if let Statement::Block(inner) = alt.as_ref() {
-                        collect_eval_declaration_names(inner, var_names, lex_names);
-                    }
+                if let Some(alt) = alternate
+                    && let Statement::Block(inner) = alt.as_ref()
+                {
+                    collect_eval_declaration_names(inner, var_names, lex_names);
                 }
             }
             Statement::While { body, .. }

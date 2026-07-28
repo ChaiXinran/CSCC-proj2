@@ -1021,10 +1021,10 @@ fn object_prevent_extensions(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let target = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    if context.value_object(&target).is_some() {
-        if !proxy::internal_prevent_extensions(vm, context, target.clone())? {
-            return Err(VmError::type_error("cannot prevent extensions"));
-        }
+    if context.value_object(&target).is_some()
+        && !proxy::internal_prevent_extensions(vm, context, target.clone())?
+    {
+        return Err(VmError::type_error("cannot prevent extensions"));
     }
     Ok(target)
 }

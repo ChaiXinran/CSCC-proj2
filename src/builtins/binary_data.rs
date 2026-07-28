@@ -731,7 +731,7 @@ fn atomic_number_bits(kind: TypedArrayElementKind, value: f64) -> u64 {
     if bits == 0 || !value.is_finite() || value == 0.0 {
         return 0;
     }
-    value.trunc().rem_euclid(2_f64.powi(bits as i32)) as u64
+    value.trunc().rem_euclid(2_f64.powi(bits)) as u64
 }
 
 fn atomic_normalized_number(kind: TypedArrayElementKind, value: f64) -> JsValue {
@@ -2492,6 +2492,7 @@ fn typed_array_constructor_values(
     collect_typed_array_source_values(vm, context, source)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_typed_array_object(
     context: &mut NativeContext,
     prototype: ObjectId,
@@ -2515,6 +2516,7 @@ fn create_typed_array_object(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_typed_array_object_with_tracking(
     context: &mut NativeContext,
     prototype: ObjectId,
@@ -4479,7 +4481,7 @@ fn validate_number_format_use_grouping(
 ) -> Result<(), VmError> {
     match value {
         JsValue::Undefined | JsValue::Boolean(_) | JsValue::Null => Ok(()),
-        JsValue::Number(value) if value == 0.0 => Ok(()),
+        JsValue::Number(0.0) => Ok(()),
         JsValue::String(value)
             if matches!(
                 value.as_str(),

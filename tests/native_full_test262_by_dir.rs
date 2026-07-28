@@ -387,7 +387,7 @@ fn failure_sample(test262_root: &Path, case: &CaseResult) -> FailureSample {
     let path = case
         .path
         .strip_prefix(test262_root)
-        .map_or_else(|_| case.path.as_path(), |path| path);
+        .unwrap_or(case.path.as_path());
 
     FailureSample {
         path: normalize_path(path),

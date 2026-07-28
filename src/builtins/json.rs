@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 
 use crate::{
-    runtime::{JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyKind, abstract_ops},
+    runtime::{
+        JsValue, NativeContext, ObjectId, ObjectKind, PrimitiveValue, PropertyKind, abstract_ops,
+    },
     vm::{Vm, VmError},
 };
 

@@ -23,10 +23,7 @@ pub fn get_active_realm_global(context: &NativeContext) -> ObjectId {
 
 /// Create a new Realm with fresh global object and environment.
 /// Returns the new RealmId.
-pub fn create_new_realm(
-    _vm: &mut Vm,
-    _context: &mut NativeContext,
-) -> Result<RealmId, VmError> {
+pub fn create_new_realm(_vm: &mut Vm, _context: &mut NativeContext) -> Result<RealmId, VmError> {
     Err(VmError::runtime(
         "ShadowRealm creation not yet fully implemented",
     ))
@@ -42,11 +39,9 @@ pub fn get_wrapped_value(
     _target_realm: ObjectId,
 ) -> Result<JsValue, VmError> {
     match value {
-        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
-            Err(VmError::type_error(
-                "ShadowRealm object wrapping not yet implemented",
-            ))
-        }
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => Err(
+            VmError::type_error("ShadowRealm object wrapping not yet implemented"),
+        ),
         // Primitives pass through unchanged
         _ => Ok(value),
     }

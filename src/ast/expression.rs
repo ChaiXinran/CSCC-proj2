@@ -202,7 +202,7 @@ pub enum PropertyName {
 
 /// Convert a numeric property key to the ECMAScript canonical string (ToString algorithm).
 fn js_number_to_property_key(n: f64) -> String {
-    if n.fract() == 0.0 && n.is_finite() && n >= 0.0 && n < 9.007_199_254_740_992e15 {
+    if n.fract() == 0.0 && n.is_finite() && (0.0..9.007_199_254_740_992e15).contains(&n) {
         return format!("{}", n as i64);
     }
     if n.is_nan() {

@@ -9,9 +9,7 @@
 //! methods, promise reactions) remain on the VM/context call path so that
 //! accessors and Proxy traps are never accidentally bypassed.
 
-use super::{
-    IteratorRecord, JsValue, NativeContext, PreferredType, PropertyKey, to_property_key,
-};
+use super::{IteratorRecord, JsValue, NativeContext, PreferredType, PropertyKey, to_property_key};
 use crate::vm::{Vm, VmError};
 
 // ════════════════════════════════════════════════════════════════
@@ -75,9 +73,9 @@ pub fn is_constructor_with_context(context: &NativeContext, value: &JsValue) -> 
 /// Throws TypeError if value is undefined or null.
 pub fn require_object_coercible(value: &JsValue) -> Result<(), VmError> {
     match value {
-        JsValue::Undefined | JsValue::Null => {
-            Err(VmError::type_error("cannot convert undefined or null to object"))
-        }
+        JsValue::Undefined | JsValue::Null => Err(VmError::type_error(
+            "cannot convert undefined or null to object",
+        )),
         _ => Ok(()),
     }
 }
@@ -204,7 +202,12 @@ pub fn ordinary_to_primitive(
         Default | Number => ("valueOf", "toString"),
     };
     for method_name in [first, second] {
-        let method = get(vm, context, object.clone(), PropertyKey::String(method_name.into()))?;
+        let method = get(
+            vm,
+            context,
+            object.clone(),
+            PropertyKey::String(method_name.into()),
+        )?;
         if is_callable(&method) || context.is_callable_value(&method) {
             let result = call(vm, context, method, object.clone(), Vec::new())?;
             if !matches!(result, JsValue::Object(_)) {
@@ -212,7 +215,9 @@ pub fn ordinary_to_primitive(
             }
         }
     }
-    Err(VmError::type_error("cannot convert object to primitive value"))
+    Err(VmError::type_error(
+        "cannot convert object to primitive value",
+    ))
 }
 
 /// VM-mediated `ToString` (7.1.12) via context.
@@ -225,7 +230,9 @@ pub fn to_string(
         JsValue::String(_) => Ok(value),
         JsValue::Symbol(_) => Err(VmError::type_error("Cannot convert a Symbol to a string")),
         _ => Ok(JsValue::String(
-            value.to_js_string().unwrap_or_else(|| "undefined".to_string()),
+            value
+                .to_js_string()
+                .unwrap_or_else(|| "undefined".to_string()),
         )),
     }
 }
@@ -507,7 +514,12 @@ pub fn species_constructor(
     if context.value_object(&constructor).is_none() {
         return Err(VmError::type_error("constructor property is not an object"));
     }
-    let species = get(vm, context, constructor.clone(), PropertyKey::Symbol(context.well_known_symbols().species))?;
+    let species = get(
+        vm,
+        context,
+        constructor.clone(),
+        PropertyKey::Symbol(context.well_known_symbols().species),
+    )?;
     if matches!(species, JsValue::Null | JsValue::Undefined) {
         return Ok(default_constructor);
     }
@@ -534,11 +546,17 @@ pub fn array_species_create(
         .intrinsics()
         .map(|intrinsics| intrinsics.array_constructor.clone())
         .ok_or_else(|| VmError::runtime("Array constructor missing"))?;
-    let constructor = species_constructor(vm, context, original_array, default_constructor.clone())?;
+    let constructor =
+        species_constructor(vm, context, original_array, default_constructor.clone())?;
     if constructor == default_constructor || constructor.same_value(&default_constructor) {
         context.create_sparse_array(length)
     } else {
-        construct(vm, context, constructor, vec![JsValue::Number(length as f64)])
+        construct(
+            vm,
+            context,
+            constructor,
+            vec![JsValue::Number(length as f64)],
+        )
     }
 }
 
@@ -577,10 +595,22 @@ mod tests {
 
     #[test]
     fn same_value_zero_works() {
-        assert!(same_value_zero(&JsValue::Number(f64::NAN), &JsValue::Number(f64::NAN)));
-        assert!(same_value_zero(&JsValue::Number(0.0), &JsValue::Number(-0.0)));
-        assert!(!same_value_zero(&JsValue::Number(1.0), &JsValue::Number(2.0)));
-        assert!(same_value_zero(&JsValue::String("hello".into()), &JsValue::String("hello".into())));
+        assert!(same_value_zero(
+            &JsValue::Number(f64::NAN),
+            &JsValue::Number(f64::NAN)
+        ));
+        assert!(same_value_zero(
+            &JsValue::Number(0.0),
+            &JsValue::Number(-0.0)
+        ));
+        assert!(!same_value_zero(
+            &JsValue::Number(1.0),
+            &JsValue::Number(2.0)
+        ));
+        assert!(same_value_zero(
+            &JsValue::String("hello".into()),
+            &JsValue::String("hello".into())
+        ));
     }
 
     #[test]
