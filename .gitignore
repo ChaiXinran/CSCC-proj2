@@ -8,6 +8,9 @@
 !/reports/
 /reports/*
 !/reports/full-test262-summary.json
+!/reports/test262-latest-common-errors-2026-07-28.md
+!/reports/v17-partA-report.md
+!/reports/v17-partC-report.md
 !/reports/85-target/
 /reports/85-target/*.txt
 !/reports/.test262

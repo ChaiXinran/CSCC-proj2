@@ -873,7 +873,7 @@ fn regexp_escape(
     let Some(JsValue::String(string)) = arguments.first() else {
         return Err(VmError::type_error("RegExp.escape requires a string"));
     };
-    Ok(JsValue::String(escape_regexp_pattern_literal(&string)))
+    Ok(JsValue::String(escape_regexp_pattern_literal(string)))
 }
 
 fn escape_regexp_pattern_literal(value: &str) -> String {
@@ -1264,6 +1264,7 @@ fn regexp_replace_flags(
     vm.to_string_coerce(flags_value, context)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn get_substitution(
     template: &str,
     matched: &str,

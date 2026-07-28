@@ -143,7 +143,12 @@ impl Compiler {
             // Pass empty set — top-level functions are already handled by normal
             // hoisting and are skipped inside collect_annex_b_var_names.
             let empty_hoisted = std::collections::HashSet::new();
-            collect_annex_b_var_names(&program.body, &top_lex, &empty_hoisted, &mut annex_b_var_names);
+            collect_annex_b_var_names(
+                &program.body,
+                &top_lex,
+                &empty_hoisted,
+                &mut annex_b_var_names,
+            );
             if !annex_b_var_names.is_empty() {
                 let undef_const = chunk
                     .add_constant(Constant::Undefined)
@@ -367,10 +372,10 @@ impl Compiler {
             .flat_map(|scope| scope.iter().map(|s| s.as_str()))
             .collect();
         for stmt in statements {
-            if let Statement::FunctionDeclaration { name, .. } = stmt {
-                if all_visible_lexicals.contains(name.as_str()) {
-                    path_b_fn_names.insert(name.clone());
-                }
+            if let Statement::FunctionDeclaration { name, .. } = stmt
+                && all_visible_lexicals.contains(name.as_str())
+            {
+                path_b_fn_names.insert(name.clone());
             }
         }
 
@@ -393,17 +398,16 @@ impl Compiler {
                 is_async,
                 is_generator,
             } = stmt
+                && !path_b_fn_names.contains(name)
             {
-                if !path_b_fn_names.contains(name) {
-                    self.compile_function_declaration(
-                        name,
-                        params,
-                        body,
-                        (*is_async, *is_generator),
-                        chunk,
-                        context,
-                    )?;
-                }
+                self.compile_function_declaration(
+                    name,
+                    params,
+                    body,
+                    (*is_async, *is_generator),
+                    chunk,
+                    context,
+                )?;
             }
         }
 
@@ -418,17 +422,17 @@ impl Compiler {
         // var-scoped bindings. After CreateLexicalEnvironment, load the outer
         // function value and create/initialize a same-named binding here.
         for stmt in statements {
-            if let Statement::FunctionDeclaration { name, .. } = stmt {
-                if !path_b_fn_names.contains(name) {
-                    let name_idx = self.add_name(name, chunk)?;
-                    scope.insert(name.clone());
-                    // Load the var-scoped binding from the outer scope.
-                    chunk.emit(Instruction::LoadName(name_idx));
-                    // Create a block-scoped mutable binding.
-                    chunk.emit(Instruction::CreateMutableBinding(name_idx));
-                    // Initialize it to the loaded function value.
-                    chunk.emit(Instruction::InitializeBinding(name_idx));
-                }
+            if let Statement::FunctionDeclaration { name, .. } = stmt
+                && !path_b_fn_names.contains(name)
+            {
+                let name_idx = self.add_name(name, chunk)?;
+                scope.insert(name.clone());
+                // Load the var-scoped binding from the outer scope.
+                chunk.emit(Instruction::LoadName(name_idx));
+                // Create a block-scoped mutable binding.
+                chunk.emit(Instruction::CreateMutableBinding(name_idx));
+                // Initialize it to the loaded function value.
+                chunk.emit(Instruction::InitializeBinding(name_idx));
             }
         }
         context.lexical_scopes.push(scope);
@@ -441,17 +445,16 @@ impl Compiler {
                 is_async,
                 is_generator,
             } = stmt
+                && path_b_fn_names.contains(name)
             {
-                if path_b_fn_names.contains(name) {
-                    self.compile_function_declaration(
-                        name,
-                        params,
-                        body,
-                        (*is_async, *is_generator),
-                        chunk,
-                        context,
-                    )?;
-                }
+                self.compile_function_declaration(
+                    name,
+                    params,
+                    body,
+                    (*is_async, *is_generator),
+                    chunk,
+                    context,
+                )?;
             }
         }
         // Compile non-function statements (all fn decls already handled above).
@@ -2482,11 +2485,11 @@ impl Compiler {
                         chunk.emit(Instruction::Pop); // pop undefined
                         self.compile_expression(default_expr, chunk, context)?;
                         // Spec: SetFunctionName when anon fn default assigned to identifier ref.
-                        if is_anonymous_function_definition(default_expr) {
-                            if let Expression::Identifier(binding_name) = target.as_ref() {
-                                let nm = self.add_name(binding_name, chunk)?;
-                                chunk.emit(Instruction::SetFunctionName(nm));
-                            }
+                        if is_anonymous_function_definition(default_expr)
+                            && let Expression::Identifier(binding_name) = target.as_ref()
+                        {
+                            let nm = self.add_name(binding_name, chunk)?;
+                            chunk.emit(Instruction::SetFunctionName(nm));
                         }
                         let after_default = chunk.current_offset();
                         chunk
@@ -2497,12 +2500,10 @@ impl Compiler {
                         } else {
                             self.assign_dstr_element_to_target(target, chunk, context)?;
                         }
+                    } else if let Some((object_idx, key_idx)) = precomputed_member {
+                        self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
                     } else {
-                        if let Some((object_idx, key_idx)) = precomputed_member {
-                            self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
-                        } else {
-                            self.assign_dstr_element_to_target(target_expr, chunk, context)?;
-                        }
+                        self.assign_dstr_element_to_target(target_expr, chunk, context)?;
                     }
 
                     let after_jump = chunk.emit(Instruction::Jump(usize::MAX));
@@ -2520,11 +2521,11 @@ impl Compiler {
                     } = target_expr
                     {
                         self.compile_expression(default_expr, chunk, context)?;
-                        if is_anonymous_function_definition(default_expr) {
-                            if let Expression::Identifier(binding_name) = target.as_ref() {
-                                let nm = self.add_name(binding_name, chunk)?;
-                                chunk.emit(Instruction::SetFunctionName(nm));
-                            }
+                        if is_anonymous_function_definition(default_expr)
+                            && let Expression::Identifier(binding_name) = target.as_ref()
+                        {
+                            let nm = self.add_name(binding_name, chunk)?;
+                            chunk.emit(Instruction::SetFunctionName(nm));
                         }
                         if let Some((object_idx, key_idx)) = precomputed_member {
                             self.assign_to_precomputed_member(object_idx, key_idx, chunk)?;
@@ -2793,11 +2794,11 @@ impl Compiler {
                         chunk.emit(Instruction::Pop);
                         self.compile_expression(default_expr, chunk, context)?;
                         // Spec: SetFunctionName when anon fn default assigned to identifier ref.
-                        if is_anonymous_function_definition(default_expr) {
-                            if let Expression::Identifier(binding_name) = target.as_ref() {
-                                let nm = self.add_name(binding_name, chunk)?;
-                                chunk.emit(Instruction::SetFunctionName(nm));
-                            }
+                        if is_anonymous_function_definition(default_expr)
+                            && let Expression::Identifier(binding_name) = target.as_ref()
+                        {
+                            let nm = self.add_name(binding_name, chunk)?;
+                            chunk.emit(Instruction::SetFunctionName(nm));
                         }
                         let after_default = chunk.current_offset();
                         chunk
@@ -4044,12 +4045,12 @@ impl Compiler {
                     }
                     let binding_name = format!("__cfield_key_{field_idx}__");
                     let bidx = self.add_name(&binding_name, chunk)?;
-                    chunk.emit(Instruction::CreateMutableBinding(bidx as u16));
+                    chunk.emit(Instruction::CreateMutableBinding(bidx));
                     self.compile_expression(key_expr, chunk, context)?; // push key
                     // Convert once at class evaluation time, before any instance
                     // initializer runs, as required by ClassFieldDefinitionEvaluation.
                     chunk.emit(Instruction::ToPropertyKey);
-                    chunk.emit(Instruction::InitializeBinding(bidx as u16)); // pop key → store
+                    chunk.emit(Instruction::InitializeBinding(bidx)); // pop key → store
                     instance_field_specs.push(InstanceField {
                         static_name: None,
                         computed_binding: Some(binding_name),
@@ -5367,10 +5368,11 @@ fn annex_b_collect_stmt(
             // NOT in the ENCLOSING blocks' lexicals (this block's own names don't matter
             // for the early-error check on var F in an outer scope).
             for inner in stmts {
-                if let Statement::FunctionDeclaration { name, .. } = inner {
-                    if !enclosing_block_lexicals.contains(name) && !names.contains(name) {
-                        names.push(name.clone());
-                    }
+                if let Statement::FunctionDeclaration { name, .. } = inner
+                    && !enclosing_block_lexicals.contains(name)
+                    && !names.contains(name)
+                {
+                    names.push(name.clone());
                 }
             }
             // Recurse with the combined set (now this block's names are "enclosing" for nested).
@@ -5413,20 +5415,19 @@ fn annex_b_collect_stmt(
         // that is enclosing for the body. Must include those names in the conflict check.
         Statement::For { init, body, .. } => {
             let mut inner_enclosing = enclosing_block_lexicals.clone();
-            if let Some(init_stmt) = init {
-                if let Statement::VariableDeclaration {
+            if let Some(init_stmt) = init
+                && let Statement::VariableDeclaration {
                     kind: VariableKind::Let | VariableKind::Const,
                     declarations,
                 } = init_stmt.as_ref()
-                {
-                    for decl in declarations {
-                        if let Some(pat) = &decl.pattern {
-                            for n in binding_pattern_names(pat) {
-                                inner_enclosing.insert(n);
-                            }
-                        } else {
-                            inner_enclosing.insert(decl.name.clone());
+            {
+                for decl in declarations {
+                    if let Some(pat) = &decl.pattern {
+                        for n in binding_pattern_names(pat) {
+                            inner_enclosing.insert(n);
                         }
+                    } else {
+                        inner_enclosing.insert(decl.name.clone());
                     }
                 }
             }
@@ -5491,10 +5492,11 @@ fn annex_b_collect_stmt(
                 // Function declarations DIRECTLY in switch case bodies = Annex B candidates
                 // (if not conflicting with enclosing scope lexicals, NOT switch-body lexicals).
                 for s in &case.consequent {
-                    if let Statement::FunctionDeclaration { name, .. } = s {
-                        if !enclosing_block_lexicals.contains(name) && !names.contains(name) {
-                            names.push(name.clone());
-                        }
+                    if let Statement::FunctionDeclaration { name, .. } = s
+                        && !enclosing_block_lexicals.contains(name)
+                        && !names.contains(name)
+                    {
+                        names.push(name.clone());
                     }
                 }
                 // Recurse with the combined switch-body lexicals as the new enclosing.
@@ -5680,7 +5682,12 @@ pub(crate) fn collect_annex_b_var_names(
                         }
                         _ => {
                             // Check sub-statements for nested blocks with fn decls.
-                            collect_annex_b_var_names_in_sub(s, &inner_lex_names, already_hoisted, result);
+                            collect_annex_b_var_names_in_sub(
+                                s,
+                                &inner_lex_names,
+                                already_hoisted,
+                                result,
+                            );
                         }
                     }
                 }
@@ -5707,7 +5714,12 @@ pub(crate) fn collect_annex_b_var_names(
                 block_level_lex_names.insert(cls.name.clone());
             }
             _ => {
-                collect_annex_b_var_names_in_sub(stmt, &block_level_lex_names, already_hoisted, result);
+                collect_annex_b_var_names_in_sub(
+                    stmt,
+                    &block_level_lex_names,
+                    already_hoisted,
+                    result,
+                );
             }
         }
     }
@@ -5749,11 +5761,17 @@ fn collect_annex_b_var_names_in_sub(
             ..
         } => {
             collect_annex_b_var_names_in_if_body(
-                consequent, enclosing_lex_names, already_hoisted, result,
+                consequent,
+                enclosing_lex_names,
+                already_hoisted,
+                result,
             );
             if let Some(alt) = alternate {
                 collect_annex_b_var_names_in_if_body(
-                    alt, enclosing_lex_names, already_hoisted, result,
+                    alt,
+                    enclosing_lex_names,
+                    already_hoisted,
+                    result,
                 );
             }
         }
@@ -5761,7 +5779,10 @@ fn collect_annex_b_var_names_in_sub(
         | Statement::DoWhile { body, .. }
         | Statement::With { body, .. } => {
             collect_annex_b_var_names_in_if_body(
-                body, enclosing_lex_names, already_hoisted, result,
+                body,
+                enclosing_lex_names,
+                already_hoisted,
+                result,
             );
         }
         Statement::For { body, init, .. } => {
@@ -5769,16 +5790,12 @@ fn collect_annex_b_var_names_in_sub(
             if let Some(init_stmt) = init {
                 add_lexical_names_from_var_decl(init_stmt, &mut body_lex);
             }
-            collect_annex_b_var_names_in_if_body_with_lex(
-                body, &body_lex, already_hoisted, result,
-            );
+            collect_annex_b_var_names_in_if_body_with_lex(body, &body_lex, already_hoisted, result);
         }
         Statement::ForIn { left, body, .. } | Statement::ForOf { left, body, .. } => {
             let mut body_lex = enclosing_lex_names.clone();
             add_lexical_names_from_for_binding(left, &mut body_lex);
-            collect_annex_b_var_names_in_if_body_with_lex(
-                body, &body_lex, already_hoisted, result,
-            );
+            collect_annex_b_var_names_in_if_body_with_lex(body, &body_lex, already_hoisted, result);
         }
         Statement::Try {
             block,
@@ -5786,39 +5803,37 @@ fn collect_annex_b_var_names_in_sub(
             finalizer,
             ..
         } => {
-            collect_annex_b_var_names(
-                block, enclosing_lex_names, already_hoisted, result,
-            );
+            collect_annex_b_var_names(block, enclosing_lex_names, already_hoisted, result);
             if let Some(h) = handler {
                 let mut handler_lex = enclosing_lex_names.clone();
                 if let Some(crate::ast::CatchParameter::Identifier(name)) = &h.parameter {
                     handler_lex.insert(name.clone());
                 }
-                collect_annex_b_var_names(
-                    &h.body, &handler_lex, already_hoisted, result,
-                );
+                collect_annex_b_var_names(&h.body, &handler_lex, already_hoisted, result);
             }
             if let Some(f) = finalizer {
-                collect_annex_b_var_names(
-                    f, enclosing_lex_names, already_hoisted, result,
-                );
+                collect_annex_b_var_names(f, enclosing_lex_names, already_hoisted, result);
             }
         }
         Statement::Switch { cases, .. } => {
             for case in cases {
                 collect_annex_b_var_names(
-                    &case.consequent, enclosing_lex_names, already_hoisted, result,
+                    &case.consequent,
+                    enclosing_lex_names,
+                    already_hoisted,
+                    result,
                 );
             }
         }
         Statement::Block(body) => {
-            collect_annex_b_var_names(
-                body, enclosing_lex_names, already_hoisted, result,
-            );
+            collect_annex_b_var_names(body, enclosing_lex_names, already_hoisted, result);
         }
         Statement::Labelled { body, .. } => {
             collect_annex_b_var_names_in_if_body(
-                body, enclosing_lex_names, already_hoisted, result,
+                body,
+                enclosing_lex_names,
+                already_hoisted,
+                result,
             );
         }
         _ => {}
@@ -5841,14 +5856,10 @@ fn collect_annex_b_var_names_in_if_body(
             }
         }
         Statement::Block(block_body) => {
-            collect_annex_b_var_names(
-                block_body, enclosing_lex_names, already_hoisted, result,
-            );
+            collect_annex_b_var_names(block_body, enclosing_lex_names, already_hoisted, result);
         }
         _ => {
-            collect_annex_b_var_names_in_sub(
-                body, enclosing_lex_names, already_hoisted, result,
-            );
+            collect_annex_b_var_names_in_sub(body, enclosing_lex_names, already_hoisted, result);
         }
     }
 }
@@ -5871,14 +5882,10 @@ fn collect_annex_b_var_names_in_if_body_with_lex(
             }
         }
         Statement::Block(block_body) => {
-            collect_annex_b_var_names(
-                block_body, enclosing_lex_names, already_hoisted, result,
-            );
+            collect_annex_b_var_names(block_body, enclosing_lex_names, already_hoisted, result);
         }
         _ => {
-            collect_annex_b_var_names_in_sub(
-                body, enclosing_lex_names, already_hoisted, result,
-            );
+            collect_annex_b_var_names_in_sub(body, enclosing_lex_names, already_hoisted, result);
         }
     }
 }
@@ -5888,15 +5895,14 @@ fn add_lexical_names_from_for_binding(
     left: &crate::ast::ForBinding,
     names: &mut std::collections::HashSet<String>,
 ) {
-    if let crate::ast::ForBinding::Declaration { kind, pattern } = left {
-        if matches!(
+    if let crate::ast::ForBinding::Declaration { kind, pattern } = left
+        && matches!(
             kind,
             crate::ast::VariableKind::Let | crate::ast::VariableKind::Const
-        ) {
-            if let crate::ast::BindingPattern::Identifier(name) = pattern {
-                names.insert(name.clone());
-            }
-        }
+        )
+        && let crate::ast::BindingPattern::Identifier(name) = pattern
+    {
+        names.insert(name.clone());
     }
 }
 
@@ -5906,15 +5912,15 @@ fn add_lexical_names_from_var_decl(
     stmt: &Statement,
     names: &mut std::collections::HashSet<String>,
 ) {
-    if let Statement::VariableDeclaration { kind, declarations } = stmt {
-        if matches!(
+    if let Statement::VariableDeclaration { kind, declarations } = stmt
+        && matches!(
             kind,
             crate::ast::VariableKind::Let | crate::ast::VariableKind::Const
-        ) {
-            for d in declarations {
-                if d.pattern.is_none() {
-                    names.insert(d.name.clone());
-                }
+        )
+    {
+        for d in declarations {
+            if d.pattern.is_none() {
+                names.insert(d.name.clone());
             }
         }
     }

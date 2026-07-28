@@ -1722,7 +1722,7 @@ impl Vm {
                     // Fast path: non-negative integer key on Array / TypedArray.
                     'fast: {
                         let JsValue::Number(n) = key else { break 'fast };
-                        if n.fract() != 0.0 || n < 0.0 || n >= 4_294_967_295.0 {
+                        if n.fract() != 0.0 || !(0.0..4_294_967_295.0).contains(&n) {
                             break 'fast;
                         }
                         let JsValue::Object(obj_id) = object else {
@@ -1751,11 +1751,9 @@ impl Vm {
                         } else {
                             "undefined"
                         };
-                        abrupt = Some(Completion::Throw(vm_error_to_value(
-                            VmError::type_error(format!(
-                                "Cannot read properties of {kind} (reading property key)"
-                            )),
-                        )));
+                        abrupt = Some(Completion::Throw(vm_error_to_value(VmError::type_error(
+                            format!("Cannot read properties of {kind} (reading property key)"),
+                        ))));
                         discard_saved_finally = true;
                     } else if let JsValue::Symbol(sym_id) = &key {
                         match self.get_symbol_property_value_completion(object, *sym_id, context)? {
@@ -2880,11 +2878,9 @@ impl Vm {
                             // (non-strict) or throws (strict). With-object
                             // property deletion is handled separately.
                             if context.is_strict_code() {
-                                abrupt = Some(Completion::Throw(
-                                    vm_error_to_value(VmError::type_error(
-                                        "cannot delete property",
-                                    )),
-                                ));
+                                abrupt = Some(Completion::Throw(vm_error_to_value(
+                                    VmError::type_error("cannot delete property"),
+                                )));
                                 discard_saved_finally = true;
                             } else {
                                 self.stack.push(JsValue::Boolean(false));
@@ -3283,6 +3279,7 @@ impl Vm {
         Ok(JsValue::Function(id))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_generator_object(
         &mut self,
         function: FunctionId,
@@ -4157,14 +4154,13 @@ impl Vm {
         }
         // If Symbol.iterator returned a native iterator object (e.g., from Array.prototype.values),
         // use it directly without wrapping.
-        if let JsValue::Object(id) = &iterator {
-            if context
+        if let JsValue::Object(id) = &iterator
+            && context
                 .heap()
                 .object(*id)
                 .is_some_and(|o| matches!(o.kind, ObjectKind::Iterator { .. }))
-            {
-                return Ok(OperationResult::Value(iterator));
-            }
+        {
+            return Ok(OperationResult::Value(iterator));
         }
         match self.wrap_js_iterator(iterator, context) {
             Ok(iterator) => Ok(OperationResult::Value(iterator)),
@@ -4260,12 +4256,10 @@ impl Vm {
                 if matches!(
                     &result,
                     IteratorStepResult::Value { done: true, .. } | IteratorStepResult::Throw(_)
-                ) {
-                    if let Some(obj) = context.heap_mut().object_mut(id) {
-                        if let ObjectKind::Iterator { record } = &mut obj.kind {
-                            record.done = true;
-                        }
-                    }
+                ) && let Some(obj) = context.heap_mut().object_mut(id)
+                    && let ObjectKind::Iterator { record } = &mut obj.kind
+                {
+                    record.done = true;
                 }
                 Ok(result)
             }
@@ -4849,20 +4843,18 @@ impl Vm {
             } else {
                 Ok(YieldStarStepResult::Complete(value))
             }
+        } else if is_async {
+            let value = match self.get_property_value_completion(result, "value", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            };
+            let value = match self.await_value_now(value, context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            };
+            generator_result(context, value, false).map(YieldStarStepResult::Yield)
         } else {
-            if is_async {
-                let value = match self.get_property_value_completion(result, "value", context)? {
-                    OperationResult::Value(value) => value,
-                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
-                };
-                let value = match self.await_value_now(value, context)? {
-                    OperationResult::Value(value) => value,
-                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
-                };
-                generator_result(context, value, false).map(YieldStarStepResult::Yield)
-            } else {
-                Ok(YieldStarStepResult::Yield(result))
-            }
+            Ok(YieldStarStepResult::Yield(result))
         }
     }
 
@@ -4962,20 +4954,18 @@ impl Vm {
             } else {
                 Ok(YieldStarStepResult::Complete(value))
             }
+        } else if is_async {
+            let value = match self.get_property_value_completion(result, "value", context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            };
+            let value = match self.await_value_now(value, context)? {
+                OperationResult::Value(value) => value,
+                OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
+            };
+            generator_result(context, value, false).map(YieldStarStepResult::Yield)
         } else {
-            if is_async {
-                let value = match self.get_property_value_completion(result, "value", context)? {
-                    OperationResult::Value(value) => value,
-                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
-                };
-                let value = match self.await_value_now(value, context)? {
-                    OperationResult::Value(value) => value,
-                    OperationResult::Throw(value) => return Ok(YieldStarStepResult::Throw(value)),
-                };
-                generator_result(context, value, false).map(YieldStarStepResult::Yield)
-            } else {
-                Ok(YieldStarStepResult::Yield(result))
-            }
+            Ok(YieldStarStepResult::Yield(result))
         }
     }
 
@@ -5340,6 +5330,7 @@ impl Vm {
         context.define_symbol_own_property(receiver_object, symbol, PropertyDescriptor::data(value))
     }
 
+    #[allow(clippy::wrong_self_convention)]
     pub(crate) fn to_property_key_from_builtin(
         &mut self,
         value: JsValue,
@@ -5421,8 +5412,8 @@ impl Vm {
             _ => return,
         };
         let obj_id_opt = match func_val {
-            JsValue::Function(func_id) => context.function_object(func_id.clone()),
-            JsValue::Object(obj_id) => Some(obj_id.clone()),
+            JsValue::Function(func_id) => context.function_object(*func_id),
+            JsValue::Object(obj_id) => Some(*obj_id),
             _ => None,
         };
         let Some(obj_id) = obj_id_opt else {
@@ -5445,6 +5436,7 @@ impl Vm {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn define_computed_accessor(
         &mut self,
         object: ObjectId,
@@ -5713,6 +5705,7 @@ impl Vm {
         }
     }
 
+    #[allow(clippy::wrong_self_convention)]
     pub(crate) fn to_numeric(
         &mut self,
         value: JsValue,
@@ -5725,6 +5718,7 @@ impl Vm {
         self.to_number(primitive, context).map(JsValue::Number)
     }
 
+    #[allow(clippy::wrong_self_convention)]
     fn to_numeric_operands(
         &mut self,
         left: JsValue,

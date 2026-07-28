@@ -31,8 +31,7 @@ pub(crate) mod string;
 use crate::{
     runtime::{
         Intrinsics, JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, NativeErrorKind,
-        NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-        abstract_ops,
+        NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor, abstract_ops,
     },
     vm::{Vm, VmError},
 };

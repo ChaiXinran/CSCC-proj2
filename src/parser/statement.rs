@@ -560,28 +560,26 @@ impl Parser {
                 imported_name: "*".into(),
                 local_name,
             });
-        } else {
-            if let TokenKind::Identifier(local_name) = self.peek().kind.clone() {
-                self.advance();
-                entries.push(crate::ast::ImportEntry {
-                    imported_name: "default".into(),
-                    local_name,
-                });
-                if self.eat_punctuator(',') {
-                    if self.eat_operator("*") {
-                        self.expect_identifier_name_exact("as")?;
-                        let local_name = self.expect_identifier()?;
-                        entries.push(crate::ast::ImportEntry {
-                            imported_name: "*".into(),
-                            local_name,
-                        });
-                    } else {
-                        self.parse_named_import_entries(&mut entries)?;
-                    }
+        } else if let TokenKind::Identifier(local_name) = self.peek().kind.clone() {
+            self.advance();
+            entries.push(crate::ast::ImportEntry {
+                imported_name: "default".into(),
+                local_name,
+            });
+            if self.eat_punctuator(',') {
+                if self.eat_operator("*") {
+                    self.expect_identifier_name_exact("as")?;
+                    let local_name = self.expect_identifier()?;
+                    entries.push(crate::ast::ImportEntry {
+                        imported_name: "*".into(),
+                        local_name,
+                    });
+                } else {
+                    self.parse_named_import_entries(&mut entries)?;
                 }
-            } else {
-                self.parse_named_import_entries(&mut entries)?;
             }
+        } else {
+            self.parse_named_import_entries(&mut entries)?;
         }
 
         self.expect_identifier_name_exact("from")?;
@@ -2012,30 +2010,8 @@ impl Parser {
         // Annex B B.3.3.4: in non-strict mode, duplicate FunctionDeclaration names are allowed.
         let all_case_stmts: Vec<&Statement> =
             cases.iter().flat_map(|c| c.consequent.iter()).collect();
-        let fn_decl_only_switch: HashSet<&str> = {
-            let mut fn_names: HashSet<&str> = HashSet::new();
-            let mut non_fn_names: HashSet<&str> = HashSet::new();
-            for stmt in &all_case_stmts {
-                match stmt {
-                    Statement::FunctionDeclaration { name, .. } => {
-                        fn_names.insert(name.as_str());
-                    }
-                    Statement::VariableDeclaration {
-                        kind: crate::ast::VariableKind::Let | crate::ast::VariableKind::Const,
-                        declarations,
-                    } => {
-                        for d in declarations {
-                            non_fn_names.insert(d.name.as_str());
-                        }
-                    }
-                    Statement::ClassDeclaration(cls) => {
-                        non_fn_names.insert(cls.name.as_str());
-                    }
-                    _ => {}
-                }
-            }
-            fn_names.difference(&non_fn_names).copied().collect()
-        };
+        let fn_decl_only_switch =
+            annex_b_redeclarable_function_names(all_case_stmts.iter().copied());
         let mut lexical_names = HashSet::new();
         for name in cases
             .iter()
@@ -2083,30 +2059,7 @@ impl Parser {
         functions_are_lexical: bool,
     ) -> Result<(), ParseError> {
         // Names that appear only as FunctionDeclarations in this block (for Annex B B.3.3.4).
-        let fn_decl_only: HashSet<&str> = {
-            let mut fn_names: HashSet<&str> = HashSet::new();
-            let mut non_fn_names: HashSet<&str> = HashSet::new();
-            for stmt in statements {
-                match stmt {
-                    Statement::FunctionDeclaration { name, .. } => {
-                        fn_names.insert(name.as_str());
-                    }
-                    Statement::VariableDeclaration {
-                        kind: crate::ast::VariableKind::Let | crate::ast::VariableKind::Const,
-                        declarations,
-                    } => {
-                        for d in declarations {
-                            non_fn_names.insert(d.name.as_str());
-                        }
-                    }
-                    Statement::ClassDeclaration(cls) => {
-                        non_fn_names.insert(cls.name.as_str());
-                    }
-                    _ => {}
-                }
-            }
-            fn_names.difference(&non_fn_names).copied().collect()
-        };
+        let fn_decl_only = annex_b_redeclarable_function_names(statements);
 
         let mut lexical_names: HashSet<&str> = HashSet::new();
         let direct_names = if functions_are_lexical {
@@ -2128,9 +2081,7 @@ impl Parser {
             }
         }
         for name in var_declared_names(statements) {
-            if lexical_names.contains(name)
-                && !(!self.is_strict && functions_are_lexical && fn_decl_only.contains(name))
-            {
+            if lexical_names.contains(name) {
                 return Err(self.error(format!(
                     "var declaration `{name}` conflicts with a lexical declaration"
                 )));
@@ -2535,6 +2486,50 @@ fn call_arg_contains_forbidden_meta(arg: &crate::ast::CallArgument) -> bool {
             expr_contains_forbidden_meta(expr)
         }
     }
+}
+
+/// Returns names whose direct declarations are exclusively ordinary
+/// FunctionDeclarations. Annex B permits duplicate declarations only for this
+/// narrow category in sloppy blocks; async and generator declarations retain
+/// the normal lexical duplicate rules.
+fn annex_b_redeclarable_function_names<'a>(
+    statements: impl IntoIterator<Item = &'a Statement>,
+) -> HashSet<&'a str> {
+    let mut ordinary_function_names = HashSet::new();
+    let mut disqualified_names = HashSet::new();
+    for statement in statements {
+        match statement {
+            Statement::FunctionDeclaration {
+                name,
+                is_async: false,
+                is_generator: false,
+                ..
+            } => {
+                ordinary_function_names.insert(name.as_str());
+            }
+            Statement::FunctionDeclaration { name, .. } => {
+                disqualified_names.insert(name.as_str());
+            }
+            Statement::VariableDeclaration {
+                kind: VariableKind::Let | VariableKind::Const,
+                declarations,
+            } => {
+                disqualified_names.extend(
+                    declarations
+                        .iter()
+                        .map(|declaration| declaration.name.as_str()),
+                );
+            }
+            Statement::ClassDeclaration(class) => {
+                disqualified_names.insert(class.name.as_str());
+            }
+            _ => {}
+        }
+    }
+    ordinary_function_names
+        .difference(&disqualified_names)
+        .copied()
+        .collect()
 }
 
 fn is_identifier_like(name: &str) -> bool {
@@ -3108,6 +3103,32 @@ mod tests {
                 .message
                 .contains("conflicts")
         );
+        assert!(
+            parse_error("{ function f() {} var f; }")
+                .message
+                .contains("conflicts")
+        );
+        assert!(
+            parse_error("{ { var f; } function f() {} }")
+                .message
+                .contains("conflicts")
+        );
+    }
+
+    #[test]
+    fn annex_b_duplicate_function_exception_is_ordinary_function_only() {
+        parse("{ function f() {} function f() {} }");
+        for source in [
+            "{ function f() {} async function f() {} }",
+            "{ function f() {} function* f() {} }",
+            "{ async function f() {} async function f() {} }",
+            "{ function* f() {} function* f() {} }",
+        ] {
+            assert!(
+                parse_error(source).message.contains("duplicate"),
+                "{source} should reject duplicate lexical declarations"
+            );
+        }
     }
 
     #[test]

@@ -66,6 +66,13 @@ impl Parser {
         // V9-A: `yield [*] [expr]` — only valid inside a generator function.
         if self.is_generator_context && self.check_keyword(Keyword::Yield) {
             self.advance();
+            if matches!(&self.peek().kind, TokenKind::Operator(op) if *op == "*")
+                && self.peek().line_terminator_before
+            {
+                return Err(
+                    self.error("line terminator is not allowed before `*` in `yield*`".into())
+                );
+            }
             let delegate = self.eat_operator("*");
             // `yield` can be followed by a line terminator, in which case the
             // argument is absent.
@@ -224,6 +231,16 @@ impl Parser {
             return Ok(None);
         }
 
+        if self.is_async_context
+            && self.tokens[saved..self.cursor]
+                .iter()
+                .any(|token| matches!(token.kind, TokenKind::Keyword(Keyword::Await)))
+        {
+            return Err(
+                self.error("`await` is not allowed in arrow parameters in async context".into())
+            );
+        }
+
         // NSPL + "use strict" is forbidden for non-async arrows too.
         let is_nspl = Self::params_are_non_simple(&params);
         let body_strict = self.check_punctuator('{') && self.peek_body_has_use_strict();
@@ -284,12 +301,12 @@ impl Parser {
             }
             // Spec: it is a SyntaxError if the left operand of `**` is a
             // UnaryExpression with a prefix unary operator (not an update expr).
-            if operator == "**" {
-                if let Expression::Unary { .. } = &left {
-                    return Err(self.error(
+            if operator == "**"
+                && let Expression::Unary { .. } = &left
+            {
+                return Err(self.error(
                         "unary expression cannot be used directly as left operand of `**`; wrap in parentheses".into(),
                     ));
-                }
             }
             self.advance();
             // `**` is right-associative: right operand uses same precedence
@@ -299,7 +316,7 @@ impl Parser {
                 precedence + 1
             };
             let right = self.parse_binary(right_min)?;
-            left = combine(&operator, left, right);
+            left = combine(operator, left, right);
         }
         Ok(left)
     }
@@ -756,7 +773,7 @@ impl Parser {
             // literal, not a division operator. Use the source text to re-read the
             // full `/pattern/flags` sequence, then skip the tokens that the
             // context-free lexer split it into.
-            TokenKind::Operator(ref op) if *op == "/" || *op == "/=" => self.parse_regex_literal(),
+            TokenKind::Operator(op) if op == "/" || op == "/=" => self.parse_regex_literal(),
             // V8-A: template literals
             TokenKind::TemplateLiteral(value) => {
                 self.advance();
@@ -987,18 +1004,10 @@ impl Parser {
             let key = self.allowing_in(|parser| parser.parse_assignment())?;
             self.expect_punctuator(']')?;
             if self.check_punctuator('(') {
-                let params = self.parse_param_list()?;
-                let body = self.parse_function_body()?;
+                let function = self.parse_object_method_function(None, false, false)?;
                 return Ok(ObjectProperty::ComputedData {
                     key,
-                    value: Expression::Function(FunctionLiteral {
-                        name: None,
-                        params,
-                        body,
-                        is_async: false,
-                        is_generator: false,
-                        is_arrow: false,
-                    }),
+                    value: Expression::Function(function),
                 });
             }
             self.expect_punctuator(':')?;
@@ -1097,61 +1106,54 @@ impl Parser {
 
         if self.check_punctuator('(') {
             let name = key.to_key_string();
-            let params = self.parse_param_list()?;
-            let body = self.parse_function_body()?;
+            let function = self.parse_object_method_function(Some(name), false, false)?;
             return Ok(ObjectProperty::Data {
                 key,
-                value: Expression::Function(FunctionLiteral {
-                    name: Some(name),
-                    params,
-                    body,
-                    is_async: false,
-                    is_generator: false,
-                    is_arrow: false,
-                }),
+                value: Expression::Function(function),
             });
         }
 
         // Shorthand property: `{name}` or `{name = default}`.
         // Only when: token was Identifier (not keyword), and name is not a reserved word.
-        if key_can_be_shorthand && !self.check_punctuator(':') {
-            if let PropertyName::Identifier(ref ident) = key {
-                // Truly reserved words can never appear as shorthand.
-                if is_reserved_identifier_name(ident)
-                    || (self.is_strict
-                        && (ident == "eval"
-                            || ident == "arguments"
-                            || is_strict_future_reserved(ident)
-                            || is_strict_future_reserved_keyword(ident)))
-                {
-                    return Err(self.error(format!(
-                        "reserved word `{ident}` cannot be used as shorthand property"
-                    )));
-                }
-                // Context-sensitive keywords (yield/await) are not valid shorthands
-                // inside generator/async functions but are fine elsewhere.
-                let is_context_keyword = (self.is_generator_context && ident == "yield")
-                    || (self.is_async_context && ident == "await");
-                if !is_context_keyword {
-                    let ident = ident.clone();
-                    let default_expr = if self.eat_operator("=") {
-                        Some(self.parse_assignment()?)
-                    } else {
-                        None
-                    };
-                    let value = if let Some(def) = default_expr {
-                        Expression::Assignment {
-                            target: Box::new(Expression::Identifier(ident.clone())),
-                            value: Box::new(def),
-                        }
-                    } else {
-                        Expression::Identifier(ident.clone())
-                    };
-                    return Ok(ObjectProperty::Data {
-                        key: PropertyName::Identifier(ident),
-                        value,
-                    });
-                }
+        if key_can_be_shorthand
+            && !self.check_punctuator(':')
+            && let PropertyName::Identifier(ref ident) = key
+        {
+            // Truly reserved words can never appear as shorthand.
+            if is_reserved_identifier_name(ident)
+                || (self.is_strict
+                    && (ident == "eval"
+                        || ident == "arguments"
+                        || is_strict_future_reserved(ident)
+                        || is_strict_future_reserved_keyword(ident)))
+            {
+                return Err(self.error(format!(
+                    "reserved word `{ident}` cannot be used as shorthand property"
+                )));
+            }
+            // Context-sensitive keywords (yield/await) are not valid shorthands
+            // inside generator/async functions but are fine elsewhere.
+            let is_context_keyword = (self.is_generator_context && ident == "yield")
+                || (self.is_async_context && ident == "await");
+            if !is_context_keyword {
+                let ident = ident.clone();
+                let default_expr = if self.eat_operator("=") {
+                    Some(self.parse_assignment()?)
+                } else {
+                    None
+                };
+                let value = if let Some(def) = default_expr {
+                    Expression::Assignment {
+                        target: Box::new(Expression::Identifier(ident.clone())),
+                        value: Box::new(def),
+                    }
+                } else {
+                    Expression::Identifier(ident.clone())
+                };
+                return Ok(ObjectProperty::Data {
+                    key: PropertyName::Identifier(ident),
+                    value,
+                });
             }
         }
 
@@ -1176,60 +1178,60 @@ impl Parser {
             if self.eat_punctuator('[') {
                 let key = self.parse_assignment()?;
                 self.expect_punctuator(']')?;
-                let params = self.parse_param_list()?;
-                let is_nspl = Self::params_are_non_simple(&params);
-                let body_strict = self.peek_body_has_use_strict();
-                if is_nspl && body_strict {
-                    return Err(self.error(
-                        "\"use strict\" directive is not allowed in function with non-simple parameters".into(),
-                    ));
-                }
-                if is_async || is_generator || self.is_strict || body_strict || is_nspl {
-                    self.check_duplicate_params(&params)?;
-                }
-                let body = self.parse_function_body()?;
+                let function = self.parse_object_method_function(None, is_async, is_generator)?;
                 return Ok(ObjectProperty::ComputedData {
                     key,
-                    value: Expression::Function(FunctionLiteral {
-                        name: None,
-                        params,
-                        body,
-                        is_async,
-                        is_generator,
-                        is_arrow: false,
-                    }),
+                    value: Expression::Function(function),
                 });
             }
             let key = self.parse_property_name()?;
             let name = key.to_key_string();
-            let params = self.parse_param_list()?;
-            let is_nspl = Self::params_are_non_simple(&params);
-            let body_strict = self.peek_body_has_use_strict();
-            if is_nspl && body_strict {
-                return Err(self.error(
-                    "\"use strict\" directive is not allowed in function with non-simple parameters".into(),
-                ));
-            }
-            if is_async || is_generator || self.is_strict || body_strict || is_nspl {
-                self.check_duplicate_params(&params)?;
-            }
-            let body = self.parse_function_body()?;
+            let function = self.parse_object_method_function(Some(name), is_async, is_generator)?;
             Ok(ObjectProperty::Data {
                 key,
-                value: Expression::Function(FunctionLiteral {
-                    name: Some(name),
-                    params,
-                    body,
-                    is_async,
-                    is_generator,
-                    is_arrow: false,
-                }),
+                value: Expression::Function(function),
             })
         })();
 
         self.is_async_context = outer_async;
         self.is_generator_context = outer_generator;
         result
+    }
+
+    /// Parses the shared parameter/body tail of an object method. Keeping the
+    /// static semantics here prevents ordinary, computed, async, and generator
+    /// method syntaxes from drifting into different early-error behavior.
+    fn parse_object_method_function(
+        &mut self,
+        name: Option<String>,
+        is_async: bool,
+        is_generator: bool,
+    ) -> Result<FunctionLiteral, ParseError> {
+        let params = self.parse_param_list()?;
+        if is_generator {
+            Self::check_generator_params_no_yield(&params)?;
+        }
+        let is_nspl = Self::params_are_non_simple(&params);
+        if is_nspl && self.peek_body_has_use_strict() {
+            return Err(self.error(
+                "\"use strict\" directive is not allowed in function with non-simple parameters"
+                    .into(),
+            ));
+        }
+        // Method definitions always use UniqueFormalParameters.
+        self.check_duplicate_params(&params)?;
+        self.check_non_ctor_super_call_params(&params)?;
+        let body = self.parse_function_body()?;
+        self.validate_params_vs_lexical(&params, &body.statements)?;
+        self.check_non_ctor_super_call(&body)?;
+        Ok(FunctionLiteral {
+            name,
+            params,
+            body,
+            is_async,
+            is_generator,
+            is_arrow: false,
+        })
     }
 
     /// Parses a property key: identifier, string literal, or number literal.
@@ -1302,12 +1304,12 @@ impl Parser {
         // Retroactive strict checks: if the body is strict, validate name and params.
         let effective_strict = self.is_strict || body.is_strict;
         if effective_strict {
-            if let Some(ref n) = name {
-                if matches!(n.as_str(), "eval" | "arguments") || is_strict_future_reserved(n) {
-                    return Err(
-                        self.error(format!("function name `{n}` is not allowed in strict mode"))
-                    );
-                }
+            if let Some(ref n) = name
+                && (matches!(n.as_str(), "eval" | "arguments") || is_strict_future_reserved(n))
+            {
+                return Err(
+                    self.error(format!("function name `{n}` is not allowed in strict mode"))
+                );
             }
             if !is_generator && !self.is_strict {
                 // Outer context wasn't strict, but body is — re-check params.
@@ -1413,6 +1415,14 @@ impl Parser {
             return Ok(Expression::Identifier("async".into()));
         }
 
+        if self.tokens[saved..self.cursor].iter().any(|token| {
+            matches!(token.kind, TokenKind::Keyword(Keyword::Await))
+                || matches!(&token.kind, TokenKind::Identifier(name) if name == "await")
+        }) {
+            return Err(self.error("`await` is not allowed in async arrow parameters".into()));
+        }
+        self.check_duplicate_params(&params)?;
+
         // Now confirmed it's an async arrow — set async context for body parsing.
         let outer_async = self.is_async_context;
         self.is_async_context = true;
@@ -1436,6 +1446,7 @@ impl Parser {
                 is_strict: self.is_strict,
             }
         };
+        self.validate_params_vs_lexical(&params, &body.statements)?;
         Ok(Expression::Function(FunctionLiteral {
             name: None,
             params,
@@ -1705,13 +1716,11 @@ impl Parser {
                         return Err(self.error(format!("duplicate private setter `#{pn}`")));
                     }
                     seen_private_setters.insert(key, is_static);
-                } else {
-                    if seen_private_getters.contains_key(&key)
-                        || seen_private_setters.contains_key(&key)
-                        || !seen_private_names.insert(key)
-                    {
-                        return Err(self.error(format!("duplicate private name `#{pn}`")));
-                    }
+                } else if seen_private_getters.contains_key(&key)
+                    || seen_private_setters.contains_key(&key)
+                    || !seen_private_names.insert(key)
+                {
+                    return Err(self.error(format!("duplicate private name `#{pn}`")));
                 }
                 // `#constructor` is forbidden (per spec, in any position).
                 if pn == "constructor" {
@@ -4522,6 +4531,35 @@ mod tests {
             .tokenize()
             .unwrap();
         assert!(Parser::new(tokens).parse_program().is_err());
+    }
+
+    #[test]
+    fn object_methods_share_static_semantics_validation() {
+        for source in [
+            "({ method(a = 0) { 'use strict'; } });",
+            "({ ['method'](...rest) { 'use strict'; } });",
+            "({ method(param) { let param; } });",
+            "({ method(a, a) {} });",
+            "({ method() { super(); } });",
+        ] {
+            parse_program_err(source);
+        }
+        parse_program_ok("({ method() { return 1; }, ['computed'](x) { return x; } });");
+        parse_program_err("({ *g() { yield\n* 1; } });");
+    }
+
+    #[test]
+    fn async_arrows_validate_parameters_and_body_lexicals() {
+        for source in [
+            "async (await) => {};",
+            "async (x = await 1) => {};",
+            "async (x = 0, x) => {};",
+            "async (x) => { let x; };",
+            "async () => { (x = await /r/g) => {}; };",
+        ] {
+            parse_program_err(source);
+        }
+        parse_program_ok("async (x, y = 1) => x + y;");
     }
 
     #[test]
