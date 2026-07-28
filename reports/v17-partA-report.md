@@ -300,3 +300,47 @@ normalized without altering the value produced by an escaped `\r`.
 `language/expressions/template-literal` is consequently zero-failure and
 zero-skip. Template caching, freezing, raw property descriptors, and invalid
 tagged escapes remain runtime/interface work.
+
+## Post-B-merge A repair batch: Unicode, early errors, and named evaluation
+
+This batch stayed within the lexer/parser/compiler boundary and did not change
+the shared contracts, chunk format, or opcode interface.
+
+Implemented Unicode 5.2 through 17.0 identifier additions, U+2E2F and numeric
+literal lexical restrictions, missing contextual-keyword and static-block
+early errors, decorator syntax, BigInt property names, and NamedEvaluation for
+object properties and logical assignments.
+
+| Suite | Before | After | Change |
+|---|---:|---:|---:|
+| `language/identifiers` | 200/268 | 268/268 | +68 |
+| `language/expressions/object` | 1101/1170 | 1108/1170 | +7 |
+| `language/expressions/logical-assignment` | 48/78 | 57/78 | +9 |
+| `language/expressions/class` | 3903/4059 | 3913/4059 | +10 |
+| `language/statements/class` | 4166/4367 | 4180/4367 | +14 |
+| `language/expressions/coalesce` | 18/24 | 22/24 | +4 |
+| `language/statements/with` | 113/181 | 121/181 | +8 |
+| `language/expressions/async-function` | 70/93 | 72/93 | +2 |
+| `language/expressions/async-generator` | 576/623 | 578/623 | +2 |
+| `language/statements/function` | 436/451 | 437/451 | +1 |
+| **Conservative aggregate** |  |  | **+125** |
+
+Additional final focused results were
+`language/expressions/class/decorator` 8/8,
+`language/statements/class/decorator` 12/12,
+`language/future-reserved-words` 54/55,
+`language/statements/for-of` 714/751,
+`language/statements/for-await-of` 1218/1234, and
+`language/literals/numeric` 156/157. Every listed Test262 run had zero skips.
+
+Commands run included `cargo fmt --all`, `cargo check --all-targets`,
+`cargo test lexer::`, `cargo test parser::`,
+`cargo test bytecode::compiler::`, the release native build, and focused
+release Test262 runs for every directory listed above.
+
+Final project gates: formatting, `cargo check --all-targets`,
+`cargo test --all-targets`, and
+`cargo test --no-default-features --test native_test262` passed. Clippy still
+reports two pre-existing post-merge Track B warnings in
+`src/builtins/annex_b.rs` and `src/runtime/context.rs`; the Track A warnings
+found during this batch were corrected.

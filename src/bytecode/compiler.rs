@@ -3083,6 +3083,12 @@ impl Compiler {
                 };
                 chunk.emit(Instruction::Pop);
                 self.compile_expression(value, chunk, context)?;
+                if is_anonymous_function_definition(value)
+                    && let Expression::Identifier(name) = target
+                {
+                    let name_index = self.add_name(name, chunk)?;
+                    chunk.emit(Instruction::SetFunctionName(name_index));
+                }
                 self.emit_store_target(target, chunk, context)?;
                 chunk
                     .patch_jump(jump_instr, chunk.current_offset())
@@ -3684,7 +3690,11 @@ impl Compiler {
             match property {
                 ObjectProperty::Data { key, value } => {
                     self.compile_expression(value, chunk, context)?;
-                    let key = self.add_name(&property_key(key), chunk)?;
+                    let key_name = property_key(key);
+                    let key = self.add_name(&key_name, chunk)?;
+                    if is_anonymous_function_definition(value) {
+                        chunk.emit(Instruction::SetFunctionName(key));
+                    }
                     chunk.emit(Instruction::DefineDataProperty(key));
                 }
                 ObjectProperty::ComputedData { key, value } => {

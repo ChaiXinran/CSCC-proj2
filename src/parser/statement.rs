@@ -92,6 +92,13 @@ impl Parser {
             TokenKind::Keyword(Keyword::Try) => self.parse_try(),
             TokenKind::Keyword(Keyword::Switch) => self.parse_switch(),
             TokenKind::Keyword(Keyword::Class) => self.parse_class_declaration(),
+            TokenKind::Punctuator('@') => {
+                self.consume_decorators()?;
+                if !self.check_keyword(Keyword::Class) {
+                    return Err(self.error("decorators must precede a class declaration".into()));
+                }
+                self.parse_class_declaration()
+            }
             TokenKind::Keyword(Keyword::With) => self.parse_with(),
             // Labelled statement: identifier followed by `:`.
             // `await` and `yield` are valid labels in appropriate contexts,
@@ -160,7 +167,11 @@ impl Parser {
         // Parse the name in the OUTER (non-generator) context so that `yield` is
         // a valid binding identifier for `function* yield()` in non-strict mode.
         let name = self.expect_identifier()?;
+        let outer_async = self.is_async_context;
+        let outer_static_block = self.in_class_static_block;
         let outer_generator = self.is_generator_context;
+        self.is_async_context = false;
+        self.in_class_static_block = false;
         self.is_generator_context = is_generator;
         let params = self.parse_param_list()?;
         if is_generator {
@@ -171,6 +182,8 @@ impl Parser {
         // NSPL + "use strict" in body is always a SyntaxError.
         if is_nspl && body_strict {
             self.is_generator_context = outer_generator;
+            self.is_async_context = outer_async;
+            self.in_class_static_block = outer_static_block;
             return Err(self.error(
                 "\"use strict\" directive is not allowed in function with non-simple parameters"
                     .into(),
@@ -191,8 +204,15 @@ impl Parser {
                 )));
             }
         }
+        let outer_super_property = self.allow_class_super_property;
+        self.allow_class_super_property = false;
         let body = self.parse_function_body()?;
+        self.allow_class_super_property = outer_super_property;
+        self.is_async_context = outer_async;
+        self.in_class_static_block = outer_static_block;
         self.is_generator_context = outer_generator;
+        self.check_non_ctor_super_call_params(&params)?;
+        self.check_non_ctor_super_call(&body)?;
         // Check for param/lexical conflicts (BoundNames vs LexicallyDeclaredNames).
         self.validate_params_vs_lexical(&params, &body.statements)?;
         Ok(Statement::FunctionDeclaration {
@@ -229,9 +249,17 @@ impl Parser {
                     .into(),
             ));
         }
+        let outer_super_property = self.allow_class_super_property;
+        self.allow_class_super_property = false;
         let body = self.parse_function_body()?;
+        self.allow_class_super_property = outer_super_property;
         self.is_async_context = outer_async;
         self.is_generator_context = outer_generator;
+        if body.is_strict && matches!(name.as_str(), "eval" | "arguments") {
+            return Err(self.error("async function name is not allowed in strict mode".into()));
+        }
+        self.check_non_ctor_super_call_params(&params)?;
+        self.check_non_ctor_super_call(&body)?;
         // Check for param/lexical conflicts.
         self.validate_params_vs_lexical(&params, &body.statements)?;
         Ok(Statement::FunctionDeclaration {
@@ -775,7 +803,12 @@ impl Parser {
         };
         self.is_strict = outer_strict;
         let super_class = if self.eat_keyword(Keyword::Extends) {
-            Some(self.parse_assignment()?)
+            let heritage = self.parse_assignment()?;
+            if matches!(&heritage, Expression::Function(function) if function.is_arrow) {
+                return Err(self
+                    .error("an unparenthesized arrow function cannot be a class heritage".into()));
+            }
+            Some(heritage)
         } else {
             None
         };
@@ -788,6 +821,9 @@ impl Parser {
     }
 
     fn eat_identifier_name(&mut self, name: &str) -> bool {
+        if self.peek().has_identifier_escape {
+            return false;
+        }
         match self.peek().kind.clone() {
             TokenKind::Identifier(value) if value == name => {
                 self.advance();
@@ -1089,6 +1125,14 @@ impl Parser {
                 self.advance();
                 Ok((PropertyName::Number(n), None, false))
             }
+            TokenKind::BigInt(raw) => {
+                self.advance();
+                Ok((
+                    PropertyName::String(raw.strip_suffix('n').unwrap_or(&raw).to_owned()),
+                    None,
+                    false,
+                ))
+            }
             TokenKind::Keyword(kw) => {
                 self.advance();
                 Ok((
@@ -1122,7 +1166,12 @@ impl Parser {
         let name_result = self.expect_class_name();
         let name = name_result?;
         let super_class = if self.eat_keyword(Keyword::Extends) {
-            Some(self.parse_assignment()?)
+            let heritage = self.parse_assignment()?;
+            if matches!(&heritage, Expression::Function(function) if function.is_arrow) {
+                return Err(self
+                    .error("an unparenthesized arrow function cannot be a class heritage".into()));
+            }
+            Some(heritage)
         } else {
             None
         };
@@ -1241,7 +1290,13 @@ impl Parser {
     /// in the current context (`await` is reserved in async; `yield` in strict/generator).
     fn label_identifier_is_valid(&self) -> bool {
         if let TokenKind::Identifier(name) = &self.peek().kind {
+            if self.peek().has_identifier_escape && crate::parser::is_keyword_name(name) {
+                return false;
+            }
             if name == "await" && self.is_async_context {
+                return false;
+            }
+            if name == "await" && self.in_class_static_block {
                 return false;
             }
             if name == "yield" && (self.is_strict || self.is_generator_context) {
@@ -1331,7 +1386,8 @@ impl Parser {
 
     /// Returns `true` if the current token is the contextual keyword `of`.
     fn check_contextual_of(&self) -> bool {
-        matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "of")
+        !self.peek().has_identifier_escape
+            && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "of")
     }
 
     /// Parses both `for (init; test; update) body`, `for (left in right) body`,
@@ -1544,6 +1600,11 @@ impl Parser {
 
         // V9-A: `for (expr of right)` �?also accepts Array/Object destructuring targets.
         if self.check_contextual_of() {
+            if matches!(&expression, Expression::Identifier(name) if name == "async") {
+                return Err(
+                    self.error("`async` cannot be the left-hand side of a for-of statement".into())
+                );
+            }
             if !matches!(
                 expression,
                 Expression::Identifier(_)
@@ -1862,6 +1923,19 @@ impl Parser {
         let object = self.allowing_in(|p| p.parse_assignment())?;
         self.expect_punctuator(')')?;
         let body = self.parse_statement()?;
+        if matches!(
+            body,
+            Statement::FunctionDeclaration { .. }
+                | Statement::ClassDeclaration(_)
+                | Statement::VariableDeclaration {
+                    kind: VariableKind::Let | VariableKind::Const,
+                    ..
+                }
+        ) {
+            return Err(
+                self.error("declarations are not allowed as the body of a `with` statement".into())
+            );
+        }
         Ok(Statement::With {
             object,
             body: Box::new(body),
@@ -2843,6 +2917,21 @@ mod tests {
     #[test]
     fn parses_empty_statement() {
         assert_eq!(parse(";"), [Statement::Empty]);
+    }
+
+    #[test]
+    fn rejects_declarations_as_with_bodies() {
+        for source in [
+            "with (obj) function f() {}",
+            "with (obj) async function f() {}",
+            "with (obj) class C {}",
+            "with (obj) let x;",
+            "with (obj) const x = 1;",
+        ] {
+            parse_error(source);
+        }
+        parse("with (obj) { let x; }");
+        parse("with (obj) var x;");
     }
 
     #[test]

@@ -63,6 +63,8 @@ pub struct Parser {
     /// cannot use `function_depth` to recognize their valid super-property
     /// references.
     allow_class_super_property: bool,
+    /// Whether parsing is directly inside a class static initialization block.
+    pub(super) in_class_static_block: bool,
     /// When true, the relational `in` operator is not consumed by expression
     /// parsing. Used while parsing a `for` header so `for (x in obj)` can be
     /// disambiguated from `for (x in y; …)`. Reset on entry to any nested
@@ -108,6 +110,7 @@ impl Parser {
             switch_depth: 0,
             function_depth: 0,
             allow_class_super_property: false,
+            in_class_static_block: false,
             no_in: false,
             source: None,
             nesting_depth: 0,
@@ -254,6 +257,14 @@ impl Parser {
 
     fn expect_identifier(&mut self) -> Result<String, ParseError> {
         let tok = self.peek();
+        if self.in_class_static_block
+            && (matches!(&tok.kind, TokenKind::Keyword(Keyword::Await))
+                || matches!(&tok.kind, TokenKind::Identifier(name) if name == "await"))
+        {
+            return Err(self.error(
+                "`await` cannot be used as a binding identifier in a class static block".into(),
+            ));
+        }
         // `await` is a reserved word inside async functions (including escaped forms).
         if self.is_async_context {
             match &tok.kind {
@@ -307,7 +318,8 @@ impl Parser {
             // cannot be used as binding identifiers.
             if self.is_strict
                 && (matches!(name.as_str(), "arguments" | "eval")
-                    || is_strict_future_reserved(name))
+                    || is_strict_future_reserved(name)
+                    || is_strict_future_reserved_keyword(name))
             {
                 return Err(self.error(format!(
                     "`{name}` cannot be used as a binding identifier in strict mode"

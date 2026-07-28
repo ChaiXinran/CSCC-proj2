@@ -185,6 +185,15 @@ impl Parser {
                 }) if  *op == "=>"
             )
         };
+        if self.in_class_static_block
+            && next_is_arrow(&self.tokens, self.cursor)
+            && (matches!(self.peek().kind, TokenKind::Keyword(Keyword::Await))
+                || matches!(&self.peek().kind, TokenKind::Identifier(name) if name == "await"))
+        {
+            return Err(
+                self.error("`await` cannot be an arrow parameter in a class static block".into())
+            );
+        }
         let params = match self.peek().kind.clone() {
             TokenKind::Identifier(name) if next_is_arrow(&self.tokens, self.cursor) => {
                 // In strict mode, binding identifiers like `eval` and `arguments`
@@ -239,6 +248,9 @@ impl Parser {
             return Err(
                 self.error("`await` is not allowed in arrow parameters in async context".into())
             );
+        }
+        if self.is_generator_context {
+            Self::check_generator_params_no_yield(&params)?;
         }
 
         // NSPL + "use strict" is forbidden for non-async arrows too.
@@ -316,6 +328,32 @@ impl Parser {
                 precedence + 1
             };
             let right = self.parse_binary(right_min)?;
+            let mixes_nullish = match operator {
+                "??" => [&left, &right].iter().any(|expression| {
+                    matches!(
+                        expression,
+                        Expression::Logical {
+                            operator: LogicalOperator::And | LogicalOperator::Or,
+                            ..
+                        }
+                    )
+                }),
+                "&&" | "||" => [&left, &right].iter().any(|expression| {
+                    matches!(
+                        expression,
+                        Expression::Logical {
+                            operator: LogicalOperator::Nullish,
+                            ..
+                        }
+                    )
+                }),
+                _ => false,
+            };
+            if mixes_nullish {
+                return Err(
+                    self.error("`??` cannot be mixed with `&&` or `||` without parentheses".into())
+                );
+            }
             left = combine(operator, left, right);
         }
         Ok(left)
@@ -381,7 +419,7 @@ impl Parser {
             let argument = self.parse_unary()?;
             self.leave_depth();
             // Strict-mode early error: `delete` of an unqualified identifier.
-            if self.is_strict && matches!(argument, Expression::Identifier(_)) {
+            if self.is_strict && is_parenthesized_identifier(&argument) {
                 return Err(
                     self.error("cannot delete an unqualified identifier in strict mode".into())
                 );
@@ -538,6 +576,11 @@ impl Parser {
                 self.peek().kind,
                 TokenKind::TemplateLiteral(_) | TokenKind::TemplateHead(_)
             ) {
+                if matches!(expression, Expression::OptionalChain { .. }) {
+                    return Err(
+                        self.error("optional chains cannot be used as tagged-template tags".into())
+                    );
+                }
                 let template = self.parse_template_literal_from_current(true)?;
                 expression = Expression::TaggedTemplate {
                     tag: Box::new(expression),
@@ -548,6 +591,13 @@ impl Parser {
             }
         }
         Ok(expression)
+    }
+
+    pub(super) fn consume_decorators(&mut self) -> Result<(), ParseError> {
+        while self.eat_punctuator('@') {
+            self.parse_call_member()?;
+        }
+        Ok(())
     }
 
     /// Parses the first step after `?.` has already been consumed.
@@ -803,6 +853,13 @@ impl Parser {
             TokenKind::TemplateHead(_) => self.parse_template_literal(),
             // V8-A: class expressions
             TokenKind::Keyword(Keyword::Class) => self.parse_class_expression(),
+            TokenKind::Punctuator('@') => {
+                self.consume_decorators()?;
+                if !self.check_keyword(Keyword::Class) {
+                    return Err(self.error("decorators must precede a class expression".into()));
+                }
+                self.parse_class_expression()
+            }
             // `this` / `super`
             TokenKind::Keyword(Keyword::This) => {
                 self.advance();
@@ -1062,7 +1119,13 @@ impl Parser {
                 if self.check_punctuator('(') {
                     self.expect_punctuator('(')?;
                     self.expect_punctuator(')')?;
+                    let outer_super_property = self.allow_class_super_property;
+                    let outer_static_block = self.in_class_static_block;
+                    self.allow_class_super_property = true;
+                    self.in_class_static_block = false;
                     let body = self.parse_function_body()?;
+                    self.allow_class_super_property = outer_super_property;
+                    self.in_class_static_block = outer_static_block;
                     return Ok(ObjectProperty::Getter { key, body });
                 }
             }
@@ -1083,20 +1146,48 @@ impl Parser {
             {
                 let key = self.parse_property_name()?;
                 if self.check_punctuator('(') {
-                    self.expect_punctuator('(')?;
-                    let param_name = self.expect_identifier()?;
-                    self.expect_punctuator(')')?;
+                    let mut params = self.parse_param_list()?;
+                    if params.len() != 1
+                        || matches!(
+                            params.first(),
+                            Some(FunctionParam::Rest(_) | FunctionParam::RestPattern(_))
+                        )
+                    {
+                        return Err(
+                            self.error("setter must have exactly one non-rest parameter".into())
+                        );
+                    }
+                    let parameter = params.remove(0);
+                    let parameter_is_non_simple = !matches!(&parameter, FunctionParam::Simple(_));
+                    let outer_super_property = self.allow_class_super_property;
+                    let outer_static_block = self.in_class_static_block;
+                    let body_has_use_strict = self.peek_body_has_use_strict();
+                    self.allow_class_super_property = true;
+                    self.in_class_static_block = false;
                     let body = self.parse_function_body()?;
+                    self.allow_class_super_property = outer_super_property;
+                    self.in_class_static_block = outer_static_block;
+                    if parameter_is_non_simple && body_has_use_strict {
+                        return Err(self.error(
+                            "\"use strict\" is not allowed in a setter with a non-simple parameter"
+                                .into(),
+                        ));
+                    }
                     // Retroactive strict check: if the setter body is strict,
                     // `eval` and `arguments` are forbidden as parameter names.
-                    if body.is_strict && matches!(param_name.as_str(), "eval" | "arguments") {
-                        return Err(self.error(format!(
-                            "`{param_name}` cannot be used as a parameter name in strict mode"
-                        )));
+                    if body.is_strict
+                        && matches!(
+                            &parameter,
+                            FunctionParam::Simple(name) if matches!(name.as_str(), "eval" | "arguments")
+                        )
+                    {
+                        return Err(
+                            self.error("setter parameter cannot be used in strict mode".into())
+                        );
                     }
                     return Ok(ObjectProperty::Setter {
                         key,
-                        parameter: FunctionParam::Simple(param_name),
+                        parameter,
                         body,
                     });
                 }
@@ -1234,6 +1325,10 @@ impl Parser {
         is_async: bool,
         is_generator: bool,
     ) -> Result<FunctionLiteral, ParseError> {
+        let outer_super_property = self.allow_class_super_property;
+        let outer_static_block = self.in_class_static_block;
+        self.allow_class_super_property = true;
+        self.in_class_static_block = false;
         let params = self.parse_param_list()?;
         if is_generator {
             Self::check_generator_params_no_yield(&params)?;
@@ -1249,6 +1344,8 @@ impl Parser {
         self.check_duplicate_params(&params)?;
         self.check_non_ctor_super_call_params(&params)?;
         let body = self.parse_function_body()?;
+        self.allow_class_super_property = outer_super_property;
+        self.in_class_static_block = outer_static_block;
         self.validate_params_vs_lexical(&params, &body.statements)?;
         self.check_non_ctor_super_call(&body)?;
         Ok(FunctionLiteral {
@@ -1277,6 +1374,12 @@ impl Parser {
                 self.advance();
                 Ok(PropertyName::Number(n))
             }
+            TokenKind::BigInt(raw) => {
+                self.advance();
+                Ok(PropertyName::String(
+                    raw.strip_suffix('n').unwrap_or(&raw).to_owned(),
+                ))
+            }
             // Keywords are also valid as property names (e.g. `{ if: 1 }`)
             TokenKind::Keyword(keyword) => {
                 self.advance();
@@ -1297,7 +1400,10 @@ impl Parser {
     fn parse_function_expression(&mut self) -> Result<Expression, ParseError> {
         self.advance(); // `function`
         let is_generator = self.eat_operator("*");
+        let outer_async = self.is_async_context;
+        let outer_static_block = self.in_class_static_block;
         let outer_generator = self.is_generator_context;
+        self.is_async_context = false;
         self.is_generator_context = is_generator;
         // Optional name for named function expressions (also accept keywords as names)
         let name = match self.peek().kind.clone() {
@@ -1311,23 +1417,43 @@ impl Parser {
             }
             _ => None,
         };
+        if outer_static_block && name.as_deref() == Some("await") {
+            return Err(
+                self.error("`await` cannot be a function name in a class static block".into())
+            );
+        }
+        if is_generator && name.as_deref() == Some("yield") {
+            return Err(self.error(
+                "`yield` cannot be the binding identifier of a generator expression".into(),
+            ));
+        }
+        self.in_class_static_block = false;
         let params = self.parse_param_list()?;
         if is_generator {
             Self::check_generator_params_no_yield(&params)?;
         }
-        if is_generator || self.is_strict {
+        let is_nspl = Self::params_are_non_simple(&params);
+        if is_generator || self.is_strict || is_nspl {
             self.check_duplicate_params(&params)?;
         }
-        let is_nspl = Self::params_are_non_simple(&params);
         if is_nspl && self.peek_body_has_use_strict() {
             self.is_generator_context = outer_generator;
+            self.is_async_context = outer_async;
+            self.in_class_static_block = outer_static_block;
             return Err(self.error(
                 "\"use strict\" directive is not allowed in function with non-simple parameters"
                     .into(),
             ));
         }
+        let outer_super_property = self.allow_class_super_property;
+        self.allow_class_super_property = false;
         let body = self.parse_function_body()?;
+        self.allow_class_super_property = outer_super_property;
+        self.is_async_context = outer_async;
+        self.in_class_static_block = outer_static_block;
         self.is_generator_context = outer_generator;
+        self.check_non_ctor_super_call_params(&params)?;
+        self.check_non_ctor_super_call(&body)?;
         // Retroactive strict checks: if the body is strict, validate name and params.
         let effective_strict = self.is_strict || body.is_strict;
         if effective_strict {
@@ -1391,9 +1517,21 @@ impl Parser {
                         .into(),
                 ));
             }
+            let outer_super_property = self.allow_class_super_property;
+            self.allow_class_super_property = false;
             let body = self.parse_function_body()?;
+            self.allow_class_super_property = outer_super_property;
             self.is_async_context = outer_async;
             self.is_generator_context = outer_generator;
+            if body.is_strict
+                && name
+                    .as_deref()
+                    .is_some_and(|name| matches!(name, "eval" | "arguments"))
+            {
+                return Err(self.error("async function name is not allowed in strict mode".into()));
+            }
+            self.check_non_ctor_super_call_params(&params)?;
+            self.check_non_ctor_super_call(&body)?;
             // Check for param/lexical conflicts.
             self.validate_params_vs_lexical(&params, &body.statements)?;
             return Ok(Expression::Function(FunctionLiteral {
@@ -1527,7 +1665,7 @@ impl Parser {
                 self.error("legacy escape sequences are not allowed in template literals".into())
             );
         }
-        raw_quasis.push(self.peek().template_raw.clone().unwrap_or_else(String::new));
+        raw_quasis.push(self.peek().template_raw.clone().unwrap_or_default());
         let head_text = match self.advance().kind {
             TokenKind::TemplateHead(text) => text,
             _ => unreachable!("parse_template_literal called on non-TemplateHead"),
@@ -1599,7 +1737,12 @@ impl Parser {
             None
         };
         let super_class = if self.eat_keyword(Keyword::Extends) {
-            Some(Box::new(self.parse_assignment()?))
+            let heritage = self.parse_assignment()?;
+            if matches!(&heritage, Expression::Function(function) if function.is_arrow) {
+                return Err(self
+                    .error("an unparenthesized arrow function cannot be a class heritage".into()));
+            }
+            Some(Box::new(heritage))
         } else {
             None
         };
@@ -1637,6 +1780,7 @@ impl Parser {
         let mut seen_private_setters: HashMap<String, bool> = HashMap::new();
 
         while !self.check_punctuator('}') && !self.at_eof() {
+            self.consume_decorators()?;
             // Skip empty class elements (bare semicolons).
             if self.eat_punctuator(';') {
                 continue;
@@ -1673,9 +1817,12 @@ impl Parser {
                 self.loop_depth = 0;
                 self.switch_depth = 0;
                 let outer_allow_class_super_property = self.allow_class_super_property;
+                let outer_static_block = self.in_class_static_block;
                 self.allow_class_super_property = true;
+                self.in_class_static_block = true;
                 let block = self.parse_block();
                 self.allow_class_super_property = outer_allow_class_super_property;
+                self.in_class_static_block = outer_static_block;
                 self.is_async_context = outer_async;
                 self.is_generator_context = outer_generator;
                 self.function_depth = outer_function_depth;
@@ -2104,14 +2251,17 @@ impl Parser {
     /// `super()` call (`Contains SuperCall` abstract operation). Stops recursion
     /// at nested function expressions (they have their own super binding) but
     /// recurses into arrow functions.
-    fn check_non_ctor_super_call(&self, body: &crate::ast::FunctionBody) -> Result<(), ParseError> {
+    pub(super) fn check_non_ctor_super_call(
+        &self,
+        body: &crate::ast::FunctionBody,
+    ) -> Result<(), ParseError> {
         for stmt in &body.statements {
             self.check_super_call_stmt(stmt)?;
         }
         Ok(())
     }
 
-    fn check_non_ctor_super_call_params(
+    pub(super) fn check_non_ctor_super_call_params(
         &self,
         params: &[crate::ast::FunctionParam],
     ) -> Result<(), ParseError> {
@@ -3779,6 +3929,14 @@ fn unwrap_parenthesized(expr: Expression) -> Expression {
     }
 }
 
+fn is_parenthesized_identifier(expr: &Expression) -> bool {
+    match expr {
+        Expression::Identifier(_) => true,
+        Expression::Parenthesized(inner) => is_parenthesized_identifier(inner),
+        _ => false,
+    }
+}
+
 fn logical_operator(operator: &str) -> Option<LogicalOperator> {
     match operator {
         "&&" => Some(LogicalOperator::And),
@@ -4011,6 +4169,20 @@ mod tests {
         parse_program_err(r"`\8`;");
         parse_program_err(r"`head${0}\9`;");
         parse_program_ok(r"(function () {})`\1`;");
+    }
+
+    #[test]
+    fn rejects_unparenthesized_nullish_logical_mixing() {
+        for source in [
+            "a ?? b || c;",
+            "a ?? b && c;",
+            "a || b ?? c;",
+            "a && b ?? c;",
+        ] {
+            parse_program_err(source);
+        }
+        parse_program_ok("(a ?? b) || c;");
+        parse_program_ok("a ?? (b && c);");
     }
 
     fn number(value: f64) -> Expression {

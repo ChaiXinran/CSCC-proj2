@@ -82,8 +82,8 @@ fn accepts_other_id_start_and_continue_characters() {
 }
 
 #[test]
-fn rejects_bigint_as_literal_property_name() {
-    parse_fails("({ 1n: true });");
+fn accepts_bigint_as_literal_property_name() {
+    parse("({ 1n: true });");
 }
 
 #[test]

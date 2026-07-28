@@ -2,6 +2,7 @@
 
 mod cursor;
 mod token;
+mod unicode_id;
 
 use std::fmt;
 
@@ -42,7 +43,7 @@ const OPERATORS: &[&str] = &[
 
 /// Punctuators recognized by the lexer. V2 adds `?` and `:` for the conditional
 /// operator. V3 adds `[` and `]` for array literals and computed member access.
-const PUNCTUATORS: &[char] = &['(', ')', '{', '}', '[', ']', ';', ',', '.', '?', ':'];
+const PUNCTUATORS: &[char] = &['(', ')', '{', '}', '[', ']', ';', ',', '.', '?', ':', '@'];
 
 fn normalize_template_line_terminators(source: &str) -> String {
     source.replace("\r\n", "\n").replace('\r', "\n")
@@ -443,6 +444,13 @@ impl<'source> Lexer<'source> {
                 }
                 if self.cursor.peek() == Some('n') {
                     self.cursor.bump();
+                    if self.cursor.peek().is_some_and(is_identifier_start) {
+                        return Err(LexError {
+                            span: Span::new(start, self.cursor.offset()),
+                            message: "identifier cannot immediately follow a numeric literal"
+                                .into(),
+                        });
+                    }
                     let raw = self.cursor.slice(Span::new(start, self.cursor.offset()));
                     return Ok(Token::new(
                         TokenKind::BigInt(raw.into()),
@@ -453,6 +461,12 @@ impl<'source> Lexer<'source> {
                     span: Span::new(start, digits_end),
                     message: format!("invalid base-{radix} number literal"),
                 })? as f64;
+                if self.cursor.peek().is_some_and(is_identifier_start) {
+                    return Err(LexError {
+                        span: Span::new(start, self.cursor.offset()),
+                        message: "identifier cannot immediately follow a numeric literal".into(),
+                    });
+                }
                 return Ok(Token::new(
                     TokenKind::Number(value),
                     Span::new(start, self.cursor.offset()),
@@ -524,11 +538,23 @@ impl<'source> Lexer<'source> {
                 });
             }
             self.cursor.bump();
+            if self.cursor.peek().is_some_and(is_identifier_start) {
+                return Err(LexError {
+                    span: Span::new(start, self.cursor.offset()),
+                    message: "identifier cannot immediately follow a numeric literal".into(),
+                });
+            }
             let raw = self.cursor.slice(Span::new(start, self.cursor.offset()));
             return Ok(Token::new(
                 TokenKind::BigInt(raw.into()),
                 Span::new(start, self.cursor.offset()),
             ));
+        }
+        if self.cursor.peek().is_some_and(is_identifier_start) {
+            return Err(LexError {
+                span: Span::new(start, self.cursor.offset()),
+                message: "identifier cannot immediately follow a numeric literal".into(),
+            });
         }
         let mut tok = Token::new(TokenKind::Number(value), Span::new(start, end));
         tok.has_legacy_numeric = is_legacy_numeric;
@@ -2154,15 +2180,21 @@ fn is_whitespace(ch: char) -> bool {
 
 /// Unicode identifier start characters (`$` and `_` are permitted by ECMAScript).
 fn is_identifier_start(ch: char) -> bool {
-    ch.is_alphabetic() || matches!(ch, '_' | '$') || is_other_identifier_start(ch)
+    ch != '\u{2E2F}'
+        && (ch.is_alphabetic()
+            || matches!(ch, '_' | '$')
+            || is_other_identifier_start(ch)
+            || unicode_id::is_start_addition(ch))
 }
 
 /// Unicode identifier continuation characters.
 fn is_identifier_part(ch: char) -> bool {
-    ch.is_alphanumeric()
-        || matches!(ch, '_' | '$' | '\u{200C}' | '\u{200D}')
-        || is_other_identifier_start(ch)
-        || is_other_identifier_continue(ch)
+    ch != '\u{2E2F}'
+        && (ch.is_alphanumeric()
+            || matches!(ch, '_' | '$' | '\u{200C}' | '\u{200D}')
+            || is_other_identifier_start(ch)
+            || is_other_identifier_continue(ch)
+            || unicode_id::is_continue_addition(ch))
 }
 
 fn is_other_identifier_start(ch: char) -> bool {
@@ -2425,13 +2457,9 @@ mod tests {
     }
 
     #[test]
-    fn unknown_character_produces_placeholder_not_lex_error() {
-        // Unknown characters (e.g. `@`) that can appear in regex literal bodies
-        // are now tokenized as placeholder Operator("\0") tokens instead of
-        // causing an immediate lex error. A parse error is raised later if the
-        // token appears outside a regex context.
+    fn tokenizes_decorator_punctuator() {
         let tokens = Lexer::new("@").tokenize().unwrap();
-        assert!(matches!(&tokens[0].kind, TokenKind::Operator(op) if *op == " "));
+        assert_eq!(tokens[0].kind, TokenKind::Punctuator('@'));
     }
 
     #[test]
