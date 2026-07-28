@@ -268,6 +268,7 @@ pub enum ArrayElement {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TemplateLiteral {
     pub quasis: Vec<String>,
+    pub raw_quasis: Vec<String>,
     pub expressions: Vec<Expression>,
 }
 

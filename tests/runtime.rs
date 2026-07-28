@@ -17,6 +17,90 @@ fn captures_console_output() {
 }
 
 #[test]
+fn calls_accept_multiple_and_non_trailing_spreads() {
+    let report = Engine::default()
+        .execute(
+            "function join() { return Array.prototype.join.call(arguments, ','); }
+             const receiver = {
+                 prefix: 'ok',
+                 join(...args) { return this.prefix + ':' + args.join(','); }
+             };
+             [join(1, ...[2, 3], 4, ...[5]), receiver.join(...[1, 2], 3, ...[4])].join('|');",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(report.value, "1,2,3,4,5|ok:1,2,3,4");
+}
+
+#[test]
+fn construct_accepts_multiple_and_non_trailing_spreads() {
+    let report = Engine::default()
+        .execute(
+            "class Values {
+                 constructor(...args) { this.text = args.join(','); }
+             }
+             new Values(1, ...[2, 3], 4, ...[5]).text;",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(report.value, "1,2,3,4,5");
+}
+
+#[test]
+fn spread_arguments_are_consumed_left_to_right() {
+    let report = Engine::default()
+        .execute(
+            "const log = [];
+             function value(x) { log.push(x); return x; }
+             function spread(x) {
+                 return {
+                     [Symbol.iterator]() {
+                         log.push('iter-' + x);
+                         let done = false;
+                         return { next() {
+                             if (done) return { done: true };
+                             done = true;
+                             return { value: x, done: false };
+                         }};
+                     }
+                 };
+             }
+             (function () {})(value(1), ...spread(2), value(3), ...spread(4));
+             log.join(',');",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(report.value, "1,iter-2,3,iter-4");
+}
+
+#[test]
+fn tagged_templates_expose_indexed_cooked_values() {
+    let report = Engine::default()
+        .execute(
+            "function tag(strings, value) {
+                 return strings[0] + value + strings[1] + ':' + strings.raw[0];
+             }
+             tag`left-${7}-right`;",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+
+    assert_eq!(report.value, "left-7-right:left-");
+
+    let escaped = Engine::default()
+        .execute(
+            r"function tag(strings) { return strings[0] + ':' + strings.raw[0]; }
+              tag`\x41`;",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(escaped.value, r"A:\x41");
+}
+
+#[test]
 fn isolates_separate_executions() {
     let engine = Engine::default();
     engine

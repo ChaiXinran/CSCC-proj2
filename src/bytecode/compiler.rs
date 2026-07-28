@@ -3281,32 +3281,36 @@ impl Compiler {
         if matches!(callee, Expression::Super) {
             let super_name = self.add_name("\u{0}class_super", chunk)?;
             chunk.emit(Instruction::LoadName(super_name));
-            let (regular, spread) = if has_spread {
-                let (regular, spread) = self.split_trailing_spread(arguments, "super()")?;
-                (regular, Some(spread))
-            } else {
-                (arguments.len(), None)
-            };
-            for argument in &arguments[..regular] {
-                let CallArgument::Expression(expression) = argument else {
-                    unreachable!()
-                };
-                self.compile_expression(expression, chunk, context)?;
-            }
-            let count = u16::try_from(regular).map_err(|_| CompileError {
-                is_syntax: false,
-                message: "super() argument count exceeds the u16 bytecode range".into(),
-            })?;
-            if let Some(spread) = spread {
-                self.compile_expression(spread, chunk, context)?;
-                if regular == 0
-                    && matches!(spread, Expression::Identifier(name) if name == "\0default_ctor_args")
-                {
+            if has_spread {
+                if matches!(
+                    arguments,
+                    [CallArgument::Spread(Expression::Identifier(name))]
+                        if name == "\0default_ctor_args"
+                ) {
+                    self.compile_expression(
+                        match &arguments[0] {
+                            CallArgument::Spread(expression) => expression,
+                            CallArgument::Expression(_) => unreachable!(),
+                        },
+                        chunk,
+                        context,
+                    )?;
                     chunk.emit(Instruction::SuperForwardCall);
                 } else {
-                    chunk.emit(Instruction::SuperSpreadCall(count));
+                    self.compile_argument_list_array(arguments, chunk, context)?;
+                    chunk.emit(Instruction::SuperSpreadCall(0));
                 }
             } else {
+                for argument in arguments {
+                    let CallArgument::Expression(expression) = argument else {
+                        unreachable!()
+                    };
+                    self.compile_expression(expression, chunk, context)?;
+                }
+                let count = u16::try_from(arguments.len()).map_err(|_| CompileError {
+                    is_syntax: false,
+                    message: "super() argument count exceeds the u16 bytecode range".into(),
+                })?;
                 chunk.emit(Instruction::SuperCall(count));
             }
             return Ok(());
@@ -3332,20 +3336,8 @@ impl Compiler {
             chunk.emit(Instruction::GetSuperMethod(method_index));
 
             if has_spread {
-                let (n_regular, spread_expr) =
-                    self.split_trailing_spread(arguments, "super method call")?;
-                let n = u16::try_from(n_regular).map_err(|_| CompileError {
-                    is_syntax: false,
-                    message: "too many call arguments".into(),
-                })?;
-                for arg in &arguments[..n_regular] {
-                    let CallArgument::Expression(e) = arg else {
-                        unreachable!()
-                    };
-                    self.compile_expression(e, chunk, context)?;
-                }
-                self.compile_expression(spread_expr, chunk, context)?;
-                chunk.emit(Instruction::SpreadCallWithThis(n));
+                self.compile_argument_list_array(arguments, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(0));
             } else {
                 let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
                     is_syntax: false,
@@ -3373,20 +3365,8 @@ impl Compiler {
             chunk.emit(Instruction::GetSuperElementMethod);
 
             if has_spread {
-                let (n_regular, spread_expr) =
-                    self.split_trailing_spread(arguments, "computed super method call")?;
-                let n = u16::try_from(n_regular).map_err(|_| CompileError {
-                    is_syntax: false,
-                    message: "too many call arguments".into(),
-                })?;
-                for arg in &arguments[..n_regular] {
-                    let CallArgument::Expression(e) = arg else {
-                        unreachable!()
-                    };
-                    self.compile_expression(e, chunk, context)?;
-                }
-                self.compile_expression(spread_expr, chunk, context)?;
-                chunk.emit(Instruction::SpreadCallWithThis(n));
+                self.compile_argument_list_array(arguments, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(0));
             } else {
                 let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
                     is_syntax: false,
@@ -3412,20 +3392,8 @@ impl Compiler {
         {
             self.compile_optional_chain(base, steps, true, chunk, context)?;
             if has_spread {
-                let (n_regular, spread_expr) =
-                    self.split_trailing_spread(arguments, "optional-chain method call")?;
-                let n = u16::try_from(n_regular).map_err(|_| CompileError {
-                    is_syntax: false,
-                    message: "too many call arguments".into(),
-                })?;
-                for arg in &arguments[..n_regular] {
-                    let CallArgument::Expression(expression) = arg else {
-                        unreachable!()
-                    };
-                    self.compile_expression(expression, chunk, context)?;
-                }
-                self.compile_expression(spread_expr, chunk, context)?;
-                chunk.emit(Instruction::SpreadCallWithThis(n));
+                self.compile_argument_list_array(arguments, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(0));
             } else {
                 let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
                     is_syntax: false,
@@ -3468,20 +3436,8 @@ impl Compiler {
             }
 
             if has_spread {
-                let (n_regular, spread_expr) =
-                    self.split_trailing_spread(arguments, "method call")?;
-                let n = u16::try_from(n_regular).map_err(|_| CompileError {
-                    is_syntax: false,
-                    message: "too many call arguments".into(),
-                })?;
-                for arg in &arguments[..n_regular] {
-                    let CallArgument::Expression(e) = arg else {
-                        unreachable!()
-                    };
-                    self.compile_expression(e, chunk, context)?;
-                }
-                self.compile_expression(spread_expr, chunk, context)?;
-                chunk.emit(Instruction::SpreadCallWithThis(n));
+                self.compile_argument_list_array(arguments, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(0));
             } else {
                 let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
                     is_syntax: false,
@@ -3510,20 +3466,8 @@ impl Compiler {
             chunk.emit(Instruction::GetElementMethod);
 
             if has_spread {
-                let (n_regular, spread_expr) =
-                    self.split_trailing_spread(arguments, "computed method call")?;
-                let n = u16::try_from(n_regular).map_err(|_| CompileError {
-                    is_syntax: false,
-                    message: "too many call arguments".into(),
-                })?;
-                for arg in &arguments[..n_regular] {
-                    let CallArgument::Expression(e) = arg else {
-                        unreachable!()
-                    };
-                    self.compile_expression(e, chunk, context)?;
-                }
-                self.compile_expression(spread_expr, chunk, context)?;
-                chunk.emit(Instruction::SpreadCallWithThis(n));
+                self.compile_argument_list_array(arguments, chunk, context)?;
+                chunk.emit(Instruction::SpreadCallWithThis(0));
             } else {
                 let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
                     is_syntax: false,
@@ -3542,20 +3486,8 @@ impl Compiler {
 
         self.compile_expression(callee, chunk, context)?;
         if has_spread {
-            let (n_regular, spread_expr) =
-                self.split_trailing_spread(arguments, "function call")?;
-            let n = u16::try_from(n_regular).map_err(|_| CompileError {
-                is_syntax: false,
-                message: "too many call arguments".into(),
-            })?;
-            for arg in &arguments[..n_regular] {
-                let CallArgument::Expression(e) = arg else {
-                    unreachable!()
-                };
-                self.compile_expression(e, chunk, context)?;
-            }
-            self.compile_expression(spread_expr, chunk, context)?;
-            chunk.emit(Instruction::SpreadCall(n));
+            self.compile_argument_list_array(arguments, chunk, context)?;
+            chunk.emit(Instruction::SpreadCall(0));
         } else {
             let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
                 is_syntax: false,
@@ -3586,20 +3518,8 @@ impl Compiler {
 
         self.compile_expression(callee, chunk, context)?;
         if has_spread {
-            let (n_regular, spread_expr) =
-                self.split_trailing_spread(arguments, "new expression")?;
-            let n = u16::try_from(n_regular).map_err(|_| CompileError {
-                is_syntax: false,
-                message: "too many construct arguments".into(),
-            })?;
-            for arg in &arguments[..n_regular] {
-                let CallArgument::Expression(e) = arg else {
-                    unreachable!()
-                };
-                self.compile_expression(e, chunk, context)?;
-            }
-            self.compile_expression(spread_expr, chunk, context)?;
-            chunk.emit(Instruction::SpreadConstruct(n));
+            self.compile_argument_list_array(arguments, chunk, context)?;
+            chunk.emit(Instruction::SpreadConstruct(0));
         } else {
             let argument_count = u16::try_from(arguments.len()).map_err(|_| CompileError {
                 is_syntax: false,
@@ -3616,37 +3536,29 @@ impl Compiler {
         Ok(())
     }
 
-    /// Returns `(n_regular, spread_expr)` when the argument list has exactly
-    /// one trailing spread and all preceding args are plain expressions.
-    /// Returns `CompileError` if there are multiple spreads or non-trailing spread.
-    fn split_trailing_spread<'a>(
-        &self,
-        arguments: &'a [crate::ast::CallArgument],
-        ctx: &str,
-    ) -> Result<(usize, &'a Expression), CompileError> {
+    /// Builds a single iterable argument list while preserving left-to-right
+    /// evaluation for ordinary and spread arguments.
+    fn compile_argument_list_array(
+        &mut self,
+        arguments: &[crate::ast::CallArgument],
+        chunk: &mut Chunk,
+        context: &mut CompileContext,
+    ) -> Result<(), CompileError> {
         use crate::ast::CallArgument;
-        let spread_count = arguments
-            .iter()
-            .filter(|a| matches!(a, CallArgument::Spread(_)))
-            .count();
-        if spread_count != 1 {
-            return Err(CompileError {
-                is_syntax: false,
-                message: format!(
-                    "{ctx}: only a single trailing spread argument is supported in V8"
-                ),
-            });
+        chunk.emit(Instruction::ArrayCreateSparse(0));
+        for argument in arguments {
+            match argument {
+                CallArgument::Expression(expression) => {
+                    self.compile_expression(expression, chunk, context)?;
+                    chunk.emit(Instruction::ArrayPush);
+                }
+                CallArgument::Spread(expression) => {
+                    self.compile_expression(expression, chunk, context)?;
+                    chunk.emit(Instruction::SpreadIntoArray);
+                }
+            }
         }
-        let last = arguments.last().expect("at least one spread");
-        let CallArgument::Spread(spread_expr) = last else {
-            return Err(CompileError {
-                is_syntax: false,
-                message: format!(
-                    "{ctx}: spread must be the last argument in V8 (non-trailing spread unsupported)"
-                ),
-            });
-        };
-        Ok((arguments.len() - 1, spread_expr))
+        Ok(())
     }
 
     fn compile_array(
@@ -3981,7 +3893,7 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let raw_array = Expression::Array(
             template
-                .quasis
+                .raw_quasis
                 .iter()
                 .cloned()
                 .map(|text| {
@@ -3989,10 +3901,25 @@ impl Compiler {
                 })
                 .collect(),
         );
-        let template_object = Expression::Object(vec![ObjectProperty::Data {
+        // A template object is array-like: its cooked strings are indexed
+        // properties and `raw` contains the corresponding source strings.
+        // The object model currently cannot freeze the pair here, but emitting
+        // the indexed cooked values avoids silently presenting every template
+        // character as `undefined` to the tag.
+        let mut template_properties = template
+            .quasis
+            .iter()
+            .enumerate()
+            .map(|(index, text)| ObjectProperty::Data {
+                key: PropertyName::String(index.to_string()),
+                value: Expression::Literal(Literal::String(text.clone())),
+            })
+            .collect::<Vec<_>>();
+        template_properties.push(ObjectProperty::Data {
             key: PropertyName::Identifier("raw".into()),
             value: raw_array,
-        }]);
+        });
+        let template_object = Expression::Object(template_properties);
         let mut arguments = Vec::with_capacity(template.expressions.len() + 1);
         arguments.push(crate::ast::CallArgument::Expression(template_object));
         arguments.extend(

@@ -538,7 +538,7 @@ impl Parser {
                 self.peek().kind,
                 TokenKind::TemplateLiteral(_) | TokenKind::TemplateHead(_)
             ) {
-                let template = self.parse_template_literal_from_current()?;
+                let template = self.parse_template_literal_from_current(true)?;
                 expression = Expression::TaggedTemplate {
                     tag: Box::new(expression),
                     template,
@@ -588,8 +588,14 @@ impl Parser {
         self.advance(); // `new`
         // `new.target` is a MetaProperty — handle before trying to parse a callee.
         if self.eat_punctuator('.') {
+            let property_has_escape = self.peek().has_identifier_escape;
             let prop = self.expect_identifier_name()?;
             if prop == "target" {
+                if property_has_escape {
+                    return Err(self.error(
+                        "`target` in the `new.target` meta-property cannot contain escapes".into(),
+                    ));
+                }
                 if self.function_depth == 0 {
                     return Err(self.error(
                         "`new.target` is only valid inside a function or class constructor".into(),
@@ -776,10 +782,21 @@ impl Parser {
             TokenKind::Operator(op) if op == "/" || op == "/=" => self.parse_regex_literal(),
             // V8-A: template literals
             TokenKind::TemplateLiteral(value) => {
+                if self.peek().has_legacy_escape {
+                    return Err(self.error(
+                        "legacy escape sequences are not allowed in template literals".into(),
+                    ));
+                }
+                let raw = self
+                    .peek()
+                    .template_raw
+                    .clone()
+                    .unwrap_or_else(|| value.clone());
                 self.advance();
                 // No-substitution template: `...text...`
                 Ok(Expression::TemplateLiteral(TemplateLiteral {
                     quasis: vec![value],
+                    raw_quasis: vec![raw],
                     expressions: vec![],
                 }))
             }
@@ -1019,6 +1036,16 @@ impl Parser {
         // here — they remain valid as regular identifier property names too.
         let is_get = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
         let is_set = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
+        let escaped_accessor_keyword = (is_get || is_set)
+            && self.peek().has_identifier_escape
+            && self.tokens.get(self.cursor + 1).is_some_and(|next| {
+                !matches!(next.kind, TokenKind::Punctuator(':' | ',' | '}' | '('))
+            });
+        if escaped_accessor_keyword {
+            return Err(
+                self.error("object accessor contextual keywords cannot contain escapes".into())
+            );
+        }
 
         // `get key() { body }` — accessor getter (0 params)
         // `get` followed immediately by `(` is a method named `get`, not a getter.
@@ -1464,23 +1491,43 @@ impl Parser {
     /// Parses a template literal that starts with a `TemplateHead` token.
     fn parse_template_literal(&mut self) -> Result<Expression, ParseError> {
         Ok(Expression::TemplateLiteral(
-            self.parse_template_literal_from_current()?,
+            self.parse_template_literal_from_current(false)?,
         ))
     }
 
-    fn parse_template_literal_from_current(&mut self) -> Result<TemplateLiteral, ParseError> {
+    fn parse_template_literal_from_current(
+        &mut self,
+        tagged: bool,
+    ) -> Result<TemplateLiteral, ParseError> {
         if let TokenKind::TemplateLiteral(value) = self.peek().kind.clone() {
+            if !tagged && self.peek().has_legacy_escape {
+                return Err(self
+                    .error("legacy escape sequences are not allowed in template literals".into()));
+            }
+            let raw = self
+                .peek()
+                .template_raw
+                .clone()
+                .unwrap_or_else(|| value.clone());
             self.advance();
             return Ok(TemplateLiteral {
                 quasis: vec![value],
+                raw_quasis: vec![raw],
                 expressions: vec![],
             });
         }
 
         let mut quasis = Vec::new();
+        let mut raw_quasis = Vec::new();
         let mut expressions = Vec::new();
 
         // Consume the TemplateHead token.
+        if !tagged && self.peek().has_legacy_escape {
+            return Err(
+                self.error("legacy escape sequences are not allowed in template literals".into())
+            );
+        }
+        raw_quasis.push(self.peek().template_raw.clone().unwrap_or_else(String::new));
         let head_text = match self.advance().kind {
             TokenKind::TemplateHead(text) => text,
             _ => unreachable!("parse_template_literal called on non-TemplateHead"),
@@ -1493,12 +1540,28 @@ impl Parser {
             expressions.push(expr);
 
             // Next must be TemplateMiddle or TemplateTail.
+            if !tagged && self.peek().has_legacy_escape {
+                return Err(self
+                    .error("legacy escape sequences are not allowed in template literals".into()));
+            }
             match self.peek().kind.clone() {
                 TokenKind::TemplateMiddle(text) => {
+                    raw_quasis.push(
+                        self.peek()
+                            .template_raw
+                            .clone()
+                            .unwrap_or_else(|| text.clone()),
+                    );
                     self.advance();
                     quasis.push(text);
                 }
                 TokenKind::TemplateTail(text) => {
+                    raw_quasis.push(
+                        self.peek()
+                            .template_raw
+                            .clone()
+                            .unwrap_or_else(|| text.clone()),
+                    );
                     self.advance();
                     quasis.push(text);
                     break;
@@ -1514,6 +1577,7 @@ impl Parser {
 
         Ok(TemplateLiteral {
             quasis,
+            raw_quasis,
             expressions,
         })
     }
@@ -3931,6 +3995,22 @@ mod tests {
     fn rejects_new_target_at_script_level() {
         parse_program_err("new.target;");
         parse_program_ok("function f() { return new.target; }");
+        parse_program_err(r"function f() { return new.t\u{61}rget; }");
+    }
+
+    #[test]
+    fn rejects_escaped_object_accessor_contextual_keywords() {
+        parse_program_err(r"({ g\u{65}t value() {} });");
+        parse_program_err(r"({ s\u{65}t value(v) {} });");
+        parse_program_ok(r"({ g\u{65}t: 1, s\u{65}t() {} });");
+    }
+
+    #[test]
+    fn rejects_legacy_escapes_in_untagged_templates() {
+        parse_program_err(r"`\1`;");
+        parse_program_err(r"`\8`;");
+        parse_program_err(r"`head${0}\9`;");
+        parse_program_ok(r"(function () {})`\1`;");
     }
 
     fn number(value: f64) -> Expression {

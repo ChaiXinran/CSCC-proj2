@@ -204,3 +204,99 @@ Runner status after the changes:
   `toString`; its next unsupported feature is RegExp backreferences.
 - jsdom-d3-startup, mobx, and web-ssr now identify missing embedded preload
   resources instead of failing with an undefined callable.
+
+## Parallel repair A1: general spread argument lowering
+
+Base SHA: `fc06c548339ac0d12ef7df40a4f4229e3092f811`
+
+The compiler now builds one argument array with the existing
+`ArrayCreateSparse`, `ArrayPush`, and `SpreadIntoArray` instructions whenever a
+call or construct expression contains spread arguments. The completed array is
+passed through the existing spread call/construct instruction with zero regular
+arguments. This supports multiple and non-trailing spreads without changing the
+frozen opcode, chunk, VM, runtime, or contracts interfaces.
+
+Covered forms:
+
+- `f(1, ...a, 2, ...b)`
+- `obj.m(...a, 2, ...b)` with the original receiver
+- `new C(1, ...a, ...b)`
+- `super(...)`, super method calls, and optional member calls
+- left-to-right argument evaluation and iterator consumption
+
+Focused Test262 results:
+
+| Suite | Before | After | Change |
+|---|---:|---:|---:|
+| `language/expressions/call` | 79/92 | 81/92 | +2 |
+| `language/expressions/new` | 52/59 | 53/59 | +1 |
+| `language/statements/class` | 4165/4367 | 4166/4367 | +1 |
+| `language/expressions/class` | 3902/4059 | 3903/4059 | +1 |
+| `language/expressions/optional-chaining` | 30/38 | 30/38 | unchanged |
+
+No focused suite lost passing cases. Three runtime regression tests cover plain
+and receiver-preserving calls, construction, and observable evaluation order.
+
+## Parallel repair A2 interface blocker
+
+`language/expressions/compound-assignment` remains at 365/454. A compiler-only
+attempt to emit `ToPropertyKey` before duplicating a computed reference caused
+11 regressions (354/454) and was fully reverted; the suite returned to 365/454.
+
+The remaining Reference semantics require shared runtime/bytecode support:
+
+- a property-reference representation or get/set instruction pair that reuses
+  one already-coerced property key;
+- environment references that preserve the initially resolved environment
+  across RHS eval;
+- VM-mediated accessor get/set;
+- kind-aware immutable private method/accessor storage;
+- super `[[Set]]` with distinct base and receiver.
+
+No shared interface file was changed in this batch.
+
+## Parallel repair A4: escaped contextual keywords
+
+Two parser-only early-error gaps were closed without changing AST or bytecode:
+
+- `target` in the `new.target` meta-property must be written literally and may
+  not contain an identifier Unicode escape.
+- `get` and `set` may not contain identifier Unicode escapes when used as
+  object-literal accessor contextual keywords. Escaped names remain valid as
+  ordinary data-property names and ordinary method names.
+
+Focused Test262 results:
+
+| Suite | Before | After | Change |
+|---|---:|---:|---:|
+| `language/expressions/new.target` | 13/14 | 14/14 | +1 |
+| `language/expressions/object` | 1090/1170 | 1101/1170 | +11 |
+| `language/statements/class` | 4166/4367 | 4166/4367 | unchanged |
+
+Unit tests cover escaped `new.target`, escaped accessor keywords, and the
+corresponding legal ordinary-property/method spelling. No runtime or shared
+interface file changed.
+
+## Parallel repair: template `undefined` semantics
+
+Tagged template lowering now supplies indexed cooked string properties on the
+template object instead of exposing only `.raw`. Tags therefore receive
+`strings[0]`, `strings[1]`, and later segments rather than `undefined`.
+
+The lexer also propagates legacy-escape metadata through all template token
+kinds. Untagged templates reject octal and non-octal decimal escapes at parse
+time, while tagged templates retain their separate invalid-escape grammar.
+
+Focused Test262 results:
+
+| Suite | Before | After | Change |
+|---|---:|---:|---:|
+| `language/expressions/template-literal` | 42/57 | 57/57 | +15 |
+| `language/expressions/tagged-template` | 15/27 | 15/27 | unchanged |
+
+Template tokens and AST nodes now carry distinct cooked and raw quasi strings.
+Raw escape spelling is preserved, while physical CR and CRLF sequences are
+normalized without altering the value produced by an escaped `\r`.
+`language/expressions/template-literal` is consequently zero-failure and
+zero-skip. Template caching, freezing, raw property descriptors, and invalid
+tagged escapes remain runtime/interface work.

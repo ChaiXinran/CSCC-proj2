@@ -137,6 +137,9 @@ pub enum TokenKind {
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
+    /// Raw source text for template token segments, excluding delimiters.
+    /// `None` for every non-template token.
+    pub template_raw: Option<String>,
     /// Whether an ECMAScript line terminator appeared between the end of the
     /// previous token and the start of this one, counting terminators inside
     /// skipped comments. The parser uses this for restricted productions such
@@ -169,6 +172,7 @@ impl Token {
         Self {
             kind,
             span,
+            template_raw: None,
             line_terminator_before: false,
             has_legacy_escape: false,
             has_identifier_escape: false,
@@ -186,6 +190,7 @@ impl Token {
         Self {
             kind,
             span,
+            template_raw: None,
             line_terminator_before,
             has_legacy_escape: false,
             has_identifier_escape: false,

@@ -44,6 +44,10 @@ const OPERATORS: &[&str] = &[
 /// operator. V3 adds `[` and `]` for array literals and computed member access.
 const PUNCTUATORS: &[char] = &['(', ')', '{', '}', '[', ']', ';', ',', '.', '?', ':'];
 
+fn normalize_template_line_terminators(source: &str) -> String {
+    source.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 /// Stateful tokenizer for AgentJS source text.
 pub struct Lexer<'source> {
     cursor: Cursor<'source>,
@@ -584,6 +588,7 @@ impl<'source> Lexer<'source> {
     fn read_template_literal(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
         let saved = self.cursor.clone();
+        self.string_has_legacy_escape = false;
         self.cursor
             .bump()
             .expect("template literal opens with a backtick");
@@ -602,10 +607,13 @@ impl<'source> Lexer<'source> {
                 }
                 Some('`') => {
                     let end = self.cursor.offset();
-                    return Ok(Token::new(
-                        TokenKind::TemplateLiteral(value),
-                        Span::new(start, end),
+                    let mut token =
+                        Token::new(TokenKind::TemplateLiteral(value), Span::new(start, end));
+                    token.template_raw = Some(normalize_template_line_terminators(
+                        &self.cursor.source()[start + 1..end - 1],
                     ));
+                    token.has_legacy_escape = self.string_has_legacy_escape;
+                    return Ok(token);
                 }
                 Some('\\') => {
                     if let Err(error) = self.read_string_escape(start, &mut value) {
@@ -619,10 +627,19 @@ impl<'source> Lexer<'source> {
                 Some('$') if self.cursor.peek() == Some('{') => {
                     self.cursor.bump(); // consume '{'
                     let end = self.cursor.offset();
-                    return Ok(Token::new(
-                        TokenKind::TemplateHead(value),
-                        Span::new(start, end),
+                    let mut token =
+                        Token::new(TokenKind::TemplateHead(value), Span::new(start, end));
+                    token.template_raw = Some(normalize_template_line_terminators(
+                        &self.cursor.source()[start + 1..end - 2],
                     ));
+                    token.has_legacy_escape = self.string_has_legacy_escape;
+                    return Ok(token);
+                }
+                Some('\r') => {
+                    if self.cursor.peek() == Some('\n') {
+                        self.cursor.bump();
+                    }
+                    value.push('\n');
                 }
                 Some(ch) => value.push(ch),
             }
@@ -636,6 +653,7 @@ impl<'source> Lexer<'source> {
     fn read_template_middle_or_tail(&mut self) -> Result<Token, LexError> {
         let start = self.cursor.offset();
         self.cursor.bump().expect("} was peeked");
+        self.string_has_legacy_escape = false;
         let mut value = String::new();
         loop {
             match self.cursor.bump() {
@@ -647,19 +665,31 @@ impl<'source> Lexer<'source> {
                 }
                 Some('`') => {
                     let end = self.cursor.offset();
-                    return Ok(Token::new(
-                        TokenKind::TemplateTail(value),
-                        Span::new(start, end),
+                    let mut token =
+                        Token::new(TokenKind::TemplateTail(value), Span::new(start, end));
+                    token.template_raw = Some(normalize_template_line_terminators(
+                        &self.cursor.source()[start + 1..end - 1],
                     ));
+                    token.has_legacy_escape = self.string_has_legacy_escape;
+                    return Ok(token);
                 }
                 Some('\\') => self.read_string_escape(start, &mut value)?,
                 Some('$') if self.cursor.peek() == Some('{') => {
                     self.cursor.bump(); // consume '{'
                     let end = self.cursor.offset();
-                    return Ok(Token::new(
-                        TokenKind::TemplateMiddle(value),
-                        Span::new(start, end),
+                    let mut token =
+                        Token::new(TokenKind::TemplateMiddle(value), Span::new(start, end));
+                    token.template_raw = Some(normalize_template_line_terminators(
+                        &self.cursor.source()[start + 1..end - 2],
                     ));
+                    token.has_legacy_escape = self.string_has_legacy_escape;
+                    return Ok(token);
+                }
+                Some('\r') => {
+                    if self.cursor.peek() == Some('\n') {
+                        self.cursor.bump();
+                    }
+                    value.push('\n');
                 }
                 Some(ch) => value.push(ch),
             }
