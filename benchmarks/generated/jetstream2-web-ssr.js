@@ -1,6 +1,25 @@
 
 const isInBrowser = false;
-var console = { log: (...args) => print(...args) };
+const isD8 = false;
+const isSpiderMonkey = false;
+var runString = () => {
+    globalThis.loadString = (source) =>
+        new Function("top", source)(globalThis.top);
+    return globalThis;
+};
+var load = (name) => globalThis.loadString(readFile(name));
+var console = {
+    log: (...args) => print(...args),
+    assert(condition, ...args) {
+        if (!condition)
+            throw new Error(args.join(" ") || "Assertion failed");
+    },
+};
+var performance = globalThis.performance = {
+    now: Date.now.bind(Date),
+    mark(name) { return { name }; },
+    measure() {},
+};
 var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
@@ -884,15 +903,7 @@ class BrowserScripts extends Scripts {
 }
 
 
-function initializeJetStreamBenchmark(target, plan) {
-    target.plan = plan;
-    target.iterations = testIterationCount || plan.iterations || defaultIterationCount;
-    target.isAsync = !!plan.isAsync;
-    target.scripts = plan.files.map((file) => readFile(file));
-    target._resourcesPromise = Promise.resolve();
-}
-
-class JetStreamBenchmarkBase {
+class Benchmark {
     constructor({
             name, 
             files,
@@ -1505,7 +1516,7 @@ class GroupedBenchmark extends Benchmark {
     }
 };
 
-class DefaultBenchmark {
+class DefaultBenchmark extends Benchmark {
     constructor({worstCaseCount, ...args}) {
         super(args);
 
@@ -1564,14 +1575,7 @@ class DefaultBenchmark {
     }
 }
 
-class AsyncBenchmark {
-    constructor(plan) {
-        initializeJetStreamBenchmark(this, plan);
-        this.worstCaseCount = plan.worstCaseCount || defaultWorstCaseCount;
-        this.firstIteration = null;
-        this.worst4 = null;
-        this.average = null;
-    }
+class AsyncBenchmark extends DefaultBenchmark {
     get prerunCode() {
         let str = "";
         // FIXME: It would be nice if these were available to any benchmark not just async ones but since these functions
@@ -1696,7 +1700,7 @@ class WasmEMCCBenchmark extends AsyncBenchmark {
     }
 };
 
-class WSLBenchmark {
+class WSLBenchmark extends Benchmark {
     constructor(plan) {
         super(plan);
 
@@ -3304,7 +3308,7 @@ if (JetStreamParams.testList.length) {
     benchmarks = findBenchmarksByTag("Default", defaultDisabledTags)
 }
 
-this.JetStream = new Driver(benchmarks);
+var JetStream = new Driver(benchmarks);
 
 
 JetStream.initialize()

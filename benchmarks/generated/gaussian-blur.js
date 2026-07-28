@@ -1,34 +1,30 @@
 
 const isInBrowser = false;
-globalThis.document = {
+const jetStreamHostPrint = typeof globalThis.print === "function"
+    ? globalThis.print
+    : (...args) => globalThis.console.log(...args);
+globalThis.print = jetStreamHostPrint;
+var console = { log: (...args) => jetStreamHostPrint(...args) };
+var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
-globalThis.testList = "gaussian-blur";
-globalThis.testIterationCount = 5;
-globalThis.RAMification = false;
-globalThis.__jetstreamResources = {"./SeaMonster/gaussian-blur.js":"// Taken from: https://github.com/nodeca/glur\r\n\r\n/*\r\n* The MIT License (MIT)\r\n* \r\n* Copyright (c) 2014 Andrei Tupitcyn\r\n* \r\n* Permission is hereby granted, free of charge, to any person obtaining a copy\r\n* of this software and associated documentation files (the \"Software\"), to deal\r\n* in the Software without restriction, including without limitation the rights\r\n* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\r\n* copies of the Software, and to permit persons to whom the Software is\r\n* furnished to do so, subject to the following conditions:\r\n* \r\n* The above copyright notice and this permission notice shall be included in all\r\n* copies or substantial portions of the Software.\r\n* \r\n* THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\r\n* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\r\n* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\r\n* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\r\n* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\r\n* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\r\n* SOFTWARE.\r\n*/\r\n\r\n// Calculate Gaussian blur of an image using IIR filter\r\n// The method is taken from Intel's white paper and code example attached to it:\r\n// https://software.intel.com/en-us/articles/iir-gaussian-blur-filter\r\n// -implementation-using-intel-advanced-vector-extensions\r\n\r\nvar a0, a1, a2, a3, b1, b2, left_corner, right_corner;\r\n\r\nfunction gaussCoef(sigma) {\r\n  if (sigma < 0.5) {\r\n    sigma = 0.5;\r\n  }\r\n\r\n  var a = Math.exp(0.726 * 0.726) / sigma,\r\n      g1 = Math.exp(-a),\r\n      g2 = Math.exp(-2 * a),\r\n      k = (1 - g1) * (1 - g1) / (1 + 2 * a * g1 - g2);\r\n\r\n  a0 = k;\r\n  a1 = k * (a - 1) * g1;\r\n  a2 = k * (a + 1) * g1;\r\n  a3 = -k * g2;\r\n  b1 = 2 * g1;\r\n  b2 = -g2;\r\n  left_corner = (a0 + a1) / (1 - b1 - b2);\r\n  right_corner = (a2 + a3) / (1 - b1 - b2);\r\n\r\n  // Attempt to force type to FP32.\r\n  return new Float32Array([ a0, a1, a2, a3, b1, b2, left_corner, right_corner ]);\r\n}\r\n\r\nfunction convolveRGBA(src, out, line, coeff, width, height) {\r\n  // takes src image and writes the blurred and transposed result into out\r\n\r\n  var rgba;\r\n  var prev_src_r, prev_src_g, prev_src_b, prev_src_a;\r\n  var curr_src_r, curr_src_g, curr_src_b, curr_src_a;\r\n  var curr_out_r, curr_out_g, curr_out_b, curr_out_a;\r\n  var prev_out_r, prev_out_g, prev_out_b, prev_out_a;\r\n  var prev_prev_out_r, prev_prev_out_g, prev_prev_out_b, prev_prev_out_a;\r\n\r\n  var src_index, out_index, line_index;\r\n  var i, j;\r\n  var coeff_a0, coeff_a1, coeff_b1, coeff_b2;\r\n\r\n  for (i = 0; i < height; i++) {\r\n    src_index = i * width;\r\n    out_index = i;\r\n    line_index = 0;\r\n\r\n    // left to right\r\n    rgba = src[src_index];\r\n\r\n    prev_src_r = rgba & 0xff;\r\n    prev_src_g = (rgba >> 8) & 0xff;\r\n    prev_src_b = (rgba >> 16) & 0xff;\r\n    prev_src_a = (rgba >> 24) & 0xff;\r\n\r\n    prev_prev_out_r = prev_src_r * coeff[6];\r\n    prev_prev_out_g = prev_src_g * coeff[6];\r\n    prev_prev_out_b = prev_src_b * coeff[6];\r\n    prev_prev_out_a = prev_src_a * coeff[6];\r\n\r\n    prev_out_r = prev_prev_out_r;\r\n    prev_out_g = prev_prev_out_g;\r\n    prev_out_b = prev_prev_out_b;\r\n    prev_out_a = prev_prev_out_a;\r\n\r\n    coeff_a0 = coeff[0];\r\n    coeff_a1 = coeff[1];\r\n    coeff_b1 = coeff[4];\r\n    coeff_b2 = coeff[5];\r\n\r\n    for (j = 0; j < width; j++) {\r\n      rgba = src[src_index];\r\n      curr_src_r = rgba & 0xff;\r\n      curr_src_g = (rgba >> 8) & 0xff;\r\n      curr_src_b = (rgba >> 16) & 0xff;\r\n      curr_src_a = (rgba >> 24) & 0xff;\r\n\r\n      curr_out_r = curr_src_r * coeff_a0 + prev_src_r * coeff_a1 + prev_out_r * coeff_b1 + prev_prev_out_r * coeff_b2;\r\n      curr_out_g = curr_src_g * coeff_a0 + prev_src_g * coeff_a1 + prev_out_g * coeff_b1 + prev_prev_out_g * coeff_b2;\r\n      curr_out_b = curr_src_b * coeff_a0 + prev_src_b * coeff_a1 + prev_out_b * coeff_b1 + prev_prev_out_b * coeff_b2;\r\n      curr_out_a = curr_src_a * coeff_a0 + prev_src_a * coeff_a1 + prev_out_a * coeff_b1 + prev_prev_out_a * coeff_b2;\r\n\r\n      prev_prev_out_r = prev_out_r;\r\n      prev_prev_out_g = prev_out_g;\r\n      prev_prev_out_b = prev_out_b;\r\n      prev_prev_out_a = prev_out_a;\r\n\r\n      prev_out_r = curr_out_r;\r\n      prev_out_g = curr_out_g;\r\n      prev_out_b = curr_out_b;\r\n      prev_out_a = curr_out_a;\r\n\r\n      prev_src_r = curr_src_r;\r\n      prev_src_g = curr_src_g;\r\n      prev_src_b = curr_src_b;\r\n      prev_src_a = curr_src_a;\r\n\r\n      line[line_index] = prev_out_r;\r\n      line[line_index + 1] = prev_out_g;\r\n      line[line_index + 2] = prev_out_b;\r\n      line[line_index + 3] = prev_out_a;\r\n      line_index += 4;\r\n      src_index++;\r\n    }\r\n\r\n    src_index--;\r\n    line_index -= 4;\r\n    out_index += height * (width - 1);\r\n\r\n    // right to left\r\n    rgba = src[src_index];\r\n\r\n    prev_src_r = rgba & 0xff;\r\n    prev_src_g = (rgba >> 8) & 0xff;\r\n    prev_src_b = (rgba >> 16) & 0xff;\r\n    prev_src_a = (rgba >> 24) & 0xff;\r\n\r\n    prev_prev_out_r = prev_src_r * coeff[7];\r\n    prev_prev_out_g = prev_src_g * coeff[7];\r\n    prev_prev_out_b = prev_src_b * coeff[7];\r\n    prev_prev_out_a = prev_src_a * coeff[7];\r\n\r\n    prev_out_r = prev_prev_out_r;\r\n    prev_out_g = prev_prev_out_g;\r\n    prev_out_b = prev_prev_out_b;\r\n    prev_out_a = prev_prev_out_a;\r\n\r\n    curr_src_r = prev_src_r;\r\n    curr_src_g = prev_src_g;\r\n    curr_src_b = prev_src_b;\r\n    curr_src_a = prev_src_a;\r\n\r\n    coeff_a0 = coeff[2];\r\n    coeff_a1 = coeff[3];\r\n\r\n    for (j = width - 1; j >= 0; j--) {\r\n      curr_out_r = curr_src_r * coeff_a0 + prev_src_r * coeff_a1 + prev_out_r * coeff_b1 + prev_prev_out_r * coeff_b2;\r\n      curr_out_g = curr_src_g * coeff_a0 + prev_src_g * coeff_a1 + prev_out_g * coeff_b1 + prev_prev_out_g * coeff_b2;\r\n      curr_out_b = curr_src_b * coeff_a0 + prev_src_b * coeff_a1 + prev_out_b * coeff_b1 + prev_prev_out_b * coeff_b2;\r\n      curr_out_a = curr_src_a * coeff_a0 + prev_src_a * coeff_a1 + prev_out_a * coeff_b1 + prev_prev_out_a * coeff_b2;\r\n\r\n      prev_prev_out_r = prev_out_r;\r\n      prev_prev_out_g = prev_out_g;\r\n      prev_prev_out_b = prev_out_b;\r\n      prev_prev_out_a = prev_out_a;\r\n\r\n      prev_out_r = curr_out_r;\r\n      prev_out_g = curr_out_g;\r\n      prev_out_b = curr_out_b;\r\n      prev_out_a = curr_out_a;\r\n\r\n      prev_src_r = curr_src_r;\r\n      prev_src_g = curr_src_g;\r\n      prev_src_b = curr_src_b;\r\n      prev_src_a = curr_src_a;\r\n\r\n      rgba = src[src_index];\r\n      curr_src_r = rgba & 0xff;\r\n      curr_src_g = (rgba >> 8) & 0xff;\r\n      curr_src_b = (rgba >> 16) & 0xff;\r\n      curr_src_a = (rgba >> 24) & 0xff;\r\n\r\n      rgba = ((line[line_index] + prev_out_r) << 0) +\r\n        ((line[line_index + 1] + prev_out_g) << 8) +\r\n        ((line[line_index + 2] + prev_out_b) << 16) +\r\n        ((line[line_index + 3] + prev_out_a) << 24);\r\n\r\n      out[out_index] = rgba;\r\n\r\n      src_index--;\r\n      line_index -= 4;\r\n      out_index -= height;\r\n    }\r\n  }\r\n}\r\n\r\n\r\nfunction blurRGBA(src, width, height, radius) {\r\n  // Quick exit on zero radius\r\n  if (!radius) { return; }\r\n\r\n  // Unify input data type, to keep convolver calls isomorphic\r\n  var src32 = new Uint32Array(src.buffer);\r\n\r\n  var out      = new Uint32Array(src32.length),\r\n      tmp_line = new Float32Array(Math.max(width, height) * 4);\r\n\r\n  var coeff = gaussCoef(radius);\r\n\r\n  convolveRGBA(src32, out, tmp_line, coeff, width, height, radius);\r\n  convolveRGBA(out, src32, tmp_line, coeff, height, width, radius);\r\n}\r\n\r\nclass Benchmark {\r\n    constructor() {\r\n        this.width = 800;\r\n        this.height = 450;\r\n        this.radius = 15;\r\n\r\n        const rand = (function() {\r\n            let seed = 49734321;\r\n            return function() {\r\n                // Robert Jenkins' 32 bit integer hash function.\r\n                seed = ((seed + 0x7ed55d16) + (seed << 12))  & 0xffffffff;\r\n                seed = ((seed ^ 0xc761c23c) ^ (seed >>> 19)) & 0xffffffff;\r\n                seed = ((seed + 0x165667b1) + (seed << 5))   & 0xffffffff;\r\n                seed = ((seed + 0xd3a2646c) ^ (seed << 9))   & 0xffffffff;\r\n                seed = ((seed + 0xfd7046c5) + (seed << 3))   & 0xffffffff;\r\n                seed = ((seed ^ 0xb55a4f09) ^ (seed >>> 16)) & 0xffffffff;\r\n                return (seed & 0xfffffff) / 0x10000000;\r\n            };\r\n        })();\r\n\r\n        const buffer = new Uint32Array(this.width * this.height);\r\n        for (let i = 0; i < buffer.length; ++i)\r\n            buffer[i] = rand();\r\n\r\n        this.buffer = buffer;\r\n    }\r\n\r\n    runIteration() {\r\n         blurRGBA(this.buffer, this.width, this.height, this.radius);\r\n    }\r\n}\r\n"};
-globalThis.readFile = function (name) {
+var testList = "gaussian-blur";
+var testIterationCount = 1;
+var RAMification = false;
+var JetStreamParams = {
+    prefetchResources: false,
+    forceGC: false,
+    dumpJSONResults: false,
+    testIterationCountMap: {},
+    testWorstCaseCountMap: {},
+    testList: "gaussian-blur",
+};
+var __jetstreamResources = {"./SeaMonster/gaussian-blur.js":"// Taken from: https://github.com/nodeca/glur\r\n\r\n/*\r\n* The MIT License (MIT)\r\n* \r\n* Copyright (c) 2014 Andrei Tupitcyn\r\n* \r\n* Permission is hereby granted, free of charge, to any person obtaining a copy\r\n* of this software and associated documentation files (the \"Software\"), to deal\r\n* in the Software without restriction, including without limitation the rights\r\n* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\r\n* copies of the Software, and to permit persons to whom the Software is\r\n* furnished to do so, subject to the following conditions:\r\n* \r\n* The above copyright notice and this permission notice shall be included in all\r\n* copies or substantial portions of the Software.\r\n* \r\n* THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\r\n* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\r\n* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\r\n* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\r\n* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\r\n* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\r\n* SOFTWARE.\r\n*/\r\n\r\n// Calculate Gaussian blur of an image using IIR filter\r\n// The method is taken from Intel's white paper and code example attached to it:\r\n// https://software.intel.com/en-us/articles/iir-gaussian-blur-filter\r\n// -implementation-using-intel-advanced-vector-extensions\r\n\r\nvar a0, a1, a2, a3, b1, b2, left_corner, right_corner;\r\n\r\nfunction gaussCoef(sigma) {\r\n  if (sigma < 0.5) {\r\n    sigma = 0.5;\r\n  }\r\n\r\n  var a = Math.exp(0.726 * 0.726) / sigma,\r\n      g1 = Math.exp(-a),\r\n      g2 = Math.exp(-2 * a),\r\n      k = (1 - g1) * (1 - g1) / (1 + 2 * a * g1 - g2);\r\n\r\n  a0 = k;\r\n  a1 = k * (a - 1) * g1;\r\n  a2 = k * (a + 1) * g1;\r\n  a3 = -k * g2;\r\n  b1 = 2 * g1;\r\n  b2 = -g2;\r\n  left_corner = (a0 + a1) / (1 - b1 - b2);\r\n  right_corner = (a2 + a3) / (1 - b1 - b2);\r\n\r\n  // Attempt to force type to FP32.\r\n  return new Float32Array([ a0, a1, a2, a3, b1, b2, left_corner, right_corner ]);\r\n}\r\n\r\nfunction convolveRGBA(src, out, line, coeff, width, height) {\r\n  // takes src image and writes the blurred and transposed result into out\r\n\r\n  var rgba;\r\n  var prev_src_r, prev_src_g, prev_src_b, prev_src_a;\r\n  var curr_src_r, curr_src_g, curr_src_b, curr_src_a;\r\n  var curr_out_r, curr_out_g, curr_out_b, curr_out_a;\r\n  var prev_out_r, prev_out_g, prev_out_b, prev_out_a;\r\n  var prev_prev_out_r, prev_prev_out_g, prev_prev_out_b, prev_prev_out_a;\r\n\r\n  var src_index, out_index, line_index;\r\n  var i, j;\r\n  var coeff_a0, coeff_a1, coeff_b1, coeff_b2;\r\n\r\n  for (i = 0; i < height; i++) {\r\n    src_index = i * width;\r\n    out_index = i;\r\n    line_index = 0;\r\n\r\n    // left to right\r\n    rgba = src[src_index];\r\n\r\n    prev_src_r = rgba & 0xff;\r\n    prev_src_g = (rgba >> 8) & 0xff;\r\n    prev_src_b = (rgba >> 16) & 0xff;\r\n    prev_src_a = (rgba >> 24) & 0xff;\r\n\r\n    prev_prev_out_r = prev_src_r * coeff[6];\r\n    prev_prev_out_g = prev_src_g * coeff[6];\r\n    prev_prev_out_b = prev_src_b * coeff[6];\r\n    prev_prev_out_a = prev_src_a * coeff[6];\r\n\r\n    prev_out_r = prev_prev_out_r;\r\n    prev_out_g = prev_prev_out_g;\r\n    prev_out_b = prev_prev_out_b;\r\n    prev_out_a = prev_prev_out_a;\r\n\r\n    coeff_a0 = coeff[0];\r\n    coeff_a1 = coeff[1];\r\n    coeff_b1 = coeff[4];\r\n    coeff_b2 = coeff[5];\r\n\r\n    for (j = 0; j < width; j++) {\r\n      rgba = src[src_index];\r\n      curr_src_r = rgba & 0xff;\r\n      curr_src_g = (rgba >> 8) & 0xff;\r\n      curr_src_b = (rgba >> 16) & 0xff;\r\n      curr_src_a = (rgba >> 24) & 0xff;\r\n\r\n      curr_out_r = curr_src_r * coeff_a0 + prev_src_r * coeff_a1 + prev_out_r * coeff_b1 + prev_prev_out_r * coeff_b2;\r\n      curr_out_g = curr_src_g * coeff_a0 + prev_src_g * coeff_a1 + prev_out_g * coeff_b1 + prev_prev_out_g * coeff_b2;\r\n      curr_out_b = curr_src_b * coeff_a0 + prev_src_b * coeff_a1 + prev_out_b * coeff_b1 + prev_prev_out_b * coeff_b2;\r\n      curr_out_a = curr_src_a * coeff_a0 + prev_src_a * coeff_a1 + prev_out_a * coeff_b1 + prev_prev_out_a * coeff_b2;\r\n\r\n      prev_prev_out_r = prev_out_r;\r\n      prev_prev_out_g = prev_out_g;\r\n      prev_prev_out_b = prev_out_b;\r\n      prev_prev_out_a = prev_out_a;\r\n\r\n      prev_out_r = curr_out_r;\r\n      prev_out_g = curr_out_g;\r\n      prev_out_b = curr_out_b;\r\n      prev_out_a = curr_out_a;\r\n\r\n      prev_src_r = curr_src_r;\r\n      prev_src_g = curr_src_g;\r\n      prev_src_b = curr_src_b;\r\n      prev_src_a = curr_src_a;\r\n\r\n      line[line_index] = prev_out_r;\r\n      line[line_index + 1] = prev_out_g;\r\n      line[line_index + 2] = prev_out_b;\r\n      line[line_index + 3] = prev_out_a;\r\n      line_index += 4;\r\n      src_index++;\r\n    }\r\n\r\n    src_index--;\r\n    line_index -= 4;\r\n    out_index += height * (width - 1);\r\n\r\n    // right to left\r\n    rgba = src[src_index];\r\n\r\n    prev_src_r = rgba & 0xff;\r\n    prev_src_g = (rgba >> 8) & 0xff;\r\n    prev_src_b = (rgba >> 16) & 0xff;\r\n    prev_src_a = (rgba >> 24) & 0xff;\r\n\r\n    prev_prev_out_r = prev_src_r * coeff[7];\r\n    prev_prev_out_g = prev_src_g * coeff[7];\r\n    prev_prev_out_b = prev_src_b * coeff[7];\r\n    prev_prev_out_a = prev_src_a * coeff[7];\r\n\r\n    prev_out_r = prev_prev_out_r;\r\n    prev_out_g = prev_prev_out_g;\r\n    prev_out_b = prev_prev_out_b;\r\n    prev_out_a = prev_prev_out_a;\r\n\r\n    curr_src_r = prev_src_r;\r\n    curr_src_g = prev_src_g;\r\n    curr_src_b = prev_src_b;\r\n    curr_src_a = prev_src_a;\r\n\r\n    coeff_a0 = coeff[2];\r\n    coeff_a1 = coeff[3];\r\n\r\n    for (j = width - 1; j >= 0; j--) {\r\n      curr_out_r = curr_src_r * coeff_a0 + prev_src_r * coeff_a1 + prev_out_r * coeff_b1 + prev_prev_out_r * coeff_b2;\r\n      curr_out_g = curr_src_g * coeff_a0 + prev_src_g * coeff_a1 + prev_out_g * coeff_b1 + prev_prev_out_g * coeff_b2;\r\n      curr_out_b = curr_src_b * coeff_a0 + prev_src_b * coeff_a1 + prev_out_b * coeff_b1 + prev_prev_out_b * coeff_b2;\r\n      curr_out_a = curr_src_a * coeff_a0 + prev_src_a * coeff_a1 + prev_out_a * coeff_b1 + prev_prev_out_a * coeff_b2;\r\n\r\n      prev_prev_out_r = prev_out_r;\r\n      prev_prev_out_g = prev_out_g;\r\n      prev_prev_out_b = prev_out_b;\r\n      prev_prev_out_a = prev_out_a;\r\n\r\n      prev_out_r = curr_out_r;\r\n      prev_out_g = curr_out_g;\r\n      prev_out_b = curr_out_b;\r\n      prev_out_a = curr_out_a;\r\n\r\n      prev_src_r = curr_src_r;\r\n      prev_src_g = curr_src_g;\r\n      prev_src_b = curr_src_b;\r\n      prev_src_a = curr_src_a;\r\n\r\n      rgba = src[src_index];\r\n      curr_src_r = rgba & 0xff;\r\n      curr_src_g = (rgba >> 8) & 0xff;\r\n      curr_src_b = (rgba >> 16) & 0xff;\r\n      curr_src_a = (rgba >> 24) & 0xff;\r\n\r\n      rgba = ((line[line_index] + prev_out_r) << 0) +\r\n        ((line[line_index + 1] + prev_out_g) << 8) +\r\n        ((line[line_index + 2] + prev_out_b) << 16) +\r\n        ((line[line_index + 3] + prev_out_a) << 24);\r\n\r\n      out[out_index] = rgba;\r\n\r\n      src_index--;\r\n      line_index -= 4;\r\n      out_index -= height;\r\n    }\r\n  }\r\n}\r\n\r\n\r\nfunction blurRGBA(src, width, height, radius) {\r\n  // Quick exit on zero radius\r\n  if (!radius) { return; }\r\n\r\n  // Unify input data type, to keep convolver calls isomorphic\r\n  var src32 = new Uint32Array(src.buffer);\r\n\r\n  var out      = new Uint32Array(src32.length),\r\n      tmp_line = new Float32Array(Math.max(width, height) * 4);\r\n\r\n  var coeff = gaussCoef(radius);\r\n\r\n  convolveRGBA(src32, out, tmp_line, coeff, width, height, radius);\r\n  convolveRGBA(out, src32, tmp_line, coeff, height, width, radius);\r\n}\r\n\r\nclass Benchmark {\r\n    constructor() {\r\n        this.width = 800;\r\n        this.height = 450;\r\n        this.radius = 15;\r\n\r\n        const rand = (function() {\r\n            let seed = 49734321;\r\n            return function() {\r\n                // Robert Jenkins' 32 bit integer hash function.\r\n                seed = ((seed + 0x7ed55d16) + (seed << 12))  & 0xffffffff;\r\n                seed = ((seed ^ 0xc761c23c) ^ (seed >>> 19)) & 0xffffffff;\r\n                seed = ((seed + 0x165667b1) + (seed << 5))   & 0xffffffff;\r\n                seed = ((seed + 0xd3a2646c) ^ (seed << 9))   & 0xffffffff;\r\n                seed = ((seed + 0xfd7046c5) + (seed << 3))   & 0xffffffff;\r\n                seed = ((seed ^ 0xb55a4f09) ^ (seed >>> 16)) & 0xffffffff;\r\n                return (seed & 0xfffffff) / 0x10000000;\r\n            };\r\n        })();\r\n\r\n        const buffer = new Uint32Array(this.width * this.height);\r\n        for (let i = 0; i < buffer.length; ++i)\r\n            buffer[i] = rand();\r\n\r\n        this.buffer = buffer;\r\n    }\r\n\r\n    runIteration() {\r\n         blurRGBA(this.buffer, this.width, this.height, this.radius);\r\n    }\r\n}\r\n"};
+var readFile = function (name) {
     const normalized = String(name).replaceAll("\\", "/");
     if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
         throw new Error("JetStream resource not embedded: " + normalized);
     return __jetstreamResources[normalized];
-};
-globalThis.runString = function (source) {
-    if (source)
-        __agentjsLoadString(source);
-    const shellRealm = {
-        print,
-        loadString(text) { return __agentjsLoadString(text); }
-    };
-    Object.defineProperty(shellRealm, "console", {
-        get() { return globalThis.console; },
-        set(_) {}
-    });
-    Object.defineProperty(shellRealm, "top", {
-        get() { return globalThis.top; },
-        set(value) { globalThis.top = value; }
-    });
-    return shellRealm;
 };
 
 "use strict";
@@ -68,8 +64,8 @@ if (typeof testIterationCount === "undefined")
     var testIterationCount = undefined;
 
 // Used for the promise representing the current benchmark run.
-this.currentResolve = null;
-this.currentReject = null;
+var currentResolve = null;
+var currentReject = null;
 
 const defaultIterationCount = 120;
 const defaultWorstCaseCount = 4;
@@ -200,7 +196,7 @@ class Driver {
 
         await updateUI();
 
-        let start = Date.now();
+        let __jetstreamSuiteStart = Date.now();
         for (let benchmark of this.benchmarks) {
             benchmark.updateUIBeforeRun();
 
@@ -217,7 +213,7 @@ class Driver {
             benchmark.updateUIAfterRun();
         }
 
-        let totalTime = Date.now() - start;
+        let totalTime = Date.now() - __jetstreamSuiteStart;
         if (measureTotalTimeAsSubtest) {
             if (isInBrowser)
                 document.getElementById("benchmark-total-time-score").innerHTML = uiFriendlyNumber(totalTime);
@@ -243,16 +239,9 @@ class Driver {
     runCode(string)
     {
         if (!isInBrowser) {
-            let scripts = string;
-            let globalObject = runString("");
-            globalObject.console = {log:globalObject.print}
-            globalObject.top = {
-                currentResolve,
-                currentReject
-            };
-            for (let script of scripts)
-                globalObject.loadString(script);
-            return globalObject;
+            let top = { currentResolve, currentReject };
+            new Function("top", string.join("\n"))(top);
+            return globalThis;
         }
 
         var magic = document.getElementById("magic");
@@ -382,7 +371,7 @@ class Driver {
     }
 };
 
-class JetStreamBenchmarkBase {
+class Benchmark {
     constructor(plan)
     {
         this.plan = plan;
@@ -391,8 +380,8 @@ class JetStreamBenchmarkBase {
 
         this.scripts = null;
 
-        this._resourcesPromise = null;
-        this.fetchResources();
+        this._resourcesPromise = Promise.resolve();
+        this.scripts = this.plan.files.map((file) => readFile(file));
     }
 
     get name() { return this.plan.name; }
@@ -405,11 +394,11 @@ class JetStreamBenchmarkBase {
                 if (__benchmark.prepareForNextIteration)
                     __benchmark.prepareForNextIteration();
 
-                let start = Date.now();
+                let __jetstreamIterationStart = Date.now();
                 __benchmark.runIteration();
-                let end = Date.now();
+                let __jetstreamIterationEnd = Date.now();
 
-                results.push(Math.max(1, end - start));
+                results.push(Math.max(1, __jetstreamIterationEnd - __jetstreamIterationStart));
             }
             if (__benchmark.validate)
                 __benchmark.validate();
@@ -447,7 +436,7 @@ class JetStreamBenchmarkBase {
                 assert(false, "Should not reach here in CLI");
         };
 
-        addScript(`globalThis.performance = {now: Date.now.bind(Date)};`);
+        addScript(`var performance = globalThis.performance = {now: Date.now.bind(Date)};`);
 
         if (!!this.plan.deterministicRandom) {
             addScript(`
@@ -500,7 +489,7 @@ class JetStreamBenchmarkBase {
                 ${code}
             `;
         }
-        addScript(this.runnerCode);
+        addScript("(() => {\n" + this.runnerCode + "\n})();");
 
         this.startTime = new Date();
 
@@ -607,7 +596,7 @@ class JetStreamBenchmarkBase {
     }
 };
 
-class DefaultBenchmark extends JetStreamBenchmarkBase {
+class DefaultBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -703,7 +692,7 @@ class AsyncBenchmark extends DefaultBenchmark {
     }
 };
 
-class WSLBenchmark extends JetStreamBenchmarkBase {
+class WSLBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -776,7 +765,7 @@ class WSLBenchmark extends JetStreamBenchmarkBase {
     }
 };
 
-class WasmBenchmark extends JetStreamBenchmarkBase {
+class WasmBenchmark extends Benchmark {
     constructor(...args) {
         super(...args);
 
@@ -1520,7 +1509,7 @@ for (let plan of testPlans) {
         testsByGroup.set(group, [testName]);
 }
 
-this.JetStream = new Driver();
+var JetStream = new Driver();
 
 function addTestByName(testName)
 {

@@ -21,59 +21,8 @@ const adaptedDriverSource = driverSource
     .replace("this.currentReject = null;", "var currentReject = null;")
     .replace("this.JetStream = new Driver();", "var JetStream = new Driver();")
     .replace(
-        "class Benchmark {",
-        `function initializeJetStreamBenchmark(target, plan) {
-    target.plan = plan;
-    target.iterations = testIterationCount || plan.iterations || defaultIterationCount;
-    target.isAsync = !!plan.isAsync;
-    target.scripts = plan.files.map((file) => readFile(file));
-    target._resourcesPromise = Promise.resolve();
-}
-
-class JetStreamBenchmarkBase {`,
-    )
-    .replace(
-        "class DefaultBenchmark extends Benchmark {",
-        "class DefaultBenchmark {",
-    )
-    .replace(
-        "class AsyncBenchmark extends DefaultBenchmark {",
-        `class AsyncBenchmark {
-    constructor(plan) {
-        initializeJetStreamBenchmark(this, plan);
-        this.worstCaseCount = plan.worstCaseCount || defaultWorstCaseCount;
-        this.firstIteration = null;
-        this.worst4 = null;
-        this.average = null;
-    }`,
-    )
-    .replace(
-        "class WSLBenchmark extends Benchmark {",
-        "class WSLBenchmark {",
-    )
-    .replace(
-        "class WasmBenchmark extends Benchmark {",
-        "class WasmBenchmark {",
-    )
-    .replace(
         /this\._resourcesPromise = null;\r?\n\s*this\.fetchResources\(\);/,
         "this._resourcesPromise = Promise.resolve();\n        this.scripts = this.plan.files.map((file) => readFile(file));",
-    )
-    // ponytail: JetStream wrappers only forward one plan; avoid native's current super() gap.
-    .replaceAll(
-        /constructor\(\.\.\.args\) \{\r?\n\s*super\(\.\.\.args\);/g,
-        "constructor(plan) {\n        initializeJetStreamBenchmark(this, plan);",
-    )
-    .replace(
-        "const ARESGroup =",
-        `const Benchmark = JetStreamBenchmarkBase;
-        Object.setPrototypeOf(DefaultBenchmark.prototype, JetStreamBenchmarkBase.prototype);
-Object.setPrototypeOf(AsyncBenchmark.prototype, DefaultBenchmark.prototype);
-Object.setPrototypeOf(AsyncBenchmark, DefaultBenchmark);
-Object.setPrototypeOf(WSLBenchmark.prototype, JetStreamBenchmarkBase.prototype);
-Object.setPrototypeOf(WasmBenchmark.prototype, JetStreamBenchmarkBase.prototype);
-
-const ARESGroup =`,
     )
     .replace(
         "addScript(`const isInBrowser = ${isInBrowser}; let performance = {now: Date.now.bind(Date)};`);",
@@ -160,7 +109,11 @@ for (const relative of benchmarkFiles) {
 
 const compatibility = `
 const isInBrowser = false;
-var console = { log: (...args) => print(...args) };
+const jetStreamHostPrint = typeof globalThis.print === "function"
+    ? globalThis.print
+    : (...args) => globalThis.console.log(...args);
+globalThis.print = jetStreamHostPrint;
+var console = { log: (...args) => jetStreamHostPrint(...args) };
 var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };

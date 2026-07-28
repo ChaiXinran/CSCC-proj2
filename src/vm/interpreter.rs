@@ -6908,15 +6908,6 @@ impl Vm {
         Ok(OperationResult::Value(promise_object))
     }
 
-    fn construct_value(
-        &mut self,
-        constructor: JsValue,
-        arguments: Vec<JsValue>,
-        context: &mut NativeContext,
-    ) -> Result<OperationResult, VmError> {
-        self.construct_value_with_new_target(constructor.clone(), arguments, constructor, context)
-    }
-
     pub(super) fn construct_value_with_new_target(
         &mut self,
         constructor: JsValue,
