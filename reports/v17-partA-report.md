@@ -137,3 +137,32 @@ Shared-interface requirements for B:
 - Private method/accessor slots need kind-aware runtime storage (field, method,
   accessor) before A can complete immutable private methods and private
   getter/setter dispatch without encoding a second runtime path.
+
+## Optional method-call receiver follow-up
+
+The JetStream3 runner investigation showed that object rest and
+`super(args)` preserved their data. The shared engine defect was optional
+method-call lowering: `obj.method?.()`, parenthesized optional member calls,
+and `super.method?.()` used a plain call and lost the reference receiver.
+
+Changes:
+
+- Preserve `[callee, receiver]` through optional nullish branches.
+- Use `CallWithThis` for optional named/computed member calls.
+- Keep parenthesized member references and super home-object lookup.
+- Merge each legacy JetStream3 workload's embedded resources into one
+  `new Function` scope so its workload `Benchmark` class remains visible to
+  the runner.
+
+Focused results:
+
+| Suite | Before | Final | Change |
+|---|---:|---:|---:|
+| `language/expressions/optional-chaining` | 28/38 | 30/38 | +2, 0 regressions |
+| `language/statements/class` | 4165/4367 | 4165/4367 | unchanged |
+| `language/expressions/class` | 3902/4059 | 3902/4059 | unchanged |
+
+Newly passing Test262 cases:
+
+- `optional-call-preserves-this.js`
+- `super-property-optional-call.js`
