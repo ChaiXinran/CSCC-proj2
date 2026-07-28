@@ -2790,6 +2790,18 @@ impl NativeContext {
     }
 
     #[must_use]
+    pub fn default_function_prototype_for_callable(
+        &self,
+        constructor: &JsValue,
+    ) -> Option<ObjectId> {
+        self.default_intrinsic_prototype_for_callable(
+            constructor,
+            |intrinsics| intrinsics.function_prototype,
+            self.function_prototype_object(),
+        )
+    }
+
+    #[must_use]
     pub fn default_array_prototype_for_callable(&self, constructor: &JsValue) -> Option<ObjectId> {
         self.default_intrinsic_prototype_for_callable(
             constructor,

@@ -1,11 +1,12 @@
 //! `Function` constructor and prototype methods.
 
+use super::proxy;
 use crate::{
     bytecode::{Chunk, Compiler, Instruction},
     lexer::Lexer,
     parser::Parser,
-    runtime::{JsFunction, JsValue, NativeContext, PropertyDescriptor, PropertyKind},
-    vm::{Vm, VmError},
+    runtime::{JsValue, NativeContext, ObjectId, PropertyDescriptor},
+    vm::{FunctionEnvironmentMode, FunctionInstantiationRequest, Vm, VmError},
 };
 
 pub fn install_function(context: &mut NativeContext) {
@@ -374,22 +375,28 @@ pub fn function_call(
     _this: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    create_dynamic_function(vm, context, arguments)
+    create_dynamic_function(vm, context, arguments, None)
 }
 
 pub fn function_construct(
     vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
-    _new_target: JsValue,
+    new_target: JsValue,
 ) -> Result<JsValue, VmError> {
-    create_dynamic_function(vm, context, arguments)
+    let prototype_value =
+        get_property_preserving_throw(vm, context, new_target.clone(), "prototype")?;
+    let function_object_prototype = context
+        .value_object(&prototype_value)
+        .or_else(|| context.default_function_prototype_for_callable(&new_target));
+    create_dynamic_function(vm, context, arguments, function_object_prototype)
 }
 
 fn create_dynamic_function(
     vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
+    function_object_prototype: Option<crate::runtime::ObjectId>,
 ) -> Result<JsValue, VmError> {
     let (params, body) = dynamic_function_source_parts(vm, context, arguments)?;
     // Per spec §19.2.1.1.1, the closing ')' is always on a new line so that HTML
@@ -408,35 +415,15 @@ fn create_dynamic_function(
         chunk.functions.first().cloned().ok_or_else(|| {
             VmError::syntax_error("dynamic Function did not compile to a function")
         })?;
-    let is_strict = template.is_strict;
-    let uses_arguments = template.uses_arguments;
-    let id = context.allocate_function(JsFunction {
-        name: template.name.or_else(|| Some("anonymous".into())),
-        params: template.params,
-        rest_param: template.rest_param,
-        length_override: template.length_override,
-        chunk: template.chunk,
-        // Dynamic Function is created in the global scope; it must not capture
-        // the caller's local lexical environment.
-        environment: Some(context.global_environment()),
-        is_async: false,
-        is_generator: false,
-        is_arrow: false,
-        binds_name_in_activation: false,
-        is_derived_constructor: false,
-        is_constructable: true,
-        has_own_prototype_property: true,
-        prototype_writable: true,
-        uses_arguments,
-        lexical_this: None,
-        lexical_new_target: None,
-        home_object: None,
-    })?;
-    if is_strict {
-        context.mark_strict_function(id);
-        context.remove_own_function_legacy_properties(id)?;
-    }
-    Ok(JsValue::Function(id))
+    vm.instantiate_function(
+        FunctionInstantiationRequest {
+            template,
+            environment_mode: FunctionEnvironmentMode::Global,
+            name_override: Some("anonymous".into()),
+            function_object_prototype,
+        },
+        context,
+    )
 }
 
 fn function_restricted_thrower(
@@ -557,12 +544,59 @@ fn function_prototype_has_instance(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    if !context.is_callable_value(&this) {
-        return Ok(JsValue::Boolean(false));
+    Ok(JsValue::Boolean(function_ordinary_has_instance(
+        vm, context, this, value,
+    )?))
+}
+
+fn function_ordinary_has_instance(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    constructor: JsValue,
+    value: JsValue,
+) -> Result<bool, VmError> {
+    if !context.is_callable_value(&constructor) {
+        return Ok(false);
     }
-    Ok(JsValue::Boolean(
-        vm.ordinary_instance_of(value, this, context)?,
-    ))
+    if matches!(value, JsValue::Error(_)) {
+        return context.ordinary_instance_of(value, constructor);
+    }
+    if let JsValue::BuiltinFunction(id) = &constructor
+        && let Some(bound) = context
+            .builtin(*id)
+            .and_then(|builtin| builtin.bound.as_ref())
+    {
+        return function_ordinary_has_instance(vm, context, bound.target.clone(), value);
+    }
+    let Some(object) = context.value_object(&value) else {
+        return Ok(false);
+    };
+    let prototype_value = get_property_preserving_throw(vm, context, constructor, "prototype")?;
+    let prototype = context
+        .value_object(&prototype_value)
+        .ok_or_else(|| VmError::type_error("constructor prototype is not an object"))?;
+    prototype_chain_contains(vm, context, object, prototype)
+}
+
+fn prototype_chain_contains(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    prototype: ObjectId,
+) -> Result<bool, VmError> {
+    let mut current = proxy::internal_get_prototype_of(vm, context, context.object_value(object))?;
+    let mut depth = 0usize;
+    while let Some(object) = current {
+        if depth > 1024 {
+            return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+        }
+        if object == prototype {
+            return Ok(true);
+        }
+        current = proxy::internal_get_prototype_of(vm, context, context.object_value(object))?;
+        depth += 1;
+    }
+    Ok(false)
 }
 
 fn function_prototype_to_string(
@@ -593,7 +627,7 @@ fn function_prototype_to_string(
 }
 
 fn function_prototype_bind(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this: JsValue,
     arguments: &[JsValue],
@@ -606,17 +640,18 @@ fn function_prototype_bind(
     let bound_this = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let bound_args: Vec<JsValue> = arguments.iter().skip(1).cloned().collect();
 
-    let target_length = context
-        .value_object(&this)
-        .and_then(|object| context.get_own_property_descriptor(object, "length"))
-        .and_then(|descriptor| match descriptor.kind {
-            PropertyKind::Data {
-                value: JsValue::Number(value),
-                ..
-            } => Some(value),
-            _ => None,
-        })
-        .unwrap_or(0.0);
+    let target_length = if context.value_object(&this).is_some_and(|object| {
+        context
+            .get_own_property_descriptor(object, "length")
+            .is_some()
+    }) {
+        match get_property_preserving_throw(vm, context, this.clone(), "length")? {
+            JsValue::Number(value) => value,
+            _ => 0.0,
+        }
+    } else {
+        0.0
+    };
     let length = if target_length.is_infinite() {
         if target_length.is_sign_positive() {
             f64::INFINITY
@@ -629,15 +664,23 @@ fn function_prototype_bind(
         (target_length.trunc() - bound_args.len() as f64).max(0.0)
     };
 
-    let target_name = context
-        .get_property(this.clone(), "name")
-        .ok()
-        .and_then(|value| match value {
-            JsValue::String(name) => Some(name),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let target_name = match get_property_preserving_throw(vm, context, this.clone(), "name")? {
+        JsValue::String(name) => name,
+        _ => String::new(),
+    };
     let display_name = format!("bound {target_name}");
 
     context.register_bound_function(this, bound_this, bound_args, length, display_name)
+}
+
+fn get_property_preserving_throw(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    receiver: JsValue,
+    key: &str,
+) -> Result<JsValue, VmError> {
+    match vm.get_property_value_catching_from_builtin(receiver, key, context)? {
+        Ok(value) => Ok(value),
+        Err(thrown) => Err(vm.throw_value_from_builtin(thrown)),
+    }
 }

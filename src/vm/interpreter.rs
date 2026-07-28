@@ -5,10 +5,7 @@ use std::{collections::HashMap, fmt, fs, path::Path};
 use crate::{
     ast::{ModuleDeclaration, Statement},
     builtins::{proxy, string},
-    bytecode::{
-        Chunk, Compiler, Constant, EnvironmentCapturePolicy, ExceptionHandler, HandlerKind,
-        Instruction,
-    },
+    bytecode::{Chunk, Compiler, Constant, ExceptionHandler, HandlerKind, Instruction},
     lexer::Lexer,
     parser::Parser,
     runtime::{
@@ -18,7 +15,10 @@ use crate::{
         PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, SymbolId,
         TypedArrayViewId, array_index, bigint, to_property_key,
     },
-    vm::{CallFrame, Completion},
+    vm::{
+        CallFrame, CallRequest, Completion, ConstructRequest, FunctionEnvironmentMode,
+        FunctionInstantiationRequest, InvocationOutcome,
+    },
 };
 
 #[derive(Debug)]
@@ -612,7 +612,7 @@ pub struct Vm {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum OperationResult {
+pub(super) enum OperationResult {
     Value(JsValue),
     Throw(JsValue),
 }
@@ -3212,71 +3212,15 @@ impl Vm {
             .get(index as usize)
             .cloned()
             .ok_or_else(|| VmError::runtime(format!("function index {index} is out of bounds")))?;
-        let environment = match template.environment_policy {
-            EnvironmentCapturePolicy::None => None,
-            EnvironmentCapturePolicy::CaptureCurrent => Some(context.current_environment()),
-        };
-        let is_async = template.is_async;
-        let is_generator = template.is_generator;
-        let is_arrow = template.is_arrow;
-        let lexical_this = is_arrow.then(|| context.current_or_global_this());
-        let lexical_new_target = is_arrow.then(|| context.current_new_target());
-        let home_object = if is_arrow {
-            context
-                .current_function()
-                .and_then(|function| context.function(function))
-                .and_then(|function| function.home_object)
-        } else {
-            None
-        };
-        let id = context.allocate_function(JsFunction {
-            name: template.name,
-            params: template.params,
-            rest_param: template.rest_param,
-            length_override: template.length_override,
-            chunk: template.chunk,
-            environment,
-            is_async,
-            is_generator,
-            is_arrow,
-            binds_name_in_activation: template.binds_name_in_activation,
-            is_derived_constructor: template.is_derived_constructor,
-            is_constructable: template.is_constructable,
-            has_own_prototype_property: template.has_own_prototype_property,
-            prototype_writable: template.prototype_writable,
-            uses_arguments: template.uses_arguments,
-            lexical_this,
-            lexical_new_target,
-            home_object,
-        })?;
-        if is_generator && let Some(generator_prototype) = context.function_prototype(id) {
-            let iterator_prototype = if is_async {
-                intrinsic_async_iterator_prototype(context)
-            } else {
-                intrinsic_iterator_prototype(context)
-            };
-            if let Some(iterator_prototype) = iterator_prototype {
-                if is_async {
-                    let mut async_generator_prototype = JsObject::ordinary();
-                    async_generator_prototype.prototype = Some(iterator_prototype);
-                    let async_generator_prototype = context
-                        .heap_mut()
-                        .allocate_object(async_generator_prototype)
-                        .ok_or_else(|| {
-                            VmError::runtime_limit("async generator prototype arena exhausted")
-                        })?;
-                    context
-                        .set_prototype_of(generator_prototype, Some(async_generator_prototype))?;
-                } else {
-                    context.set_prototype_of(generator_prototype, Some(iterator_prototype))?;
-                }
-            }
-        }
-        if template.is_strict || context.strict() {
-            context.mark_strict_function(id);
-            context.install_restricted_function_properties(id)?;
-        }
-        Ok(JsValue::Function(id))
+        self.instantiate_function(
+            FunctionInstantiationRequest {
+                template,
+                environment_mode: FunctionEnvironmentMode::FollowTemplate,
+                name_override: None,
+                function_object_prototype: None,
+            },
+            context,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3819,7 +3763,7 @@ impl Vm {
             .or_else(|| default(context, &constructor)))
     }
 
-    fn call_value(
+    pub(super) fn call_value(
         &mut self,
         callee: JsValue,
         this_value: JsValue,
@@ -4976,9 +4920,9 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        match self.call_value(callee, this_value, arguments, context)? {
-            OperationResult::Value(value) => Ok(value),
-            OperationResult::Throw(value) => {
+        match self.invoke_call(CallRequest::new(callee, this_value, arguments), context)? {
+            InvocationOutcome::Value(value) => Ok(value),
+            InvocationOutcome::Throw(value) => {
                 self.pending_exception = Some(value);
                 Err(VmError::runtime("JavaScript callback threw"))
             }
@@ -5170,10 +5114,8 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<Result<JsValue, JsValue>, VmError> {
-        match self.call_value(callee, this_value, arguments, context)? {
-            OperationResult::Value(value) => Ok(Ok(value)),
-            OperationResult::Throw(value) => Ok(Err(value)),
-        }
+        self.invoke_call(CallRequest::new(callee, this_value, arguments), context)
+            .map(InvocationOutcome::into_value)
     }
 
     pub(crate) fn construct_value_from_builtin(
@@ -5182,9 +5124,9 @@ impl Vm {
         arguments: Vec<JsValue>,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        match self.construct_value(constructor, arguments, context)? {
-            OperationResult::Value(value) => Ok(value),
-            OperationResult::Throw(value) => {
+        match self.invoke_construct(ConstructRequest::ordinary(constructor, arguments), context)? {
+            InvocationOutcome::Value(value) => Ok(value),
+            InvocationOutcome::Throw(value) => {
                 self.pending_exception = Some(value);
                 Err(VmError::runtime("JavaScript constructor threw"))
             }
@@ -5198,9 +5140,12 @@ impl Vm {
         new_target: JsValue,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
-        match self.construct_value_with_new_target(constructor, arguments, new_target, context)? {
-            OperationResult::Value(value) => Ok(value),
-            OperationResult::Throw(value) => {
+        match self.invoke_construct(
+            ConstructRequest::with_new_target(constructor, arguments, new_target),
+            context,
+        )? {
+            InvocationOutcome::Value(value) => Ok(value),
+            InvocationOutcome::Throw(value) => {
                 self.pending_exception = Some(value);
                 Err(VmError::runtime("JavaScript constructor threw"))
             }
@@ -6925,7 +6870,7 @@ impl Vm {
         self.construct_value_with_new_target(constructor.clone(), arguments, constructor, context)
     }
 
-    fn construct_value_with_new_target(
+    pub(super) fn construct_value_with_new_target(
         &mut self,
         constructor: JsValue,
         arguments: Vec<JsValue>,
@@ -7304,24 +7249,6 @@ fn is_object_like(value: &JsValue) -> bool {
 
 fn is_callable_value(value: &JsValue) -> bool {
     matches!(value, JsValue::Function(_) | JsValue::BuiltinFunction(_))
-}
-
-fn intrinsic_iterator_prototype(context: &NativeContext) -> Option<ObjectId> {
-    let constructor = context.get_global("Iterator")?;
-    let constructor = context.value_object(&constructor)?;
-    context
-        .get_own_property_descriptor(constructor, "prototype")?
-        .value_cloned()
-        .and_then(|value| context.value_object(&value))
-}
-
-fn intrinsic_async_iterator_prototype(context: &NativeContext) -> Option<ObjectId> {
-    let constructor = context.get_global("Iterator")?;
-    let constructor = context.value_object(&constructor)?;
-    context
-        .get_own_property_descriptor(constructor, "__agentjs_async_iterator_prototype__")?
-        .value_cloned()
-        .and_then(|value| context.value_object(&value))
 }
 
 fn existing_accessor_getter(
