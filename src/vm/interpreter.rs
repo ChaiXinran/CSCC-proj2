@@ -3638,6 +3638,7 @@ impl Vm {
         let JsValue::Object(arguments_id) = arguments_obj else {
             unreachable!("ordinary_object_with_prototype always returns Object")
         };
+        context.mark_arguments_object(arguments_id);
         for (i, arg) in arguments.iter().enumerate() {
             context.define_own_property(
                 arguments_id,
@@ -6839,6 +6840,7 @@ impl Vm {
                 JsValue::Object(id) => *id,
                 _ => unreachable!("ordinary_object_with_prototype always returns Object"),
             };
+            context.mark_arguments_object(arguments_id);
             for (i, arg) in arguments.iter().enumerate() {
                 let key = i.to_string();
                 if let Err(e) = context.define_own_property(
