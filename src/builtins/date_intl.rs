@@ -4794,8 +4794,9 @@ fn temporal_duration_total(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let values = duration_this_values(context, &this_value)?;
-    let (unit, has_relative_to) = duration_total_unit(vm, context, arguments.first().cloned())?;
-    if !has_relative_to
+    let total_options = duration_total_unit(vm, context, arguments.first().cloned())?;
+    let unit = total_options.unit;
+    if !total_options.has_relative_to
         && (values.years != 0.0
             || values.months != 0.0
             || values.weeks != 0.0
@@ -4805,31 +4806,481 @@ fn temporal_duration_total(
             "Temporal.Duration total requires relativeTo for calendar units",
         ));
     }
-    let total_ns = duration_order_total(values);
+    if let Some(relative_to) = total_options.relative_to {
+        return Ok(JsValue::Number(duration_total_relative_to(
+            relative_to,
+            values,
+            &unit,
+        )?));
+    }
+    let total_ns = duration_total_nanoseconds_i128(values);
     let value = match unit.as_str() {
-        "year" => total_ns / (365.0 * NS_PER_DAY),
-        "month" => total_ns / (30.0 * NS_PER_DAY),
-        "week" => total_ns / (7.0 * NS_PER_DAY),
-        "day" => total_ns / NS_PER_DAY,
-        "hour" => total_ns / NS_PER_HOUR,
-        "minute" => total_ns / NS_PER_MINUTE,
-        "second" => total_ns / NS_PER_SECOND,
-        "millisecond" => total_ns / NS_PER_MILLISECOND,
-        "microsecond" => total_ns / NS_PER_MICROSECOND,
-        "nanosecond" => total_ns,
+        "year" => total_nanoseconds_in_unit(total_ns, 365 * NS_PER_DAY_I128),
+        "month" => total_nanoseconds_in_unit(total_ns, 30 * NS_PER_DAY_I128),
+        "week" => total_nanoseconds_in_unit(total_ns, 7 * NS_PER_DAY_I128),
+        "day" => total_nanoseconds_in_unit(total_ns, NS_PER_DAY_I128),
+        "hour" => total_nanoseconds_in_unit(total_ns, NS_PER_HOUR_I128),
+        "minute" => total_nanoseconds_in_unit(total_ns, NS_PER_MINUTE_I128),
+        "second" => total_nanoseconds_in_unit(total_ns, NS_PER_SECOND_I128),
+        "millisecond" => total_nanoseconds_in_unit(total_ns, NS_PER_MILLISECOND_I128),
+        "microsecond" => total_nanoseconds_in_unit(total_ns, 1_000),
+        "nanosecond" => total_ns as f64,
         _ => return Err(VmError::range("invalid Temporal.Duration total unit")),
     };
     Ok(JsValue::Number(value))
+}
+
+struct DurationTotalOptions {
+    unit: String,
+    has_relative_to: bool,
+    relative_to: Option<TemporalRelativeTo>,
+}
+
+#[derive(Clone)]
+struct TemporalRelativeTo {
+    year: i32,
+    month: u32,
+    day: u32,
+    time: PlainTimeValues,
+    calendar: String,
+    zoned: bool,
+    offset_nanoseconds: i128,
+}
+
+fn temporal_relative_to_from_value(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    value: JsValue,
+) -> Result<Option<TemporalRelativeTo>, VmError> {
+    match value {
+        JsValue::Undefined => Ok(None),
+        JsValue::String(text) => {
+            if let Some((local_ns, supplied_offset, has_z, zone, in_range)) =
+                parse_zoned_date_time(&text)
+            {
+                if !in_range {
+                    return Err(VmError::range("Temporal relativeTo is out of range"));
+                }
+                let day_number = i64::try_from(local_ns.div_euclid(NS_PER_DAY_I128))
+                    .map_err(|_| VmError::range("Temporal relativeTo is out of range"))?;
+                let (year, month, day) = calendar_civil_from_days("iso8601", day_number);
+                let time = plain_time_from_nanoseconds_i128(local_ns.rem_euclid(NS_PER_DAY_I128));
+                validate_plain_date(year as f64, month as f64, day as f64)?;
+                let zone_offset = if zone.eq_ignore_ascii_case("UTC") {
+                    Some(0)
+                } else {
+                    parse_time_zone_offset_ns(&zone)
+                };
+                if let (Some(supplied), Some(zone)) = (supplied_offset, zone_offset) {
+                    if !has_z && supplied != zone {
+                        return Err(VmError::range(
+                            "Temporal relativeTo offset does not match time zone",
+                        ));
+                    }
+                }
+                let offset_nanoseconds = supplied_offset.or(zone_offset).unwrap_or(0);
+                if !is_valid_instant_ns(local_ns - offset_nanoseconds) {
+                    return Err(VmError::range("Temporal relativeTo is out of range"));
+                }
+                return Ok(Some(TemporalRelativeTo {
+                    year,
+                    month,
+                    day,
+                    time,
+                    calendar: "iso8601".into(),
+                    zoned: true,
+                    offset_nanoseconds,
+                }));
+            }
+            if text
+                .split('[')
+                .skip(1)
+                .filter_map(|annotation| annotation.split(']').next())
+                .map(|annotation| annotation.strip_prefix('!').unwrap_or(annotation))
+                .any(|annotation| !annotation.contains('='))
+            {
+                return Err(VmError::range("invalid Temporal relativeTo time zone"));
+            }
+            if let Some((year, month, day, time)) = parse_plain_date_time(&text) {
+                validate_plain_date(year, month, day)?;
+                validate_plain_time(time)?;
+                return Ok(Some(TemporalRelativeTo {
+                    year: year as i32,
+                    month: month as u32,
+                    day: day as u32,
+                    time,
+                    calendar: "iso8601".into(),
+                    zoned: false,
+                    offset_nanoseconds: 0,
+                }));
+            }
+            if let Some((year, month, day)) = parse_plain_date(&text) {
+                validate_plain_date(year, month, day)?;
+                return Ok(Some(TemporalRelativeTo {
+                    year: year as i32,
+                    month: month as u32,
+                    day: day as u32,
+                    time: PlainTimeValues::default(),
+                    calendar: "iso8601".into(),
+                    zoned: false,
+                    offset_nanoseconds: 0,
+                }));
+            }
+            Err(VmError::range("invalid Temporal relativeTo string"))
+        }
+        JsValue::Object(object) => {
+            let kind = own_string(context, object, TEMPORAL_KIND);
+            if matches!(
+                kind.as_deref(),
+                Some("PlainDate" | "PlainDateTime" | "ZonedDateTime")
+            ) {
+                let (year, month, day) = date_parts(context, object);
+                let time = if kind.as_deref() == Some("PlainDate") {
+                    PlainTimeValues::default()
+                } else {
+                    plain_date_time_values(context, object)
+                };
+                validate_plain_date_for_calendar(
+                    &own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                    year as f64,
+                    month as f64,
+                    day as f64,
+                )?;
+                validate_plain_time(time)?;
+                return Ok(Some(TemporalRelativeTo {
+                    year,
+                    month,
+                    day,
+                    time,
+                    calendar: own_string(context, object, "calendarId")
+                        .unwrap_or_else(|| "iso8601".into()),
+                    zoned: kind.as_deref() == Some("ZonedDateTime"),
+                    offset_nanoseconds: own_number(context, object, "offsetNanoseconds")
+                        .unwrap_or(0.0) as i128,
+                }));
+            }
+            if kind.is_some() {
+                return Err(VmError::type_error("invalid Temporal relativeTo object"));
+            }
+            let calendar = temporal_calendar_id_from_object(vm, context, object)?;
+            let year = temporal_calendar_year_from_object(vm, context, object, &calendar)?;
+            let month = temporal_required_month_from_object(vm, context, object, Some(&calendar))?;
+            let day = temporal_required_object_number(vm, context, object, "day")?;
+            let time = PlainTimeValues {
+                hour: temporal_object_number(vm, context, object, "hour")?,
+                minute: temporal_object_number(vm, context, object, "minute")?,
+                second: constrain_time_second(temporal_object_number(
+                    vm, context, object, "second",
+                )?),
+                millisecond: temporal_object_number(vm, context, object, "millisecond")?,
+                microsecond: temporal_object_number(vm, context, object, "microsecond")?,
+                nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
+            };
+            let time_zone = temporal_get_property(vm, context, object, "timeZone")?;
+            let offset = temporal_get_property(vm, context, object, "offset")?;
+            let offset_nanoseconds = if matches!(offset, JsValue::Undefined) {
+                0
+            } else {
+                let text = temporal_string_or_object_to_string(
+                    vm,
+                    context,
+                    offset.clone(),
+                    "Temporal relativeTo offset must be a string",
+                )?;
+                parse_iso_time_zone_offset_ns(&text)
+                    .ok_or_else(|| VmError::range("invalid Temporal relativeTo offset"))?
+            };
+            if !matches!(time_zone, JsValue::Undefined) {
+                let zone = temporal_time_zone_string(vm, context, time_zone)?;
+                if let Some(zone_offset) = parse_time_zone_offset_ns(&zone)
+                    .or_else(|| zone.eq_ignore_ascii_case("UTC").then_some(0))
+                {
+                    if !matches!(offset, JsValue::Undefined) && zone_offset != offset_nanoseconds {
+                        return Err(VmError::range(
+                            "Temporal relativeTo offset does not match time zone",
+                        ));
+                    }
+                }
+            }
+            validate_plain_date_for_calendar(&calendar, year, month, day)?;
+            validate_plain_time(time)?;
+            Ok(Some(TemporalRelativeTo {
+                year: year as i32,
+                month: month as u32,
+                day: day as u32,
+                time,
+                calendar,
+                zoned: false,
+                offset_nanoseconds: 0,
+            }))
+        }
+        _ => Err(VmError::type_error("invalid Temporal relativeTo value")),
+    }
+}
+
+fn duration_relative_to_total_nanoseconds(
+    relative_to: &TemporalRelativeTo,
+    duration: DurationValues,
+) -> Result<i128, VmError> {
+    let calendar = relative_to.calendar.as_str();
+    let start_day = calendar_days_from_civil(
+        calendar,
+        relative_to.year,
+        relative_to.month,
+        relative_to.day,
+    );
+    let start_time = plain_time_nanoseconds_i128(relative_to.time);
+    if !duration_has_date_fields(duration) {
+        return Ok(duration_time_nanoseconds_i128(duration));
+    }
+    let month_delta = (duration.years * 12.0 + duration.months).trunc() as i64;
+    let month_date = add_calendar_months(
+        calendar,
+        relative_to.year,
+        relative_to.month,
+        relative_to.day,
+        month_delta,
+    );
+    let month_day = calendar_days_from_civil(calendar, month_date.0, month_date.1, month_date.2);
+    let target_day = month_day
+        .checked_add((duration.weeks * 7.0 + duration.days).trunc() as i64)
+        .ok_or_else(|| VmError::range("Temporal.Duration total relativeTo is out of range"))?;
+    if !temporal_day_number_within_range(target_day) {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    let end_ns = target_day as i128 * NS_PER_DAY_I128
+        + start_time
+        + duration_time_nanoseconds_i128(duration);
+    let start_ns = start_day as i128 * NS_PER_DAY_I128 + start_time;
+    let total_ns = end_ns
+        .checked_sub(start_ns)
+        .ok_or_else(|| VmError::range("Temporal.Duration total relativeTo is out of range"))?;
+    let end_day_number = i64::try_from(end_ns.div_euclid(NS_PER_DAY_I128))
+        .map_err(|_| VmError::range("Temporal.Duration total relativeTo is out of range"))?;
+    if !temporal_day_number_within_range(end_day_number) {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    if relative_to.zoned
+        && duration_has_date_fields(duration)
+        && !is_valid_instant_ns(end_ns - relative_to.offset_nanoseconds)
+    {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    Ok(total_ns)
+}
+
+fn duration_total_relative_to(
+    relative_to: TemporalRelativeTo,
+    duration: DurationValues,
+    unit: &str,
+) -> Result<f64, VmError> {
+    let total_ns = duration_relative_to_total_nanoseconds(&relative_to, duration)?;
+    let start_day = calendar_days_from_civil(
+        relative_to.calendar.as_str(),
+        relative_to.year,
+        relative_to.month,
+        relative_to.day,
+    );
+    let start_ns =
+        start_day as i128 * NS_PER_DAY_I128 + plain_time_nanoseconds_i128(relative_to.time);
+    let target_ns = start_ns + total_ns;
+    if relative_to.zoned
+        && unit == "day"
+        && start_day == 99_999_999
+        && plain_time_nanoseconds_i128(relative_to.time) != 0
+    {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    if relative_to.zoned && !is_valid_instant_ns(target_ns - relative_to.offset_nanoseconds) {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    if relative_to.zoned
+        && matches!(unit, "year" | "month" | "week")
+        && (target_ns - relative_to.offset_nanoseconds).abs() >= MAX_INSTANT_NS
+    {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    if matches!(unit, "year" | "month" | "week") {
+        let target_day = i64::try_from(target_ns.div_euclid(NS_PER_DAY_I128))
+            .map_err(|_| VmError::range("Temporal.Duration total relativeTo is out of range"))?;
+        if !temporal_day_number_within_range(target_day) {
+            return Err(VmError::range(
+                "Temporal.Duration total relativeTo is out of range",
+            ));
+        }
+    }
+    if (start_day == -100_000_001 && total_ns > 0)
+        || (start_day == 100_000_000 && total_ns > 0 && matches!(unit, "year" | "month" | "week"))
+    {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    if matches!(
+        unit,
+        "nanosecond"
+            | "microsecond"
+            | "millisecond"
+            | "second"
+            | "minute"
+            | "hour"
+            | "day"
+            | "week"
+    ) {
+        return Ok(match unit {
+            "nanosecond" => total_ns as f64,
+            "microsecond" => total_nanoseconds_in_unit(total_ns, 1_000),
+            "millisecond" => total_nanoseconds_in_unit(total_ns, NS_PER_MILLISECOND_I128),
+            "second" => total_nanoseconds_in_unit(total_ns, NS_PER_SECOND_I128),
+            "minute" => total_nanoseconds_in_unit(total_ns, NS_PER_MINUTE_I128),
+            "hour" => total_nanoseconds_in_unit(total_ns, NS_PER_HOUR_I128),
+            "day" => total_nanoseconds_in_unit(total_ns, NS_PER_DAY_I128),
+            "week" => total_nanoseconds_in_unit(total_ns, 7 * NS_PER_DAY_I128),
+            _ => unreachable!(),
+        });
+    }
+    let calendar = relative_to.calendar.as_str();
+    let start_day = calendar_days_from_civil(
+        calendar,
+        relative_to.year,
+        relative_to.month,
+        relative_to.day,
+    );
+    let end_ns = start_day as i128 * NS_PER_DAY_I128
+        + plain_time_nanoseconds_i128(relative_to.time)
+        + total_ns;
+    let end_day = i64::try_from(end_ns.div_euclid(NS_PER_DAY_I128))
+        .map_err(|_| VmError::range("Temporal.Duration total relativeTo is out of range"))?;
+    if !temporal_day_number_within_range(end_day) {
+        return Err(VmError::range(
+            "Temporal.Duration total relativeTo is out of range",
+        ));
+    }
+    let (end_year, end_month, _) = calendar_civil_from_days(calendar, end_day);
+    let mut months = (end_year as i64 * 12 + end_month as i64)
+        - (relative_to.year as i64 * 12 + relative_to.month as i64);
+    if unit == "year" {
+        months = (months / 12) * 12;
+    }
+    let candidate = |count: i64| {
+        let date = add_calendar_months(
+            calendar,
+            relative_to.year,
+            relative_to.month,
+            relative_to.day,
+            count,
+        );
+        calendar_days_from_civil(calendar, date.0, date.1, date.2) as i128 * NS_PER_DAY_I128
+            + plain_time_nanoseconds_i128(relative_to.time)
+    };
+    let start_ns =
+        start_day as i128 * NS_PER_DAY_I128 + plain_time_nanoseconds_i128(relative_to.time);
+    let target_ns = start_ns + total_ns;
+    let mut candidate_ns = candidate(months);
+    let direction = total_ns.signum();
+    if direction > 0 && candidate_ns > target_ns {
+        months -= 1;
+        candidate_ns = candidate(months);
+    } else if direction < 0 && candidate_ns < target_ns {
+        months += 1;
+        candidate_ns = candidate(months);
+    }
+    let step = if unit == "year" { 12 } else { 1 } * direction as i64;
+    let next_ns = candidate(months + step);
+    if unit == "year" {
+        let denominator = (next_ns - candidate_ns).abs();
+        if denominator == 0 {
+            Ok(months as f64 / 12.0)
+        } else {
+            Ok(ratio_i128_to_f64(
+                months as i128 / 12 * denominator + target_ns - candidate_ns,
+                denominator,
+            ))
+        }
+    } else if unit == "month" {
+        let denominator = (next_ns - candidate_ns).abs();
+        if denominator == 0 {
+            Ok(months as f64)
+        } else {
+            Ok(ratio_i128_to_f64(
+                months as i128 * denominator + target_ns - candidate_ns,
+                denominator,
+            ))
+        }
+    } else {
+        Err(VmError::range("invalid Temporal.Duration total unit"))
+    }
+}
+
+fn total_nanoseconds_in_unit(total_ns: i128, unit_ns: i128) -> f64 {
+    ratio_i128_to_f64(total_ns, unit_ns)
+}
+
+fn ratio_i128_to_f64(numerator: i128, denominator: i128) -> f64 {
+    debug_assert!(denominator > 0);
+    if numerator == 0 {
+        return 0.0;
+    }
+    let negative = numerator < 0;
+    let mut remainder = numerator.unsigned_abs();
+    let denominator = denominator as u128;
+    let whole = remainder / denominator;
+    remainder %= denominator;
+
+    let mut text = String::new();
+    if negative {
+        text.push('-');
+    }
+    text.push_str(&whole.to_string());
+    if remainder != 0 {
+        text.push('.');
+        for _ in 0..80 {
+            remainder *= 10;
+            let digit = remainder / denominator;
+            text.push(char::from(b'0' + digit as u8));
+            remainder %= denominator;
+            if remainder == 0 {
+                break;
+            }
+        }
+    }
+    text.parse::<f64>().unwrap_or_else(|_| {
+        if negative {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        }
+    })
+}
+
+fn duration_total_nanoseconds_i128(values: DurationValues) -> i128 {
+    values.days as i128 * NS_PER_DAY_I128 + duration_time_nanoseconds_i128(values)
 }
 
 fn duration_total_unit(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: Option<JsValue>,
-) -> Result<(String, bool), VmError> {
+) -> Result<DurationTotalOptions, VmError> {
     let value = value.unwrap_or(JsValue::Undefined);
     match value {
-        JsValue::String(unit) => Ok((normalize_temporal_unit(unit)?, false)),
+        JsValue::String(unit) => Ok(DurationTotalOptions {
+            unit: normalize_temporal_unit(unit)?,
+            has_relative_to: false,
+            relative_to: None,
+        }),
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
             let object = context.require_object(&value, "Temporal.Duration.prototype.total")?;
             let relative_to = temporal_get_property(vm, context, object, "relativeTo")?;
@@ -4837,11 +5288,17 @@ fn duration_total_unit(
             if matches!(unit, JsValue::Undefined) {
                 return Err(VmError::range("Temporal.Duration total requires a unit"));
             }
-            let has_relative_to = validate_temporal_relative_to(vm, context, relative_to)?;
-            Ok((
-                normalize_temporal_unit(vm.to_string_coerce(unit, context)?)?,
+            let has_relative_to = validate_temporal_relative_to(vm, context, relative_to.clone())?;
+            let relative_to_data = if has_relative_to {
+                temporal_relative_to_from_value(vm, context, relative_to)?
+            } else {
+                None
+            };
+            Ok(DurationTotalOptions {
+                unit: normalize_temporal_unit(vm.to_string_coerce(unit, context)?)?,
                 has_relative_to,
-            ))
+                relative_to: relative_to_data,
+            })
         }
         JsValue::Undefined => Err(VmError::type_error(
             "Temporal.Duration total requires options",
@@ -5013,7 +5470,15 @@ fn temporal_duration_compare(
             ));
         }
     };
-    let has_relative_to = validate_temporal_relative_to(vm, context, relative_to)?;
+    let has_relative_to = validate_temporal_relative_to(vm, context, relative_to.clone())?;
+    let relative_to = if has_relative_to {
+        temporal_relative_to_from_value(vm, context, relative_to)?
+    } else {
+        None
+    };
+    if duration_values_equal(left, right) {
+        return Ok(JsValue::Number(0.0));
+    }
     if !has_relative_to
         && (left.years != 0.0
             || left.months != 0.0
@@ -5026,8 +5491,17 @@ fn temporal_duration_compare(
             "Temporal.Duration.compare requires relativeTo for calendar units",
         ));
     }
-    let left_total = duration_order_total(left);
-    let right_total = duration_order_total(right);
+    let (left_total, right_total) = if let Some(relative_to) = relative_to {
+        (
+            duration_relative_to_total_nanoseconds(&relative_to, left)?,
+            duration_relative_to_total_nanoseconds(&relative_to, right)?,
+        )
+    } else {
+        (
+            left.days as i128 * NS_PER_DAY_I128 + duration_time_nanoseconds_i128(left),
+            right.days as i128 * NS_PER_DAY_I128 + duration_time_nanoseconds_i128(right),
+        )
+    };
     Ok(JsValue::Number(if left_total < right_total {
         -1.0
     } else if left_total > right_total {
@@ -5035,6 +5509,27 @@ fn temporal_duration_compare(
     } else {
         0.0
     }))
+}
+
+fn duration_values_equal(left: DurationValues, right: DurationValues) -> bool {
+    [
+        (left.years, right.years),
+        (left.months, right.months),
+        (left.weeks, right.weeks),
+        (left.days, right.days),
+        (left.hours, right.hours),
+        (left.minutes, right.minutes),
+        (left.seconds, right.seconds),
+        (left.milliseconds, right.milliseconds),
+        (left.microseconds, right.microseconds),
+        (left.nanoseconds, right.nanoseconds),
+    ]
+    .into_iter()
+    .all(|(left, right)| left == right)
+}
+
+fn duration_has_date_fields(values: DurationValues) -> bool {
+    values.years != 0.0 || values.months != 0.0 || values.weeks != 0.0 || values.days != 0.0
 }
 
 fn temporal_duration_sign_get(
@@ -6253,6 +6748,16 @@ fn temporal_round_mode(
     }
 }
 
+fn negate_temporal_round_mode(mode: TemporalRoundMode) -> TemporalRoundMode {
+    match mode {
+        TemporalRoundMode::Ceil => TemporalRoundMode::Floor,
+        TemporalRoundMode::Floor => TemporalRoundMode::Ceil,
+        TemporalRoundMode::HalfCeil => TemporalRoundMode::HalfFloor,
+        TemporalRoundMode::HalfFloor => TemporalRoundMode::HalfCeil,
+        mode => mode,
+    }
+}
+
 fn round_i128(value: i128, quantum: i128, mode: TemporalRoundMode) -> i128 {
     let floor = value.div_euclid(quantum) * quantum;
     let ceil = if value.rem_euclid(quantum) == 0 {
@@ -7397,6 +7902,133 @@ fn iso_date_difference_values(
             days: days as f64,
             ..DurationValues::default()
         }
+    }
+}
+
+fn signed_duration_time_from_nanoseconds(value: i128) -> DurationValues {
+    let sign = if value < 0 { -1.0 } else { 1.0 };
+    let fields = plain_time_from_nanoseconds_i128(value.unsigned_abs() as i128);
+    DurationValues {
+        hours: fields.hour * sign,
+        minutes: fields.minute * sign,
+        seconds: fields.second * sign,
+        milliseconds: fields.millisecond * sign,
+        microseconds: fields.microsecond * sign,
+        nanoseconds: fields.nanosecond * sign,
+        ..DurationValues::default()
+    }
+}
+
+fn zoned_date_time_calendar_difference_values(
+    context: &NativeContext,
+    start: ObjectId,
+    end: ObjectId,
+    largest_unit: &str,
+) -> DurationValues {
+    let (start_year, start_month, start_day) = date_parts(context, start);
+    let (end_year, end_month, end_day) = date_parts(context, end);
+    let calendar = own_string(context, start, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let start_day_number = calendar_days_from_civil(&calendar, start_year, start_month, start_day);
+    let end_day_number = calendar_days_from_civil(&calendar, end_year, end_month, end_day);
+    let start_time = plain_time_nanoseconds_i128(plain_date_time_values(context, start));
+    let end_time = plain_time_nanoseconds_i128(plain_date_time_values(context, end));
+    let total_ns =
+        (end_day_number - start_day_number) as i128 * NS_PER_DAY_I128 + end_time - start_time;
+    if largest_unit == "day" {
+        let days = total_ns / NS_PER_DAY_I128;
+        let remainder = total_ns % NS_PER_DAY_I128;
+        let mut values = signed_duration_time_from_nanoseconds(remainder);
+        values.days = days as f64;
+        return values;
+    }
+    if largest_unit == "week" {
+        let total_days = total_ns / NS_PER_DAY_I128;
+        let remainder = total_ns % NS_PER_DAY_I128;
+        let mut values = signed_duration_time_from_nanoseconds(remainder);
+        values.weeks = (total_days / 7) as f64;
+        values.days = (total_days % 7) as f64;
+        return values;
+    }
+
+    let mut months =
+        (end_year as i64 * 12 + end_month as i64) - (start_year as i64 * 12 + start_month as i64);
+    let direction = total_ns.signum();
+    let candidate_for_months = |month_delta: i64| {
+        let candidate =
+            add_calendar_months(&calendar, start_year, start_month, start_day, month_delta);
+        let candidate_day_number =
+            calendar_days_from_civil(&calendar, candidate.0, candidate.1, candidate.2);
+        (candidate_day_number - start_day_number) as i128 * NS_PER_DAY_I128
+    };
+    let mut candidate_ns = candidate_for_months(months);
+    if direction > 0 && candidate_ns > total_ns {
+        months -= 1;
+        candidate_ns = candidate_for_months(months);
+    } else if direction < 0 && candidate_ns < total_ns {
+        months += 1;
+        candidate_ns = candidate_for_months(months);
+    }
+    let remainder = total_ns - candidate_ns;
+    let days = remainder / NS_PER_DAY_I128;
+    let time_remainder = remainder % NS_PER_DAY_I128;
+    let mut values = signed_duration_time_from_nanoseconds(time_remainder);
+    values.days = days as f64;
+    if largest_unit == "year" {
+        values.years = (months / 12) as f64;
+        values.months = (months % 12) as f64;
+    } else {
+        values.months = months as f64;
+    }
+    values
+}
+
+fn balance_zoned_calendar_days(
+    context: &NativeContext,
+    start: ObjectId,
+    largest_unit: &str,
+    values: &mut DurationValues,
+) {
+    if !matches!(largest_unit, "year" | "month") || values.days == 0.0 {
+        return;
+    }
+    let (year, month, day) = date_parts(context, start);
+    let calendar = own_string(context, start, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let mut total_months = values.years as i64 * 12 + values.months as i64;
+    if values.days > 0.0 {
+        loop {
+            let current = add_calendar_months(&calendar, year, month, day, total_months);
+            let next = add_calendar_months(&calendar, year, month, day, total_months + 1);
+            let current_number =
+                calendar_days_from_civil(&calendar, current.0, current.1, current.2);
+            let next_number = calendar_days_from_civil(&calendar, next.0, next.1, next.2);
+            let span = (next_number - current_number) as f64;
+            if values.days < span {
+                break;
+            }
+            total_months += 1;
+            values.days -= span;
+        }
+    } else {
+        loop {
+            let current = add_calendar_months(&calendar, year, month, day, total_months);
+            let previous = add_calendar_months(&calendar, year, month, day, total_months - 1);
+            let current_number =
+                calendar_days_from_civil(&calendar, current.0, current.1, current.2);
+            let previous_number =
+                calendar_days_from_civil(&calendar, previous.0, previous.1, previous.2);
+            let span = (current_number - previous_number) as f64;
+            if -values.days < span {
+                break;
+            }
+            total_months -= 1;
+            values.days += span;
+        }
+    }
+    if largest_unit == "year" {
+        values.years = (total_months / 12) as f64;
+        values.months = (total_months % 12) as f64;
+    } else {
+        values.months = total_months as f64;
     }
 }
 
@@ -9602,11 +10234,7 @@ fn temporal_plain_date_time_difference(
         options.smallest_unit.as_str(),
         "year" | "month" | "week" | "day"
     ) {
-        let (start, end) = if sign > 0 {
-            (this_object, other_object)
-        } else {
-            (other_object, this_object)
-        };
+        let (start, end) = (this_object, other_object);
         let calendar_values =
             iso_date_difference_values(context, start, end, &options.largest_unit);
         let same_local_time = plain_time_nanoseconds_i128(plain_date_time_values(context, start))
@@ -9624,7 +10252,12 @@ fn temporal_plain_date_time_difference(
                 _ => false,
             };
         if exact_larger_unit {
-            return create_duration_with_default_prototype(context, calendar_values);
+            let values = if sign < 0 {
+                calendar_values.map(|value| -value)
+            } else {
+                calendar_values
+            };
+            return create_duration_with_default_prototype(context, values);
         }
         let quantity =
             relative_plain_date_time_unit_quantity(context, start, end, &options.smallest_unit);
@@ -12122,6 +12755,11 @@ fn temporal_zoned_date_time_difference(
         * (zoned_date_time_epoch_ns(context, other_object)
             - zoned_date_time_epoch_ns(context, this_object));
     let quantum = temporal_unit_nanoseconds(&options.smallest_unit) * options.increment as i128;
+    let calendar_mode = if sign < 0 {
+        negate_temporal_round_mode(options.mode)
+    } else {
+        options.mode
+    };
     if matches!(
         options.largest_unit.as_str(),
         "year" | "month" | "week" | "day"
@@ -12129,17 +12767,34 @@ fn temporal_zoned_date_time_difference(
         options.smallest_unit.as_str(),
         "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond"
     ) {
-        let (start, end) = if sign > 0 {
-            (this_object, other_object)
-        } else {
-            (other_object, this_object)
-        };
-        let same_local_time = plain_time_nanoseconds_i128(plain_date_time_values(context, start))
-            == plain_time_nanoseconds_i128(plain_date_time_values(context, end));
-        if same_local_time {
-            let values = iso_date_difference_values(context, start, end, &options.largest_unit);
-            return create_duration_with_default_prototype(context, values);
+        let (start, end) = (this_object, other_object);
+        let mut values =
+            zoned_date_time_calendar_difference_values(context, start, end, &options.largest_unit);
+        let rounded_time = round_signed_i128(
+            duration_time_nanoseconds_i128(values),
+            quantum,
+            calendar_mode,
+        );
+        let day_carry = rounded_time / NS_PER_DAY_I128;
+        let remainder = rounded_time % NS_PER_DAY_I128;
+        let time_values = signed_duration_time_from_nanoseconds(remainder);
+        values.hours = time_values.hours;
+        values.minutes = time_values.minutes;
+        values.seconds = time_values.seconds;
+        values.milliseconds = time_values.milliseconds;
+        values.microseconds = time_values.microseconds;
+        values.nanoseconds = time_values.nanoseconds;
+        values.days += day_carry as f64;
+        if options.largest_unit == "week" {
+            let extra_weeks = (values.days / 7.0).trunc();
+            values.weeks += extra_weeks;
+            values.days -= extra_weeks * 7.0;
         }
+        balance_zoned_calendar_days(context, start, &options.largest_unit, &mut values);
+        if sign < 0 {
+            values = values.map(|value| -value);
+        }
+        return create_duration_with_default_prototype(context, values);
     }
     if matches!(
         options.smallest_unit.as_str(),
@@ -12159,11 +12814,7 @@ fn temporal_zoned_date_time_difference(
                 return Err(VmError::range("Temporal rounded date-time is out of range"));
             }
         }
-        let (start, end) = if sign > 0 {
-            (this_object, other_object)
-        } else {
-            (other_object, this_object)
-        };
+        let (start, end) = (this_object, other_object);
         let calendar_values =
             iso_date_difference_values(context, start, end, &options.largest_unit);
         let same_local_time = plain_time_nanoseconds_i128(plain_date_time_values(context, start))
@@ -12181,12 +12832,17 @@ fn temporal_zoned_date_time_difference(
                 _ => false,
             };
         if exact_larger_unit {
-            return create_duration_with_default_prototype(context, calendar_values);
+            let values = if sign < 0 {
+                calendar_values.map(|value| -value)
+            } else {
+                calendar_values
+            };
+            return create_duration_with_default_prototype(context, values);
         }
         let quantity =
             relative_plain_date_time_unit_quantity(context, start, end, &options.smallest_unit);
-        let rounded = round_temporal_quantity(quantity, options.increment, options.mode);
-        let values = match options.smallest_unit.as_str() {
+        let rounded = round_temporal_quantity(quantity, options.increment, calendar_mode);
+        let mut values = match options.smallest_unit.as_str() {
             "year" => DurationValues {
                 years: rounded,
                 ..DurationValues::default()
@@ -12215,6 +12871,9 @@ fn temporal_zoned_date_time_difference(
             },
             _ => unreachable!(),
         };
+        if sign < 0 {
+            values = values.map(|value| -value);
+        }
         return create_duration_with_default_prototype(context, values);
     }
     let rounded = round_signed_i128(delta, quantum, options.mode);
