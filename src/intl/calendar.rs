@@ -1,7 +1,9 @@
 use icu_calendar::{
     AnyCalendar, AnyCalendarKind, Date, Iso,
-    options::{DateAddOptions, DateDifferenceOptions, DateDurationUnit, Overflow},
-    types::{DateDuration, Month},
+    options::{
+        DateAddOptions, DateDifferenceOptions, DateDurationUnit, DateFromFieldsOptions, Overflow,
+    },
+    types::{DateDuration, DateFields, Month},
 };
 
 use super::IsoDate;
@@ -127,7 +129,7 @@ impl CalendarBackend for Icu4xCalendarBackend {
         let era = year.era();
         Ok(CalendarDate {
             year: year.extended_year(),
-            month: date.month().number(),
+            month: date.month().ordinal,
             month_code: date.month().to_input().code().to_string(),
             day: date.day_of_month().0,
             era: era.map(|value| value.era.to_string()),
@@ -183,24 +185,26 @@ impl CalendarBackend for Icu4xCalendarBackend {
         calendar: &str,
         fields: &CalendarDateFields,
     ) -> Result<IsoDate, String> {
-        let month_code = fields
-            .month_code
-            .clone()
-            .or_else(|| fields.month.map(|month| format!("M{month:02}")))
-            .ok_or_else(|| "calendar date requires month or monthCode".to_string())?;
-        let iso = self.date_to_iso(calendar, fields.year, &month_code, fields.day)?;
-        let resolved = self.date_from_iso(calendar, iso)?;
-        if let Some(month) = fields.month
-            && month != resolved.month
-        {
-            return Err(format!(
-                "month {month} conflicts with monthCode {month_code}"
-            ));
+        if fields.month.is_none() && fields.month_code.is_none() {
+            return Err("calendar date requires month or monthCode".to_string());
         }
-        if fields.month_code.is_some() && resolved.month_code != month_code {
-            return Err(format!("invalid monthCode `{month_code}` for calendar"));
-        }
-        Ok(iso)
+        let mut date_fields = DateFields::default();
+        date_fields.extended_year = Some(fields.year);
+        date_fields.ordinal_month = fields.month;
+        date_fields.month_code = fields.month_code.as_deref().map(str::as_bytes);
+        date_fields.day = Some(fields.day);
+        let date = Date::try_from_fields(
+            date_fields,
+            DateFromFieldsOptions::default(),
+            AnyCalendar::new(calendar_kind(calendar)?),
+        )
+        .map_err(|error| error.to_string())?
+        .to_calendar(Iso);
+        Ok(IsoDate {
+            year: date.year().extended_year(),
+            month: date.month().number(),
+            day: date.day_of_month().0,
+        })
     }
 
     fn add_date(

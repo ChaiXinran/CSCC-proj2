@@ -37,6 +37,13 @@ pub trait TimeZoneProvider {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct JiffTimeZoneProvider;
 
+pub fn canonicalize_time_zone_identifier(identifier: &str) -> Result<String, String> {
+    let zone = TimeZone::get(identifier).map_err(|error| error.to_string())?;
+    zone.iana_name()
+        .map(str::to_string)
+        .ok_or_else(|| format!("time zone `{identifier}` has no IANA identifier"))
+}
+
 fn fixed_offset(identifier: &str) -> Option<i32> {
     if identifier.eq_ignore_ascii_case("UTC") {
         return Some(0);
