@@ -22,4 +22,7 @@ pub use records::{
     RelativeTimeFormatRecord, TimeZoneNameStyle,
 };
 pub use temporal_bridge::{IntlDateTimeInput, IsoDate, IsoDateTime, IsoTime};
-pub use timezone::{JiffTimeZoneProvider, LocalDateTime, TimeZoneDisambiguation, TimeZoneProvider};
+pub use timezone::{
+    JiffTimeZoneProvider, LocalDateTime, TimeZoneDisambiguation, TimeZoneProvider,
+    canonicalize_time_zone_identifier,
+};
