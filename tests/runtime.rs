@@ -17,6 +17,37 @@ fn captures_console_output() {
 }
 
 #[test]
+fn distinguishes_direct_and_indirect_eval_environments() {
+    let report = Engine::default()
+        .execute(
+            "var x = 'global';
+             function probe() {
+                 let x = 'local';
+                 return eval('x') + ':' + (0, eval)('x');
+             }
+             probe();",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(report.value, "local:global");
+}
+
+#[test]
+fn strict_eval_declarations_do_not_leak() {
+    let report = Engine::default()
+        .execute(
+            "function probe() {
+                 eval(\"'use strict'; var hidden = 1; let lexical = 2;\");
+                 return typeof hidden + ':' + typeof lexical;
+             }
+             probe();",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(report.value, "undefined:undefined");
+}
+
+#[test]
 fn calls_accept_multiple_and_non_trailing_spreads() {
     let report = Engine::default()
         .execute(

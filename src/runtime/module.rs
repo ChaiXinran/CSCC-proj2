@@ -190,6 +190,13 @@ impl ModuleRegistry {
         self.namespaces.get(&id).cloned()
     }
 
+    #[must_use]
+    pub fn is_namespace_value(&self, value: &JsValue) -> bool {
+        self.namespaces
+            .values()
+            .any(|namespace| namespace.same_value(value))
+    }
+
     pub(crate) fn environments(&self) -> impl Iterator<Item = EnvironmentId> + '_ {
         self.environments.values().copied()
     }

@@ -106,6 +106,9 @@ pub enum Instruction {
     GetProperty(u16),
     /// Pops the callee and `argument_count` arguments, then pushes the result.
     Call(u16),
+    /// Calls a syntactic `eval(...)`, preserving direct-eval semantics only
+    /// when the resolved callee is the original intrinsic eval function.
+    DirectEval(u16),
     /// Pops the constructor and `argument_count` arguments, then pushes the constructed value.
     Construct(u16),
 
@@ -136,6 +139,9 @@ pub enum Instruction {
     /// popping the initializer off the stack.
     /// Stack: [value] → []
     DeclareLocal(u16),
+    /// EvalDeclarationInstantiation var creation. Existing bindings are left
+    /// unchanged; absent bindings are created in the active eval environment.
+    DeclareEvalVar(u16),
 
     /// Looks up a name along the environment chain and pushes its value.
     /// Returns `ReferenceError` if not found.
@@ -423,6 +429,7 @@ impl Instruction {
             | Self::Throw
             | Self::Return
             | Self::DeclareLocal(_)
+            | Self::DeclareEvalVar(_)
             | Self::EnterWithEnvironment
             | Self::InitializeBinding(_) => StackEffect::new(1, 0),
 
@@ -493,9 +500,9 @@ impl Instruction {
             | Self::EndFinally => StackEffect::new(0, 0),
 
             // call variants
-            Self::Call(argument_count) | Self::Construct(argument_count) => {
-                StackEffect::new(argument_count as u32 + 1, 1)
-            }
+            Self::Call(argument_count)
+            | Self::DirectEval(argument_count)
+            | Self::Construct(argument_count) => StackEffect::new(argument_count as u32 + 1, 1),
             Self::CallWithThis(argument_count) => {
                 StackEffect::with_required(argument_count as u32 + 2, argument_count as u32 + 2, 1)
             }

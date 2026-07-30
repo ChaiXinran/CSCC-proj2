@@ -49,8 +49,17 @@ pub struct Compiler;
 #[derive(Debug, Default)]
 struct CompileContext {
     loops: Vec<LoopContext>,
+    pending_loop_labels: Vec<String>,
     breakables: Vec<BreakContext>,
     lexical_scopes: Vec<HashSet<String>>,
+    /// Script/eval chunks keep one completion value at the bottom of the
+    /// operand stack. Function bodies leave this false because their result is
+    /// controlled by explicit return.
+    has_completion_slot: bool,
+    /// Whether expression statements currently update the completion slot.
+    /// Normal finally clauses temporarily disable updates while retaining the
+    /// underlying stack slot.
+    tracks_completion: bool,
     environment_depth: u32,
     with_depth: u32,
     /// Number of enclosing function bodies; 0 = top-level script.
@@ -59,6 +68,10 @@ struct CompileContext {
 
 #[derive(Debug)]
 struct LoopContext {
+    labels: Vec<String>,
+    /// Hidden iterator binding for a for-of loop. Used to close intervening
+    /// iterators when a labelled continue targets an outer loop.
+    iterator_binding: Option<u16>,
     /// `Some` for loops whose continue target is already emitted (e.g. `while`,
     /// which continues to the test). `None` for `for` loops, where `continue`
     /// must reach the not-yet-emitted update clause via `continue_jumps`.
@@ -112,6 +125,13 @@ impl Compiler {
         let mut chunk = Chunk::default();
         let mut context = CompileContext::default();
         let completion_expression = completion_expression_index(&program.body);
+        // Keep the compact legacy lowering when a top-level expression already
+        // determines the result. The stack slot is only needed to carry a
+        // completion out of nested control flow.
+        let tracks_completion = !program.body.is_empty()
+            && completion_expression.is_none()
+            && statements_need_stack_completion(&program.body)
+            && statements_support_stack_completion(&program.body);
         let lexical_scope = self.predeclare_lexical_bindings(&program.body, &mut chunk)?;
         context.lexical_scopes.push(lexical_scope);
 
@@ -182,6 +202,17 @@ impl Compiler {
             }
         }
 
+        if tracks_completion {
+            // Script/eval completion records are represented by one value at
+            // the bottom of the operand stack. Every statement preserves it.
+            let undefined = chunk
+                .add_constant(Constant::Undefined)
+                .map_err(CompileError::from_chunk)?;
+            chunk.emit(Instruction::Constant(undefined));
+            context.has_completion_slot = true;
+            context.tracks_completion = true;
+        }
+
         for (index, statement) in program.body.iter().enumerate() {
             if matches!(statement, Statement::FunctionDeclaration { .. }) {
                 continue;
@@ -190,12 +221,11 @@ impl Compiler {
                 statement,
                 &mut chunk,
                 &mut context,
-                Some(index) == completion_expression,
+                !tracks_completion && Some(index) == completion_expression,
             )?;
         }
         context.lexical_scopes.pop();
-
-        chunk.emit(if completion_expression.is_some() {
+        chunk.emit(if tracks_completion || completion_expression.is_some() {
             Instruction::Return
         } else {
             Instruction::ReturnUndefined
@@ -211,11 +241,17 @@ impl Compiler {
         context: &mut CompileContext,
         preserve_expression_value: bool,
     ) -> Result<(), CompileError> {
+        if statement_resets_completion(statement) {
+            self.reset_completion_value(chunk, context)?;
+        }
         match statement {
             Statement::Empty => Ok(()),
             Statement::Expression(expression) => {
                 self.compile_expression(expression, chunk, context)?;
-                if !preserve_expression_value {
+                if context.tracks_completion {
+                    chunk.emit(Instruction::Swap);
+                    chunk.emit(Instruction::Pop);
+                } else if !preserve_expression_value {
                     chunk.emit(Instruction::Pop);
                 }
                 Ok(())
@@ -272,7 +308,7 @@ impl Compiler {
                 self.compile_for_in(left, right, body, chunk, context)
             }
             Statement::Break(label) => self.compile_break(label.as_deref(), chunk, context),
-            Statement::Continue(_) => self.compile_continue(chunk, context),
+            Statement::Continue(label) => self.compile_continue(label.as_deref(), chunk, context),
             Statement::Throw(expression) => {
                 self.compile_expression(expression, chunk, context)?;
                 chunk.emit(Instruction::Throw);
@@ -347,6 +383,23 @@ impl Compiler {
                 result
             }
         }
+    }
+
+    fn reset_completion_value(
+        &mut self,
+        chunk: &mut Chunk,
+        context: &CompileContext,
+    ) -> Result<(), CompileError> {
+        if !context.tracks_completion {
+            return Ok(());
+        }
+        let undefined = chunk
+            .add_constant(Constant::Undefined)
+            .map_err(CompileError::from_chunk)?;
+        chunk.emit(Instruction::Constant(undefined));
+        chunk.emit(Instruction::Swap);
+        chunk.emit(Instruction::Pop);
+        Ok(())
     }
 
     fn compile_block(
@@ -553,6 +606,7 @@ impl Compiler {
             let catch_target = chunk.current_offset();
             chunk.emit(Instruction::CreateLexicalEnvironment);
             context.environment_depth += 1;
+            self.reset_completion_value(chunk, context)?;
 
             let names = lexical_names(&handler.body);
             let mut scope = self.predeclare_names(&names, &handler.body, chunk)?;
@@ -594,7 +648,7 @@ impl Compiler {
                     end: protected_end,
                     target: catch_target,
                     kind: HandlerKind::Catch,
-                    stack_depth: 0,
+                    stack_depth: u32::from(context.has_completion_slot),
                     environment_depth: handler_environment_depth,
                 });
             }
@@ -611,7 +665,10 @@ impl Compiler {
                     .map_err(CompileError::from_chunk)?;
             }
 
-            self.compile_block(finalizer, chunk, context)?;
+            let tracks_completion = std::mem::replace(&mut context.tracks_completion, false);
+            let finalizer_result = self.compile_block(finalizer, chunk, context);
+            context.tracks_completion = tracks_completion;
+            finalizer_result?;
             chunk.emit(Instruction::EndFinally);
 
             if protected_start < finally_target {
@@ -620,7 +677,7 @@ impl Compiler {
                     end: finally_target,
                     target: finally_target,
                     kind: HandlerKind::Finally,
-                    stack_depth: 0,
+                    stack_depth: u32::from(context.has_completion_slot),
                     environment_depth: handler_environment_depth,
                 });
             }
@@ -798,7 +855,10 @@ impl Compiler {
         let exit_jump = chunk.emit(Instruction::JumpIfFalse(usize::MAX));
         chunk.emit(Instruction::Pop);
 
+        let loop_labels = std::mem::take(&mut context.pending_loop_labels);
         context.loops.push(LoopContext {
+            labels: loop_labels.clone(),
+            iterator_binding: None,
             continue_target: Some(loop_start),
             continue_jumps: Vec::new(),
             environment_depth: context.environment_depth,
@@ -811,6 +871,7 @@ impl Compiler {
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
             context.loops.pop();
             context.breakables.pop();
+            context.pending_loop_labels = loop_labels;
             return Err(error);
         }
         chunk.emit(Instruction::Jump(loop_start));
@@ -835,6 +896,7 @@ impl Compiler {
                 .patch_jump(jump, loop_end)
                 .map_err(CompileError::from_chunk)?;
         }
+        context.pending_loop_labels = loop_labels;
         Ok(())
     }
 
@@ -847,7 +909,10 @@ impl Compiler {
     ) -> Result<(), CompileError> {
         let loop_start = chunk.current_offset();
 
+        let loop_labels = std::mem::take(&mut context.pending_loop_labels);
         context.loops.push(LoopContext {
+            labels: loop_labels.clone(),
+            iterator_binding: None,
             continue_target: None, // patched after body
             continue_jumps: Vec::new(),
             environment_depth: context.environment_depth,
@@ -861,6 +926,7 @@ impl Compiler {
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
             context.loops.pop();
             context.breakables.pop();
+            context.pending_loop_labels = loop_labels;
             return Err(error);
         }
 
@@ -896,6 +962,7 @@ impl Compiler {
                 .patch_jump(jump, loop_end)
                 .map_err(CompileError::from_chunk)?;
         }
+        context.pending_loop_labels = loop_labels;
         Ok(())
     }
 
@@ -945,6 +1012,10 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        let labels_iteration = is_iteration_statement(body);
+        if labels_iteration {
+            context.pending_loop_labels.push(label.to_owned());
+        }
         // Push a breakable context for the label so `break <label>` can target it.
         context.breakables.push(BreakContext {
             break_jumps: Vec::new(),
@@ -953,6 +1024,13 @@ impl Compiler {
         });
         let compile_result = self.compile_statement(body, chunk, context, false);
         let labeled_ctx = context.breakables.pop().expect("labeled break context");
+        if labels_iteration {
+            let pending = context
+                .pending_loop_labels
+                .pop()
+                .expect("labelled iteration must restore its pending label");
+            debug_assert_eq!(pending, label);
+        }
         compile_result?;
         let end_offset = chunk.current_offset();
         for jump in labeled_ctx.break_jumps {
@@ -965,16 +1043,50 @@ impl Compiler {
 
     fn compile_continue(
         &mut self,
+        label: Option<&str>,
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
-        let loop_context = context
-            .loops
-            .last()
-            .ok_or_else(|| CompileError::unsupported("continue statement outside of a loop"))?;
-        let target_depth = loop_context.environment_depth;
-        let continue_target = loop_context.continue_target;
-        for _ in target_depth..context.environment_depth {
+        let loop_index =
+            match label {
+                Some(label) => context
+                    .loops
+                    .iter()
+                    .rposition(|loop_context| {
+                        loop_context
+                            .labels
+                            .iter()
+                            .any(|candidate| candidate == label)
+                    })
+                    .ok_or_else(|| {
+                        CompileError::unsupported("continue label does not name an enclosing loop")
+                    })?,
+                None => context.loops.len().checked_sub(1).ok_or_else(|| {
+                    CompileError::unsupported("continue statement outside of a loop")
+                })?,
+            };
+        let target_depth = context.loops[loop_index].environment_depth;
+        let continue_target = context.loops[loop_index].continue_target;
+        let intervening_iterators: Vec<(u16, u32)> = context.loops[loop_index + 1..]
+            .iter()
+            .rev()
+            .filter_map(|loop_context| {
+                loop_context
+                    .iterator_binding
+                    .map(|binding| (binding, loop_context.environment_depth))
+            })
+            .collect();
+        let mut current_depth = context.environment_depth;
+        for (iterator_binding, iterator_environment_depth) in intervening_iterators {
+            chunk.emit(Instruction::LoadName(iterator_binding));
+            chunk.emit(Instruction::IteratorClose);
+            let unwind_to = iterator_environment_depth.saturating_sub(1);
+            for _ in unwind_to..current_depth {
+                chunk.emit(Instruction::PopEnvironment);
+            }
+            current_depth = unwind_to;
+        }
+        for _ in target_depth..current_depth {
             chunk.emit(Instruction::PopEnvironment);
         }
         match continue_target {
@@ -985,7 +1097,7 @@ impl Compiler {
                 let jump = chunk.emit(Instruction::Jump(usize::MAX));
                 context
                     .loops
-                    .last_mut()
+                    .get_mut(loop_index)
                     .expect("loop context exists")
                     .continue_jumps
                     .push(jump);
@@ -1073,7 +1185,14 @@ impl Compiler {
                     }
                 }
             }
-            Some(other) => self.compile_statement(other, chunk, context, false)?,
+            Some(other) => {
+                // The init expression is evaluated for side effects; it is not
+                // the completion value of the surrounding for statement.
+                let tracks_completion = std::mem::replace(&mut context.tracks_completion, false);
+                let result = self.compile_statement(other, chunk, context, false);
+                context.tracks_completion = tracks_completion;
+                result?;
+            }
             None => {}
         }
 
@@ -1129,7 +1248,10 @@ impl Compiler {
             context.environment_depth
         };
 
+        let loop_labels = std::mem::take(&mut context.pending_loop_labels);
         context.loops.push(LoopContext {
+            labels: loop_labels.clone(),
+            iterator_binding: None,
             continue_target: None,
             continue_jumps: Vec::new(),
             environment_depth: continue_environment_depth,
@@ -1143,6 +1265,7 @@ impl Compiler {
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
             context.loops.pop();
             context.breakables.pop();
+            context.pending_loop_labels = loop_labels;
             return Err(error);
         }
 
@@ -1201,6 +1324,7 @@ impl Compiler {
             chunk.emit(Instruction::PopEnvironment);
             context.environment_depth -= 1;
         }
+        context.pending_loop_labels = loop_labels;
         Ok(())
     }
 
@@ -1332,7 +1456,10 @@ impl Compiler {
         } else {
             context.environment_depth
         };
+        let loop_labels = std::mem::take(&mut context.pending_loop_labels);
         context.loops.push(LoopContext {
+            labels: loop_labels.clone(),
+            iterator_binding: None,
             continue_target: None,
             continue_jumps: Vec::new(),
             environment_depth: outer_environment_depth,
@@ -1346,6 +1473,7 @@ impl Compiler {
         if let Err(error) = self.compile_statement(body, chunk, context, false) {
             context.loops.pop();
             context.breakables.pop();
+            context.pending_loop_labels = loop_labels;
             return Err(error);
         }
 
@@ -1397,6 +1525,7 @@ impl Compiler {
         context.lexical_scopes.pop();
         chunk.emit(Instruction::PopEnvironment);
         context.environment_depth -= 1;
+        context.pending_loop_labels = loop_labels;
         Ok(())
     }
 
@@ -1655,8 +1784,11 @@ impl Compiler {
         let mut fn_chunk = Chunk::default();
         let mut fn_context = CompileContext {
             loops: Vec::new(),
+            pending_loop_labels: Vec::new(),
             breakables: Vec::new(),
             lexical_scopes: Vec::new(),
+            has_completion_slot: false,
+            tracks_completion: false,
             environment_depth: 0,
             with_depth: 0,
             function_depth: outer_context.function_depth + 1,
@@ -2691,7 +2823,7 @@ impl Compiler {
                 end: protected_end,
                 target: finally_target,
                 kind: HandlerKind::Finally,
-                stack_depth: 0,
+                stack_depth: u32::from(context.has_completion_slot),
                 environment_depth: handler_environment_depth,
             });
         }
@@ -3490,6 +3622,7 @@ impl Compiler {
             return Ok(());
         }
 
+        let is_direct_eval = matches!(callee, Expression::Identifier(name) if name == "eval");
         self.compile_expression(callee, chunk, context)?;
         if has_spread {
             self.compile_argument_list_array(arguments, chunk, context)?;
@@ -3505,7 +3638,11 @@ impl Compiler {
                 };
                 self.compile_expression(e, chunk, context)?;
             }
-            chunk.emit(Instruction::Call(argument_count));
+            chunk.emit(if is_direct_eval {
+                Instruction::DirectEval(argument_count)
+            } else {
+                Instruction::Call(argument_count)
+            });
         }
         Ok(())
     }
@@ -4587,6 +4724,17 @@ impl Compiler {
                         chunk.emit(Instruction::SetFunctionHomeObject);
                         chunk.emit(Instruction::Swap); // [ctor, fn, ctor]
                         chunk.emit(Instruction::CallWithThis(0)); // [ctor, value]
+                        if initializer
+                            .as_deref()
+                            .is_some_and(is_anonymous_function_definition)
+                        {
+                            let inferred_name = match prop_name {
+                                crate::ast::PropertyName::PrivateName(name) => format!("#{name}"),
+                                _ => prop_name.to_key_string(),
+                            };
+                            let name_idx = self.add_name(&inferred_name, chunk)?;
+                            chunk.emit(Instruction::SetFunctionName(name_idx));
+                        }
                         let (key, private) = match prop_name {
                             crate::ast::PropertyName::PrivateName(name) => {
                                 (format!("\0#init#{name}"), true)
@@ -5088,15 +5236,22 @@ impl Compiler {
                         VariableKind::Const => {
                             // Const bindings are created per-iteration; nothing to do here.
                         }
-                        _ => {
-                            // Let / var: create AND pre-initialize to undefined so
-                            // subsequent StoreName calls work without "already initialized" errors.
+                        VariableKind::Let => {
+                            // Let bindings live in the loop's lexical environment and
+                            // are reassigned on each iteration.
                             chunk.emit(Instruction::CreateMutableBinding(idx));
                             chunk.emit(Instruction::Constant(undefined_idx));
                             chunk.emit(Instruction::InitializeBinding(idx));
                         }
+                        VariableKind::Var => {
+                            // Var bindings were hoisted by declaration instantiation.
+                            // Creating another binding here breaks duplicate var
+                            // patterns and incorrectly hides the outer var binding.
+                        }
                     }
-                    scope.insert(name.clone());
+                    if *kind != VariableKind::Var {
+                        scope.insert(name.clone());
+                    }
                 }
             }
             crate::ast::ForBinding::Target(_) => {}
@@ -5130,6 +5285,7 @@ impl Compiler {
         // contexts are anchored here so that `continue` and `break` unwind the
         // per-iteration scope (if any) before jumping to their targets.
         let outer_env_depth = context.environment_depth;
+        let iteration_protected_start = chunk.current_offset();
 
         // Assign the iteration value to the loop variable.
         // For let/var, the binding was pre-initialized before the loop; use StoreName
@@ -5158,23 +5314,15 @@ impl Compiler {
                     }
                 }
             }
-            crate::ast::ForBinding::Target(target) => match target {
-                Expression::Identifier(name) => {
-                    self.emit_store_identifier(name, chunk, context)?;
-                    chunk.emit(Instruction::Pop);
-                }
-                Expression::Array(_) | Expression::Object(_) => {
-                    self.compile_destructuring_assignment_target(target, chunk, context)?;
-                }
-                _ => {
-                    return Err(CompileError::unsupported(
-                        "for-of target must be a simple identifier, array, or object pattern",
-                    ));
-                }
-            },
+            crate::ast::ForBinding::Target(target) => {
+                self.assign_dstr_element_to_target(target, chunk, context)?;
+            }
         }
 
+        let loop_labels = std::mem::take(&mut context.pending_loop_labels);
         context.loops.push(LoopContext {
+            labels: loop_labels.clone(),
+            iterator_binding: Some(iter_idx),
             continue_target: Some(loop_start),
             continue_jumps: Vec::new(),
             environment_depth: outer_env_depth,
@@ -5188,7 +5336,35 @@ impl Compiler {
         if let Err(e) = self.compile_statement(body, chunk, context, false) {
             context.loops.pop();
             context.breakables.pop();
+            context.pending_loop_labels = loop_labels;
             return Err(e);
+        }
+
+        // Abrupt completion while assigning the iteration value or executing
+        // the body must close the iterator. The VM's finally handlers preserve
+        // throw/return completions, while direct break/continue jumps retain
+        // their existing dedicated control-flow paths.
+        if !is_const {
+            let iteration_protected_end = chunk.current_offset();
+            let normal_iteration_exit = chunk.emit(Instruction::Jump(usize::MAX));
+            let iterator_close_target = chunk.current_offset();
+            chunk.emit(Instruction::LoadName(iter_idx));
+            chunk.emit(Instruction::IteratorClose);
+            chunk.emit(Instruction::EndFinally);
+            let after_iterator_close = chunk.current_offset();
+            chunk
+                .patch_jump(normal_iteration_exit, after_iterator_close)
+                .map_err(CompileError::from_chunk)?;
+            if iteration_protected_start < iteration_protected_end {
+                chunk.handlers.push(ExceptionHandler {
+                    start: iteration_protected_start,
+                    end: iteration_protected_end,
+                    target: iterator_close_target,
+                    kind: HandlerKind::Finally,
+                    stack_depth: u32::from(context.has_completion_slot),
+                    environment_depth: outer_env_depth,
+                });
+            }
         }
 
         // For const, pop the per-iteration scope before jumping back to the loop
@@ -5237,43 +5413,26 @@ impl Compiler {
         context.lexical_scopes.pop();
         context.environment_depth -= 1;
         chunk.emit(Instruction::PopEnvironment);
+        context.pending_loop_labels = loop_labels;
         Ok(())
-    }
-
-    /// Emits a destructuring ASSIGNMENT (not declaration) for Array/Object expression targets.
-    ///
-    /// Used by `for ([a, b] of xs)` where `a` and `b` are existing variables.
-    /// TOS is consumed; each target variable receives its element.
-    fn compile_destructuring_assignment_target(
-        &mut self,
-        target: &Expression,
-        chunk: &mut Chunk,
-        context: &mut CompileContext,
-    ) -> Result<(), CompileError> {
-        match target {
-            Expression::Array(elements) => {
-                // Delegate to the full iterator-protocol array destructuring assignment,
-                // which handles holes, defaults, and rest spread.  It leaves the rhs on
-                // the stack (assignment-expression result), so we pop it here.
-                self.compile_array_destructuring_assignment(elements, chunk, context)?;
-                chunk.emit(Instruction::Pop);
-                Ok(())
-            }
-            Expression::Object(props) => {
-                self.compile_object_destructuring_assignment(props, chunk, context)?;
-                chunk.emit(Instruction::Pop);
-                Ok(())
-            }
-            _ => Err(CompileError::unsupported(
-                "destructuring assignment target must be array or object expression",
-            )),
-        }
     }
 }
 
 fn parse_bigint_literal(raw: &str) -> Result<crate::runtime::BigIntValue, CompileError> {
     crate::runtime::bigint::parse_bigint_literal(raw)
         .map_err(|_| CompileError::unsupported(format_args!("invalid BigInt literal `{raw}`")))
+}
+
+fn is_iteration_statement(statement: &Statement) -> bool {
+    match statement {
+        Statement::While { .. }
+        | Statement::DoWhile { .. }
+        | Statement::For { .. }
+        | Statement::ForIn { .. }
+        | Statement::ForOf { .. } => true,
+        Statement::Labelled { body, .. } => is_iteration_statement(body),
+        _ => false,
+    }
 }
 
 /// Intermediate result returned from `compile_function_body`.
@@ -6114,6 +6273,83 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
     }
     // Recurse into sub-statements via the shared walker.
     for_each_sub_statement(stmt, &mut |sub| collect_var_names_in(sub, names));
+}
+
+/// The operand-stack completion slot cannot cross an explicit `throw` or a
+/// user-authored try handler because terminator validation and handler entry
+/// use the chunk's zero-based stack contract. Those programs retain the older
+/// top-level completion path until completion records become a shared VM type.
+fn statements_support_stack_completion(statements: &[Statement]) -> bool {
+    statements.iter().all(statement_supports_stack_completion)
+}
+
+fn statements_need_stack_completion(statements: &[Statement]) -> bool {
+    statements.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::Block(_)
+                | Statement::If { .. }
+                | Statement::While { .. }
+                | Statement::DoWhile { .. }
+                | Statement::For { .. }
+                | Statement::ForIn { .. }
+                | Statement::ForOf { .. }
+                | Statement::Labelled { .. }
+                | Statement::Switch { .. }
+                | Statement::With { .. }
+        )
+    })
+}
+
+fn statement_resets_completion(statement: &Statement) -> bool {
+    matches!(
+        statement,
+        Statement::If { .. }
+            | Statement::While { .. }
+            | Statement::DoWhile { .. }
+            | Statement::For { .. }
+            | Statement::ForIn { .. }
+            | Statement::ForOf { .. }
+            | Statement::Labelled { .. }
+            | Statement::Try { .. }
+            | Statement::Switch { .. }
+            | Statement::With { .. }
+    )
+}
+
+fn statement_supports_stack_completion(statement: &Statement) -> bool {
+    match statement {
+        Statement::Throw(_) | Statement::Try { .. } => false,
+        Statement::FunctionDeclaration { .. } | Statement::ClassDeclaration(_) => false,
+        Statement::Block(statements) => statements_support_stack_completion(statements),
+        Statement::If {
+            consequent,
+            alternate,
+            ..
+        } => {
+            statement_supports_stack_completion(consequent)
+                && alternate
+                    .as_deref()
+                    .is_none_or(statement_supports_stack_completion)
+        }
+        Statement::While { body, .. }
+        | Statement::DoWhile { body, .. }
+        | Statement::For { body, .. }
+        | Statement::ForIn { body, .. }
+        | Statement::ForOf { body, .. }
+        | Statement::Labelled { body, .. }
+        | Statement::With { body, .. } => statement_supports_stack_completion(body),
+        Statement::Switch { cases, .. } => cases
+            .iter()
+            .all(|case| statements_support_stack_completion(&case.consequent)),
+        Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) => declaration
+            .declaration
+            .as_deref()
+            .is_none_or(statement_supports_stack_completion),
+        // Function/class bodies execute in their own chunks and therefore do
+        // not constrain the surrounding script's completion representation.
+        _ => true,
+    }
 }
 
 fn completion_expression_index(statements: &[Statement]) -> Option<usize> {

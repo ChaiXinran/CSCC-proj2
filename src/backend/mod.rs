@@ -366,7 +366,15 @@ impl RuntimeBackend for NativeRuntime {
         }
         Ok(BackendExecution {
             value: value.to_string(),
-            output: self.context.take_output(),
+            // Async Test262 callers drain the job queue after evaluation and
+            // then inspect the runtime output.  Keep output resident until
+            // that explicit drain/check boundary instead of consuming an
+            // already-observed synchronous `$DONE` here.
+            output: if options.drain_jobs {
+                self.context.take_output()
+            } else {
+                Vec::new()
+            },
         })
     }
 
@@ -450,7 +458,14 @@ impl RuntimeBackend for NativeRuntime {
                     .set_evaluation_state(module_id, ModuleEvaluationState::Fulfilled);
                 Ok(BackendExecution {
                     value: value.to_string(),
-                    output: self.context.take_output(),
+                    // Top-level await is currently driven through the same
+                    // explicit job-drain boundary as other async evaluation.
+                    // Preserve completion output until that boundary.
+                    output: if drain_jobs {
+                        self.context.take_output()
+                    } else {
+                        Vec::new()
+                    },
                 })
             }
             Err(error) => {
