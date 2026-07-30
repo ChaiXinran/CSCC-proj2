@@ -37,10 +37,13 @@ impl Parser {
             // `let [` always starts a destructuring declaration regardless.
             TokenKind::Keyword(Keyword::Let)
                 if !self.is_strict
-                    && self
-                        .tokens
-                        .get(self.cursor + 1)
-                        .is_some_and(|t| t.line_terminator_before)
+                    && self.tokens.get(self.cursor + 1).is_some_and(|token| {
+                        token.line_terminator_before
+                            || matches!(
+                                token.kind,
+                                TokenKind::Operator(_) | TokenKind::Punctuator('.')
+                            )
+                    })
                     // If the next token is `await` in an async context or `yield`
                     // in a generator/strict context, ASI does not apply — the
                     // parser must attempt a let-binding (which will fail), producing
@@ -55,7 +58,7 @@ impl Parser {
                     ) && (self.is_strict || self.is_generator_context))
                     && !matches!(
                         self.tokens.get(self.cursor + 1).map(|t| &t.kind),
-                        Some(TokenKind::Punctuator('['))
+                        Some(TokenKind::Punctuator('[') | TokenKind::Keyword(Keyword::Let))
                     ) =>
             {
                 self.parse_expression_statement()
@@ -235,6 +238,7 @@ impl Parser {
         self.is_generator_context = is_generator;
         let name = self.expect_identifier()?;
         let params = self.parse_param_list()?;
+        Self::check_async_params_no_await(&params)?;
         if is_generator {
             Self::check_generator_params_no_yield(&params)?;
         }
@@ -407,6 +411,16 @@ impl Parser {
             return Err(ParseError {
                 span: crate::lexer::Span { start: 0, end: 0 },
                 message: "`yield` is not allowed in generator parameter initializers".into(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(super) fn check_async_params_no_await(params: &[FunctionParam]) -> Result<(), ParseError> {
+        if params.iter().any(function_param_contains_await) {
+            return Err(ParseError {
+                span: crate::lexer::Span { start: 0, end: 0 },
+                message: "`await` is not allowed in async function parameter initializers".into(),
             });
         }
         Ok(())
@@ -930,7 +944,14 @@ impl Parser {
 
         let mut declarations = Vec::new();
         loop {
-            let name = self.expect_identifier()?;
+            let name =
+                if kind == VariableKind::Var && !self.is_strict && self.check_keyword(Keyword::Let)
+                {
+                    self.advance();
+                    "let".into()
+                } else {
+                    self.expect_identifier()?
+                };
             let initializer = if self.eat_operator("=") {
                 Some(self.parse_assignment()?)
             } else {
@@ -1131,6 +1152,24 @@ impl Parser {
                     PropertyName::String(raw.strip_suffix('n').unwrap_or(&raw).to_owned()),
                     None,
                     false,
+                ))
+            }
+            TokenKind::Keyword(Keyword::Await)
+                if !self.is_async_context && !self.in_class_static_block =>
+            {
+                self.advance();
+                Ok((
+                    PropertyName::Identifier("await".into()),
+                    Some("await".into()),
+                    had_escape,
+                ))
+            }
+            TokenKind::Keyword(Keyword::Yield) if !self.is_strict && !self.is_generator_context => {
+                self.advance();
+                Ok((
+                    PropertyName::Identifier("yield".into()),
+                    Some("yield".into()),
+                    had_escape,
                 ))
             }
             TokenKind::Keyword(kw) => {
@@ -1410,9 +1449,26 @@ impl Parser {
             return self.parse_for_classic_rest(None);
         }
 
+        // In sloppy code, `let` is an IdentifierReference when the following
+        // token makes a lexical declaration impossible. Preserve the `let [`
+        // lookahead restriction so destructuring declarations remain
+        // unambiguous.
+        let sloppy_let_expression_head = !self.is_strict
+            && self.check_keyword(Keyword::Let)
+            && matches!(
+                self.tokens.get(self.cursor + 1).map(|token| &token.kind),
+                Some(
+                    TokenKind::Punctuator(';')
+                        | TokenKind::Punctuator('.')
+                        | TokenKind::Operator(_)
+                        | TokenKind::Keyword(Keyword::In)
+                )
+            );
+
         // Declaration head: `var`/`let`/`const`.
-        if let TokenKind::Keyword(keyword @ (Keyword::Var | Keyword::Let | Keyword::Const)) =
-            self.peek().kind
+        if !sloppy_let_expression_head
+            && let TokenKind::Keyword(keyword @ (Keyword::Var | Keyword::Let | Keyword::Const)) =
+                self.peek().kind
         {
             let kind = match keyword {
                 Keyword::Var => VariableKind::Var,
@@ -1472,7 +1528,14 @@ impl Parser {
                 return self.parse_for_classic_rest(Some(Box::new(decl)));
             }
 
-            let name = self.expect_identifier()?;
+            let name =
+                if kind == VariableKind::Var && !self.is_strict && self.check_keyword(Keyword::Let)
+                {
+                    self.advance();
+                    "let".into()
+                } else {
+                    self.expect_identifier()?
+                };
 
             if self.check_keyword(Keyword::In) {
                 self.advance(); // `in`
@@ -1571,8 +1634,38 @@ impl Parser {
         // default initializers may contain `in`.
         let expression_starts_with_destructuring =
             self.check_punctuator('[') || self.check_punctuator('{');
+        let array_target_continues_as_member = self.check_punctuator('[') && {
+            let mut depth = 0usize;
+            let mut closing = None;
+            for (index, token) in self.tokens[self.cursor..].iter().enumerate() {
+                match token.kind {
+                    TokenKind::Punctuator('[') => depth += 1,
+                    TokenKind::Punctuator(']') => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            closing = Some(self.cursor + index);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            closing.is_some_and(|index| {
+                matches!(
+                    self.tokens.get(index + 1).map(|token| &token.kind),
+                    Some(TokenKind::Punctuator('[' | '.'))
+                )
+            })
+        };
         let expression = if expression_starts_with_destructuring {
-            self.allowing_in(|p| p.parse_expression())?
+            if array_target_continues_as_member {
+                self.no_in = true;
+                let expression = self.parse_expression();
+                self.no_in = false;
+                expression?
+            } else {
+                self.allowing_in(|p| p.parse_expression())?
+            }
         } else {
             self.no_in = true;
             let expression = self.parse_expression();
@@ -1600,7 +1693,17 @@ impl Parser {
 
         // V9-A: `for (expr of right)` �?also accepts Array/Object destructuring targets.
         if self.check_contextual_of() {
-            if matches!(&expression, Expression::Identifier(name) if name == "async") {
+            // The grammar lookahead only rejects the exact, unescaped token
+            // sequence `for (async of ...)`. Parenthesized/escaped identifiers
+            // are allowed, as is `async` in a `for await (... of ...)` head.
+            let is_bare_unescaped_async = self.cursor > 0
+                && matches!(
+                    self.tokens.get(self.cursor - 1),
+                    Some(token)
+                        if !token.has_identifier_escape
+                            && matches!(&token.kind, TokenKind::Identifier(name) if name == "async")
+                );
+            if !is_await && is_bare_unescaped_async {
                 return Err(
                     self.error("`async` cannot be the left-hand side of a for-of statement".into())
                 );
@@ -1920,7 +2023,7 @@ impl Parser {
             return Err(self.error("`with` statements are not allowed in strict mode".into()));
         }
         self.expect_punctuator('(')?;
-        let object = self.allowing_in(|p| p.parse_assignment())?;
+        let object = self.allowing_in(|p| p.parse_expression())?;
         self.expect_punctuator(')')?;
         let body = self.parse_statement()?;
         if matches!(
@@ -1928,6 +2031,10 @@ impl Parser {
             Statement::FunctionDeclaration { .. }
                 | Statement::ClassDeclaration(_)
                 | Statement::VariableDeclaration {
+                    kind: VariableKind::Let | VariableKind::Const,
+                    ..
+                }
+                | Statement::DestructuringDeclaration {
                     kind: VariableKind::Let | VariableKind::Const,
                     ..
                 }
@@ -2337,12 +2444,92 @@ fn module_item_contains_forbidden_meta(statement: &Statement) -> bool {
     }
 }
 
-fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
-    match expr {
-        Expression::Super | Expression::NewTarget => true,
-        Expression::Unary { argument, .. } | Expression::Update { argument, .. } => {
-            expr_contains_forbidden_meta(argument)
+fn function_param_contains_yield(param: &FunctionParam) -> bool {
+    function_param_contains(param, ExpressionFeature::Yield)
+}
+
+fn function_param_contains_await(param: &FunctionParam) -> bool {
+    function_param_contains(param, ExpressionFeature::Await)
+}
+
+#[derive(Clone, Copy)]
+enum ExpressionFeature {
+    Await,
+    Yield,
+    ForbiddenFunctionMeta,
+}
+
+impl ExpressionFeature {
+    fn matches(self, expression: &Expression) -> bool {
+        match self {
+            Self::Await => matches!(expression, Expression::Await(_)),
+            Self::Yield => matches!(expression, Expression::Yield { .. }),
+            Self::ForbiddenFunctionMeta => {
+                matches!(expression, Expression::Super | Expression::NewTarget)
+            }
         }
+    }
+}
+
+fn function_param_contains(param: &FunctionParam, feature: ExpressionFeature) -> bool {
+    match param {
+        FunctionParam::Default(_, expression) => expression_contains(expression, feature),
+        FunctionParam::Pattern(pattern, default) => {
+            binding_pattern_contains(pattern, feature)
+                || default
+                    .as_deref()
+                    .is_some_and(|expression| expression_contains(expression, feature))
+        }
+        FunctionParam::RestPattern(pattern) => binding_pattern_contains(pattern, feature),
+        FunctionParam::Simple(_) | FunctionParam::Rest(_) => false,
+    }
+}
+
+fn binding_pattern_contains(pattern: &BindingPattern, feature: ExpressionFeature) -> bool {
+    match pattern {
+        BindingPattern::Identifier(_) => false,
+        BindingPattern::Array { elements, rest } => {
+            elements.iter().flatten().any(|element| {
+                binding_pattern_contains(&element.pattern, feature)
+                    || element
+                        .default
+                        .as_deref()
+                        .is_some_and(|expression| expression_contains(expression, feature))
+            }) || rest
+                .as_deref()
+                .is_some_and(|pattern| binding_pattern_contains(pattern, feature))
+        }
+        BindingPattern::Object { props, rest } => {
+            props.iter().any(|prop| {
+                matches!(&prop.key, ObjectBindingKey::Computed(expression) if expression_contains(expression, feature))
+                    || binding_pattern_contains(&prop.value, feature)
+                    || prop
+                        .default
+                        .as_deref()
+                        .is_some_and(|expression| expression_contains(expression, feature))
+            }) || rest
+                .as_deref()
+                .is_some_and(|pattern| binding_pattern_contains(pattern, feature))
+        }
+    }
+}
+
+fn expr_contains_forbidden_meta(expression: &Expression) -> bool {
+    expression_contains(expression, ExpressionFeature::ForbiddenFunctionMeta)
+}
+
+fn expression_contains(expression: &Expression, feature: ExpressionFeature) -> bool {
+    if feature.matches(expression) {
+        return true;
+    }
+    match expression {
+        Expression::Unary { argument, .. }
+        | Expression::Update { argument, .. }
+        | Expression::Spread(argument)
+        | Expression::Await(argument) => expression_contains(argument, feature),
+        Expression::Yield { argument, .. } => argument
+            .as_deref()
+            .is_some_and(|expression| expression_contains(expression, feature)),
         Expression::Binary { left, right, .. }
         | Expression::Logical { left, right, .. }
         | Expression::Assignment {
@@ -2358,180 +2545,69 @@ fn expr_contains_forbidden_meta(expr: &Expression) -> bool {
             object: left,
             property: right,
             ..
-        } => expr_contains_forbidden_meta(left) || expr_contains_forbidden_meta(right),
+        } => expression_contains(left, feature) || expression_contains(right, feature),
         Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
-            expr_contains_forbidden_meta(callee)
-                || arguments.iter().any(call_arg_contains_forbidden_meta)
+            expression_contains(callee, feature)
+                || arguments
+                    .iter()
+                    .any(|argument| call_arg_contains(argument, feature))
         }
         Expression::Conditional {
             test,
             consequent,
             alternate,
         } => {
-            expr_contains_forbidden_meta(test)
-                || expr_contains_forbidden_meta(consequent)
-                || expr_contains_forbidden_meta(alternate)
+            expression_contains(test, feature)
+                || expression_contains(consequent, feature)
+                || expression_contains(alternate, feature)
         }
         Expression::Array(elements) => elements.iter().any(|element| match element {
-            crate::ast::ArrayElement::Expression(expr) | crate::ast::ArrayElement::Spread(expr) => {
-                expr_contains_forbidden_meta(expr)
+            crate::ast::ArrayElement::Expression(expression)
+            | crate::ast::ArrayElement::Spread(expression) => {
+                expression_contains(expression, feature)
             }
             crate::ast::ArrayElement::Hole => false,
         }),
         Expression::Object(properties) => properties.iter().any(|property| match property {
             ObjectProperty::Data { value, .. } | ObjectProperty::PrototypeSetter { value } => {
-                expr_contains_forbidden_meta(value)
+                expression_contains(value, feature)
             }
             ObjectProperty::ComputedData { key, value } => {
-                expr_contains_forbidden_meta(key) || expr_contains_forbidden_meta(value)
+                expression_contains(key, feature) || expression_contains(value, feature)
             }
-            ObjectProperty::Spread(expr) => expr_contains_forbidden_meta(expr),
+            ObjectProperty::Spread(expression) => expression_contains(expression, feature),
             ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
         }),
         Expression::TemplateLiteral(template) => template
             .expressions
             .iter()
-            .any(expr_contains_forbidden_meta),
+            .any(|expression| expression_contains(expression, feature)),
         Expression::TaggedTemplate { tag, template } => {
-            expr_contains_forbidden_meta(tag)
+            expression_contains(tag, feature)
                 || template
                     .expressions
                     .iter()
-                    .any(expr_contains_forbidden_meta)
+                    .any(|expression| expression_contains(expression, feature))
         }
-        Expression::Parenthesized(inner) => expr_contains_forbidden_meta(inner),
-        Expression::Spread(expr) | Expression::Await(expr) => expr_contains_forbidden_meta(expr),
-        Expression::Yield { argument, .. } => argument
-            .as_deref()
-            .is_some_and(expr_contains_forbidden_meta),
+        Expression::Parenthesized(inner) => expression_contains(inner, feature),
         Expression::DynamicImport { specifier, options } => {
-            expr_contains_forbidden_meta(specifier)
-                || options.as_deref().is_some_and(expr_contains_forbidden_meta)
+            expression_contains(specifier, feature)
+                || options
+                    .as_deref()
+                    .is_some_and(|expression| expression_contains(expression, feature))
         }
-        Expression::Sequence(expressions) => expressions.iter().any(expr_contains_forbidden_meta),
+        Expression::Sequence(expressions) => expressions
+            .iter()
+            .any(|expression| expression_contains(expression, feature)),
         Expression::OptionalChain { base, steps } => {
-            expr_contains_forbidden_meta(base)
+            expression_contains(base, feature)
                 || steps.iter().any(|step| match step {
                     crate::ast::OptionalChainStep::Member { property, .. } => {
-                        expr_contains_forbidden_meta(property)
+                        expression_contains(property, feature)
                     }
-                    crate::ast::OptionalChainStep::Call { arguments, .. } => {
-                        arguments.iter().any(call_arg_contains_forbidden_meta)
-                    }
-                })
-        }
-        Expression::Literal(_)
-        | Expression::Identifier(_)
-        | Expression::Function(_)
-        | Expression::Class(_)
-        | Expression::This
-        | Expression::ImportMeta
-        | Expression::PrivateName(_) => false,
-    }
-}
-
-fn function_param_contains_yield(param: &FunctionParam) -> bool {
-    match param {
-        FunctionParam::Default(_, expr) => expr_contains_yield(expr),
-        FunctionParam::Pattern(pattern, default) => {
-            binding_pattern_contains_yield(pattern)
-                || default.as_deref().is_some_and(expr_contains_yield)
-        }
-        FunctionParam::RestPattern(pattern) => binding_pattern_contains_yield(pattern),
-        FunctionParam::Simple(_) | FunctionParam::Rest(_) => false,
-    }
-}
-
-fn binding_pattern_contains_yield(pattern: &BindingPattern) -> bool {
-    match pattern {
-        BindingPattern::Identifier(_) => false,
-        BindingPattern::Array { elements, rest } => {
-            elements.iter().flatten().any(|element| {
-                binding_pattern_contains_yield(&element.pattern)
-                    || element.default.as_deref().is_some_and(expr_contains_yield)
-            }) || rest.as_deref().is_some_and(binding_pattern_contains_yield)
-        }
-        BindingPattern::Object { props, rest } => {
-            props.iter().any(|prop| {
-                matches!(&prop.key, ObjectBindingKey::Computed(expr) if expr_contains_yield(expr))
-                    || binding_pattern_contains_yield(&prop.value)
-                    || prop.default.as_deref().is_some_and(expr_contains_yield)
-            }) || rest.as_deref().is_some_and(binding_pattern_contains_yield)
-        }
-    }
-}
-
-fn expr_contains_yield(expr: &Expression) -> bool {
-    match expr {
-        Expression::Yield { .. } => true,
-        Expression::Unary { argument, .. }
-        | Expression::Update { argument, .. }
-        | Expression::Spread(argument)
-        | Expression::Await(argument) => expr_contains_yield(argument),
-        Expression::Binary { left, right, .. }
-        | Expression::Logical { left, right, .. }
-        | Expression::Assignment {
-            target: left,
-            value: right,
-        }
-        | Expression::CompoundAssignment {
-            target: left,
-            value: right,
-            ..
-        }
-        | Expression::Member {
-            object: left,
-            property: right,
-            ..
-        } => expr_contains_yield(left) || expr_contains_yield(right),
-        Expression::Call { callee, arguments } | Expression::Construct { callee, arguments } => {
-            expr_contains_yield(callee) || arguments.iter().any(call_arg_contains_yield)
-        }
-        Expression::Conditional {
-            test,
-            consequent,
-            alternate,
-        } => {
-            expr_contains_yield(test)
-                || expr_contains_yield(consequent)
-                || expr_contains_yield(alternate)
-        }
-        Expression::Array(elements) => elements.iter().any(|element| match element {
-            crate::ast::ArrayElement::Expression(expr) | crate::ast::ArrayElement::Spread(expr) => {
-                expr_contains_yield(expr)
-            }
-            crate::ast::ArrayElement::Hole => false,
-        }),
-        Expression::Object(properties) => properties.iter().any(|property| match property {
-            ObjectProperty::Data { value, .. } | ObjectProperty::PrototypeSetter { value } => {
-                expr_contains_yield(value)
-            }
-            ObjectProperty::ComputedData { key, value } => {
-                expr_contains_yield(key) || expr_contains_yield(value)
-            }
-            ObjectProperty::Spread(expr) => expr_contains_yield(expr),
-            ObjectProperty::Getter { .. } | ObjectProperty::Setter { .. } => false,
-        }),
-        Expression::TemplateLiteral(template) => {
-            template.expressions.iter().any(expr_contains_yield)
-        }
-        Expression::TaggedTemplate { tag, template } => {
-            expr_contains_yield(tag) || template.expressions.iter().any(expr_contains_yield)
-        }
-        Expression::Parenthesized(inner) => expr_contains_yield(inner),
-        Expression::DynamicImport { specifier, options } => {
-            expr_contains_yield(specifier) || options.as_deref().is_some_and(expr_contains_yield)
-        }
-        Expression::Sequence(expressions) => expressions.iter().any(expr_contains_yield),
-        Expression::OptionalChain { base, steps } => {
-            expr_contains_yield(base)
-                || steps.iter().any(|step| match step {
-                    crate::ast::OptionalChainStep::Member { property, .. } => {
-                        expr_contains_yield(property)
-                    }
-                    crate::ast::OptionalChainStep::Call { arguments, .. } => {
-                        arguments.iter().any(call_arg_contains_yield)
-                    }
+                    crate::ast::OptionalChainStep::Call { arguments, .. } => arguments
+                        .iter()
+                        .any(|argument| call_arg_contains(argument, feature)),
                 })
         }
         Expression::Literal(_)
@@ -2546,19 +2622,10 @@ fn expr_contains_yield(expr: &Expression) -> bool {
     }
 }
 
-fn call_arg_contains_yield(arg: &crate::ast::CallArgument) -> bool {
-    match arg {
-        crate::ast::CallArgument::Expression(expr) | crate::ast::CallArgument::Spread(expr) => {
-            expr_contains_yield(expr)
-        }
-    }
-}
-
-fn call_arg_contains_forbidden_meta(arg: &crate::ast::CallArgument) -> bool {
-    match arg {
-        crate::ast::CallArgument::Expression(expr) | crate::ast::CallArgument::Spread(expr) => {
-            expr_contains_forbidden_meta(expr)
-        }
+fn call_arg_contains(argument: &crate::ast::CallArgument, feature: ExpressionFeature) -> bool {
+    match argument {
+        crate::ast::CallArgument::Expression(expression)
+        | crate::ast::CallArgument::Spread(expression) => expression_contains(expression, feature),
     }
 }
 
