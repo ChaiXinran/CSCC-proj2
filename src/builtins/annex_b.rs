@@ -725,8 +725,8 @@ fn create_regexp_indices_object(
     let utf16_offsets = utf16_indices_for_byte_offsets(input, &byte_offsets);
 
     let mut elements = Vec::with_capacity(captures.len());
-    for index in 0..captures.len() {
-        let value = if let Some((start_offset, end_offset)) = byte_spans[index] {
+    for span in byte_spans.iter().take(captures.len()) {
+        let value = if let Some((start_offset, end_offset)) = *span {
             let start = utf16_offsets[start_offset];
             let end = utf16_offsets[end_offset];
             context.create_array(vec![

@@ -9,17 +9,17 @@ use fancy_regex::Regex;
 
 use super::{
     ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction, BuiltinId,
-    CollectionStats, Collector, DataViewId, DataViewRecord, Environment,
-    EnvironmentId, FunctionId, Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue,
-    JsFunction, JsObject, JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
-    NativeErrorValue, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
-    PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
-    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind,
-    ProxyRecord, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
-    TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
+    CollectionStats, Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId,
+    Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue,
+    ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue, NativeJob,
+    ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot, PromiseCallbackJob,
+    PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState, PromiseThenReaction,
+    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, ProxyRecord, RootSet,
+    SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
+    WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
 };
-use crate::builtins::string;
 use crate::vm::{CallFrame, Vm, VmError};
+use crate::{builtins::string, intl::IntlObjectData};
 
 /// Stable identifier for a secondary ECMAScript realm hosted by one native
 /// isolate.
@@ -161,7 +161,7 @@ impl ExecutionBudget {
 }
 
 /// Per-isolate language state passed to the bytecode executor.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct StringPrototypePropertyCache {
     char_code_at: Option<JsValue>,
     index_of: Option<JsValue>,
@@ -173,18 +173,6 @@ struct StringPrototypePropertyCache {
 impl StringPrototypePropertyCache {
     fn clear(&mut self) {
         *self = Self::default();
-    }
-}
-
-impl Default for StringPrototypePropertyCache {
-    fn default() -> Self {
-        Self {
-            char_code_at: None,
-            index_of: None,
-            slice: None,
-            replace_all: None,
-            to_lower_case: None,
-        }
     }
 }
 
@@ -221,6 +209,7 @@ pub struct NativeContext {
     error_object_names: HashMap<ObjectId, &'static str>,
     raw_json_objects: HashMap<ObjectId, String>,
     disposable_stacks: HashMap<ObjectId, DisposableStackState>,
+    intl_objects: HashMap<ObjectId, IntlObjectData>,
     builtin_registry: Vec<BuiltinFunction>,
     builtin_realm_globals: HashMap<BuiltinId, ObjectId>,
     current_builtin_stack: Vec<BuiltinId>,
@@ -314,6 +303,7 @@ impl NativeContext {
             error_object_names: HashMap::new(),
             raw_json_objects: HashMap::new(),
             disposable_stacks: HashMap::new(),
+            intl_objects: HashMap::new(),
             builtin_registry: Vec::new(),
             builtin_realm_globals: HashMap::new(),
             current_builtin_stack: Vec::new(),
@@ -1529,6 +1519,15 @@ impl NativeContext {
         self.raw_json_objects
             .get(&object)
             .map(std::string::String::as_str)
+    }
+
+    pub fn set_intl_object_data(&mut self, object: ObjectId, data: IntlObjectData) {
+        self.intl_objects.insert(object, data);
+    }
+
+    #[must_use]
+    pub fn intl_object_data(&self, object: ObjectId) -> Option<&IntlObjectData> {
+        self.intl_objects.get(&object)
     }
 
     #[must_use]

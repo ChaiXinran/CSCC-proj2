@@ -7,6 +7,11 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::{
+    intl::{
+        CalendarBackend, CalendarDate, CalendarDateFields, CalendarDuration, CalendarLargestUnit,
+        CalendarOverflow, Icu4xCalendarBackend, IsoDate, JiffTimeZoneProvider, LocalDateTime,
+        TimeZoneDisambiguation, TimeZoneProvider,
+    },
     runtime::{
         JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, ObjectId, PreferredType,
         PrimitiveValue, PropertyDescriptor, PropertyKind, abstract_ops, bigint,
@@ -481,26 +486,58 @@ fn temporal_week_fields(year: i32, month: u32, day: u32) -> (u32, i32) {
     (week as u32, week_year)
 }
 
-fn temporal_date_slots(
+fn temporal_date_slots_from_iso(
     year: f64,
     month: f64,
     day: f64,
     calendar_id: String,
 ) -> Vec<(&'static str, JsValue)> {
-    let year_i = year.trunc() as i32;
-    let iso_year_i = calendar_iso_year(&calendar_id, year_i);
-    let month_u = month.trunc() as u32;
-    let day_u = day.trunc() as u32;
-    let day_number = days_from_civil(iso_year_i, month_u, day_u);
-    let day_of_year = temporal_day_of_year(iso_year_i, month_u, day_u);
-    let (week_of_year, iso_year_of_week) = temporal_week_fields(iso_year_i, month_u, day_u);
-    let year_of_week = calendar_year_from_iso(&calendar_id, iso_year_of_week);
-    let leap = calendar_is_leap_year(&calendar_id, year_i);
+    let iso_year = year.trunc() as i32;
+    let iso_month = month.trunc() as u32;
+    let iso_day = day.trunc() as u32;
+    let day_number = days_from_civil(iso_year, iso_month, iso_day);
+    let (week_of_year, year_of_week) = temporal_week_fields(iso_year, iso_month, iso_day);
+    let converted = Icu4xCalendarBackend
+        .date_from_iso(
+            &calendar_id,
+            IsoDate {
+                year: iso_year,
+                month: iso_month as u8,
+                day: iso_day as u8,
+            },
+        )
+        .ok();
+    let calendar_year = converted.as_ref().map_or(iso_year, |date| date.year);
+    let calendar_month = converted
+        .as_ref()
+        .map_or(iso_month as u8, |date| date.month);
+    let calendar_day = converted.as_ref().map_or(iso_day as u8, |date| date.day);
+    let month_code = converted
+        .as_ref()
+        .map_or_else(|| month_code(month), |date| date.month_code.clone());
+    let day_of_year = converted.as_ref().map_or_else(
+        || temporal_day_of_year(iso_year, iso_month, iso_day) as u16,
+        |date| date.day_of_year,
+    );
+    let days_in_month = converted.as_ref().map_or_else(
+        || month_day_count(iso_year, iso_month) as u8,
+        |date| date.days_in_month,
+    );
+    let days_in_year = converted.as_ref().map_or_else(
+        || if is_leap_year(iso_year) { 366 } else { 365 },
+        |date| date.days_in_year,
+    );
+    let months_in_year = converted.as_ref().map_or(12, |date| date.months_in_year);
+    let leap = converted.as_ref().is_some_and(|date| date.in_leap_year)
+        || (converted.is_none() && is_leap_year(iso_year));
     vec![
-        ("year", JsValue::Number(year.trunc())),
-        ("month", JsValue::Number(month.trunc())),
-        ("monthCode", JsValue::String(month_code(month))),
-        ("day", JsValue::Number(day.trunc())),
+        ("isoYear", JsValue::Number(iso_year as f64)),
+        ("isoMonth", JsValue::Number(iso_month as f64)),
+        ("isoDay", JsValue::Number(iso_day as f64)),
+        ("year", JsValue::Number(calendar_year as f64)),
+        ("month", JsValue::Number(calendar_month as f64)),
+        ("monthCode", JsValue::String(month_code)),
+        ("day", JsValue::Number(calendar_day as f64)),
         ("calendarId", JsValue::String(calendar_id.clone())),
         (
             "dayOfWeek",
@@ -510,18 +547,9 @@ fn temporal_date_slots(
         ("weekOfYear", JsValue::Number(week_of_year as f64)),
         ("yearOfWeek", JsValue::Number(year_of_week as f64)),
         ("daysInWeek", JsValue::Number(7.0)),
-        (
-            "daysInMonth",
-            JsValue::Number(calendar_month_day_count(&calendar_id, year_i, month_u) as f64),
-        ),
-        (
-            "daysInYear",
-            JsValue::Number(calendar_days_in_year(&calendar_id, year_i) as f64),
-        ),
-        (
-            "monthsInYear",
-            JsValue::Number(calendar_months_in_year(&calendar_id, year_i) as f64),
-        ),
+        ("daysInMonth", JsValue::Number(days_in_month as f64)),
+        ("daysInYear", JsValue::Number(days_in_year as f64)),
+        ("monthsInYear", JsValue::Number(months_in_year as f64)),
         ("inLeapYear", JsValue::Boolean(leap)),
     ]
 }
@@ -2918,27 +2946,37 @@ fn date_time_format_ms(
                 temporal_number_slot(context, object, "epochNanosecondsNumber") / 1_000_000.0
             }
             "PlainDate" => day_ms(
-                temporal_number_slot(context, object, "year"),
-                temporal_number_slot(context, object, "month"),
-                temporal_number_slot(context, object, "day"),
+                own_number(context, object, "isoYear")
+                    .unwrap_or_else(|| temporal_number_slot(context, object, "year")),
+                own_number(context, object, "isoMonth")
+                    .unwrap_or_else(|| temporal_number_slot(context, object, "month")),
+                own_number(context, object, "isoDay")
+                    .unwrap_or_else(|| temporal_number_slot(context, object, "day")),
             ),
             "PlainDateTime" => {
                 day_ms(
-                    temporal_number_slot(context, object, "year"),
-                    temporal_number_slot(context, object, "month"),
-                    temporal_number_slot(context, object, "day"),
+                    own_number(context, object, "isoYear")
+                        .unwrap_or_else(|| temporal_number_slot(context, object, "year")),
+                    own_number(context, object, "isoMonth")
+                        .unwrap_or_else(|| temporal_number_slot(context, object, "month")),
+                    own_number(context, object, "isoDay")
+                        .unwrap_or_else(|| temporal_number_slot(context, object, "day")),
                 ) + plain_time_nanoseconds_i128(plain_date_time_values(context, object)) as f64
                     / 1_000_000.0
             }
             "PlainYearMonth" => day_ms(
-                temporal_number_slot(context, object, "year"),
-                temporal_number_slot(context, object, "month"),
+                own_number(context, object, "isoYear")
+                    .unwrap_or_else(|| temporal_number_slot(context, object, "year")),
+                own_number(context, object, "isoMonth")
+                    .unwrap_or_else(|| temporal_number_slot(context, object, "month")),
                 temporal_number_slot(context, object, "referenceISODay"),
             ),
             "PlainMonthDay" => day_ms(
                 temporal_number_slot(context, object, "referenceISOYear"),
-                temporal_number_slot(context, object, "month"),
-                temporal_number_slot(context, object, "day"),
+                own_number(context, object, "isoMonth")
+                    .unwrap_or_else(|| temporal_number_slot(context, object, "month")),
+                own_number(context, object, "isoDay")
+                    .unwrap_or_else(|| temporal_number_slot(context, object, "day")),
             ),
             "PlainTime" => {
                 plain_time_nanoseconds_i128(plain_time_values_from_temporal(context, object)) as f64
@@ -4871,12 +4909,13 @@ fn temporal_relative_to_from_value(
                 } else {
                     parse_time_zone_offset_ns(&zone)
                 };
-                if let (Some(supplied), Some(zone)) = (supplied_offset, zone_offset) {
-                    if !has_z && supplied != zone {
-                        return Err(VmError::range(
-                            "Temporal relativeTo offset does not match time zone",
-                        ));
-                    }
+                if let (Some(supplied), Some(zone)) = (supplied_offset, zone_offset)
+                    && !has_z
+                    && supplied != zone
+                {
+                    return Err(VmError::range(
+                        "Temporal relativeTo offset does not match time zone",
+                    ));
                 }
                 let offset_nanoseconds = supplied_offset.or(zone_offset).unwrap_or(0);
                 if !is_valid_instant_ns(local_ns - offset_nanoseconds) {
@@ -4994,12 +5033,12 @@ fn temporal_relative_to_from_value(
                 let zone = temporal_time_zone_string(vm, context, time_zone)?;
                 if let Some(zone_offset) = parse_time_zone_offset_ns(&zone)
                     .or_else(|| zone.eq_ignore_ascii_case("UTC").then_some(0))
+                    && !matches!(offset, JsValue::Undefined)
+                    && zone_offset != offset_nanoseconds
                 {
-                    if !matches!(offset, JsValue::Undefined) && zone_offset != offset_nanoseconds {
-                        return Err(VmError::range(
-                            "Temporal relativeTo offset does not match time zone",
-                        ));
-                    }
+                    return Err(VmError::range(
+                        "Temporal relativeTo offset does not match time zone",
+                    ));
                 }
             }
             validate_plain_date_for_calendar(&calendar, year, month, day)?;
@@ -5256,7 +5295,7 @@ fn ratio_i128_to_f64(numerator: i128, denominator: i128) -> f64 {
             }
         }
     }
-    text.parse::<f64>().unwrap_or_else(|_| {
+    text.parse::<f64>().unwrap_or({
         if negative {
             f64::NEG_INFINITY
         } else {
@@ -5850,6 +5889,46 @@ fn temporal_required_month_from_object(
             "Temporal property `month` or `monthCode` is required",
         ))
     }
+}
+
+fn temporal_required_month_fields_from_object(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    object: ObjectId,
+    calendar: &str,
+) -> Result<(f64, Option<String>), VmError> {
+    let month_value = temporal_get_property(vm, context, object, "month")?;
+    let month_code_value = temporal_get_property(vm, context, object, "monthCode")?;
+    let month = if matches!(month_value, JsValue::Undefined) {
+        None
+    } else {
+        Some(vm.to_number(month_value, context)?.trunc())
+    };
+    let month_code = if matches!(month_code_value, JsValue::Undefined) {
+        None
+    } else {
+        let text = temporal_month_code_to_string(vm, context, month_code_value)?;
+        parse_month_code(&text).ok_or_else(|| VmError::range("invalid Temporal monthCode"))?;
+        if calendar == "iso8601" && (text.ends_with('L') || parse_month_code(&text) > Some(12.0)) {
+            return Err(VmError::range(
+                "Temporal monthCode is not valid for the ISO 8601 calendar",
+            ));
+        }
+        Some(text)
+    };
+    let numeric_code = month_code.as_deref().and_then(parse_month_code);
+    if let (Some(month), Some(code)) = (month, numeric_code)
+        && !month_code
+            .as_deref()
+            .is_some_and(|code| code.ends_with('L'))
+        && month != code
+    {
+        return Err(VmError::range("Temporal month and monthCode conflict"));
+    }
+    let effective_month = month.or(numeric_code).ok_or_else(|| {
+        VmError::type_error("Temporal property `month` or `monthCode` is required")
+    })?;
+    Ok((effective_month, month_code))
 }
 
 fn parse_duration(text: &str) -> Option<DurationValues> {
@@ -7257,11 +7336,40 @@ fn create_plain_date_with_calendar(
     day: f64,
     calendar_id: String,
 ) -> Result<JsValue, VmError> {
+    let iso = Icu4xCalendarBackend
+        .date_to_iso(
+            &calendar_id,
+            year.trunc() as i32,
+            &month_code(month),
+            day.trunc() as u8,
+        )
+        .map_err(VmError::range)?;
     create_temporal_object(
         context,
         prototype,
         "PlainDate",
-        temporal_date_slots(year, month, day, calendar_id),
+        temporal_date_slots_from_iso(
+            iso.year as f64,
+            iso.month as f64,
+            iso.day as f64,
+            calendar_id,
+        ),
+    )
+}
+
+fn create_plain_date_with_calendar_from_iso(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    year: f64,
+    month: f64,
+    day: f64,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
+    create_temporal_object(
+        context,
+        prototype,
+        "PlainDate",
+        temporal_date_slots_from_iso(year, month, day, calendar_id),
     )
 }
 
@@ -7294,7 +7402,7 @@ fn temporal_plain_date_construct(
         .trunc();
     let calendar_id = temporal_calendar_from_argument(vm, context, arguments.get(3))?;
     validate_plain_date(year, month, day)?;
-    create_plain_date_with_calendar(context, prototype, year, month, day, calendar_id)
+    create_plain_date_with_calendar_from_iso(context, prototype, year, month, day, calendar_id)
 }
 
 fn validate_plain_date(year: f64, month: f64, day: f64) -> Result<(), VmError> {
@@ -7397,10 +7505,10 @@ fn temporal_plain_date_from(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let (year, mut month, mut day, calendar_id) = match item {
+    let (year, mut month, mut day, calendar_id, month_code_field) = match item {
         JsValue::String(_) => {
             let (year, month, day) = parsed_string.unwrap();
-            (year, month, day, "iso8601".into())
+            (year, month, day, "iso8601".into(), None)
         }
         value => {
             let object = context.require_object(&value, "Temporal.PlainDate.from")?;
@@ -7410,6 +7518,7 @@ fn temporal_plain_date_from(
                     temporal_number_slot(context, object, "month"),
                     temporal_number_slot(context, object, "day"),
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                    own_string(context, object, "monthCode"),
                 )
             } else if matches!(
                 own_string(context, object, TEMPORAL_KIND).as_deref(),
@@ -7420,16 +7529,18 @@ fn temporal_plain_date_from(
                     temporal_number_slot(context, object, "month"),
                     temporal_number_slot(context, object, "day"),
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                    own_string(context, object, "monthCode"),
                 )
             } else {
                 let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
-                let month =
-                    temporal_required_month_from_object(vm, context, object, Some(&calendar_id))?;
+                let (month, month_code) =
+                    temporal_required_month_fields_from_object(vm, context, object, &calendar_id)?;
                 (
                     temporal_calendar_year_from_object(vm, context, object, &calendar_id)?,
                     month,
                     temporal_required_object_number(vm, context, object, "day")?,
                     calendar_id,
+                    month_code,
                 )
             }
         }
@@ -7445,6 +7556,27 @@ fn temporal_plain_date_from(
         day = day.trunc().clamp(
             1.0,
             calendar_month_day_count(&calendar_id, year as i32, month as u32).max(1) as f64,
+        );
+    }
+    if let Some(month_code) = month_code_field {
+        let iso = Icu4xCalendarBackend
+            .resolve_date_fields(
+                &calendar_id,
+                &CalendarDateFields {
+                    year: year as i32,
+                    month: None,
+                    month_code: Some(month_code),
+                    day: day as u8,
+                },
+            )
+            .map_err(VmError::range)?;
+        return create_plain_date_with_calendar_from_iso(
+            context,
+            prototype,
+            iso.year as f64,
+            iso.month as f64,
+            iso.day as f64,
+            calendar_id,
         );
     }
     validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
@@ -7569,6 +7701,8 @@ fn normalize_temporal_calendar_string(value: &str) -> Result<String, VmError> {
         "gregory",
         "japanese",
         "buddhist",
+        "chinese",
+        "dangi",
         "roc",
         "coptic",
         "ethiopic",
@@ -7828,6 +7962,41 @@ fn date_parts(context: &NativeContext, object: ObjectId) -> (i32, u32, u32) {
     )
 }
 
+fn temporal_object_iso_date(context: &NativeContext, object: ObjectId) -> Result<IsoDate, VmError> {
+    if let (Some(year), Some(month), Some(day)) = (
+        own_number(context, object, "isoYear"),
+        own_number(context, object, "isoMonth"),
+        own_number(context, object, "isoDay"),
+    ) {
+        return Ok(IsoDate {
+            year: year as i32,
+            month: month as u8,
+            day: day as u8,
+        });
+    }
+
+    let calendar = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let year = temporal_number_slot(context, object, "year") as i32;
+    let day = temporal_number_slot(context, object, "day") as u8;
+    let month_code = own_string(context, object, "monthCode").unwrap_or_else(|| {
+        format!(
+            "M{:02}",
+            temporal_number_slot(context, object, "month") as u8
+        )
+    });
+    Icu4xCalendarBackend
+        .date_to_iso(&calendar, year, &month_code, day)
+        .map_err(VmError::range)
+}
+
+fn calendar_duration_component(value: f64, sign: f64) -> Result<i32, VmError> {
+    let signed = value * sign;
+    if signed < i32::MIN as f64 || signed > i32::MAX as f64 {
+        return Err(VmError::range("Temporal duration is out of range"));
+    }
+    Ok(signed as i32)
+}
+
 fn add_calendar_months(
     calendar: &str,
     year: i32,
@@ -7903,6 +8072,37 @@ fn iso_date_difference_values(
             ..DurationValues::default()
         }
     }
+}
+
+fn calendar_date_difference_values(
+    context: &NativeContext,
+    start: ObjectId,
+    end: ObjectId,
+    largest_unit: &str,
+) -> Result<DurationValues, VmError> {
+    let calendar = own_string(context, start, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let largest_unit = match largest_unit {
+        "year" => CalendarLargestUnit::Year,
+        "month" => CalendarLargestUnit::Month,
+        "week" => CalendarLargestUnit::Week,
+        "day" => CalendarLargestUnit::Day,
+        _ => return Err(VmError::range("invalid calendar difference unit")),
+    };
+    let result = Icu4xCalendarBackend
+        .date_until(
+            &calendar,
+            temporal_object_iso_date(context, start)?,
+            temporal_object_iso_date(context, end)?,
+            largest_unit,
+        )
+        .map_err(VmError::range)?;
+    Ok(DurationValues {
+        years: result.years as f64,
+        months: result.months as f64,
+        weeks: result.weeks as f64,
+        days: result.days as f64,
+        ..DurationValues::default()
+    })
 }
 
 fn signed_duration_time_from_nanoseconds(value: i128) -> DurationValues {
@@ -8150,30 +8350,35 @@ fn temporal_plain_date_additive(
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
     let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
-    let (mut year, mut month, mut day) = apply_duration_to_date(
-        temporal_number_slot(context, object, "year"),
-        temporal_number_slot(context, object, "month"),
-        temporal_number_slot(context, object, "day"),
-        &calendar_id,
-        duration,
-        sign,
-        reject_overflow,
-    )?;
-    let time_days = (sign * duration_time_nanoseconds(duration) / NS_PER_DAY).trunc() as i64;
-    if time_days != 0 {
-        let day_number =
-            calendar_days_from_civil(&calendar_id, year as i32, month as u32, day as u32)
-                .checked_add(time_days)
-                .filter(|value| temporal_day_number_within_range(*value))
-                .ok_or_else(|| VmError::range("Temporal.PlainDate is out of range"))?;
-        (year, month, day) = {
-            let fields = calendar_civil_from_days(&calendar_id, day_number);
-            (fields.0 as f64, fields.1 as f64, fields.2 as f64)
-        };
-    }
-    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
+    let iso = temporal_object_iso_date(context, object)?;
+    let time_days = (sign * duration_time_nanoseconds(duration) / NS_PER_DAY).trunc();
+    let days = duration.days * sign + time_days;
+    let result = Icu4xCalendarBackend
+        .add_date(
+            &calendar_id,
+            iso,
+            CalendarDuration {
+                years: calendar_duration_component(duration.years, sign)?,
+                months: calendar_duration_component(duration.months, sign)?,
+                weeks: calendar_duration_component(duration.weeks, sign)?,
+                days: calendar_duration_component(days, 1.0)?,
+            },
+            if reject_overflow {
+                CalendarOverflow::Reject
+            } else {
+                CalendarOverflow::Constrain
+            },
+        )
+        .map_err(VmError::range)?;
     let prototype = temporal_constructor_prototype(context, "PlainDate")?;
-    create_plain_date_with_calendar(context, prototype, year, month, day, calendar_id)
+    create_plain_date_with_calendar_from_iso(
+        context,
+        prototype,
+        result.year as f64,
+        result.month as f64,
+        result.day as f64,
+        calendar_id,
+    )
 }
 
 fn temporal_plain_date_add(
@@ -8344,12 +8549,12 @@ fn temporal_plain_date_difference(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let (start, end) = if reverse {
-        (other_object, this_object)
-    } else {
-        (this_object, other_object)
-    };
-    let mut values = iso_date_difference_values(context, start, end, &options.largest_unit);
+    // Temporal defines `since` as the exact sign inverse of `until` for the
+    // same ordered pair. Calendar difference algorithms are not generally
+    // symmetric around constrained month ends, so do not recompute with
+    // swapped operands: compute once in the forward direction and negate.
+    let (start, end) = (this_object, other_object);
+    let mut values = calendar_date_difference_values(context, start, end, &options.largest_unit)?;
     if options.smallest_unit != "day" || options.increment > 1 {
         let quantity = relative_date_unit_quantity(context, start, end, &options.smallest_unit);
         let rounded = round_temporal_quantity(quantity, options.increment, options.mode);
@@ -8383,6 +8588,9 @@ fn temporal_plain_date_difference(
             "day" => values,
             _ => unreachable!("validated date difference unit"),
         };
+    }
+    if reverse {
+        values = values.map(|value| -value);
     }
     create_duration_with_default_prototype(context, values)
 }
@@ -9514,7 +9722,15 @@ fn temporal_plain_date_time_construct(
     let calendar_id = temporal_calendar_from_argument(vm, context, arguments.get(9))?;
     validate_plain_date(year, month, day)?;
     validate_plain_time(time)?;
-    create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
+    create_plain_date_time_with_calendar_from_iso(
+        context,
+        prototype,
+        year,
+        month,
+        day,
+        time,
+        calendar_id,
+    )
 }
 
 fn create_plain_date_time(
@@ -9545,7 +9761,35 @@ fn create_plain_date_time_with_calendar(
     time: PlainTimeValues,
     calendar_id: String,
 ) -> Result<JsValue, VmError> {
-    let mut slots = temporal_date_slots(year, month, day, calendar_id);
+    let iso = Icu4xCalendarBackend
+        .date_to_iso(
+            &calendar_id,
+            year.trunc() as i32,
+            &month_code(month),
+            day.trunc() as u8,
+        )
+        .map_err(VmError::range)?;
+    create_plain_date_time_with_calendar_from_iso(
+        context,
+        prototype,
+        iso.year as f64,
+        iso.month as f64,
+        iso.day as f64,
+        time,
+        calendar_id,
+    )
+}
+
+fn create_plain_date_time_with_calendar_from_iso(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    year: f64,
+    month: f64,
+    day: f64,
+    time: PlainTimeValues,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
+    let mut slots = temporal_date_slots_from_iso(year, month, day, calendar_id);
     slots.extend([
         ("hour", JsValue::Number(time.hour.trunc())),
         ("minute", JsValue::Number(time.minute.trunc())),
@@ -9578,10 +9822,10 @@ fn temporal_plain_date_time_from(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let (year, mut month, mut day, mut time, calendar_id) = match item {
+    let (year, mut month, mut day, mut time, calendar_id, month_code_field) = match item {
         JsValue::String(_) => {
             let (year, month, day, time) = parsed_string.unwrap();
-            (year, month, day, time, "iso8601".into())
+            (year, month, day, time, "iso8601".into(), None)
         }
         value => {
             let object = context.require_object(&value, "Temporal.PlainDateTime.from")?;
@@ -9599,6 +9843,7 @@ fn temporal_plain_date_time_from(
                         nanosecond: temporal_number_slot(context, object, "nanosecond"),
                     },
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                    own_string(context, object, "monthCode"),
                 )
             } else if own_string(context, object, TEMPORAL_KIND).as_deref() == Some("PlainDate") {
                 (
@@ -9607,11 +9852,12 @@ fn temporal_plain_date_time_from(
                     temporal_number_slot(context, object, "day"),
                     PlainTimeValues::default(),
                     own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
+                    own_string(context, object, "monthCode"),
                 )
             } else {
                 let calendar_id = temporal_calendar_id_from_object(vm, context, object)?;
-                let month =
-                    temporal_required_month_from_object(vm, context, object, Some(&calendar_id))?;
+                let (month, month_code) =
+                    temporal_required_month_fields_from_object(vm, context, object, &calendar_id)?;
                 (
                     temporal_calendar_year_from_object(vm, context, object, &calendar_id)?,
                     month,
@@ -9625,6 +9871,7 @@ fn temporal_plain_date_time_from(
                         nanosecond: temporal_object_number(vm, context, object, "nanosecond")?,
                     },
                     calendar_id,
+                    month_code,
                 )
             }
         }
@@ -9661,8 +9908,30 @@ fn temporal_plain_date_time_from(
         time.microsecond = time.microsecond.trunc().clamp(0.0, 999.0);
         time.nanosecond = time.nanosecond.trunc().clamp(0.0, 999.0);
     }
-    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
     validate_plain_time(time)?;
+    if let Some(month_code) = month_code_field {
+        let iso = Icu4xCalendarBackend
+            .resolve_date_fields(
+                &calendar_id,
+                &CalendarDateFields {
+                    year: year as i32,
+                    month: None,
+                    month_code: Some(month_code),
+                    day: day as u8,
+                },
+            )
+            .map_err(VmError::range)?;
+        return create_plain_date_time_with_calendar_from_iso(
+            context,
+            prototype,
+            iso.year as f64,
+            iso.month as f64,
+            iso.day as f64,
+            time,
+            calendar_id,
+        );
+    }
+    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
     create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
 }
 
@@ -9802,42 +10071,42 @@ fn temporal_plain_date_time_additive(
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
     let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
-    let (mut year, mut month, mut day) = apply_duration_to_date(
-        temporal_number_slot(context, object, "year"),
-        temporal_number_slot(context, object, "month"),
-        temporal_number_slot(context, object, "day"),
-        &calendar_id,
-        duration,
-        sign,
-        reject_overflow,
-    )?;
     let time_ns = plain_time_nanoseconds_i128(plain_date_time_values(context, object))
         + sign as i128 * duration_time_nanoseconds_i128(duration);
     let (extra_days, time) = balance_plain_time_nanoseconds_i128(time_ns)?;
-    if extra_days != 0 {
-        let day_number =
-            calendar_days_from_civil(&calendar_id, year as i32, month as u32, day as u32)
-                .checked_add(extra_days)
-                .filter(|value| temporal_day_number_within_range(*value))
-                .ok_or_else(|| VmError::range("Temporal.PlainDateTime is out of range"))?;
-        let fields = calendar_civil_from_days(&calendar_id, day_number);
-        year = fields.0 as f64;
-        month = fields.1 as f64;
-        day = fields.2 as f64;
-    }
-    validate_plain_date_for_calendar(&calendar_id, year, month, day)?;
+    let date = Icu4xCalendarBackend
+        .add_date(
+            &calendar_id,
+            temporal_object_iso_date(context, object)?,
+            CalendarDuration {
+                years: calendar_duration_component(duration.years, sign)?,
+                months: calendar_duration_component(duration.months, sign)?,
+                weeks: calendar_duration_component(duration.weeks, sign)?,
+                days: calendar_duration_component(duration.days * sign + extra_days as f64, 1.0)?,
+            },
+            if reject_overflow {
+                CalendarOverflow::Reject
+            } else {
+                CalendarOverflow::Constrain
+            },
+        )
+        .map_err(VmError::range)?;
     validate_plain_time(time)?;
-    if (
-        calendar_iso_year(&calendar_id, year as i32),
-        month as u32,
-        day as u32,
-    ) == (-271_821, 4, 19)
+    if (date.year, date.month as u32, date.day as u32) == (-271_821, 4, 19)
         && time_nanoseconds(time) < 1.0
     {
         return Err(VmError::range("Temporal.PlainDateTime is out of range"));
     }
     let prototype = temporal_constructor_prototype(context, "PlainDateTime")?;
-    create_plain_date_time_with_calendar(context, prototype, year, month, day, time, calendar_id)
+    create_plain_date_time_with_calendar_from_iso(
+        context,
+        prototype,
+        date.year as f64,
+        date.month as f64,
+        date.day as f64,
+        time,
+        calendar_id,
+    )
 }
 
 fn temporal_plain_date_time_add(
@@ -10722,6 +10991,79 @@ fn create_plain_year_month(
     )
 }
 
+fn create_plain_year_month_from_iso(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    iso_year: f64,
+    iso_month: f64,
+    reference_day: f64,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
+    validate_plain_date(iso_year, iso_month, reference_day)?;
+    let converted = Icu4xCalendarBackend
+        .date_from_iso(
+            &calendar_id,
+            IsoDate {
+                year: iso_year as i32,
+                month: iso_month as u8,
+                day: reference_day as u8,
+            },
+        )
+        .map_err(VmError::range)?;
+    create_temporal_object(
+        context,
+        prototype,
+        "PlainYearMonth",
+        [
+            ("isoYear", JsValue::Number(iso_year.trunc())),
+            ("isoMonth", JsValue::Number(iso_month.trunc())),
+            ("referenceISODay", JsValue::Number(reference_day.trunc())),
+            ("year", JsValue::Number(converted.year as f64)),
+            ("month", JsValue::Number(converted.month as f64)),
+            ("monthCode", JsValue::String(converted.month_code)),
+            ("calendarId", JsValue::String(calendar_id)),
+            (
+                "daysInMonth",
+                JsValue::Number(converted.days_in_month as f64),
+            ),
+            ("daysInYear", JsValue::Number(converted.days_in_year as f64)),
+            (
+                "monthsInYear",
+                JsValue::Number(converted.months_in_year as f64),
+            ),
+            ("inLeapYear", JsValue::Boolean(converted.in_leap_year)),
+        ],
+    )
+}
+
+fn create_plain_year_month_from_calendar_date(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    date: CalendarDate,
+    reference_iso_day: f64,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
+    create_temporal_object(
+        context,
+        prototype,
+        "PlainYearMonth",
+        [
+            ("year", JsValue::Number(date.year as f64)),
+            ("month", JsValue::Number(date.month as f64)),
+            (
+                "referenceISODay",
+                JsValue::Number(reference_iso_day.trunc()),
+            ),
+            ("monthCode", JsValue::String(date.month_code)),
+            ("calendarId", JsValue::String(calendar_id)),
+            ("daysInMonth", JsValue::Number(date.days_in_month as f64)),
+            ("daysInYear", JsValue::Number(date.days_in_year as f64)),
+            ("monthsInYear", JsValue::Number(date.months_in_year as f64)),
+            ("inLeapYear", JsValue::Boolean(date.in_leap_year)),
+        ],
+    )
+}
+
 fn temporal_plain_year_month_construct(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -10736,15 +11078,16 @@ fn temporal_plain_year_month_construct(
     let calendar = if matches!(arguments.get(2), None | Some(JsValue::Undefined)) {
         "iso8601".into()
     } else {
-        vm.to_string_coerce(arg_or_undefined(arguments, 2), context)?
-            .to_ascii_lowercase()
+        normalize_temporal_calendar_string(
+            &vm.to_string_coerce(arg_or_undefined(arguments, 2), context)?,
+        )?
     };
     let reference_day = if matches!(arguments.get(3), None | Some(JsValue::Undefined)) {
         1.0
     } else {
         vm.to_number(arg_or_undefined(arguments, 3), context)?
     };
-    create_plain_year_month(context, prototype, year, month, reference_day, calendar)
+    create_plain_year_month_from_iso(context, prototype, year, month, reference_day, calendar)
 }
 
 fn parse_plain_year_month(text: &str) -> Option<(f64, f64, f64)> {
@@ -10836,6 +11179,24 @@ fn plain_year_month_order_key(context: &NativeContext, object: ObjectId) -> i64 
     let year = temporal_number_slot(context, object, "year") as i64;
     let month = temporal_number_slot(context, object, "month") as i64;
     year.saturating_mul(12).saturating_add(month)
+}
+
+fn plain_year_month_calendar_date(
+    context: &NativeContext,
+    object: ObjectId,
+) -> Result<IsoDate, VmError> {
+    let calendar = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    Icu4xCalendarBackend
+        .resolve_date_fields(
+            &calendar,
+            &CalendarDateFields {
+                year: temporal_number_slot(context, object, "year") as i32,
+                month: None,
+                month_code: own_string(context, object, "monthCode"),
+                day: 1,
+            },
+        )
+        .map_err(VmError::range)
 }
 
 fn temporal_plain_year_month_compare(
@@ -10958,7 +11319,7 @@ fn temporal_plain_year_month_additive(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    let _reject_overflow = temporal_overflow_reject(
+    let reject_overflow = temporal_overflow_reject(
         vm,
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
@@ -10980,23 +11341,39 @@ fn temporal_plain_year_month_additive(
             "Temporal.PlainYearMonth arithmetic does not accept units below month",
         ));
     }
-    let month_delta = (sign * (duration.years * 12.0 + duration.months)).trunc() as i64;
-    let month_index = (temporal_number_slot(context, object, "year") as i64 * 12
-        + temporal_number_slot(context, object, "month") as i64
-        - 1)
-    .checked_add(month_delta)
-    .ok_or_else(|| VmError::range("Temporal.PlainYearMonth is out of range"))?;
-    let year = month_index.div_euclid(12) as f64;
-    let month = (month_index.rem_euclid(12) + 1) as f64;
+    let calendar_id = own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into());
+    let start = Icu4xCalendarBackend
+        .resolve_date_fields(
+            &calendar_id,
+            &CalendarDateFields {
+                year: temporal_number_slot(context, object, "year") as i32,
+                month: None,
+                month_code: own_string(context, object, "monthCode"),
+                day: 1,
+            },
+        )
+        .map_err(VmError::range)?;
+    let result = Icu4xCalendarBackend
+        .add_date(
+            &calendar_id,
+            start,
+            CalendarDuration {
+                years: calendar_duration_component(duration.years, sign)?,
+                months: calendar_duration_component(duration.months, sign)?,
+                ..CalendarDuration::default()
+            },
+            if reject_overflow {
+                CalendarOverflow::Reject
+            } else {
+                CalendarOverflow::Constrain
+            },
+        )
+        .map_err(VmError::range)?;
+    let result = Icu4xCalendarBackend
+        .date_from_iso(&calendar_id, result)
+        .map_err(VmError::range)?;
     let prototype = temporal_constructor_prototype(context, "PlainYearMonth")?;
-    create_plain_year_month(
-        context,
-        prototype,
-        year,
-        month,
-        temporal_number_slot(context, object, "referenceISODay").max(1.0),
-        own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into()),
-    )
+    create_plain_year_month_from_calendar_date(context, prototype, result, 1.0, calendar_id)
 }
 
 fn temporal_plain_year_month_add(
@@ -11086,6 +11463,30 @@ fn temporal_plain_year_month_difference(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
+    if options.smallest_unit == "month" && options.increment == 1 {
+        let calendar =
+            own_string(context, this_object, "calendarId").unwrap_or_else(|| "iso8601".into());
+        let result = Icu4xCalendarBackend
+            .date_until(
+                &calendar,
+                plain_year_month_calendar_date(context, this_object)?,
+                plain_year_month_calendar_date(context, other_object)?,
+                if options.largest_unit == "year" {
+                    CalendarLargestUnit::Year
+                } else {
+                    CalendarLargestUnit::Month
+                },
+            )
+            .map_err(VmError::range)?;
+        return create_duration_with_default_prototype(
+            context,
+            DurationValues {
+                years: result.years as f64 * sign as f64,
+                months: result.months as f64 * sign as f64,
+                ..DurationValues::default()
+            },
+        );
+    }
     let months = sign
         * (plain_year_month_order_key(context, other_object)
             - plain_year_month_order_key(context, this_object));
@@ -11276,6 +11677,41 @@ fn create_plain_month_day(
     )
 }
 
+fn create_plain_month_day_from_iso(
+    context: &mut NativeContext,
+    prototype: ObjectId,
+    month: f64,
+    day: f64,
+    reference_year: f64,
+    calendar_id: String,
+) -> Result<JsValue, VmError> {
+    validate_plain_date(reference_year, month, day)?;
+    let converted = Icu4xCalendarBackend
+        .date_from_iso(
+            &calendar_id,
+            IsoDate {
+                year: reference_year as i32,
+                month: month as u8,
+                day: day as u8,
+            },
+        )
+        .map_err(VmError::range)?;
+    create_temporal_object(
+        context,
+        prototype,
+        "PlainMonthDay",
+        [
+            ("isoMonth", JsValue::Number(month.trunc())),
+            ("isoDay", JsValue::Number(day.trunc())),
+            ("referenceISOYear", JsValue::Number(reference_year.trunc())),
+            ("month", JsValue::Number(converted.month as f64)),
+            ("day", JsValue::Number(converted.day as f64)),
+            ("monthCode", JsValue::String(converted.month_code)),
+            ("calendarId", JsValue::String(calendar_id)),
+        ],
+    )
+}
+
 fn temporal_plain_month_day_construct(
     vm: &mut Vm,
     context: &mut NativeContext,
@@ -11290,15 +11726,16 @@ fn temporal_plain_month_day_construct(
     let calendar = if matches!(arguments.get(2), None | Some(JsValue::Undefined)) {
         "iso8601".into()
     } else {
-        vm.to_string_coerce(arg_or_undefined(arguments, 2), context)?
-            .to_ascii_lowercase()
+        normalize_temporal_calendar_string(
+            &vm.to_string_coerce(arg_or_undefined(arguments, 2), context)?,
+        )?
     };
     let reference_year = if matches!(arguments.get(3), None | Some(JsValue::Undefined)) {
         1972.0
     } else {
         vm.to_number(arg_or_undefined(arguments, 3), context)?
     };
-    create_plain_month_day(context, prototype, month, day, reference_year, calendar)
+    create_plain_month_day_from_iso(context, prototype, month, day, reference_year, calendar)
 }
 
 fn parse_plain_month_day(text: &str) -> Option<(f64, f64, f64)> {
@@ -11766,7 +12203,9 @@ fn create_zoned_date_time(
     if !is_valid_instant_ns(exact_epoch_nanoseconds) {
         return Err(VmError::range("invalid Temporal.ZonedDateTime"));
     }
-    let offset_nanoseconds = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
+    let offset_nanoseconds = JiffTimeZoneProvider
+        .offset_nanoseconds(&time_zone_id, exact_epoch_nanoseconds)
+        .map_err(VmError::range)?;
     let local_epoch_nanoseconds = exact_epoch_nanoseconds + offset_nanoseconds;
     let epoch_milliseconds = local_epoch_nanoseconds.div_euclid(1_000_000) as f64;
     let offset_string = if offset_nanoseconds == 0 {
@@ -12577,9 +13016,23 @@ fn create_zoned_date_time_from_parts(
 ) -> Result<JsValue, VmError> {
     validate_plain_date(year, month, day)?;
     validate_plain_time(time)?;
-    let offset_nanoseconds = parse_time_zone_offset_ns(&time_zone_id).unwrap_or(0);
-    let exact_epoch_nanoseconds =
-        epoch_nanoseconds_i128_from_plain_parts(year, month, day, time) - offset_nanoseconds;
+    let exact_epoch_nanoseconds = JiffTimeZoneProvider
+        .local_to_epoch_nanoseconds(
+            &time_zone_id,
+            LocalDateTime {
+                year: year as i32,
+                month: month as u8,
+                day: day as u8,
+                hour: time.hour as u8,
+                minute: time.minute as u8,
+                second: time.second as u8,
+                nanosecond: (time.millisecond as u32 * 1_000_000)
+                    + (time.microsecond as u32 * 1_000)
+                    + time.nanosecond as u32,
+            },
+            TimeZoneDisambiguation::Compatible,
+        )
+        .map_err(VmError::range)?;
     let epoch_nanoseconds = exact_epoch_nanoseconds as f64;
     create_zoned_date_time(
         context,
