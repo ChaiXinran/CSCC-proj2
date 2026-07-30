@@ -1052,8 +1052,8 @@ impl<'source> Lexer<'source> {
 }
 
 /// Validates the body of a regex literal for ES early errors:
-///  - inline modifier groups `(?flags:...)` — flags must be subset of {i,m,s}, no dups
-///  - arithmetic modifier groups `(?add-remove:...)` — always rejected (ES2025 unsupported)
+///  - modifier groups `(?add-remove:...)` — flags are scoped and must be a
+///    duplicate-free subset of {i,m,s}
 ///  - named capture groups `(?<name>...)` — name must be valid identifier, no duplicates
 ///  - named backreferences `\k<name>` — must reference a defined capture group
 ///
@@ -1590,6 +1590,102 @@ fn regex_class_atom_at(
     }
 }
 
+fn scan_unicode_set_class(chars: &[char], start: usize) -> Result<usize, &'static str> {
+    let mut depth = 0usize;
+    let mut negated_classes = Vec::new();
+    let mut index = start;
+    while index < chars.len() {
+        match chars[index] {
+            '[' => {
+                depth += 1;
+                negated_classes.push(chars.get(index + 1) == Some(&'^'));
+                index += 1;
+            }
+            ']' => {
+                depth = depth
+                    .checked_sub(1)
+                    .ok_or("unexpected Unicode set class terminator")?;
+                negated_classes.pop();
+                index += 1;
+                if depth == 0 {
+                    return Ok(index);
+                }
+            }
+            '\\' => {
+                let escape = *chars
+                    .get(index + 1)
+                    .ok_or("unterminated escape in Unicode set class")?;
+                if escape == 'q' {
+                    if chars.get(index + 2) != Some(&'{') {
+                        return Err("invalid Unicode string set escape");
+                    }
+                    index += 3;
+                    let mut closed = false;
+                    while index < chars.len() {
+                        match chars[index] {
+                            '\\' => index += 2,
+                            '}' => {
+                                index += 1;
+                                closed = true;
+                                break;
+                            }
+                            _ => index += 1,
+                        }
+                    }
+                    if !closed {
+                        return Err("unterminated Unicode string set escape");
+                    }
+                } else {
+                    index += 2;
+                    if matches!(escape, 'p' | 'P') && chars.get(index) == Some(&'{') {
+                        index += 1;
+                        let property_start = index;
+                        while chars.get(index).is_some_and(|ch| *ch != '}') {
+                            index += 1;
+                        }
+                        if chars.get(index) != Some(&'}') {
+                            return Err("unterminated Unicode property escape");
+                        }
+                        let property: String = chars[property_start..index].iter().collect();
+                        if negated_classes.last() == Some(&true)
+                            && is_regex_string_property(&property)
+                        {
+                            return Err("negated Unicode set cannot contain a property of strings");
+                        }
+                        index += 1;
+                    }
+                }
+            }
+            operator @ ('&' | '-')
+                if chars.get(index + 1) == Some(&operator)
+                    && (chars.get(index.wrapping_sub(1)) == Some(&'[')
+                        || chars.get(index + 2) == Some(&']')) =>
+            {
+                return Err("Unicode set operator requires operands");
+            }
+            '-' if chars.get(index + 1) == Some(&'-') => index += 2,
+            '&' if chars.get(index + 1) == Some(&'&') => index += 2,
+            '-' if index == start + 1
+                || chars.get(index.wrapping_sub(1)) == Some(&'[')
+                || chars.get(index + 1) == Some(&']') =>
+            {
+                return Err("Unicode sets character class syntax character must be escaped");
+            }
+            '(' | ')' | '{' | '}' | '/' | '|' => {
+                return Err("Unicode sets character class syntax character must be escaped");
+            }
+            ch if chars.get(index + 1) == Some(&ch)
+                && is_unicode_sets_reserved_double_punctuator(ch)
+                && !matches!(ch, '&' | '-') =>
+            {
+                return Err("Unicode sets reserved double punctuator must be escaped");
+            }
+            _ => index += 1,
+        }
+    }
+    Err("unterminated Unicode set character class")
+}
+
 fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), LexError> {
     let unicode_mode = flags.contains('u') || flags.contains('v');
     let unicode_sets = flags.contains('v');
@@ -1766,6 +1862,11 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                 }
             }
             '[' => {
+                if unicode_sets {
+                    i = scan_unicode_set_class(&chars, i).map_err(make_err)?;
+                    can_quantify = true;
+                    continue;
+                }
                 in_class = true;
                 negated_class = chars.get(i + 1) == Some(&'^');
                 class_previous_atom = None;
@@ -1876,20 +1977,17 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                         }
                         match chars.get(i) {
                             Some(&'-') => {
-                                // Arithmetic modifier — always a parse-phase error.
-                                for &c in &add_flags {
-                                    if !matches!(c, 'i' | 'm' | 's') {
-                                        return Err(make_err(
-                                            "invalid modifier flag in regular expression",
-                                        ));
-                                    }
-                                }
                                 let mut seen = [false; 3];
                                 for &c in &add_flags {
                                     let j = match c {
                                         'i' => 0,
                                         'm' => 1,
-                                        _ => 2,
+                                        's' => 2,
+                                        _ => {
+                                            return Err(make_err(
+                                                "invalid modifier flag in regular expression",
+                                            ));
+                                        }
                                     };
                                     if seen[j] {
                                         return Err(make_err(
@@ -1898,9 +1996,35 @@ fn validate_regex_body(body: &str, flags: &str, lex_start: usize) -> Result<(), 
                                     }
                                     seen[j] = true;
                                 }
-                                return Err(make_err(
-                                    "arithmetic modifier groups (?flags-flags:...) are not supported",
-                                ));
+
+                                i += 1; // skip '-'
+                                let remove_start = i;
+                                while i < len && chars[i] != ':' {
+                                    let c = chars[i];
+                                    let j = match c {
+                                        'i' => 0,
+                                        'm' => 1,
+                                        's' => 2,
+                                        _ => {
+                                            return Err(make_err(
+                                                "invalid modifier flag in regular expression",
+                                            ));
+                                        }
+                                    };
+                                    if seen[j] {
+                                        return Err(make_err(
+                                            "duplicate modifier flag in regular expression",
+                                        ));
+                                    }
+                                    seen[j] = true;
+                                    i += 1;
+                                }
+                                if chars.get(i) != Some(&':')
+                                    || (add_flags.is_empty() && remove_start == i)
+                                {
+                                    return Err(make_err("invalid arithmetic modifier group"));
+                                }
+                                i += 1; // skip ':'
                             }
                             Some(&':') => {
                                 // Inline modifier: flags must be subset of {i,m,s}, no dups.

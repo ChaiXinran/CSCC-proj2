@@ -90,6 +90,33 @@ fn accepts_unicode_escape_and_property_escape_syntax() {
 }
 
 #[test]
+fn accepts_scoped_regexp_modifier_groups() {
+    for source in [
+        r"/(?i:abc)/;",
+        r"/(?im-s:^abc$)/;",
+        r"/(?-i:abc)/i;",
+        r"/(?s-:a.b)/;",
+        r"/(?i:(?-i:abc))/;",
+    ] {
+        parse_ok(source);
+    }
+}
+
+#[test]
+fn rejects_invalid_scoped_regexp_modifier_groups() {
+    for source in [
+        r"/(?-:abc)/;",
+        r"/(?ii:abc)/;",
+        r"/(?i-i:abc)/;",
+        r"/(?g:abc)/;",
+        r"/(?i-g:abc)/;",
+        r"/(?i-mabc)/;",
+    ] {
+        parse_fails(source);
+    }
+}
+
+#[test]
 fn rejects_invalid_unicode_property_names_and_values() {
     for source in [
         r"/\p{ASCII=Yes}/u;",

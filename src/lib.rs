@@ -12,6 +12,7 @@ pub mod lexer;
 pub mod parser;
 pub mod runtime;
 pub mod test262;
+pub(crate) mod unicode_set;
 pub mod vm;
 
 pub use backend::BackendKind;
