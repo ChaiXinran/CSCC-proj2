@@ -6,6 +6,11 @@
 
 use super::{function, install_foundation, install_test262_harness, string};
 use crate::{
+    intl::{
+        CollatorRecord, DateTimeFieldStyle, DateTimeFormatRecord, DateTimeStyle, HourCycle,
+        IntlDataProvider, IntlObjectData, IntlService, LocaleOptions, MinimalIntlProvider,
+        NumberFormatRecord, TimeZoneNameStyle, canonicalize_language_tag, resolve_locale,
+    },
     runtime::{
         ArrayBufferId, BigIntValue, DataViewId, IteratorMode, JsObject, JsValue, NativeCall,
         NativeContext, ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
@@ -4316,16 +4321,255 @@ fn construct_intl_object_with_new_target(
     new_target: JsValue,
     kind: &'static str,
 ) -> Result<JsValue, VmError> {
-    if kind == "NumberFormat" {
-        validate_number_format_arguments(vm, context, arguments)?;
-    }
+    let data = match kind {
+        "DateTimeFormat" => {
+            IntlObjectData::DateTimeFormat(initialize_date_time_format(vm, context, arguments)?)
+        }
+        "NumberFormat" => {
+            validate_number_format_arguments(vm, context, arguments)?;
+            IntlObjectData::NumberFormat(NumberFormatRecord::default())
+        }
+        "Collator" => IntlObjectData::Collator(CollatorRecord {
+            locale: "en-US".into(),
+        }),
+        _ => return Err(VmError::type_error("unsupported Intl constructor")),
+    };
     let prototype = context
         .constructor_prototype(&new_target)?
         .or_else(|| context.object_prototype())
         .ok_or_else(|| VmError::runtime("Intl prototype missing"))?;
     let object = new_ordinary_object(context, Some(prototype))?;
     define_hidden(context, object, INTL_KIND, JsValue::String(kind.into()))?;
+    context.set_intl_object_data(object, data);
     Ok(JsValue::Object(object))
+}
+
+fn date_time_string_option(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    options: &JsValue,
+    key: &str,
+    allowed: &[&str],
+) -> Result<Option<String>, VmError> {
+    let value = vm.get_property_value(options.clone(), key, context)?;
+    if matches!(value, JsValue::Undefined) {
+        return Ok(None);
+    }
+    let value = vm.to_string_coerce(value, context)?;
+    if !allowed.is_empty() && !allowed.contains(&value.as_str()) {
+        return Err(VmError::range(format!(
+            "invalid Intl.DateTimeFormat {key} option"
+        )));
+    }
+    Ok(Some(value))
+}
+
+fn initialize_date_time_format(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    arguments: &[JsValue],
+) -> Result<DateTimeFormatRecord, VmError> {
+    let requested = collect_locale_list(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?
+    .into_iter()
+    .map(|locale| {
+        canonicalize_language_tag(&locale)
+            .map_err(|_| VmError::range("invalid Intl.DateTimeFormat locale"))
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+    let options = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
+    if matches!(options, JsValue::Null) {
+        return Err(VmError::type_error(
+            "Intl.DateTimeFormat options cannot be null",
+        ));
+    }
+    let is_object = context.value_object(&options).is_some();
+    let mut locale_options = LocaleOptions::default();
+    let mut record = DateTimeFormatRecord::default();
+    if is_object {
+        locale_options.locale_matcher = date_time_string_option(
+            vm,
+            context,
+            &options,
+            "localeMatcher",
+            &["lookup", "best fit"],
+        )?;
+        locale_options.calendar = date_time_string_option(vm, context, &options, "calendar", &[])?;
+        locale_options.numbering_system =
+            date_time_string_option(vm, context, &options, "numberingSystem", &[])?;
+        let hour12 = vm.get_property_value(options.clone(), "hour12", context)?;
+        locale_options.hour_cycle = date_time_string_option(
+            vm,
+            context,
+            &options,
+            "hourCycle",
+            &["h11", "h12", "h23", "h24"],
+        )?;
+        record.time_zone = match vm.get_property_value(options.clone(), "timeZone", context)? {
+            JsValue::Undefined => "UTC".into(),
+            value => {
+                let value = vm.to_string_coerce(value, context)?;
+                MinimalIntlProvider
+                    .canonicalize_time_zone(&value)
+                    .map_err(VmError::range)?
+            }
+        };
+        record.weekday = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "weekday",
+            &["long", "short", "narrow"],
+        )?);
+        record.era = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "era",
+            &["long", "short", "narrow"],
+        )?);
+        record.year = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "year",
+            &["numeric", "2-digit"],
+        )?);
+        record.month = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "month",
+            &["numeric", "2-digit", "long", "short", "narrow"],
+        )?);
+        record.day = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "day",
+            &["numeric", "2-digit"],
+        )?);
+        record.hour = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "hour",
+            &["numeric", "2-digit"],
+        )?);
+        record.minute = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "minute",
+            &["numeric", "2-digit"],
+        )?);
+        record.second = field_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "second",
+            &["numeric", "2-digit"],
+        )?);
+        let fractional =
+            vm.get_property_value(options.clone(), "fractionalSecondDigits", context)?;
+        if !matches!(fractional, JsValue::Undefined) {
+            let value = vm.to_number(fractional, context)?;
+            if !value.is_finite() || !(1.0..=3.0).contains(&value) {
+                return Err(VmError::range("invalid fractionalSecondDigits"));
+            }
+            record.fractional_second_digits = Some(value.floor() as u8);
+        }
+        record.time_zone_name = time_zone_name(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "timeZoneName",
+            &[
+                "short",
+                "long",
+                "shortOffset",
+                "longOffset",
+                "shortGeneric",
+                "longGeneric",
+            ],
+        )?);
+        record.date_style = date_time_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "dateStyle",
+            &["full", "long", "medium", "short"],
+        )?);
+        record.time_style = date_time_style(date_time_string_option(
+            vm,
+            context,
+            &options,
+            "timeStyle",
+            &["full", "long", "medium", "short"],
+        )?);
+        record.hour_cycle = if !matches!(hour12, JsValue::Undefined) {
+            Some(if hour12.to_boolean() {
+                HourCycle::H12
+            } else {
+                HourCycle::H23
+            })
+        } else {
+            hour_cycle(locale_options.hour_cycle.as_deref())
+        };
+    }
+    let resolved = resolve_locale(
+        &MinimalIntlProvider,
+        IntlService::DateTimeFormat,
+        &requested,
+        &locale_options,
+    )
+    .map_err(VmError::range)?;
+    record.locale = resolved.locale;
+    record.calendar = resolved.calendar.unwrap_or_else(|| "gregory".into());
+    record.numbering_system = resolved.numbering_system.unwrap_or_else(|| "latn".into());
+    Ok(record)
+}
+
+fn field_style(value: Option<String>) -> Option<DateTimeFieldStyle> {
+    value.map(|value| match value.as_str() {
+        "numeric" => DateTimeFieldStyle::Numeric,
+        "2-digit" => DateTimeFieldStyle::TwoDigit,
+        "narrow" => DateTimeFieldStyle::Narrow,
+        "short" => DateTimeFieldStyle::Short,
+        _ => DateTimeFieldStyle::Long,
+    })
+}
+
+fn hour_cycle(value: Option<&str>) -> Option<HourCycle> {
+    value.map(|value| match value {
+        "h11" => HourCycle::H11,
+        "h12" => HourCycle::H12,
+        "h24" => HourCycle::H24,
+        _ => HourCycle::H23,
+    })
+}
+
+fn date_time_style(value: Option<String>) -> Option<DateTimeStyle> {
+    value.map(|value| match value.as_str() {
+        "full" => DateTimeStyle::Full,
+        "long" => DateTimeStyle::Long,
+        "medium" => DateTimeStyle::Medium,
+        _ => DateTimeStyle::Short,
+    })
+}
+
+fn time_zone_name(value: Option<String>) -> Option<TimeZoneNameStyle> {
+    value.map(|value| match value.as_str() {
+        "short" => TimeZoneNameStyle::Short,
+        "long" => TimeZoneNameStyle::Long,
+        "shortOffset" => TimeZoneNameStyle::ShortOffset,
+        "longOffset" => TimeZoneNameStyle::LongOffset,
+        "shortGeneric" => TimeZoneNameStyle::ShortGeneric,
+        _ => TimeZoneNameStyle::LongGeneric,
+    })
 }
 
 fn number_format_option(
@@ -4761,16 +5005,31 @@ fn intl_date_time_format_resolved_options(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "DateTimeFormat")?;
-    object_from_pairs(
-        context,
-        [
-            ("locale", JsValue::String("en-US".into())),
-            ("calendar", JsValue::String("gregory".into())),
-            ("numberingSystem", JsValue::String("latn".into())),
-            ("timeZone", JsValue::String("UTC".into())),
-        ],
-    )
+    let object = require_intl_kind(context, &this_value, "DateTimeFormat")?;
+    let record = match context.intl_object_data(object) {
+        Some(IntlObjectData::DateTimeFormat(record)) => record.clone(),
+        _ => return Err(VmError::type_error("invalid Intl.DateTimeFormat state")),
+    };
+    let mut pairs = vec![
+        ("locale", JsValue::String(record.locale)),
+        ("calendar", JsValue::String(record.calendar)),
+        ("numberingSystem", JsValue::String(record.numbering_system)),
+        ("timeZone", JsValue::String(record.time_zone)),
+    ];
+    if let Some(hour_cycle) = record.hour_cycle {
+        let hour_cycle = match hour_cycle {
+            HourCycle::H11 => "h11",
+            HourCycle::H12 => "h12",
+            HourCycle::H23 => "h23",
+            HourCycle::H24 => "h24",
+        };
+        pairs.push(("hourCycle", JsValue::String(hour_cycle.into())));
+        pairs.push((
+            "hour12",
+            JsValue::Boolean(matches!(hour_cycle, "h11" | "h12")),
+        ));
+    }
+    object_from_pairs(context, pairs)
 }
 
 fn intl_number_format_resolved_options(
@@ -4779,19 +5038,32 @@ fn intl_number_format_resolved_options(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "NumberFormat")?;
+    let object = require_intl_kind(context, &this_value, "NumberFormat")?;
+    let record = match context.intl_object_data(object) {
+        Some(IntlObjectData::NumberFormat(record)) => record.clone(),
+        _ => return Err(VmError::type_error("invalid Intl.NumberFormat state")),
+    };
     object_from_pairs(
         context,
         [
-            ("locale", JsValue::String("en-US".into())),
-            ("numberingSystem", JsValue::String("latn".into())),
-            ("style", JsValue::String("decimal".into())),
-            ("minimumIntegerDigits", JsValue::Number(1.0)),
-            ("minimumFractionDigits", JsValue::Number(0.0)),
-            ("maximumFractionDigits", JsValue::Number(3.0)),
-            ("useGrouping", JsValue::String("auto".into())),
-            ("notation", JsValue::String("standard".into())),
-            ("signDisplay", JsValue::String("auto".into())),
+            ("locale", JsValue::String(record.locale)),
+            ("numberingSystem", JsValue::String(record.numbering_system)),
+            ("style", JsValue::String(record.style)),
+            (
+                "minimumIntegerDigits",
+                JsValue::Number(record.minimum_integer_digits.into()),
+            ),
+            (
+                "minimumFractionDigits",
+                JsValue::Number(record.minimum_fraction_digits.into()),
+            ),
+            (
+                "maximumFractionDigits",
+                JsValue::Number(record.maximum_fraction_digits.into()),
+            ),
+            ("useGrouping", JsValue::String(record.use_grouping)),
+            ("notation", JsValue::String(record.notation)),
+            ("signDisplay", JsValue::String(record.sign_display)),
         ],
     )
 }

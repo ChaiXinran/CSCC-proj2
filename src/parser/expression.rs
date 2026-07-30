@@ -81,9 +81,12 @@ impl Parser {
                     self.peek().kind,
                     TokenKind::Punctuator(';')
                         | TokenKind::Punctuator(',')
+                        | TokenKind::Punctuator(':')
                         | TokenKind::Punctuator(')')
                         | TokenKind::Punctuator(']')
                         | TokenKind::Punctuator('}')
+                        | TokenKind::TemplateMiddle(_)
+                        | TokenKind::TemplateTail(_)
                 )
                 && !self.at_eof()
             {
@@ -268,6 +271,12 @@ impl Parser {
             self.check_strict_params(&params)?;
         }
 
+        // A class static block's ContainsAwait restriction stops at an arrow
+        // function boundary. Keep the lexical super-property capability, but
+        // parse the arrow body as its own function context so `await` can be an
+        // ordinary identifier there in script code.
+        let outer_static_block = self.in_class_static_block;
+        self.in_class_static_block = false;
         let body = if self.check_punctuator('{') {
             self.parse_function_body()?
         } else {
@@ -277,6 +286,7 @@ impl Parser {
                 is_strict: self.is_strict,
             }
         };
+        self.in_class_static_block = outer_static_block;
         Ok(Some(Expression::Function(FunctionLiteral {
             name: None,
             params,
@@ -646,7 +656,7 @@ impl Parser {
                         "`target` in the `new.target` meta-property cannot contain escapes".into(),
                     ));
                 }
-                if self.function_depth == 0 {
+                if self.function_depth == 0 && !self.in_class_static_block {
                     return Err(self.error(
                         "`new.target` is only valid inside a function or class constructor".into(),
                     ));
@@ -747,6 +757,12 @@ impl Parser {
                 Ok(Expression::Literal(Literal::String(value)))
             }
             TokenKind::Identifier(ref name) => {
+                if self.in_class_static_block && name == "await" {
+                    return Err(self.error(
+                        "`await` is not allowed as an identifier reference in a class static block"
+                            .into(),
+                    ));
+                }
                 if is_reserved_identifier_name(name) {
                     return Err(
                         self.error(format!("reserved word `{name}` cannot be an identifier"))
@@ -866,7 +882,7 @@ impl Parser {
                 Ok(Expression::This)
             }
             TokenKind::Keyword(Keyword::Super) => {
-                if self.function_depth == 0 && !self.allow_class_super_property {
+                if !self.allow_class_super_property {
                     return Err(self.error(
                         "`super` is only valid in a derived constructor or class method".into(),
                     ));
@@ -879,7 +895,9 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Identifier("yield".into()))
             }
-            TokenKind::Keyword(Keyword::Await) if !self.is_async_context => {
+            TokenKind::Keyword(Keyword::Await)
+                if !self.is_async_context && !self.in_class_static_block =>
+            {
                 self.advance();
                 Ok(Expression::Identifier("await".into()))
             }
@@ -1146,6 +1164,10 @@ impl Parser {
             {
                 let key = self.parse_property_name()?;
                 if self.check_punctuator('(') {
+                    let outer_super_property = self.allow_class_super_property;
+                    let outer_static_block = self.in_class_static_block;
+                    self.allow_class_super_property = true;
+                    self.in_class_static_block = false;
                     let mut params = self.parse_param_list()?;
                     if params.len() != 1
                         || matches!(
@@ -1159,11 +1181,7 @@ impl Parser {
                     }
                     let parameter = params.remove(0);
                     let parameter_is_non_simple = !matches!(&parameter, FunctionParam::Simple(_));
-                    let outer_super_property = self.allow_class_super_property;
-                    let outer_static_block = self.in_class_static_block;
                     let body_has_use_strict = self.peek_body_has_use_strict();
-                    self.allow_class_super_property = true;
-                    self.in_class_static_block = false;
                     let body = self.parse_function_body()?;
                     self.allow_class_super_property = outer_super_property;
                     self.in_class_static_block = outer_static_block;
@@ -1200,7 +1218,9 @@ impl Parser {
         let key_can_be_shorthand = match &self.peek().kind {
             TokenKind::Identifier(_) => true,
             TokenKind::Keyword(Keyword::Yield) => !self.is_generator_context && !self.is_strict,
-            TokenKind::Keyword(Keyword::Await) => !self.is_async_context,
+            TokenKind::Keyword(Keyword::Await) => {
+                !self.is_async_context && !self.in_class_static_block
+            }
             TokenKind::Keyword(Keyword::Let) => !self.is_strict,
             _ => false,
         };
@@ -1330,6 +1350,9 @@ impl Parser {
         self.allow_class_super_property = true;
         self.in_class_static_block = false;
         let params = self.parse_param_list()?;
+        if is_async {
+            Self::check_async_params_no_await(&params)?;
+        }
         if is_generator {
             Self::check_generator_params_no_yield(&params)?;
         }
@@ -1404,6 +1427,7 @@ impl Parser {
         let outer_static_block = self.in_class_static_block;
         let outer_generator = self.is_generator_context;
         self.is_async_context = false;
+        self.in_class_static_block = false;
         self.is_generator_context = is_generator;
         // Optional name for named function expressions (also accept keywords as names)
         let name = match self.peek().kind.clone() {
@@ -1417,17 +1441,11 @@ impl Parser {
             }
             _ => None,
         };
-        if outer_static_block && name.as_deref() == Some("await") {
-            return Err(
-                self.error("`await` cannot be a function name in a class static block".into())
-            );
-        }
-        if is_generator && name.as_deref() == Some("yield") {
+        if name.as_deref() == Some("yield") && (is_generator || self.is_strict) {
             return Err(self.error(
                 "`yield` cannot be the binding identifier of a generator expression".into(),
             ));
         }
-        self.in_class_static_block = false;
         let params = self.parse_param_list()?;
         if is_generator {
             Self::check_generator_params_no_yield(&params)?;
@@ -1504,6 +1522,7 @@ impl Parser {
                 _ => None,
             };
             let params = self.parse_param_list()?;
+            Self::check_async_params_no_await(&params)?;
             if is_generator {
                 Self::check_generator_params_no_yield(&params)?;
             }
@@ -1760,10 +1779,16 @@ impl Parser {
         self.expect_punctuator('{')?;
         // Class bodies are always strict mode per ECMAScript specification.
         let outer_strict = self.is_strict;
+        let outer_static_block = self.in_class_static_block;
         self.is_strict = true;
+        // A nested class body is a new class-evaluation boundary. Its methods
+        // and field initializers are not part of an enclosing static block's
+        // ContainsAwait traversal; nested static blocks set the flag again.
+        self.in_class_static_block = false;
         let mut elements = Vec::new();
         let result = self.parse_class_body_elements(&mut elements);
         self.is_strict = outer_strict;
+        self.in_class_static_block = outer_static_block;
         result?;
         Ok(elements)
     }
@@ -2007,7 +2032,10 @@ impl Parser {
                 }
                 self.expect_punctuator('(')?;
                 self.expect_punctuator(')')?;
+                let outer_super_property = self.allow_class_super_property;
+                self.allow_class_super_property = true;
                 let body = self.parse_function_body()?;
+                self.allow_class_super_property = outer_super_property;
                 self.check_non_ctor_super_call(&body)?;
                 elements.push(ClassElement::Method {
                     name: prop_name,
@@ -2036,6 +2064,8 @@ impl Parser {
                         prop_name.to_key_string()
                     )));
                 }
+                let outer_super_property = self.allow_class_super_property;
+                self.allow_class_super_property = true;
                 let params = self.parse_param_list()?;
                 // Check for non-simple params + "use strict" in setter body.
                 let is_nspl = Self::params_are_non_simple(&params);
@@ -2045,6 +2075,7 @@ impl Parser {
                     ));
                 }
                 let body = self.parse_function_body()?;
+                self.allow_class_super_property = outer_super_property;
                 self.check_non_ctor_super_call(&body)?;
                 elements.push(ClassElement::Method {
                     name: prop_name,
@@ -2102,10 +2133,15 @@ impl Parser {
                 // Set async/generator context for parameter and body parsing.
                 let outer_async = self.is_async_context;
                 let outer_generator = self.is_generator_context;
+                let outer_super_property = self.allow_class_super_property;
                 self.is_async_context = is_async;
                 self.is_generator_context = is_generator_method;
+                self.allow_class_super_property = true;
 
                 let params = self.parse_param_list()?;
+                if is_async {
+                    Self::check_async_params_no_await(&params)?;
+                }
                 if is_generator_method {
                     Self::check_generator_params_no_yield(&params)?;
                 }
@@ -2122,6 +2158,7 @@ impl Parser {
                 if is_nspl && self.peek_body_has_use_strict() {
                     self.is_async_context = outer_async;
                     self.is_generator_context = outer_generator;
+                    self.allow_class_super_property = outer_super_property;
                     return Err(self.error(
                         "\"use strict\" directive is not allowed in function with non-simple parameters".into(),
                     ));
@@ -2130,6 +2167,7 @@ impl Parser {
                 let body = self.parse_function_body()?;
                 self.is_async_context = outer_async;
                 self.is_generator_context = outer_generator;
+                self.allow_class_super_property = outer_super_property;
 
                 // Non-constructor methods: super() call is a SyntaxError.
                 if !is_ctor {

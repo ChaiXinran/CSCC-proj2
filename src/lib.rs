@@ -7,6 +7,7 @@ pub mod builtins;
 pub mod bytecode;
 pub mod contracts;
 pub mod engine;
+pub mod intl;
 pub mod lexer;
 pub mod parser;
 pub mod runtime;

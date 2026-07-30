@@ -14,6 +14,8 @@ default = []
 
 [dependencies]
 fancy-regex = "0.18.0"
+icu_calendar = { version = "2.2.0", features = ["compiled_data"] }
+jiff = { version = "0.2.35", features = ["tzdb-bundle-platform"] }
 regex = "1"
 
 [profile.release]
