@@ -196,21 +196,21 @@ impl fmt::Display for StringBuiltinError {
 }
 
 pub(crate) fn utf16_units(value: &str) -> Vec<u16> {
-    value.encode_utf16().collect()
+    crate::unicode_set::Utf16String::from_storage(value).units()
 }
 
 pub(crate) fn utf16_length(value: &str) -> usize {
     if value.is_ascii() {
         return value.len();
     }
-    value.encode_utf16().count()
+    utf16_units(value).len()
 }
 
 pub(crate) fn utf16_code_unit_at(value: &str, index: usize) -> Option<u16> {
     if value.is_ascii() {
         return value.as_bytes().get(index).map(|unit| u16::from(*unit));
     }
-    value.encode_utf16().nth(index)
+    utf16_units(value).get(index).copied()
 }
 
 #[allow(dead_code)]
@@ -647,7 +647,7 @@ pub(crate) fn from_code_points(values: &[u32]) -> Result<Vec<u16>, StringBuiltin
 /// Rust strings cannot store them; the C0 integration must keep the UTF-16
 /// sequence until the engine adopts a lossless ECMAScript string storage.
 pub(crate) fn decode_utf16(units: &[u16]) -> String {
-    String::from_utf16_lossy(units)
+    crate::unicode_set::Utf16String::from_units(units).into_storage()
 }
 
 fn pad(
