@@ -36,6 +36,8 @@ use crate::{
     vm::{Vm, VmError},
 };
 
+pub(crate) use function::eval_direct_call;
+
 // ── P1-A: Unified builtin installer helpers ───────────────────────────────────
 
 /// Descriptor attribute flags for builtin properties.

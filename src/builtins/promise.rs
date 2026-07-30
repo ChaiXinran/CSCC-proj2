@@ -886,7 +886,14 @@ fn bind_internal(
     let target = context
         .find_builtin_by_name(name)
         .ok_or_else(|| VmError::runtime(format!("missing internal builtin {name}")))?;
-    context.register_bound_function(target, JsValue::Undefined, arguments, 1.0, String::new())
+    let length = if name == PROMISE_FINALLY_PASSTHROUGH {
+        // The value/throw thunk created after onFinally completes has no
+        // formal parameters. ThenFinally itself remains length 1.
+        0.0
+    } else {
+        1.0
+    };
+    context.register_bound_function(target, JsValue::Undefined, arguments, length, String::new())
 }
 
 fn aggregate_state(arguments: &[JsValue]) -> Result<JsValue, VmError> {
@@ -1527,21 +1534,6 @@ pub(crate) fn resolve_promise_value(
                 crate::runtime::NativeErrorKind::Type,
                 "Promise cannot resolve to itself",
             )),
-        );
-    }
-
-    if let Some(source) = context.promise_id_from_value(&value) {
-        let (resolve, reject) = create_promise_resolving_functions(context, promise_object)?;
-        return context.add_promise_reaction(
-            source,
-            PromiseThenReaction {
-                result_promise: Some(promise),
-                resolve,
-                reject,
-                on_fulfilled: None,
-                on_rejected: None,
-                finally: false,
-            },
         );
     }
 

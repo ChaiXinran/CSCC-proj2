@@ -375,6 +375,24 @@ fn define_own_property(
     descriptor_arg: JsValue,
     update: PropertyDescriptorUpdate,
 ) -> Result<bool, VmError> {
+    if context.module_registry().is_namespace_value(&target)
+        && matches!(key, PropertyKey::String(_))
+    {
+        let Some(current) = ordinary_get_own_property_descriptor(context, target, key)? else {
+            return Ok(false);
+        };
+        // Module namespace [[DefineOwnProperty]] accepts only a request that
+        // leaves the existing exported binding descriptor unchanged.
+        return Ok(update.configurable != Some(true)
+            && update.enumerable != Some(false)
+            && update.writable != Some(false)
+            && update.get.is_none()
+            && update.set.is_none()
+            && update
+                .value
+                .as_ref()
+                .is_none_or(|value| current.value().is_some_and(|old| old.same_value(value))));
+    }
     let Some(record) = proxy_record(context, &target)? else {
         return ordinary_define_own_property(vm, context, target, key, update);
     };
@@ -686,6 +704,18 @@ fn own_property_keys(
     context: &mut NativeContext,
     target: JsValue,
 ) -> Result<Vec<PropertyKey>, VmError> {
+    if context.module_registry().is_namespace_value(&target) {
+        let mut keys = ordinary_own_property_keys(context, target)?;
+        let string_count = keys
+            .iter()
+            .position(|key| matches!(key, PropertyKey::Symbol(_)))
+            .unwrap_or(keys.len());
+        keys[..string_count].sort_by(|left, right| match (left, right) {
+            (PropertyKey::String(left), PropertyKey::String(right)) => left.cmp(right),
+            _ => std::cmp::Ordering::Equal,
+        });
+        return Ok(keys);
+    }
     let Some(record) = proxy_record(context, &target)? else {
         return ordinary_own_property_keys(context, target);
     };
@@ -771,6 +801,9 @@ fn set(
     value: JsValue,
     receiver: JsValue,
 ) -> Result<bool, VmError> {
+    if context.module_registry().is_namespace_value(&target) {
+        return Ok(false);
+    }
     let Some(record) = proxy_record(context, &target)? else {
         return ordinary_set(vm, context, target, key, value, receiver);
     };
