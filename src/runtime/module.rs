@@ -191,6 +191,41 @@ impl ModuleRegistry {
     }
 
     #[must_use]
+    pub fn path_for_namespace(&self, value: &JsValue) -> Option<PathBuf> {
+        let id = self
+            .namespaces
+            .iter()
+            .find_map(|(id, namespace)| namespace.same_value(value).then_some(*id))?;
+        self.records
+            .iter()
+            .find_map(|(path, record)| (record.id == id).then(|| path.clone()))
+    }
+
+    #[must_use]
+    pub fn namespace_local_binding(
+        &self,
+        value: &JsValue,
+        export_name: &str,
+    ) -> Option<(EnvironmentId, String)> {
+        let id = self
+            .namespaces
+            .iter()
+            .find_map(|(id, namespace)| namespace.same_value(value).then_some(*id))?;
+        let record = self.records.values().find(|record| record.id == id)?;
+        let binding = record
+            .exports
+            .iter()
+            .find(|binding| binding.export_name == export_name && binding.source.is_none())?;
+        Some((
+            *self.environments.get(&id)?,
+            binding
+                .local_name
+                .clone()
+                .unwrap_or_else(|| binding.export_name.clone()),
+        ))
+    }
+
+    #[must_use]
     pub fn is_namespace_value(&self, value: &JsValue) -> bool {
         self.namespaces
             .values()

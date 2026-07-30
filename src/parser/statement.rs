@@ -18,7 +18,13 @@ use crate::{
 impl Parser {
     pub(super) fn parse_module_item(&mut self) -> Result<Statement, ParseError> {
         match self.peek().kind {
-            TokenKind::Keyword(Keyword::Import) => self.parse_import_declaration(),
+            TokenKind::Keyword(Keyword::Import)
+                if !self.tokens.get(self.cursor + 1).is_some_and(|token| {
+                    matches!(token.kind, TokenKind::Punctuator('(' | '.'))
+                }) =>
+            {
+                self.parse_import_declaration()
+            }
             TokenKind::Keyword(Keyword::Export) => self.parse_export_declaration(),
             _ => self.parse_statement(),
         }
@@ -586,16 +592,30 @@ impl Parser {
 
         if let TokenKind::String(source) = self.peek().kind.clone() {
             self.advance();
+            let attributes = self.parse_import_attributes()?;
             self.expect_semicolon()?;
             return Ok(Statement::ModuleDeclaration(
                 crate::ast::ModuleDeclaration::Import(crate::ast::ImportDeclaration {
                     source,
                     entries,
+                    attributes,
+                    deferred: false,
                 }),
             ));
         }
 
-        if self.eat_operator("*") {
+        let deferred = self.eat_identifier_name("defer");
+        if deferred {
+            if !self.eat_operator("*") {
+                return Err(self.error("expected `*` after `import defer`".into()));
+            }
+            self.expect_identifier_name_exact("as")?;
+            let local_name = self.expect_identifier()?;
+            entries.push(crate::ast::ImportEntry {
+                imported_name: "*".into(),
+                local_name,
+            });
+        } else if self.eat_operator("*") {
             self.expect_identifier_name_exact("as")?;
             let local_name = self.expect_identifier()?;
             entries.push(crate::ast::ImportEntry {
@@ -626,13 +646,35 @@ impl Parser {
 
         self.expect_identifier_name_exact("from")?;
         let source = self.expect_string_literal("module specifier")?;
+        let attributes = self.parse_import_attributes()?;
         self.expect_semicolon()?;
         Ok(Statement::ModuleDeclaration(
             crate::ast::ModuleDeclaration::Import(crate::ast::ImportDeclaration {
                 source,
                 entries,
+                attributes,
+                deferred,
             }),
         ))
+    }
+
+    fn parse_import_attributes(&mut self) -> Result<Vec<(String, String)>, ParseError> {
+        if !self.eat_keyword(Keyword::With) {
+            return Ok(Vec::new());
+        }
+        self.expect_punctuator('{')?;
+        let mut attributes = Vec::new();
+        while !self.check_punctuator('}') {
+            let key = self.expect_module_export_name()?;
+            self.expect_punctuator(':')?;
+            let value = self.expect_string_literal("import attribute value")?;
+            attributes.push((key, value));
+            if !self.eat_punctuator(',') {
+                break;
+            }
+        }
+        self.expect_punctuator('}')?;
+        Ok(attributes)
     }
 
     fn parse_named_import_entries(
@@ -2733,6 +2775,11 @@ fn collect_var_declared_names<'a>(statement: &'a Statement, names: &mut Vec<&'a 
                 .iter()
                 .map(|declaration| declaration.name.as_str()),
         ),
+        Statement::DestructuringDeclaration {
+            kind: VariableKind::Var,
+            pattern,
+            ..
+        } => names.extend(binding_pattern_name_strs(pattern)),
         Statement::Block(statements) => {
             names.extend(var_declared_names(statements));
         }

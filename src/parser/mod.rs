@@ -490,4 +490,32 @@ mod tests {
             .unwrap();
         assert_eq!(Parser::new(tokens).parse_program().unwrap().body.len(), 1);
     }
+
+    #[test]
+    fn module_export_var_destructuring_declares_its_bound_names() {
+        let source = "export var { x = await Promise.resolve(1) } = {};";
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        assert!(Parser::with_source(tokens, source).parse_module().is_ok());
+    }
+
+    #[test]
+    fn parses_static_import_attributes() {
+        let source = "import value from './data.json' with { type: 'json' };";
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        assert!(Parser::with_source(tokens, source).parse_module().is_ok());
+    }
+
+    #[test]
+    fn parses_deferred_namespace_import() {
+        let source = "import defer * as namespace from './dependency.js';";
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        assert!(Parser::with_source(tokens, source).parse_module().is_ok());
+    }
+
+    #[test]
+    fn module_item_keeps_dynamic_import_in_expression_position() {
+        let source = "import('./dependency.js').then(value => value.default);";
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        assert!(Parser::with_source(tokens, source).parse_module().is_ok());
+    }
 }

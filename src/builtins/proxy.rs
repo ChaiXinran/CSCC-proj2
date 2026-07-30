@@ -268,6 +268,7 @@ pub(crate) fn internal_get_own_property(
     target: JsValue,
     key: &PropertyKey,
 ) -> Result<Option<PropertyDescriptor>, VmError> {
+    vm.ensure_module_namespace_evaluated(context, &target, Some(key))?;
     get_own_property_descriptor(vm, context, target, key)
 }
 
@@ -279,6 +280,7 @@ pub(crate) fn internal_define_own_property(
     descriptor_arg: JsValue,
     update: PropertyDescriptorUpdate,
 ) -> Result<bool, VmError> {
+    vm.ensure_module_namespace_evaluated(context, &target, Some(key))?;
     define_own_property(vm, context, target, key, descriptor_arg, update)
 }
 
@@ -288,6 +290,7 @@ pub(crate) fn internal_has_property(
     target: JsValue,
     key: &PropertyKey,
 ) -> Result<bool, VmError> {
+    vm.ensure_module_namespace_evaluated(context, &target, Some(key))?;
     has_property(vm, context, target, key)
 }
 
@@ -298,6 +301,7 @@ pub(crate) fn internal_get(
     key: &PropertyKey,
     receiver: JsValue,
 ) -> Result<JsValue, VmError> {
+    vm.ensure_module_namespace_evaluated(context, &target, Some(key))?;
     get(vm, context, target, key, receiver)
 }
 
@@ -318,6 +322,7 @@ pub(crate) fn internal_delete(
     target: JsValue,
     key: &PropertyKey,
 ) -> Result<bool, VmError> {
+    vm.ensure_module_namespace_evaluated(context, &target, Some(key))?;
     delete_property(vm, context, target, key)
 }
 
@@ -326,6 +331,7 @@ pub(crate) fn internal_own_property_keys(
     context: &mut NativeContext,
     target: JsValue,
 ) -> Result<Vec<PropertyKey>, VmError> {
+    vm.ensure_module_namespace_evaluated(context, &target, None)?;
     own_property_keys(vm, context, target)
 }
 

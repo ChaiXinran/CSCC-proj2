@@ -30,6 +30,8 @@ pub struct Program {
 pub struct ImportDeclaration {
     pub source: String,
     pub entries: Vec<ImportEntry>,
+    pub attributes: Vec<(String, String)>,
+    pub deferred: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

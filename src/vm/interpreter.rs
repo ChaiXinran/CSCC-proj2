@@ -29,20 +29,50 @@ struct LoadedModule {
     imports: Vec<crate::runtime::ModuleImportBinding>,
     exports: Vec<crate::runtime::ModuleExportBinding>,
     dependencies: Vec<String>,
+    module_type: Option<String>,
+    deferred_dependencies: std::collections::HashSet<String>,
 }
 
 fn load_module_graph(
     context: &mut NativeContext,
     path: &Path,
+    module_type: Option<&str>,
     graph: &mut HashMap<std::path::PathBuf, LoadedModule>,
 ) -> Result<(), VmError> {
     let path = crate::runtime::normalize_module_path(path);
     if graph.contains_key(&path) {
         return Ok(());
     }
-    let source = fs::read_to_string(&path).map_err(|error| {
+    let bytes = fs::read(&path).map_err(|error| {
         VmError::reference(format!("cannot load module `{}`: {error}", path.display()))
     })?;
+    let source = match module_type {
+        Some("json") => {
+            let json = String::from_utf8(bytes)
+                .map_err(|_| VmError::syntax_error("JSON module is not valid UTF-8"))?;
+            format!("export default {json};")
+        }
+        Some("text") => {
+            let text = String::from_utf8(bytes)
+                .map_err(|_| VmError::syntax_error("text module is not valid UTF-8"))?;
+            format!("export default {text:?};")
+        }
+        Some("bytes") => {
+            let values = bytes
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("export default new Uint8Array([{values}]);")
+        }
+        Some(other) => {
+            return Err(VmError::type_error(format!(
+                "unsupported module type attribute `{other}`"
+            )));
+        }
+        None => String::from_utf8(bytes)
+            .map_err(|_| VmError::syntax_error("source text module is not valid UTF-8"))?,
+    };
     let tokens = Lexer::new(&source)
         .tokenize()
         .map_err(|error| VmError::syntax_error(error.to_string()))?;
@@ -55,12 +85,22 @@ fn load_module_graph(
         .map_err(|error| VmError::runtime(error.to_string()))?;
 
     let mut dependencies = Vec::new();
+    let mut dependency_types = HashMap::new();
+    let mut deferred_dependencies = std::collections::HashSet::new();
     let mut import_metadata = Vec::new();
     let mut export_metadata = Vec::new();
     for item in &program.body {
         match item {
             Statement::ModuleDeclaration(ModuleDeclaration::Import(declaration)) => {
                 dependencies.push(declaration.source.clone());
+                if declaration.deferred {
+                    deferred_dependencies.insert(declaration.source.clone());
+                }
+                if let Some((_, module_type)) =
+                    declaration.attributes.iter().find(|(key, _)| key == "type")
+                {
+                    dependency_types.insert(declaration.source.clone(), module_type.clone());
+                }
                 import_metadata.extend(declaration.entries.iter().map(|entry| {
                     crate::runtime::ModuleImportBinding {
                         source: declaration.source.clone(),
@@ -117,12 +157,19 @@ fn load_module_graph(
             imports: import_metadata,
             exports: export_metadata,
             dependencies: dependencies.clone(),
+            module_type: module_type.map(str::to_owned),
+            deferred_dependencies,
         },
     );
     for specifier in dependencies {
         let dependency_path = crate::runtime::resolve_module_specifier(&path, &specifier)
             .map_err(VmError::type_error)?;
-        load_module_graph(context, &dependency_path, graph)?;
+        load_module_graph(
+            context,
+            &dependency_path,
+            dependency_types.get(&specifier).map(String::as_str),
+            graph,
+        )?;
     }
     Ok(())
 }
@@ -139,18 +186,26 @@ fn normalize_default_export_bindings(program: &mut crate::ast::Program) {
         {
             continue;
         }
-        let Some(Statement::Expression(expression)) = declaration.declaration.as_deref() else {
-            continue;
-        };
         let binding_name = "\0module_default".to_string();
-        declaration.declaration = Some(Box::new(Statement::VariableDeclaration {
-            kind: crate::ast::VariableKind::Const,
-            declarations: vec![crate::ast::VariableDeclarator {
-                name: binding_name.clone(),
-                pattern: None,
-                initializer: Some(expression.clone()),
-            }],
-        }));
+        match declaration.declaration.as_deref_mut() {
+            Some(Statement::Expression(expression)) => {
+                declaration.declaration = Some(Box::new(Statement::VariableDeclaration {
+                    kind: crate::ast::VariableKind::Const,
+                    declarations: vec![crate::ast::VariableDeclarator {
+                        name: binding_name.clone(),
+                        pattern: None,
+                        initializer: Some(expression.clone()),
+                    }],
+                }));
+            }
+            Some(Statement::ClassDeclaration(class)) if class.name == "*default*" => {
+                class.name = binding_name.clone();
+            }
+            Some(Statement::FunctionDeclaration { name, .. }) if name == "*default*" => {
+                *name = binding_name.clone();
+            }
+            _ => continue,
+        }
         for entry in &mut declaration.entries {
             if entry.export_name == "default" && entry.local_name.is_none() {
                 entry.local_name = Some(binding_name.clone());
@@ -163,18 +218,21 @@ fn instantiate_module_graph(
     context: &mut NativeContext,
     graph: &HashMap<std::path::PathBuf, LoadedModule>,
 ) -> Result<(), VmError> {
+    let mut new_modules = std::collections::HashSet::new();
     for module in graph.values() {
+        if context.module_registry().environment(module.id).is_some() {
+            continue;
+        }
         context
             .module_registry_mut()
             .set_status(module.id, crate::runtime::ModuleStatus::Linking);
-        if context.module_registry().environment(module.id).is_none() {
-            let depth = context.environment_depth();
-            let environment = context.push_environment(Some(context.global_environment()))?;
-            context.restore_environment_depth(depth)?;
-            context
-                .module_registry_mut()
-                .set_environment(module.id, environment);
-        }
+        let depth = context.environment_depth();
+        let environment = context.push_environment(Some(context.global_environment()))?;
+        context.restore_environment_depth(depth)?;
+        context
+            .module_registry_mut()
+            .set_environment(module.id, environment);
+        new_modules.insert(module.id);
         if context.module_registry().namespace(module.id).is_none() {
             let namespace = context.ordinary_object_with_prototype(None)?;
             let namespace_object = context.require_object(&namespace, "create module namespace")?;
@@ -200,6 +258,9 @@ fn instantiate_module_graph(
     // creates TDZ cells before following a cycle, so a back-edge observes an
     // uninitialized binding instead of an absent global.
     for module in graph.values() {
+        if !new_modules.contains(&module.id) {
+            continue;
+        }
         let environment = context
             .module_registry()
             .environment(module.id)
@@ -209,6 +270,9 @@ fn instantiate_module_graph(
     // Imports are indirect cells, not copied values. Wire them only after all
     // module environments and export cells exist.
     for module in graph.values() {
+        if !new_modules.contains(&module.id) {
+            continue;
+        }
         let environment = context
             .module_registry()
             .environment(module.id)
@@ -270,7 +334,87 @@ fn instantiate_module_graph(
             }
         }
     }
+    // Module namespace keys exist as soon as the graph is instantiated.  In
+    // particular, a cyclic dependency can observe a namespace before the
+    // exporting module starts evaluating; `var` exports must already read as
+    // undefined and subsequent initialization is reflected by
+    // `refresh_module_namespace_binding`.
+    for (path, module) in graph {
+        if !new_modules.contains(&module.id) {
+            continue;
+        }
+        let namespace = context
+            .module_registry()
+            .namespace(module.id)
+            .ok_or_else(|| VmError::runtime("module namespace is missing"))?;
+        let namespace_object = context.require_object(&namespace, "initialize module namespace")?;
+        for export_name in module_exported_names(graph, path) {
+            let value = resolve_export_target(context, graph, path, &export_name)
+                .and_then(|(environment, name)| {
+                    context.binding_value_in_environment(environment, &name)
+                })
+                .unwrap_or(JsValue::Undefined);
+            context.define_own_property(
+                namespace_object,
+                export_name,
+                PropertyDescriptor::data_with(value, true, true, false),
+            )?;
+        }
+        context.prevent_extensions(namespace_object)?;
+    }
     Ok(())
+}
+
+fn module_exported_names(
+    graph: &HashMap<std::path::PathBuf, LoadedModule>,
+    path: &Path,
+) -> Vec<String> {
+    fn collect(
+        graph: &HashMap<std::path::PathBuf, LoadedModule>,
+        path: &Path,
+        visited: &mut std::collections::HashSet<std::path::PathBuf>,
+        names: &mut std::collections::BTreeSet<String>,
+    ) {
+        let path = crate::runtime::normalize_module_path(path);
+        if !visited.insert(path.clone()) {
+            return;
+        }
+        let Some(module) = graph.get(&path) else {
+            return;
+        };
+        for binding in &module.exports {
+            if binding.export_name == "*" {
+                if let Some(source) = &binding.source
+                    && let Ok(dependency) = crate::runtime::resolve_module_specifier(&path, source)
+                {
+                    collect(graph, &dependency, visited, names);
+                }
+            } else {
+                names.insert(binding.export_name.clone());
+            }
+        }
+    }
+
+    let mut names = std::collections::BTreeSet::new();
+    collect(
+        graph,
+        path,
+        &mut std::collections::HashSet::new(),
+        &mut names,
+    );
+    names.remove("default");
+    if graph
+        .get(&crate::runtime::normalize_module_path(path))
+        .is_some_and(|module| {
+            module
+                .exports
+                .iter()
+                .any(|binding| binding.export_name == "default")
+        })
+    {
+        names.insert("default".into());
+    }
+    names.into_iter().collect()
 }
 
 fn module_path_for(
@@ -292,27 +436,46 @@ fn instantiate_module_declarations(
         match statement {
             Statement::VariableDeclaration { kind, declarations } => {
                 for declaration in declarations {
-                    if declaration.pattern.is_none() {
+                    let names = declaration
+                        .pattern
+                        .as_ref()
+                        .map(module_binding_pattern_names)
+                        .unwrap_or_else(|| vec![declaration.name.clone()]);
+                    for name in names {
                         match kind {
-                            crate::ast::VariableKind::Const => context.create_immutable_binding(
-                                environment,
-                                declaration.name.clone(),
-                                true,
-                            )?,
-                            crate::ast::VariableKind::Let => context.create_mutable_binding(
-                                environment,
-                                declaration.name.clone(),
-                                false,
-                                true,
-                            )?,
+                            crate::ast::VariableKind::Const => {
+                                context.create_immutable_binding(environment, name, true)?
+                            }
+                            crate::ast::VariableKind::Let => {
+                                context.create_mutable_binding(environment, name, false, true)?
+                            }
                             crate::ast::VariableKind::Var => context.declare_binding(
                                 environment,
-                                declaration.name.clone(),
+                                name,
                                 JsValue::Undefined,
                                 true,
                                 false,
                             )?,
                         }
+                    }
+                }
+            }
+            Statement::DestructuringDeclaration { kind, pattern, .. } => {
+                for name in module_binding_pattern_names(pattern) {
+                    match kind {
+                        crate::ast::VariableKind::Const => {
+                            context.create_immutable_binding(environment, name, true)?
+                        }
+                        crate::ast::VariableKind::Let => {
+                            context.create_mutable_binding(environment, name, false, true)?
+                        }
+                        crate::ast::VariableKind::Var => context.declare_binding(
+                            environment,
+                            name,
+                            JsValue::Undefined,
+                            true,
+                            false,
+                        )?,
                     }
                 }
             }
@@ -351,6 +514,34 @@ fn instantiate_module_declarations(
         }
     }
     Ok(())
+}
+
+fn module_binding_pattern_names(pattern: &crate::ast::BindingPattern) -> Vec<String> {
+    use crate::ast::BindingPattern;
+    match pattern {
+        BindingPattern::Identifier(name) => vec![name.clone()],
+        BindingPattern::Array { elements, rest } => {
+            let mut names = elements
+                .iter()
+                .flatten()
+                .flat_map(|element| module_binding_pattern_names(&element.pattern))
+                .collect::<Vec<_>>();
+            if let Some(rest) = rest {
+                names.extend(module_binding_pattern_names(rest));
+            }
+            names
+        }
+        BindingPattern::Object { props, rest } => {
+            let mut names = props
+                .iter()
+                .flat_map(|property| module_binding_pattern_names(&property.value))
+                .collect::<Vec<_>>();
+            if let Some(rest) = rest {
+                names.extend(module_binding_pattern_names(rest));
+            }
+            names
+        }
+    }
 }
 
 fn resolve_export_target(
@@ -489,6 +680,9 @@ fn evaluate_module_graph(
         .set_evaluation_state(module.id, crate::runtime::ModuleEvaluationState::Pending);
 
     for specifier in &module.dependencies {
+        if module.deferred_dependencies.contains(specifier) {
+            continue;
+        }
         let dependency_path = crate::runtime::resolve_module_specifier(&path, specifier)
             .map_err(VmError::type_error)?;
         evaluate_module_graph(vm, context, graph, &dependency_path)?;
@@ -548,6 +742,14 @@ fn evaluate_module_graph(
             )?;
         }
     }
+    if module.module_type.as_deref() == Some("bytes")
+        && let Ok(value) = context.get_property(namespace.clone(), "default")
+        && let Some(object) = context.value_object(&value)
+        && let Some((view, _)) = context.typed_array_indexed_view(object)
+        && let Some(buffer) = context.typed_array_view(view).map(|view| view.buffer)
+    {
+        context.mark_array_buffer_immutable(buffer)?;
+    }
     context.prevent_extensions(namespace_object)?;
     context
         .module_registry_mut()
@@ -558,10 +760,19 @@ fn evaluate_module_graph(
     Ok(namespace)
 }
 
-fn evaluate_local_module(
+pub(crate) fn evaluate_local_module(
     vm: &mut Vm,
     context: &mut NativeContext,
     path: &Path,
+) -> Result<JsValue, VmError> {
+    evaluate_local_module_with_type(vm, context, path, None)
+}
+
+fn evaluate_local_module_with_type(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    path: &Path,
+    module_type: Option<&str>,
 ) -> Result<JsValue, VmError> {
     let path = crate::runtime::normalize_module_path(path);
     if matches!(
@@ -575,7 +786,7 @@ fn evaluate_local_module(
             .ok_or_else(|| VmError::runtime("module namespace is missing"));
     }
     let mut graph = HashMap::new();
-    load_module_graph(context, &path, &mut graph)?;
+    load_module_graph(context, &path, module_type, &mut graph)?;
     instantiate_module_graph(context, &graph)?;
     let root = graph
         .get(&path)
@@ -594,6 +805,7 @@ fn load_dynamic_module_namespace(
     vm: &mut Vm,
     context: &mut NativeContext,
     specifier: &str,
+    module_type: Option<&str>,
 ) -> Result<JsValue, VmError> {
     let referrer = context
         .get_global("__agentjs_dynamic_import_referrer")
@@ -601,7 +813,50 @@ fn load_dynamic_module_namespace(
         .ok_or_else(|| VmError::reference("dynamic import has no referrer path"))?;
     let path = crate::runtime::resolve_module_specifier(Path::new(&referrer), specifier)
         .map_err(VmError::type_error)?;
-    evaluate_local_module(vm, context, &path)
+    evaluate_local_module_with_type(vm, context, &path, module_type)
+}
+
+fn dynamic_import_module_type(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    options: JsValue,
+) -> Result<Option<String>, VmError> {
+    if matches!(options, JsValue::Undefined) {
+        return Ok(None);
+    }
+    context.require_object(&options, "dynamic import options")?;
+    let attributes = vm.get_property_value(options, "with", context)?;
+    if matches!(attributes, JsValue::Undefined) {
+        return Ok(None);
+    }
+    context.require_object(&attributes, "dynamic import attributes")?;
+    let keys = proxy::internal_own_property_keys(vm, context, attributes.clone())?;
+    let mut module_type = None;
+    for key in keys {
+        let PropertyKey::String(name) = key else {
+            continue;
+        };
+        if !proxy::internal_get_own_property(
+            vm,
+            context,
+            attributes.clone(),
+            &PropertyKey::String(name.clone()),
+        )?
+        .is_some_and(|descriptor| descriptor.enumerable)
+        {
+            continue;
+        }
+        let value = vm.get_property_value(attributes.clone(), &name, context)?;
+        let JsValue::String(value) = value else {
+            return Err(VmError::type_error(
+                "dynamic import attribute values must be strings",
+            ));
+        };
+        if name == "type" {
+            module_type = Some(value);
+        }
+    }
+    Ok(module_type)
 }
 
 const ITERATOR_MAX_ARRAY_LENGTH: usize = 1_000_000;
@@ -866,8 +1121,9 @@ impl Vm {
                     VmError::runtime("yield completion escaped outside a generator"),
                 ),
                 Completion::Throw(value) => {
+                    let error = throw_value(value.clone(), context);
                     self.pending_exception = Some(value);
-                    Err(VmError::runtime("nested JavaScript execution threw"))
+                    Err(error)
                 }
                 Completion::Break(label) => Err(VmError::runtime(format!(
                     "break completion in eval context{}",
@@ -2642,7 +2898,7 @@ impl Vm {
                     // Dynamic import always returns a Promise. The V13-B local loader
                     // settles it synchronously into the native Promise registry; its
                     // reactions still run through the normal job queue.
-                    let _options = self.pop_value()?;
+                    let options = self.pop_value()?;
                     let specifier = self.pop_value()?;
                     let promise = context.create_promise()?;
                     let prototype = context
@@ -2655,16 +2911,44 @@ impl Vm {
                     let value = context.create_promise_object(promise, prototype)?;
                     match self.to_string_coerce(specifier, context) {
                         Ok(specifier) => {
-                            match load_dynamic_module_namespace(self, context, &specifier) {
-                                Ok(namespace) => {
-                                    context.fulfill_promise(promise, namespace)?;
-                                }
-                                Err(error) => {
-                                    let reason = self
-                                        .pending_exception
-                                        .take()
-                                        .unwrap_or_else(|| vm_error_to_value(error));
-                                    context.reject_promise(promise, reason)?;
+                            if matches!(
+                                &options,
+                                JsValue::String(value) if value == "\0import-source-phase"
+                            ) {
+                                context.reject_promise(
+                                    promise,
+                                    vm_error_to_value(VmError::syntax_error(
+                                        "source phase import is unavailable for source text modules",
+                                    )),
+                                )?;
+                            } else {
+                                match dynamic_import_module_type(self, context, options) {
+                                    Ok(module_type) => {
+                                        match load_dynamic_module_namespace(
+                                            self,
+                                            context,
+                                            &specifier,
+                                            module_type.as_deref(),
+                                        ) {
+                                            Ok(namespace) => {
+                                                context.fulfill_promise(promise, namespace)?;
+                                            }
+                                            Err(error) => {
+                                                let reason = self
+                                                    .pending_exception
+                                                    .take()
+                                                    .unwrap_or_else(|| vm_error_to_value(error));
+                                                context.reject_promise(promise, reason)?;
+                                            }
+                                        }
+                                    }
+                                    Err(error) => {
+                                        let reason = self
+                                            .pending_exception
+                                            .take()
+                                            .unwrap_or_else(|| vm_error_to_value(error));
+                                        context.reject_promise(promise, reason)?;
+                                    }
                                 }
                             }
                         }
@@ -6237,6 +6521,29 @@ impl Vm {
         }
     }
 
+    pub(crate) fn ensure_module_namespace_evaluated(
+        &mut self,
+        context: &mut NativeContext,
+        target: &JsValue,
+        key: Option<&PropertyKey>,
+    ) -> Result<(), VmError> {
+        if matches!(key, Some(PropertyKey::Symbol(_)))
+            || matches!(key, Some(PropertyKey::String(name)) if name == "then")
+        {
+            return Ok(());
+        }
+        let Some(path) = context.module_registry().path_for_namespace(target) else {
+            return Ok(());
+        };
+        if matches!(
+            context.module_registry().status_for_path(&path),
+            Some(crate::runtime::ModuleStatus::Linked)
+        ) {
+            evaluate_local_module(self, context, &path)?;
+        }
+        Ok(())
+    }
+
     pub(crate) fn get_property_value_catching_from_builtin(
         &mut self,
         receiver: JsValue,
@@ -6442,6 +6749,23 @@ impl Vm {
                 _ => JsValue::Undefined,
             };
             return Ok(OperationResult::Value(value));
+        }
+
+        if let Err(error) = self.ensure_module_namespace_evaluated(
+            context,
+            &receiver,
+            Some(&PropertyKey::String(key.into())),
+        ) {
+            return self.error_to_operation_result(error);
+        }
+        if let Some((environment, name)) = context
+            .module_registry()
+            .namespace_local_binding(&receiver, key)
+        {
+            return match context.binding_value_in_environment(environment, &name) {
+                Ok(value) => Ok(OperationResult::Value(value)),
+                Err(error) => self.error_to_operation_result(error),
+            };
         }
 
         if let Some(name) = key.strip_prefix("\0#")
@@ -7724,7 +8048,7 @@ fn generator_next(
     vm.resume_generator(this_value, sent, context)
 }
 
-fn async_generator_next(
+pub(crate) fn async_generator_next(
     vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
@@ -7734,7 +8058,7 @@ fn async_generator_next(
     wrap_async_generator_result(vm, context, result)
 }
 
-fn async_generator_return(
+pub(crate) fn async_generator_return(
     vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
@@ -7744,7 +8068,7 @@ fn async_generator_return(
     wrap_async_generator_result(vm, context, result)
 }
 
-fn async_generator_throw(
+pub(crate) fn async_generator_throw(
     vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,

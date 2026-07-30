@@ -8,15 +8,15 @@ use std::{
 use fancy_regex::Regex;
 
 use super::{
-    ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction, BuiltinId,
-    CollectionStats, Collector, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId,
-    Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject, JsValue,
-    ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue, NativeJob,
-    ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot, PromiseCallbackJob,
-    PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState, PromiseThenReaction,
-    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, ProxyRecord, RootSet,
-    SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
-    WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
+    AgentManager, ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction,
+    BuiltinId, CollectionStats, Collector, DataViewId, DataViewRecord, Environment, EnvironmentId,
+    FunctionId, Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject,
+    JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue,
+    NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
+    PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
+    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind,
+    ProxyRecord, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
+    TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 use crate::{builtins::string, intl::IntlObjectData};
@@ -184,6 +184,7 @@ pub struct NativeContext {
     current_environment: EnvironmentId,
     environment_stack: Vec<EnvironmentId>,
     call_frames: Vec<CallFrame>,
+    agent_manager: AgentManager,
     /// B: preallocated receiver for an active derived constructor until `super()`.
     pending_derived_this: Vec<(JsValue, bool)>,
     module_registry: ModuleRegistry,
@@ -282,6 +283,7 @@ impl NativeContext {
             current_environment: global_environment,
             environment_stack: Vec::new(),
             call_frames: Vec::new(),
+            agent_manager: AgentManager::default(),
             pending_derived_this: Vec::new(),
             module_registry: ModuleRegistry::default(),
             pending_module_imports: HashMap::new(),
@@ -456,6 +458,7 @@ impl NativeContext {
         roots
             .value_roots
             .extend(self.temporary_roots.iter().cloned());
+        roots.value_roots.extend(self.agent_manager.roots());
         roots.value_roots.extend(
             self.private_slots
                 .values()
@@ -1814,14 +1817,16 @@ impl NativeContext {
         lexical: bool,
     ) -> Result<(), VmError> {
         let name = name.into();
-        let environment = self
-            .heap
-            .environment_mut(environment)
-            .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
-        if environment.create_binding(name.clone(), value.clone(), mutable, lexical) {
-            return Ok(());
+        {
+            let record = self
+                .heap
+                .environment_mut(environment)
+                .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
+            if !record.create_binding(name.clone(), value.clone(), mutable, lexical) {
+                record.set_mutable_binding(&name, value.clone())?;
+            }
         }
-        environment.set_mutable_binding(&name, value)
+        self.refresh_module_namespace_binding(environment, &name, value)
     }
 
     pub fn binding_value_in_environment(
@@ -2347,6 +2352,72 @@ impl NativeContext {
     #[must_use]
     pub fn current_function(&self) -> Option<FunctionId> {
         self.call_frames.last().and_then(|frame| frame.function)
+    }
+
+    pub(crate) fn agent_start_worker(&mut self) -> usize {
+        self.agent_manager.start_worker()
+    }
+
+    pub(crate) fn agent_finish_start(&mut self) {
+        self.agent_manager.finish_start();
+    }
+
+    pub(crate) fn agent_set_receiver(&mut self, receiver: JsValue) -> bool {
+        self.agent_manager.set_receiver(receiver)
+    }
+
+    pub(crate) fn agent_receivers(&self) -> Vec<(usize, JsValue)> {
+        self.agent_manager.receivers()
+    }
+
+    pub(crate) fn agent_enter_worker(&mut self, id: usize) {
+        self.agent_manager.enter_worker(id);
+    }
+
+    pub(crate) fn agent_leave_worker_call(&mut self) {
+        self.agent_manager.leave_worker_call();
+    }
+
+    pub(crate) fn agent_mark_leaving(&mut self) {
+        self.agent_manager.mark_leaving();
+    }
+
+    pub(crate) fn agent_is_worker(&self) -> bool {
+        self.agent_manager.is_worker()
+    }
+
+    pub(crate) fn agent_register_wait(
+        &mut self,
+        buffer: ArrayBufferId,
+        index: usize,
+        timeout_ms: f64,
+    ) -> String {
+        self.agent_manager.register_wait(buffer, index, timeout_ms)
+    }
+
+    pub(crate) fn agent_report(&mut self, report: String) {
+        self.agent_manager.report(report);
+    }
+
+    pub(crate) fn agent_notify(
+        &mut self,
+        buffer: ArrayBufferId,
+        index: usize,
+        count: usize,
+    ) -> usize {
+        self.agent_manager.notify(buffer, index, count)
+    }
+
+    pub(crate) fn agent_sleep(&mut self, duration_ms: f64) {
+        self.agent_manager.sleep(duration_ms);
+    }
+
+    pub(crate) fn agent_get_report(&mut self) -> Option<String> {
+        self.agent_manager.get_report()
+    }
+
+    pub(crate) fn agent_monotonic_now(&self) -> f64 {
+        self.agent_manager.monotonic_now()
     }
 
     #[must_use]

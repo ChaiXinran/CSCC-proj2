@@ -1056,6 +1056,9 @@ fn atomics_count(
     context: &mut NativeContext,
     value: JsValue,
 ) -> Result<usize, VmError> {
+    if matches!(value, JsValue::Undefined) {
+        return Ok(usize::MAX);
+    }
     let number = vm.to_number(value, context)?;
     if number.is_nan() || number <= 0.0 {
         return Ok(0);
@@ -1079,13 +1082,13 @@ fn atomics_notify(
         false,
         "Atomics.notify",
     )?;
-    let _index = atomic_index(
+    let index = atomic_index(
         vm,
         context,
         args.get(1).cloned().unwrap_or(JsValue::Undefined),
         length,
     )?;
-    let _count = atomics_count(
+    let count = atomics_count(
         vm,
         context,
         args.get(2).cloned().unwrap_or(JsValue::Undefined),
@@ -1094,7 +1097,8 @@ fn atomics_notify(
     if !context.is_shared_array_buffer(buffer)? {
         return Ok(JsValue::Number(0.0));
     }
-    Ok(JsValue::Number(0.0))
+    let notified = context.agent_notify(buffer, index, count);
+    Ok(JsValue::Number(notified as f64))
 }
 
 fn atomics_wait_result(
@@ -1135,10 +1139,43 @@ fn atomics_wait_result(
             )?,
         )
     };
-    let _timeout = vm.to_number(args.get(3).cloned().unwrap_or(JsValue::Undefined), context)?;
+    let raw_timeout = vm.to_number(args.get(3).cloned().unwrap_or(JsValue::Undefined), context)?;
+    let timeout = if raw_timeout.is_nan() {
+        f64::INFINITY
+    } else {
+        raw_timeout.max(0.0)
+    };
     let current = context.typed_array_load_element(view, index)?;
     let status = if !current.same_value(&expected) {
         "not-equal"
+    } else if (context.agent_is_worker() || async_result) && timeout > 0.0 {
+        let buffer = context
+            .typed_array_view(view)
+            .ok_or_else(|| VmError::runtime("invalid TypedArray view id"))?
+            .buffer;
+        let marker = context.agent_register_wait(buffer, index, timeout);
+        if !async_result {
+            return Ok(JsValue::String(marker));
+        }
+        let promise_value = if timeout.is_infinite() {
+            JsValue::String("ok".into())
+        } else {
+            JsValue::String(marker)
+        };
+        let promise = context.create_promise()?;
+        let prototype = context
+            .get_global("Promise")
+            .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten());
+        let promise_object = context.create_promise_object(promise, prototype)?;
+        crate::builtins::promise::resolve_promise_id(vm, context, promise, promise_value)?;
+        let result = new_ordinary_object(context, context.object_prototype())?;
+        context.define_own_property(
+            result,
+            "async".into(),
+            method_descriptor(JsValue::Boolean(true)),
+        )?;
+        context.define_own_property(result, "value".into(), method_descriptor(promise_object))?;
+        return Ok(JsValue::Object(result));
     } else {
         "timed-out"
     };
@@ -5189,6 +5226,7 @@ fn install_test262_host_object_inner(context: &mut NativeContext) -> Result<(), 
         context.register_builtin("detachArrayBuffer", 1, test262_detach_array_buffer, None)?;
     let create_realm = context.register_builtin("createRealm", 0, test262_create_realm, None)?;
     let build_string = context.register_builtin("buildString", 1, test262_build_string, None)?;
+    let agent = install_test262_agent(context)?;
     context.define_own_property(
         host,
         "global".into(),
@@ -5199,8 +5237,155 @@ fn install_test262_host_object_inner(context: &mut NativeContext) -> Result<(), 
     context.define_own_property(host, "detachArrayBuffer".into(), method_descriptor(detach))?;
     context.define_own_property(host, "createRealm".into(), method_descriptor(create_realm))?;
     context.define_own_property(host, "buildString".into(), method_descriptor(build_string))?;
+    context.define_own_property(
+        host,
+        "agent".into(),
+        method_descriptor(JsValue::Object(agent)),
+    )?;
     context.declare_global("$262", JsValue::Object(host));
     Ok(())
+}
+
+fn install_test262_agent(context: &mut NativeContext) -> Result<ObjectId, VmError> {
+    let agent = new_ordinary_object(context, context.object_prototype())?;
+    for (name, length, call) in [
+        ("start", 1, test262_agent_start as NativeCall),
+        ("broadcast", 1, test262_agent_broadcast as NativeCall),
+        (
+            "receiveBroadcast",
+            1,
+            test262_agent_receive_broadcast as NativeCall,
+        ),
+        ("report", 1, test262_agent_report as NativeCall),
+        ("getReport", 0, test262_agent_get_report as NativeCall),
+        ("sleep", 1, test262_agent_sleep as NativeCall),
+        ("monotonicNow", 0, test262_agent_monotonic_now as NativeCall),
+        ("leaving", 0, test262_agent_leaving as NativeCall),
+    ] {
+        let method = context.register_builtin(name, length, call, None)?;
+        context.define_own_property(agent, name.into(), method_descriptor(method))?;
+    }
+    Ok(agent)
+}
+
+fn test262_agent_start(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let source = vm.to_string_coerce(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    context.agent_start_worker();
+    let isolated_source = JsValue::String(format!("\"use strict\";\n{source}"));
+    let result = function::eval_direct_call(
+        vm,
+        context,
+        JsValue::Undefined,
+        std::slice::from_ref(&isolated_source),
+    );
+    context.agent_finish_start();
+    result.map(|_| JsValue::Undefined)
+}
+
+fn test262_agent_receive_broadcast(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let receiver = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    if !context.is_callable_value(&receiver) {
+        return Err(VmError::type_error(
+            "$262.agent.receiveBroadcast requires a callback",
+        ));
+    }
+    if !context.agent_set_receiver(receiver) {
+        return Err(VmError::runtime(
+            "$262.agent.receiveBroadcast called outside an agent",
+        ));
+    }
+    Ok(JsValue::Undefined)
+}
+
+fn test262_agent_broadcast(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    for (worker, receiver) in context.agent_receivers() {
+        context.agent_enter_worker(worker);
+        let result =
+            vm.call_value_from_builtin(receiver, JsValue::Undefined, vec![value.clone()], context);
+        context.agent_leave_worker_call();
+        result?;
+    }
+    Ok(JsValue::Undefined)
+}
+
+fn test262_agent_report(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let report = vm.to_string_coerce(
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        context,
+    )?;
+    context.agent_report(report);
+    Ok(JsValue::Undefined)
+}
+
+fn test262_agent_get_report(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(context
+        .agent_get_report()
+        .map(JsValue::String)
+        .unwrap_or(JsValue::Null))
+}
+
+fn test262_agent_sleep(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let duration = vm
+        .to_number(
+            arguments.first().cloned().unwrap_or(JsValue::Undefined),
+            context,
+        )?
+        .max(0.0);
+    context.agent_sleep(duration);
+    Ok(JsValue::Undefined)
+}
+
+fn test262_agent_leaving(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    context.agent_mark_leaving();
+    Ok(JsValue::Undefined)
+}
+
+fn test262_agent_monotonic_now(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(JsValue::Number(context.agent_monotonic_now()))
 }
 
 fn test262_build_string(

@@ -435,10 +435,23 @@ impl RuntimeBackend for NativeRuntime {
             self.reset_limits();
             let program = self.parse_current_source(source)?;
             let (dependencies, imports, exports) = collect_module_metadata(&program);
+            let uses_dynamic_import = source.contains("import(")
+                || source.contains("import (")
+                || source.contains("import.defer");
+            let has_dependencies = !dependencies.is_empty();
             self.module_registry
                 .set_metadata(module_id, dependencies, imports, exports);
-            let chunk = self.pipeline.compile(&program)?;
-            self.pipeline.execute(&chunk, &mut self.context)
+            if has_dependencies || uses_dynamic_import {
+                crate::vm::evaluate_local_module(
+                    &mut self.pipeline.executor,
+                    &mut self.context,
+                    path,
+                )
+                .map_err(NativeError::Execute)
+            } else {
+                let chunk = self.pipeline.compile(&program)?;
+                self.pipeline.execute(&chunk, &mut self.context)
+            }
         })()
         .map_err(classify_native_error);
         match outcome {

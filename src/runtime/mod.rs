@@ -1,6 +1,7 @@
 //! Native runtime data model.
 
 pub mod abstract_ops;
+mod agent;
 pub mod bigint;
 mod buffer;
 mod coercion;
@@ -20,6 +21,7 @@ pub mod realm;
 mod symbol;
 mod value;
 
+pub(crate) use agent::AgentManager;
 pub use bigint::BigIntValue;
 pub use buffer::{
     ArrayBufferId, ArrayBufferRecord, DataViewId, DataViewRecord, TypedArrayElementKind,

@@ -1698,7 +1698,7 @@ impl Compiler {
             binds_name_in_activation: false,
             is_derived_constructor: false,
             is_constructable: !is_async && !is_generator,
-            has_own_prototype_property: !is_async,
+            has_own_prototype_property: !is_async || is_generator,
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
@@ -2526,12 +2526,18 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        let inferred_name = if name == "\0module_default" {
+            "default"
+        } else {
+            name
+        };
         if kind == VariableKind::Var {
             if let Some(initializer) = initializer {
                 let name_index = self.add_name(name, chunk)?;
                 self.compile_expression(initializer, chunk, context)?;
                 if is_anonymous_function_definition(initializer) {
-                    chunk.emit(Instruction::SetFunctionName(name_index));
+                    let inferred_name_index = self.add_name(inferred_name, chunk)?;
+                    chunk.emit(Instruction::SetFunctionName(inferred_name_index));
                 }
                 if context.inside_function() {
                     chunk.emit(Instruction::StoreName(name_index));
@@ -2554,7 +2560,7 @@ impl Compiler {
                 self.compile_expression(initializer, chunk, context)?;
                 // Spec: anonymous function definition in a variable declarator → infer name.
                 if is_anonymous_function_definition(initializer) {
-                    let name_idx = self.add_name(name, chunk)?;
+                    let name_idx = self.add_name(inferred_name, chunk)?;
                     chunk.emit(Instruction::SetFunctionName(name_idx));
                 }
             }
@@ -5165,7 +5171,8 @@ impl Compiler {
             binds_name_in_activation: literal.name.is_some(),
             is_derived_constructor: false,
             is_constructable: !literal.is_arrow && !literal.is_async && !literal.is_generator,
-            has_own_prototype_property: !literal.is_arrow && !literal.is_async,
+            has_own_prototype_property: !literal.is_arrow
+                && (!literal.is_async || literal.is_generator),
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
@@ -6267,6 +6274,11 @@ fn collect_var_names_in(stmt: &Statement, names: &mut Vec<String>) {
                         names.push(n);
                     }
                 }
+            }
+        }
+        Statement::ModuleDeclaration(ModuleDeclaration::Export(declaration)) => {
+            if let Some(statement) = declaration.declaration.as_deref() {
+                collect_var_names_in(statement, names);
             }
         }
         _ => {}

@@ -933,7 +933,11 @@ impl Parser {
             self.expect_punctuator(')')?;
             return Ok(Expression::DynamicImport {
                 specifier: Box::new(specifier),
-                options: None,
+                options: (phase == "source").then(|| {
+                    Box::new(Expression::Literal(Literal::String(
+                        "\0import-source-phase".into(),
+                    )))
+                }),
             });
         }
         self.expect_punctuator('(')?;

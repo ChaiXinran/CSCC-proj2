@@ -5,7 +5,7 @@
 
 use crate::{
     bytecode::{EnvironmentCapturePolicy, FunctionTemplate},
-    runtime::{JsFunction, JsObject, JsValue, NativeContext, ObjectId},
+    runtime::{JsFunction, JsObject, JsValue, NativeContext, ObjectId, PropertyDescriptor},
 };
 
 use super::{Vm, VmError, interpreter::OperationResult};
@@ -211,6 +211,69 @@ impl Vm {
                         })?;
                     context
                         .set_prototype_of(generator_prototype, Some(async_generator_prototype))?;
+                    let next = context.register_builtin(
+                        "next",
+                        1,
+                        super::interpreter::async_generator_next,
+                        None,
+                    )?;
+                    let return_ = context.register_builtin(
+                        "return",
+                        1,
+                        super::interpreter::async_generator_return,
+                        None,
+                    )?;
+                    let throw = context.register_builtin(
+                        "throw",
+                        1,
+                        super::interpreter::async_generator_throw,
+                        None,
+                    )?;
+                    for (name, method) in [("next", next), ("return", return_), ("throw", throw)] {
+                        context.define_own_property(
+                            async_generator_prototype,
+                            name.into(),
+                            PropertyDescriptor::data_with(method, true, false, true),
+                        )?;
+                    }
+                    context.define_symbol_own_property(
+                        async_generator_prototype,
+                        context.well_known_symbols().to_string_tag,
+                        PropertyDescriptor::data_with(
+                            JsValue::String("AsyncGenerator".into()),
+                            false,
+                            false,
+                            true,
+                        ),
+                    )?;
+                    let constructor = context.register_builtin(
+                        "AsyncGenerator",
+                        0,
+                        async_generator_function_prototype_call,
+                        None,
+                    )?;
+                    let constructor_object = context
+                        .value_object(&constructor)
+                        .ok_or_else(|| VmError::runtime("missing async generator constructor"))?;
+                    context.define_own_property(
+                        constructor_object,
+                        "prototype".into(),
+                        PropertyDescriptor::data_with(
+                            JsValue::Object(async_generator_prototype),
+                            false,
+                            false,
+                            false,
+                        ),
+                    )?;
+                    context.define_own_property(
+                        async_generator_prototype,
+                        "constructor".into(),
+                        PropertyDescriptor::data_with(constructor.clone(), false, false, true),
+                    )?;
+                    let function_object = context
+                        .function_object(id)
+                        .ok_or_else(|| VmError::runtime("missing async generator function"))?;
+                    context.set_prototype_of(function_object, Some(constructor_object))?;
                 } else {
                     context.set_prototype_of(generator_prototype, Some(iterator_prototype))?;
                 }
@@ -222,6 +285,15 @@ impl Vm {
         }
         Ok(JsValue::Function(id))
     }
+}
+
+fn async_generator_function_prototype_call(
+    _vm: &mut Vm,
+    _context: &mut NativeContext,
+    _this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    Ok(JsValue::Undefined)
 }
 
 fn intrinsic_iterator_prototype(context: &NativeContext) -> Option<ObjectId> {

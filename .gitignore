@@ -16,6 +16,7 @@
 !/reports/.version-report
 /reports/.version-report/*
 !/reports/.version-report/v13-partB-report.md
+!/reports/.version-report/atomics-partC-report.md
 /reports/.native-test262-tmp
 # Local editor and agent state
 /.vscode/
