@@ -127,8 +127,10 @@ fn compiler_keeps_block_statements_stack_neutral() {
         chunk.instructions,
         [
             Instruction::Constant(0),
+            Instruction::Constant(1),
+            Instruction::Swap,
             Instruction::Pop,
-            Instruction::ReturnUndefined,
+            Instruction::Return,
         ]
     );
 }
@@ -148,11 +150,15 @@ fn compiler_emits_if_else_with_condition_cleanup_on_both_paths() {
         chunk.instructions,
         [
             Instruction::Constant(0),
-            Instruction::JumpIfFalse(4),
+            Instruction::Constant(0),
+            Instruction::Swap,
             Instruction::Pop,
-            Instruction::Jump(5),
+            Instruction::Constant(1),
+            Instruction::JumpIfFalse(8),
             Instruction::Pop,
-            Instruction::ReturnUndefined,
+            Instruction::Jump(9),
+            Instruction::Pop,
+            Instruction::Return,
         ]
     );
 }
@@ -198,11 +204,15 @@ fn compiler_emits_while_loop_with_back_edge_and_false_cleanup() {
         chunk.instructions,
         [
             Instruction::Constant(0),
-            Instruction::JumpIfFalse(4),
+            Instruction::Constant(0),
+            Instruction::Swap,
             Instruction::Pop,
-            Instruction::Jump(0),
+            Instruction::Constant(1),
+            Instruction::JumpIfFalse(8),
             Instruction::Pop,
-            Instruction::ReturnUndefined,
+            Instruction::Jump(4),
+            Instruction::Pop,
+            Instruction::Return,
         ]
     );
 }
@@ -221,12 +231,16 @@ fn compiler_patches_break_after_false_condition_cleanup() {
         chunk.instructions,
         [
             Instruction::Constant(0),
-            Instruction::JumpIfFalse(5),
+            Instruction::Constant(0),
+            Instruction::Swap,
             Instruction::Pop,
-            Instruction::Jump(6),
-            Instruction::Jump(0),
+            Instruction::Constant(1),
+            Instruction::JumpIfFalse(9),
             Instruction::Pop,
-            Instruction::ReturnUndefined,
+            Instruction::Jump(10),
+            Instruction::Jump(4),
+            Instruction::Pop,
+            Instruction::Return,
         ]
     );
 }
@@ -245,12 +259,16 @@ fn compiler_targets_continue_at_the_current_loop_test() {
         chunk.instructions,
         [
             Instruction::Constant(0),
-            Instruction::JumpIfFalse(5),
+            Instruction::Constant(0),
+            Instruction::Swap,
             Instruction::Pop,
-            Instruction::Jump(0),
-            Instruction::Jump(0),
+            Instruction::Constant(1),
+            Instruction::JumpIfFalse(9),
             Instruction::Pop,
-            Instruction::ReturnUndefined,
+            Instruction::Jump(4),
+            Instruction::Jump(4),
+            Instruction::Pop,
+            Instruction::Return,
         ]
     );
 }
@@ -327,11 +345,11 @@ fn nested_loop_break_is_patched_to_the_innermost_loop_end() {
     };
 
     let chunk = Compiler::new().compile_program(&program).unwrap();
-    let break_target = match chunk.instructions[6] {
+    let break_target = match chunk.instructions[13] {
         Instruction::Jump(target) => target,
         other => panic!("expected inner break jump, got {other:?}"),
     };
-    assert_eq!(break_target, 9);
+    assert_eq!(break_target, 16);
     assert_eq!(chunk.validate(), Ok(()));
 }
 
