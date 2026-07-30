@@ -120,8 +120,27 @@ pub fn install_function(context: &mut NativeContext) {
 pub fn eval_call(
     vm: &mut Vm,
     context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    eval_impl(vm, context, this, arguments, false)
+}
+
+pub fn eval_direct_call(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    eval_impl(vm, context, this, arguments, true)
+}
+
+fn eval_impl(
+    vm: &mut Vm,
+    context: &mut NativeContext,
     _this: JsValue,
     arguments: &[JsValue],
+    direct: bool,
 ) -> Result<JsValue, VmError> {
     let source = match arguments.first().cloned().unwrap_or(JsValue::Undefined) {
         JsValue::String(source) => source,
@@ -131,9 +150,9 @@ pub fn eval_call(
     // The parser derives strict mode from the directive prologue, so make
     // inherited strictness explicit before parsing (this also enforces the
     // strict-only early errors for eval/arguments catch bindings).
-    let is_strict = context.is_strict_code();
+    let caller_is_strict = direct && context.is_strict_code();
     let strict_source;
-    let parse_source: &str = if is_strict {
+    let parse_source: &str = if caller_is_strict {
         strict_source = format!("\"use strict\";\n{source}");
         &strict_source
     } else {
@@ -152,24 +171,37 @@ pub fn eval_call(
     // with "use strict", the eval also gets its own scope (no conflict check).
     let eval_source_is_strict = source.trim_start().starts_with("\"use strict\"")
         || source.trim_start().starts_with("'use strict'");
-    if !is_strict && !eval_source_is_strict {
+    if direct && !caller_is_strict && !eval_source_is_strict {
         validate_eval_declarations(&program, context)?;
     }
     // Annex B §B.3.3.3: for non-strict direct eval in a function scope,
     // pre-declare block-contained function names in the calling context's
     // var environment. This creates mutable bindings initialized to undefined
     // before any eval code runs, matching the spec's pre-hoisting semantics.
-    let in_function_scope = context.current_environment() != context.global_environment();
-    if !is_strict && !eval_source_is_strict && in_function_scope {
+    let in_function_scope = direct && context.current_environment() != context.global_environment();
+    if !caller_is_strict && !eval_source_is_strict && in_function_scope {
         predeclare_eval_annex_b_functions(&program, context)?;
     }
     let mut chunk = Compiler::new()
         .compile_program(&program)
         .map_err(dynamic_function_syntax_error)?;
-    if in_function_scope {
-        rewrite_eval_global_accesses(&mut chunk);
+    let strict_eval = caller_is_strict || eval_source_is_strict;
+    rewrite_eval_global_accesses(&mut chunk, strict_eval);
+
+    let saved_environment = context.environment_state();
+    if !direct {
+        context.restore_environment_state(Vec::new(), context.global_environment())?;
     }
-    vm.eval_execute(&chunk, context)
+    if strict_eval {
+        let outer = context.current_environment();
+        context.push_environment(Some(outer))?;
+    }
+    let result = vm.eval_execute(&chunk, context);
+    let restore = context.restore_environment_state(saved_environment.0, saved_environment.1);
+    match (result, restore) {
+        (result, Ok(())) => result,
+        (_, Err(error)) => Err(error),
+    }
 }
 
 /// Annex B §B.3.3.3: pre-declares block-contained function names in the
@@ -238,7 +270,9 @@ fn validate_eval_declarations(
     // same name exists anywhere in the enclosing scope chain (§18.2.1.1
     // step 5.d.ii).
     for name in &var_names {
-        if context.find_binding_kind(name) == Some(true) {
+        if context.find_binding_kind(name) == Some(true)
+            || eval_var_conflicts_with_non_simple_function_body(context, name)
+        {
             return Err(VmError::syntax_error(format!(
                 "Identifier '{name}' has already been declared"
             )));
@@ -257,6 +291,62 @@ fn validate_eval_declarations(
     }
 
     Ok(())
+}
+
+/// A direct eval in a default/rest/destructuring parameter runs before the
+/// function body's declaration instantiation has created its bindings.  The
+/// conflict check must nevertheless account for those declarations.
+fn eval_var_conflicts_with_non_simple_function_body(context: &NativeContext, name: &str) -> bool {
+    let Some(function) = context
+        .current_function()
+        .and_then(|function| context.function(function))
+    else {
+        return false;
+    };
+    // `length_override` is emitted when the formal list contains a default,
+    // rest, or binding pattern. Simple parameter lists share one var
+    // environment and do not use this additional conflict rule.
+    if function.length_override.is_none() {
+        return false;
+    }
+
+    let constant_name = |index: u16| {
+        matches!(
+            function.chunk.constants.get(usize::from(index)),
+            Some(crate::bytecode::Constant::String(candidate)) if candidate == name
+        )
+    };
+
+    // Var and function declarations are hoisted into the preamble following
+    // parameter initializer bytecode.
+    if function.chunk.instructions[..function.chunk.function_body_start]
+        .iter()
+        .any(|instruction| match instruction {
+            Instruction::DeclareLocal(index) => constant_name(*index),
+            Instruction::DeclareFunction { name: index, .. } => constant_name(*index),
+            _ => false,
+        })
+    {
+        return true;
+    }
+
+    // Top-level lexical declarations are emitted in the body. Nested block
+    // environments do not conflict with the parameter eval's var environment.
+    let mut lexical_depth = 0usize;
+    for instruction in &function.chunk.instructions[function.chunk.function_body_start..] {
+        match instruction {
+            Instruction::CreateLexicalEnvironment => lexical_depth += 1,
+            Instruction::PopEnvironment => lexical_depth = lexical_depth.saturating_sub(1),
+            Instruction::CreateMutableBinding(index)
+            | Instruction::CreateImmutableBinding(index)
+                if lexical_depth == 0 && constant_name(*index) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// Walks `statements` recursively to collect var/function-declared names and
@@ -357,10 +447,11 @@ fn collect_eval_declaration_names(
     }
 }
 
-fn rewrite_eval_global_accesses(chunk: &mut Chunk) {
+fn rewrite_eval_global_accesses(chunk: &mut Chunk, strict_eval: bool) {
     for instruction in &mut chunk.instructions {
         *instruction = match *instruction {
-            Instruction::DeclareGlobal(index) => Instruction::DeclareLocal(index),
+            Instruction::DeclareGlobal(index) if strict_eval => Instruction::DeclareLocal(index),
+            Instruction::DeclareGlobal(index) => Instruction::DeclareEvalVar(index),
             Instruction::LoadGlobal(index) => Instruction::LoadName(index),
             Instruction::StoreGlobal(index) => Instruction::StoreName(index),
             Instruction::TypeOfGlobal(index) => Instruction::TypeOfName(index),

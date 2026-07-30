@@ -83,13 +83,19 @@ fn load_module_graph(
                 if let Some(Statement::VariableDeclaration { declarations, .. }) =
                     declaration.declaration.as_deref()
                 {
-                    export_metadata.extend(declarations.iter().map(|decl| {
-                        crate::runtime::ModuleExportBinding {
-                            export_name: decl.name.clone(),
-                            local_name: Some(decl.name.clone()),
-                            source: None,
-                        }
-                    }));
+                    export_metadata.extend(
+                        declarations
+                            .iter()
+                            // The normalized default-export expression uses a
+                            // private local cell. It backs the public `default`
+                            // entry above and must not itself become an export.
+                            .filter(|decl| !decl.name.starts_with('\0'))
+                            .map(|decl| crate::runtime::ModuleExportBinding {
+                                export_name: decl.name.clone(),
+                                local_name: Some(decl.name.clone()),
+                                source: None,
+                            }),
+                    );
                 }
             }
             _ => {}
@@ -207,6 +213,32 @@ fn instantiate_module_graph(
             .module_registry()
             .environment(module.id)
             .ok_or_else(|| VmError::runtime("module environment is missing"))?;
+        // `export * as ns from "..."` creates a local namespace binding whose
+        // value is the dependency's namespace object. The parser represents
+        // this as a sourced export with no local name.
+        for binding in module.exports.iter().filter(|binding| {
+            binding.source.is_some() && binding.local_name.is_none() && binding.export_name != "*"
+        }) {
+            let dependency_path = crate::runtime::resolve_module_specifier(
+                &module_path_for(graph, module.id)?,
+                binding.source.as_deref().expect("filtered sourced export"),
+            )
+            .map_err(VmError::type_error)?;
+            let dependency = graph
+                .get(&dependency_path)
+                .ok_or_else(|| VmError::reference("missing linked namespace dependency"))?;
+            let namespace = context
+                .module_registry()
+                .namespace(dependency.id)
+                .ok_or_else(|| VmError::runtime("module namespace is missing"))?;
+            context.declare_binding(
+                environment,
+                binding.export_name.clone(),
+                namespace,
+                false,
+                true,
+            )?;
+        }
         for binding in &module.imports {
             let dependency_path = crate::runtime::resolve_module_specifier(
                 &module_path_for(graph, module.id)?,
@@ -350,14 +382,68 @@ fn resolve_export_target_inner(
     let binding = module
         .exports
         .iter()
-        .find(|binding| binding.export_name == export_name)
-        .ok_or_else(|| {
+        .find(|binding| binding.export_name == export_name);
+    let Some(binding) = binding else {
+        let mut star_resolution: Option<(EnvironmentId, String)> = None;
+        for star in module
+            .exports
+            .iter()
+            .filter(|binding| binding.export_name == "*")
+        {
+            let Some(source) = &star.source else {
+                continue;
+            };
+            let dependency_path = crate::runtime::resolve_module_specifier(&module_path, source)
+                .map_err(VmError::type_error)?;
+            let mut branch_visited = visited.clone();
+            let resolution = match resolve_export_target_inner(
+                context,
+                graph,
+                &dependency_path,
+                export_name,
+                &mut branch_visited,
+            ) {
+                Ok(resolution) => resolution,
+                Err(error)
+                    if error.message.starts_with("module has no export named")
+                        || error.message.starts_with("circular re-export") =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
+            if let Some(existing) = &star_resolution {
+                if existing != &resolution {
+                    return Err(VmError::syntax_error(format!(
+                        "ambiguous export named {export_name}"
+                    )));
+                }
+            } else {
+                star_resolution = Some(resolution);
+            }
+        }
+        return star_resolution.ok_or_else(|| {
             VmError::syntax_error(format!("module has no export named {export_name}"))
-        })?;
+        });
+    };
     if let Some(source) = &binding.source {
+        if binding.local_name.is_none() && binding.export_name != "*" {
+            let environment = context
+                .module_registry()
+                .environment(module.id)
+                .ok_or_else(|| VmError::runtime("module was not instantiated"))?;
+            return Ok((environment, binding.export_name.clone()));
+        }
         let dependency_path = crate::runtime::resolve_module_specifier(&module_path, source)
             .map_err(VmError::type_error)?;
-        return resolve_export_target_inner(context, graph, &dependency_path, export_name, visited);
+        let imported_name = binding.local_name.as_deref().unwrap_or(export_name);
+        return resolve_export_target_inner(
+            context,
+            graph,
+            &dependency_path,
+            imported_name,
+            visited,
+        );
     }
     let environment = context
         .module_registry()
@@ -437,14 +523,24 @@ fn evaluate_module_graph(
         .ok_or_else(|| VmError::runtime("module namespace is missing"))?;
     let namespace_object = context.require_object(&namespace, "populate module namespace")?;
     for binding in &module.exports {
-        if binding.source.is_some() {
+        if binding.export_name == "*" {
             continue;
         }
-        let local_name = binding
-            .local_name
-            .as_deref()
-            .unwrap_or(&binding.export_name);
-        if let Ok(value) = context.binding_value_in_environment(environment, local_name) {
+        let resolved = if binding.source.is_some() {
+            resolve_export_target(context, graph, &path, &binding.export_name)
+        } else {
+            Ok((
+                environment,
+                binding
+                    .local_name
+                    .clone()
+                    .unwrap_or_else(|| binding.export_name.clone()),
+            ))
+        };
+        if let Ok((target_environment, target_name)) = resolved
+            && let Ok(value) =
+                context.binding_value_in_environment(target_environment, &target_name)
+        {
             context.define_own_property(
                 namespace_object,
                 binding.export_name.clone(),
@@ -481,6 +577,14 @@ fn evaluate_local_module(
     let mut graph = HashMap::new();
     load_module_graph(context, &path, &mut graph)?;
     instantiate_module_graph(context, &graph)?;
+    let root = graph
+        .get(&path)
+        .ok_or_else(|| VmError::reference("missing loaded root module"))?;
+    for binding in &root.exports {
+        if binding.source.is_some() && binding.export_name != "*" {
+            resolve_export_target(context, &graph, &path, &binding.export_name)?;
+        }
+    }
     evaluate_module_graph(vm, context, &graph, &path)
 }
 
@@ -1545,6 +1649,43 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::DirectEval(argument_count) => {
+                    let arguments = self.pop_arguments(argument_count)?;
+                    let callee = self.pop_value()?;
+                    let is_intrinsic_eval = match callee {
+                        JsValue::BuiltinFunction(id) => context
+                            .builtin(id)
+                            .is_some_and(|builtin| builtin.name == "eval"),
+                        _ => false,
+                    };
+                    let outcome = if is_intrinsic_eval {
+                        match crate::builtins::eval_direct_call(
+                            self,
+                            context,
+                            JsValue::Undefined,
+                            &arguments,
+                        ) {
+                            Ok(value) => InvocationOutcome::Value(value),
+                            Err(error) => InvocationOutcome::Throw(
+                                self.pending_exception
+                                    .take()
+                                    .unwrap_or_else(|| vm_error_to_value(error)),
+                            ),
+                        }
+                    } else {
+                        self.invoke_call(
+                            CallRequest::new(callee, JsValue::Undefined, arguments),
+                            context,
+                        )?
+                    };
+                    match outcome {
+                        InvocationOutcome::Value(value) => self.stack.push(value),
+                        InvocationOutcome::Throw(value) => {
+                            abrupt = Some(Completion::Throw(value));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
                 Instruction::Construct(argument_count) => {
                     let arguments = self.pop_arguments(argument_count)?;
                     let callee = self.pop_value()?;
@@ -1640,6 +1781,25 @@ impl Vm {
                         true,
                         false,
                     )?;
+                }
+                Instruction::DeclareEvalVar(index) => {
+                    let name = self
+                        .constant_string(chunk, index, current_instruction)?
+                        .to_string();
+                    let value = self.pop_value()?;
+                    if context.find_binding_kind(&name).is_none() {
+                        if context.current_environment() == context.global_environment() {
+                            context.declare_global(name, value);
+                        } else {
+                            context.declare_binding(
+                                context.current_environment(),
+                                name,
+                                value,
+                                true,
+                                false,
+                            )?;
+                        }
+                    }
                 }
                 Instruction::LoadName(index) => {
                     let name = self
@@ -7014,7 +7174,18 @@ impl Vm {
             }
         };
         if function.is_async {
-            self.wrap_async_function_result(operation?, context)
+            // AsyncFunctionStart converts abrupt completion of the function
+            // body (including declaration-instantiation failures reached by
+            // the bytecode preamble) into a rejected promise.  Propagating a
+            // VM error here made calls throw synchronously, so `.then(_, onRejected)`
+            // never had a chance to observe the specified rejection.
+            match operation {
+                Ok(operation) => self.wrap_async_function_result(operation, context),
+                Err(error) => self.wrap_async_function_result(
+                    OperationResult::Throw(vm_error_to_value(error)),
+                    context,
+                ),
+            }
         } else {
             operation
         }

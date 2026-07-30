@@ -3490,6 +3490,7 @@ impl Compiler {
             return Ok(());
         }
 
+        let is_direct_eval = matches!(callee, Expression::Identifier(name) if name == "eval");
         self.compile_expression(callee, chunk, context)?;
         if has_spread {
             self.compile_argument_list_array(arguments, chunk, context)?;
@@ -3505,7 +3506,11 @@ impl Compiler {
                 };
                 self.compile_expression(e, chunk, context)?;
             }
-            chunk.emit(Instruction::Call(argument_count));
+            chunk.emit(if is_direct_eval {
+                Instruction::DirectEval(argument_count)
+            } else {
+                Instruction::Call(argument_count)
+            });
         }
         Ok(())
     }

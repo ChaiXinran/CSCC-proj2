@@ -1,5 +1,80 @@
 # Native V13 Part B report
 
+## 46,972 baseline B follow-up
+
+Locked baseline: 46,972 / 53,379 passed, 6,405 failed, 2 skipped.
+Final result: **47,075 / 53,379 passed, 6,302 failed, 2 skipped**.
+The retained B-only work therefore delivers **+103 full-suite passes** with no
+increase in skipped tests.
+
+Delivered:
+
+- Preserved async completion output until the explicit JobQueue drain/check
+  boundary, fixing premature consumption of synchronous `$DONE` signals.
+- Converted async-function declaration-instantiation failures into Promise
+  rejections instead of synchronous VM errors.
+- Completed direct-eval conflict checks for default/rest/destructuring
+  parameter environments by accounting for not-yet-instantiated function-body
+  var, function, and top-level lexical declarations.
+- Added module-namespace exotic behavior for assignment, compatible
+  `DefineOwnProperty`, and sorted string own keys.
+- Added namespace re-export (`export * as ns from`) linking and namespace
+  population, and kept the synthetic default-export cell private.
+- Corrected the observable length of Promise finally value/throw thunks.
+
+Focused deltas:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `test/language/eval-code` | 211 / 347 | 257 / 347 | +46 |
+| `test/annexB/language` | 659 / 845 | 659 / 845 | 0 |
+| `test/language/module-code` | 410 / 599 | 426 / 599 | +16 |
+| `test/language/expressions/dynamic-import` | 906 / 1004 | 941 / 1004 | +35 |
+| `test/language/expressions/dynamic-import/namespace` | 49 / 67 | 66 / 67 | +17 |
+| `test/built-ins/Promise` | 694 / 703 | 696 / 703 | +2 |
+| Full Test262 | 46,972 / 53,379 | **47,075 / 53,379** | **+103** |
+
+Full after result:
+`reports/.native-test262-tmp/b-46972-full-final-verified.json`.
+
+## 46,865 baseline B follow-up
+
+Locked baseline: 46,865 / 53,379 passed, 6,512 failed, 2 skipped.
+Final result: **46,972 / 53,379 passed, 6,405 failed, 2 skipped**.
+The retained B-only work therefore delivers **+107 full-suite passes** with no
+increase in skipped tests.
+
+Delivered:
+
+- Added an explicit direct-eval bytecode path. Only syntactic `eval(...)`
+  calls resolving to the intrinsic eval inherit the caller environment;
+  aliases and comma calls use indirect-eval semantics.
+- Strict eval declarations execute in an isolated environment, while eval var
+  creation preserves existing bindings instead of reinitializing them.
+- Direct eval preserves original nested JavaScript throw values.
+- Dynamic module export resolution now follows the imported/local name of
+  named re-exports, detects ambiguous star-export resolutions, and validates
+  root indirect exports before evaluation.
+- Dynamic module namespaces now include named indirect exports instead of
+  dropping every export with a source module.
+- Native Promise adoption uses the observable `then` path. This restores the
+  required species/capability creation used by `Promise.prototype.finally` and
+  custom-then tests.
+
+Focused deltas:
+
+| Suite | Before | After | Delta |
+| --- | ---: | ---: | ---: |
+| `test/language/eval-code` | 183 / 347 | 211 / 347 | +28 |
+| `test/annexB/language` | 653 / 845 | 659 / 845 | +6 |
+| `test/language/module-code` | 406 / 599 | 410 / 599 | +4 |
+| `test/language/expressions/dynamic-import` | 867 / 1004 | 906 / 1004 | +39 |
+| `test/built-ins/Promise` | 683 / 703 | 694 / 703 | +11 |
+| Full Test262 | 46,865 / 53,379 | **46,972 / 53,379** | **+107** |
+
+Full after result:
+`reports/.native-test262-tmp/b-46865-full-after.json`.
+
 ## Scope
 
 Implemented only the V13-B-owned dynamic-import and class integration surface.
