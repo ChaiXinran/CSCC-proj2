@@ -13,7 +13,7 @@ fn parse(source: &str) -> Program {
     let tokens = agentjs::lexer::Lexer::new(source)
         .tokenize()
         .expect("lexing succeeds");
-    agentjs::parser::Parser::new(tokens)
+    agentjs::parser::Parser::with_source(tokens, source)
         .parse_program()
         .expect("parsing succeeds")
 }

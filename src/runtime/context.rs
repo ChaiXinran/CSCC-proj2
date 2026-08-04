@@ -4157,6 +4157,10 @@ impl NativeContext {
         self.budget.deadline = limit.map(|limit| Instant::now() + limit);
     }
 
+    pub fn set_absolute_deadline(&mut self, deadline: Option<Instant>) {
+        self.budget.deadline = deadline;
+    }
+
     pub fn check_deadline(&self) -> Result<(), VmError> {
         self.budget.check_deadline()
     }

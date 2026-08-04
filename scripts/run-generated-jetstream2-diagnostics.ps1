@@ -3,6 +3,10 @@ param(
     [string]$JetStreamRoot = "benchmarks/JetStream2",
     [int]$TimeoutSeconds = 150,
     [int]$MaxWorkingSetMB = 1536,
+    [ValidateRange(4, 256)]
+    [int]$ThreadStackMiB = 32,
+    [long]$GcThreshold = 1000000,
+    [string[]]$Tests = @(),
     [string]$OutputDirectory = "reports/jetstream2-generated-2026-08-04"
 )
 
@@ -13,11 +17,17 @@ $generatedRoot = (Resolve-Path $GeneratedDirectory).Path
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $summaryPath = Join-Path $OutputDirectory "summary.json"
 $results = @()
+$selectedTests = @($Tests | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 
 $manifests = Get-ChildItem -LiteralPath $generatedRoot -Filter "*.manifest.json" |
     Sort-Object Name
 foreach ($manifestFile in $manifests) {
     $runnerName = $manifestFile.Name -replace '\.manifest\.json$', '.js'
+    $testName = $runnerName -replace '\.js$', ''
+    $workloadName = $testName -replace '^jetstream2-', ''
+    if ($selectedTests.Count -gt 0 -and
+        $selectedTests -notcontains $testName -and
+        $selectedTests -notcontains $workloadName) { continue }
     $runner = Join-Path $generatedRoot $runnerName
     if (-not (Test-Path -LiteralPath $runner)) { throw "missing runner $runner" }
     $manifest = Get-Content -LiteralPath $manifestFile.FullName -Raw | ConvertFrom-Json
@@ -26,7 +36,8 @@ foreach ($manifestFile in $manifests) {
     $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $processInfo.FileName = $binary
     $processInfo.Arguments = 'jetstream "' + $runner + '" --resource-root "' +
-        $resourceRoot + '" --diagnostics'
+        $resourceRoot + '" --thread-stack-mib ' + $ThreadStackMiB +
+        ' --gc-threshold ' + $GcThreshold + ' --diagnostics'
     $processInfo.WorkingDirectory = (Get-Location).Path
     $processInfo.UseShellExecute = $false
     $processInfo.RedirectStandardOutput = $true
@@ -36,13 +47,37 @@ foreach ($manifestFile in $manifests) {
     $timer = [System.Diagnostics.Stopwatch]::StartNew()
     [void]$process.Start()
     $stdoutTask = $process.StandardOutput.ReadToEndAsync()
-    $stderrTask = $process.StandardError.ReadToEndAsync()
+    $stderrLines = [System.Collections.Generic.List[string]]::new()
+    $stderrReadTask = $process.StandardError.ReadLineAsync()
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
     [long]$peak = 0
+    $peakPhase = "process_start"
+    $currentPhase = "process_start"
+    $rssSamples = [System.Collections.Generic.List[object]]::new()
     $memoryLimited = $false
     while (-not $process.HasExited -and [DateTime]::UtcNow -lt $deadline) {
+        while ($stderrReadTask.IsCompleted) {
+            $line = $stderrReadTask.Result
+            if ($null -eq $line) { break }
+            $stderrLines.Add($line)
+            if ($line -match '^phase_diagnostics:phase=([^ ]+)') {
+                $currentPhase = $Matches[1]
+            } elseif ($line -match '^(runner_read_start|runner_read_end|resource_read_start|resource_read_end|job_drain_start|job_drain_end|run_end)') {
+                $currentPhase = $Matches[1]
+            }
+            $stderrReadTask = $process.StandardError.ReadLineAsync()
+        }
         $process.Refresh()
-        $peak = [math]::Max($peak, $process.WorkingSet64)
+        $workingSet = $process.WorkingSet64
+        if ($workingSet -gt $peak) {
+            $peak = $workingSet
+            $peakPhase = $currentPhase
+        }
+        $rssSamples.Add([pscustomobject]@{
+            elapsedMs = [math]::Round($timer.Elapsed.TotalMilliseconds)
+            workingSetMiB = [math]::Round($workingSet / 1MB, 1)
+            phase = $currentPhase
+        })
         if ($peak -gt $MaxWorkingSetMB * 1MB) {
             $memoryLimited = $true
             break
@@ -56,7 +91,13 @@ foreach ($manifestFile in $manifests) {
     }
     $timer.Stop()
     $stdout = $stdoutTask.Result
-    $stderr = $stderrTask.Result
+    while ($true) {
+        $line = $stderrReadTask.Result
+        if ($null -eq $line) { break }
+        $stderrLines.Add($line)
+        $stderrReadTask = $process.StandardError.ReadLineAsync()
+    }
+    $stderr = $stderrLines -join "`n"
     $combined = $stdout + "`n" + $stderr
     $exitCode = if ($process.HasExited) { $process.ExitCode } else { $null }
 
@@ -81,6 +122,27 @@ foreach ($manifestFile in $manifests) {
         $combined,
         'name_resolution:load_local_count=(\d+) store_local_count=(\d+) load_name_count=(\d+) store_name_count=(\d+) environment_hops=(\d+)'
     ))
+    $phaseDiagnostics = @([regex]::Matches(
+        $combined,
+        'phase_diagnostics:phase=([^ ]+) elapsed_ms=(\d+) source_bytes=(\d+) token_count=([^ ]+) instruction_count=([^ ]+) constant_count=([^ ]+) function_count=([^ ]+) heap_estimated_bytes=(\d+) heap_live_objects=(\d+) heap_live_environments=(\d+) heap_live_functions=(\d+) gc_count=(\d+) gc_total_pause_ns=(\d+) gc_max_pause_ns=(\d+)'
+    ) | ForEach-Object {
+        [pscustomobject]@{
+            phase = $_.Groups[1].Value
+            elapsedMs = [long]$_.Groups[2].Value
+            sourceBytes = [long]$_.Groups[3].Value
+            tokenCount = $_.Groups[4].Value
+            instructionCount = $_.Groups[5].Value
+            constantCount = $_.Groups[6].Value
+            functionCount = $_.Groups[7].Value
+            heapEstimatedBytes = [long]$_.Groups[8].Value
+            heapLiveObjects = [long]$_.Groups[9].Value
+            heapLiveEnvironments = [long]$_.Groups[10].Value
+            heapLiveFunctions = [long]$_.Groups[11].Value
+            gcCount = [long]$_.Groups[12].Value
+            gcTotalPauseNs = [long]$_.Groups[13].Value
+            gcMaxPauseNs = [long]$_.Groups[14].Value
+        }
+    })
     [long]$loadLocalCount = 0
     [long]$storeLocalCount = 0
     [long]$loadNameCount = 0
@@ -108,6 +170,9 @@ foreach ($manifestFile in $manifests) {
         status = $status
         wallSeconds = [math]::Round($timer.Elapsed.TotalSeconds, 3)
         peakWorkingSetMiB = [math]::Round($peak / 1MB, 1)
+        peakPhase = $peakPhase
+        threadStackMiB = $ThreadStackMiB
+        gcThreshold = $GcThreshold
         exitCode = $exitCode
         timedOut = $timedOut
         memoryLimited = $memoryLimited
@@ -122,6 +187,8 @@ foreach ($manifestFile in $manifests) {
         storeNameCount = $storeNameCount
         environmentHops = $environmentHops
         localFastPathPercent = $localFastPathPercent
+        phaseDiagnostics = $phaseDiagnostics
+        rssSamples = $rssSamples
         log = (Split-Path -Leaf $logPath)
     }
     $results += $result

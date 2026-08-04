@@ -1,5 +1,7 @@
 //! Stable token types shared by the lexer and parser.
 
+use crate::runtime::JsString;
+
 /// Half-open byte range in the original UTF-8 source.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct Span {
@@ -109,27 +111,48 @@ impl Keyword {
     }
 }
 
+/// Storage for token text that is either source-backed or decoded.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TokenText {
+    /// The semantic text is a delimiter-adjusted slice of [`Token::span`].
+    SourceSlice,
+    /// Escaped or normalized text that differs from the original source.
+    Cooked(JsString),
+}
+
+impl From<String> for TokenText {
+    fn from(value: String) -> Self {
+        Self::Cooked(value.into())
+    }
+}
+
+impl From<&str> for TokenText {
+    fn from(value: &str) -> Self {
+        Self::Cooked(value.into())
+    }
+}
+
 /// Lexical token payload.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Eof,
-    Identifier(String),
+    Identifier(TokenText),
     Number(f64),
-    BigInt(String),
-    String(String),
+    BigInt(TokenText),
+    String(TokenText),
     /// No-substitution template literal: `` `text` ``.
-    TemplateLiteral(String),
+    TemplateLiteral(TokenText),
     /// Start of a template with substitutions: `` `text${ ``.
-    TemplateHead(String),
+    TemplateHead(TokenText),
     /// Middle part between two substitutions: `}text${`.
-    TemplateMiddle(String),
+    TemplateMiddle(TokenText),
     /// End of a template with substitutions: `}text`` `.
-    TemplateTail(String),
+    TemplateTail(TokenText),
     Keyword(Keyword),
     Punctuator(char),
     Operator(&'static str),
     /// `#name` — private class field/method identifier.
-    PrivateName(String),
+    PrivateName(TokenText),
 }
 
 /// One token and its location in source text.
@@ -139,7 +162,7 @@ pub struct Token {
     pub span: Span,
     /// Raw source text for template token segments, excluding delimiters.
     /// `None` for every non-template token.
-    pub template_raw: Option<String>,
+    pub template_raw: Option<TokenText>,
     /// Whether an ECMAScript line terminator appeared between the end of the
     /// previous token and the start of this one, counting terminators inside
     /// skipped comments. The parser uses this for restricted productions such
@@ -196,5 +219,97 @@ impl Token {
             has_identifier_escape: false,
             has_legacy_numeric: false,
         }
+    }
+
+    #[must_use]
+    pub fn text<'a>(&'a self, source: &'a str) -> &'a str {
+        let text = match &self.kind {
+            TokenKind::Identifier(text)
+            | TokenKind::BigInt(text)
+            | TokenKind::String(text)
+            | TokenKind::TemplateLiteral(text)
+            | TokenKind::TemplateHead(text)
+            | TokenKind::TemplateMiddle(text)
+            | TokenKind::TemplateTail(text)
+            | TokenKind::PrivateName(text) => text,
+            _ => return "",
+        };
+        match text {
+            TokenText::Cooked(value) => value.as_str(),
+            TokenText::SourceSlice => {
+                let span = match self.kind {
+                    TokenKind::Identifier(_) | TokenKind::BigInt(_) => self.span,
+                    TokenKind::PrivateName(_) => Span::new(self.span.start + 1, self.span.end),
+                    TokenKind::String(_) | TokenKind::TemplateLiteral(_) => {
+                        Span::new(self.span.start + 1, self.span.end.saturating_sub(1))
+                    }
+                    TokenKind::TemplateHead(_) | TokenKind::TemplateMiddle(_) => {
+                        Span::new(self.span.start + 1, self.span.end.saturating_sub(2))
+                    }
+                    TokenKind::TemplateTail(_) => {
+                        Span::new(self.span.start + 1, self.span.end.saturating_sub(1))
+                    }
+                    _ => self.span,
+                };
+                source.get(span.start..span.end).unwrap_or("")
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn text_owned(&self, source: &str) -> String {
+        self.text(source).to_owned()
+    }
+
+    #[must_use]
+    pub fn text_shared(&self, source: &str) -> JsString {
+        match &self.kind {
+            TokenKind::Identifier(TokenText::Cooked(value))
+            | TokenKind::BigInt(TokenText::Cooked(value))
+            | TokenKind::String(TokenText::Cooked(value))
+            | TokenKind::TemplateLiteral(TokenText::Cooked(value))
+            | TokenKind::TemplateHead(TokenText::Cooked(value))
+            | TokenKind::TemplateMiddle(TokenText::Cooked(value))
+            | TokenKind::TemplateTail(TokenText::Cooked(value))
+            | TokenKind::PrivateName(TokenText::Cooked(value)) => value.clone(),
+            _ => self.text(source).into(),
+        }
+    }
+
+    #[must_use]
+    pub fn template_raw_text<'a>(&'a self, source: &'a str) -> Option<&'a str> {
+        match self.template_raw.as_ref()? {
+            TokenText::Cooked(value) => Some(value.as_str()),
+            TokenText::SourceSlice => {
+                let span = match self.kind {
+                    TokenKind::TemplateLiteral(_) => {
+                        Span::new(self.span.start + 1, self.span.end.saturating_sub(1))
+                    }
+                    TokenKind::TemplateHead(_) | TokenKind::TemplateMiddle(_) => {
+                        Span::new(self.span.start + 1, self.span.end.saturating_sub(2))
+                    }
+                    TokenKind::TemplateTail(_) => {
+                        Span::new(self.span.start + 1, self.span.end.saturating_sub(1))
+                    }
+                    _ => return None,
+                };
+                source.get(span.start..span.end)
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn requires_source(&self) -> bool {
+        matches!(
+            self.kind,
+            TokenKind::Identifier(TokenText::SourceSlice)
+                | TokenKind::BigInt(TokenText::SourceSlice)
+                | TokenKind::String(TokenText::SourceSlice)
+                | TokenKind::TemplateLiteral(TokenText::SourceSlice)
+                | TokenKind::TemplateHead(TokenText::SourceSlice)
+                | TokenKind::TemplateMiddle(TokenText::SourceSlice)
+                | TokenKind::TemplateTail(TokenText::SourceSlice)
+                | TokenKind::PrivateName(TokenText::SourceSlice)
+        ) || matches!(self.template_raw, Some(TokenText::SourceSlice))
     }
 }

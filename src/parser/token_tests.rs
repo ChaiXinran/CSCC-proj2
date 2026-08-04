@@ -33,7 +33,7 @@ fn op(spelling: &'static str) -> Token {
 }
 
 fn ident(name: &str) -> Token {
-    tok(TokenKind::Identifier(name.to_owned()))
+    tok(TokenKind::Identifier(name.to_owned().into()))
 }
 
 fn punc(ch: char) -> Token {
@@ -281,7 +281,7 @@ fn unary_minus_wraps_operand() {
 fn unary_plus_on_empty_string() {
     let tokens = vec![
         op("+"),
-        tok(TokenKind::String(String::new())),
+        tok(TokenKind::String(String::new().into())),
         punc(';'),
         eof(),
     ];
