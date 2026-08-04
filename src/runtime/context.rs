@@ -9,9 +9,9 @@ use fancy_regex::Regex;
 
 use super::{
     AgentManager, ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction,
-    BuiltinId, CollectionStats, Collector, DataViewId, DataViewRecord, Environment, EnvironmentId,
-    FunctionId, GcMetrics, Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue,
-    JsFunction, JsObject, JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
+    BuiltinId, CollectionStats, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId,
+    GcMetrics, Heap, HeapMarks, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction,
+    JsObject, JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
     NativeErrorValue, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
     PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
     PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind,
@@ -240,6 +240,7 @@ pub struct NativeContext {
     budget: ExecutionBudget,
     call_depth: u64,
     gc_allocation_threshold: usize,
+    gc_marks: HeapMarks,
     gc_metrics: GcMetrics,
     host_services: HostServices,
 }
@@ -337,6 +338,7 @@ impl NativeContext {
             budget: ExecutionBudget::default(),
             call_depth: 0,
             gc_allocation_threshold: 10_000,
+            gc_marks: HeapMarks::default(),
             gc_metrics: GcMetrics::default(),
             host_services: HostServices::default(),
         };
@@ -437,8 +439,14 @@ impl NativeContext {
 
     pub fn maybe_collect_garbage(&mut self, roots: &RootSet) -> Result<CollectionStats, VmError> {
         let started = Instant::now();
-        let mut collector = Collector;
-        let stats = collector.collect(&mut self.heap, roots);
+        let marks = std::mem::take(&mut self.gc_marks);
+        let marks = {
+            let mut tracer = Tracer::with_marks(&self.heap, marks);
+            roots.trace(&mut tracer);
+            tracer.into_marks()
+        };
+        let stats = self.heap.sweep(&marks);
+        self.gc_marks = marks;
         self.prune_swept_metadata();
         self.record_collection(started, stats);
         Ok(stats)
@@ -446,13 +454,15 @@ impl NativeContext {
 
     pub fn collect_garbage_for_vm(&mut self, vm: &Vm) -> Result<CollectionStats, VmError> {
         let started = Instant::now();
+        let marks = std::mem::take(&mut self.gc_marks);
         let marks = {
-            let mut tracer = Tracer::new(&self.heap);
+            let mut tracer = Tracer::with_marks(&self.heap, marks);
             vm.trace_roots(&mut tracer);
             self.trace_context_roots(&mut tracer);
             tracer.into_marks()
         };
         let stats = self.heap.sweep(&marks);
+        self.gc_marks = marks;
         self.prune_swept_metadata();
         self.record_collection(started, stats);
         Ok(stats)
@@ -480,6 +490,17 @@ impl NativeContext {
 
     pub(crate) fn truncate_temporary_roots(&mut self, base: usize) {
         self.temporary_roots.truncate(base);
+    }
+
+    pub(crate) fn with_temporary_roots<T>(
+        &mut self,
+        roots: impl IntoIterator<Item = JsValue>,
+        operation: impl FnOnce(&mut Self) -> Result<T, VmError>,
+    ) -> Result<T, VmError> {
+        let base = self.push_temporary_roots(roots);
+        let result = operation(self);
+        self.truncate_temporary_roots(base);
+        result
     }
 
     fn record_collection(&mut self, started: Instant, stats: CollectionStats) {
@@ -514,7 +535,7 @@ impl NativeContext {
             roots.mark_value_root(value);
         }
         for value in self.agent_manager.roots() {
-            roots.mark_value_root(&value);
+            roots.mark_value_root(value);
         }
         for (value, _) in &self.pending_derived_this {
             roots.mark_value_root(value);

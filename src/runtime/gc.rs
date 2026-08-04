@@ -60,6 +60,12 @@ impl HeapMarks {
         }
     }
 
+    pub(crate) fn prepare_for_heap(&mut self, heap: &Heap) {
+        reset_marks(&mut self.objects, heap.object_slots());
+        reset_marks(&mut self.environments, heap.environment_slots());
+        reset_marks(&mut self.functions, heap.function_slots());
+    }
+
     pub(crate) fn mark_object(&mut self, id: ObjectId) -> bool {
         mark_slot(&mut self.objects, id.0 as usize)
     }
@@ -86,6 +92,11 @@ impl HeapMarks {
     pub(crate) fn contains_function(&self, id: FunctionId) -> bool {
         self.functions.get(id.0 as usize).copied().unwrap_or(false)
     }
+}
+
+fn reset_marks(marks: &mut Vec<bool>, slots: usize) {
+    marks.resize(slots, false);
+    marks.fill(false);
 }
 
 fn mark_slot(slots: &mut [bool], index: usize) -> bool {
@@ -130,7 +141,7 @@ impl RootSet {
         }
     }
 
-    fn trace(&self, tracer: &mut Tracer<'_>) {
+    pub(crate) fn trace(&self, tracer: &mut Tracer<'_>) {
         tracer.mark_environment(self.global_environment);
         tracer.mark_environment(self.current_environment);
         for environment in &self.environment_stack {
@@ -234,6 +245,11 @@ impl<'a> Tracer<'a> {
             heap,
             marks: HeapMarks::for_heap(heap),
         }
+    }
+
+    pub(crate) fn with_marks(heap: &'a Heap, mut marks: HeapMarks) -> Self {
+        marks.prepare_for_heap(heap);
+        Self { heap, marks }
     }
 
     pub fn mark_object(&mut self, id: ObjectId) {

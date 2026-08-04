@@ -37,10 +37,10 @@ pub use environment::{Binding, Environment, EnvironmentId};
 pub use function::{
     BoundFunction, BuiltinFunction, BuiltinId, FunctionId, JsFunction, NativeCall, NativeConstruct,
 };
-pub(crate) use gc::RootSink;
 pub use gc::{
     CallFrameRoots, CollectionStats, Collector, GcMetrics, HeapStats, RootSet, Trace, Tracer,
 };
+pub(crate) use gc::{HeapMarks, RootSink};
 pub use heap::Heap;
 pub(crate) use iterator::IteratorKind;
 pub use iterator::{IteratorMode, IteratorRecord};

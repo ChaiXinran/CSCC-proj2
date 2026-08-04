@@ -7646,7 +7646,12 @@ impl Vm {
         new_target: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        match constructor {
+        let root_base = context.push_temporary_roots(
+            std::iter::once(constructor.clone())
+                .chain(std::iter::once(new_target.clone()))
+                .chain(arguments.iter().cloned()),
+        );
+        let result = (|| match constructor {
             JsValue::Object(object) if context.proxy_record(object).is_some() => {
                 match proxy::internal_construct(
                     self,
@@ -7831,7 +7836,9 @@ impl Vm {
             other => Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error(format!("{other} is not a constructor")),
             ))),
-        }
+        })();
+        context.truncate_temporary_roots(root_base);
+        result
     }
 
     fn validate_jump_target(
