@@ -4454,7 +4454,10 @@ impl NativeContext {
 
     pub fn drain_jobs(&mut self) -> Result<(), VmError> {
         while let Some(job) = self.job_queue.pop() {
-            self.run_job(job)?;
+            let root_base = self.push_temporary_roots(job.root_values());
+            let result = self.run_job(job);
+            self.truncate_temporary_roots(root_base);
+            result?;
         }
         Ok(())
     }

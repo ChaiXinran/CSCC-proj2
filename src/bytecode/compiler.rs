@@ -5,6 +5,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
+    time::Instant,
 };
 
 use crate::ast::{
@@ -50,7 +51,10 @@ impl std::error::Error for CompileError {}
 
 /// Compiles an AST into stack-based AgentJS bytecode.
 #[derive(Debug, Default)]
-pub struct Compiler;
+pub struct Compiler {
+    deadline: Option<Instant>,
+    nodes_until_checkpoint: u16,
+}
 
 #[derive(Debug, Default)]
 struct CompileContext {
@@ -160,7 +164,43 @@ impl CompileContext {
 impl Compiler {
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            deadline: None,
+            nodes_until_checkpoint: 256,
+        }
+    }
+
+    /// Installs the absolute deadline used by cooperative compilation checks.
+    ///
+    /// Keeping the deadline as an `Instant` preserves the frontend dependency
+    /// direction: the bytecode compiler does not depend on the host engine.
+    pub(crate) fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
+        self.nodes_until_checkpoint = 256;
+    }
+
+    fn checkpoint_now(&self) -> Result<(), CompileError> {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            Err(CompileError {
+                message: "wall-clock deadline exceeded".into(),
+                is_syntax: false,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn checkpoint_node(&mut self) -> Result<(), CompileError> {
+        self.nodes_until_checkpoint = self.nodes_until_checkpoint.saturating_sub(1);
+        if self.nodes_until_checkpoint == 0 {
+            self.nodes_until_checkpoint = 256;
+            self.checkpoint_now()?;
+        }
+        Ok(())
     }
 
     /// Compiles a script containing any statement forms.
@@ -171,6 +211,8 @@ impl Compiler {
         &mut self,
         program: &Program,
     ) -> Result<crate::bytecode::SharedChunk, CompileError> {
+        self.nodes_until_checkpoint = 256;
+        self.checkpoint_now()?;
         let mut chunk = Chunk::default();
         let mut context = CompileContext::default();
         let completion_expression = completion_expression_index(&program.body);
@@ -290,6 +332,7 @@ impl Compiler {
         context: &mut CompileContext,
         preserve_expression_value: bool,
     ) -> Result<(), CompileError> {
+        self.checkpoint_node()?;
         if statement_resets_completion(statement) {
             self.reset_completion_value(chunk, context)?;
         }
@@ -2222,6 +2265,7 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        self.checkpoint_node()?;
         match expression {
             Expression::Literal(literal) => self.compile_literal(literal, chunk),
             Expression::Unary { operator, argument } => {
@@ -6709,6 +6753,8 @@ impl CompileError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use crate::{
         bytecode::{Constant, EnvironmentCapturePolicy, Instruction},
         lexer::Lexer,
@@ -6729,6 +6775,40 @@ mod tests {
         Compiler::new()
             .compile_program(&program)
             .expect("compilation succeeds")
+    }
+
+    #[test]
+    fn compiler_rejects_an_already_expired_deadline() {
+        let tokens = Lexer::new("let value = 1;")
+            .tokenize()
+            .expect("lexing succeeds");
+        let program = Parser::new(tokens)
+            .parse_program()
+            .expect("parsing succeeds");
+        let mut compiler = Compiler::new();
+        compiler.set_deadline(Some(Instant::now() - Duration::from_millis(1)));
+
+        let error = compiler
+            .compile_program(&program)
+            .expect_err("expired compilation must stop");
+
+        assert_eq!(error.message, "wall-clock deadline exceeded");
+        assert!(!error.is_syntax);
+    }
+
+    #[test]
+    fn compiler_checks_deadline_at_node_cadence() {
+        let mut compiler = Compiler::new();
+        compiler.set_deadline(Some(Instant::now() + Duration::from_secs(60)));
+        compiler.nodes_until_checkpoint = 1;
+        compiler.deadline = Some(Instant::now() - Duration::from_millis(1));
+
+        let error = compiler
+            .checkpoint_node()
+            .expect_err("node checkpoint must observe expiry");
+
+        assert_eq!(error.message, "wall-clock deadline exceeded");
+        assert_eq!(compiler.nodes_until_checkpoint, 256);
     }
 
     fn num_const(value: f64) -> Constant {

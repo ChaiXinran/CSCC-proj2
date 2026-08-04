@@ -326,7 +326,7 @@ impl NativeRuntime {
                 eprintln!("compile_start");
             }
             let compile_started = Instant::now();
-            let chunk = self.pipeline.compile(&program);
+            let chunk = self.compile_current_program(&program);
             if self.config.diagnostics {
                 eprintln!("compile_end");
             }
@@ -381,7 +381,7 @@ impl NativeRuntime {
             eprintln!("compile_start");
         }
         let compile_started = Instant::now();
-        let chunk = self.pipeline.compile(&program)?;
+        let chunk = self.compile_current_program(&program)?;
         if self.config.diagnostics {
             eprintln!("compile_end");
         }
@@ -424,6 +424,23 @@ impl NativeRuntime {
             let tokens = Lexer::new(source).with_control(control).tokenize()?;
             self.last_token_count = tokens.len();
             Ok(Parser::with_source_and_control(tokens, source, control).parse_program()?)
+        }
+    }
+
+    fn compile_current_program(&mut self, program: &Program) -> Result<SharedChunk, NativeError> {
+        let control = FrontendControl {
+            deadline: self.run_control.unwrap_or_default().deadline,
+        };
+        self.pipeline
+            .compiler
+            .set_deadline(control.deadline.instant());
+        let result = self.pipeline.compile(program);
+        self.pipeline.compiler.set_deadline(None);
+        match result {
+            Err(_) if control.deadline.is_expired() => Err(NativeError::Execute(
+                crate::vm::VmError::runtime_limit("wall-clock deadline exceeded"),
+            )),
+            result => result,
         }
     }
 

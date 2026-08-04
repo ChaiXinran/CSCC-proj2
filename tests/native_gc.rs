@@ -272,6 +272,65 @@ fn gc_threshold_does_not_change_closure_semantics() {
 }
 
 #[test]
+fn gc_preserves_array_results_across_allocating_callbacks() {
+    let source = r#"
+        let input = [1, 2, 3, 4];
+        let mapped = input.map(function (value) {
+            for (let index = 0; index < 12000; index++) {
+                ({ index: index, payload: "temporary-" + index });
+            }
+            return { value: value * 2 };
+        });
+        let filtered = mapped.filter(function (entry) {
+            for (let index = 0; index < 12000; index++) {
+                ({ index: index });
+            }
+            return entry.value > 4;
+        });
+        mapped[0].value + ":" + mapped[3].value + ":" +
+            filtered[0].value + ":" + filtered.length;
+    "#;
+
+    let (result, collection_count) = eval_with_gc_threshold(source, 10_000);
+
+    assert_eq!(result, "2:8:6:2");
+    assert!(collection_count >= 2);
+}
+
+#[test]
+fn gc_preserves_the_active_promise_job_during_callback_execution() {
+    let mut runtime = NativeRuntime::new(RuntimeConfig {
+        gc_allocation_threshold: 10_000,
+        ..RuntimeConfig::default()
+    });
+    runtime
+        .eval_source(
+            r#"
+                let promiseJobResult = 0;
+                Promise.resolve(1)
+                    .then(function (value) {
+                        for (let index = 0; index < 12000; index++) {
+                            ({ index: index, payload: "temporary-" + index });
+                        }
+                        return { value: value + 41 };
+                    })
+                    .then(function (result) {
+                        promiseJobResult = result.value;
+                    });
+            "#,
+            ExecutionOptions::default(),
+        )
+        .expect("promise jobs survive collections while executing");
+
+    let result = runtime
+        .eval_source("promiseJobResult", ExecutionOptions::default())
+        .expect("result remains reachable after draining jobs");
+
+    assert_eq!(result, "42");
+    assert!(runtime.gc_metrics().collection_count >= 1);
+}
+
+#[test]
 fn gc_preserves_private_slots_promise_reactions_and_jobs() {
     let mut context = NativeContext::default();
 

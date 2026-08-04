@@ -13,6 +13,7 @@
 !/reports/v17-partC-report.md
 !/reports/phase2-partD-report.md
 !/reports/phase3-partG-report.md
+!/reports/phase3-integration-report.md
 !/reports/85-target/
 /reports/85-target/*.txt
 !/reports/.test262

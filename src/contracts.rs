@@ -151,7 +151,7 @@ impl Default for NativePipeline {
     fn default() -> Self {
         Self {
             frontend: NativeFrontend,
-            compiler: Compiler,
+            compiler: Compiler::new(),
             executor: Vm::default(),
         }
     }
