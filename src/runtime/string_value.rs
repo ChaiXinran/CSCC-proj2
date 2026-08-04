@@ -61,7 +61,6 @@ impl Borrow<str> for JsString {
 impl From<&str> for JsString {
     fn from(value: &str) -> Self {
         Self(Arc::from(value))
-        Self::new(value)
     }
 }
 
