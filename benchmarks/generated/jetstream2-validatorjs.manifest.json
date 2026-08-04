@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 346168,
   "entryFiles": [
     "./validatorjs/dist/bundle.es6.min.js",
@@ -17,6 +17,6 @@
     "./validatorjs/benchmark.js": "sha256:a331a0af2188b882841927560d1560cce0373c730dc98dc6f1a39ab2b14dc820",
     "./validatorjs/dist/bundle.es6.min.js": "sha256:346294fd5d03754f2606e244e6b7ae55c77a0a0686e7d163b09bf654be7fea43"
   },
-  "runnerSha256": "1b5f1324693af8f5652bf3f476dbde58801b053f9ebbcd52f49e7bc69a9f7714",
+  "runnerSha256": "40c209d2f72a48616582171c4a0e3b71d12fdfa92158baa4ea60ab82c0280000",
   "phaseMarkers": false
 }

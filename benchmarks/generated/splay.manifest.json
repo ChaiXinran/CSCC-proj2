@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 11849,
   "entryFiles": [
     "./Octane/splay.js"
@@ -15,6 +15,6 @@
   "resourceHashes": {
     "./Octane/splay.js": "sha256:3ac49277a4ebf21a2d352acf019ed6536c15b53300d3b884784b8dcd58273b37"
   },
-  "runnerSha256": "24abef7029f08b4eb0a116bb19ab9bb2fb07c7a01a9cb8f60d96db8649b822e2",
+  "runnerSha256": "087dd85df12e557377722795db5809e822150b7df0e9945a9cf50b7456877fd6",
   "phaseMarkers": false
 }

@@ -1,4 +1,5 @@
-
+// AGENTJS_RESOURCE:./validatorjs/dist/bundle.es6.min.js
+// AGENTJS_RESOURCE:./validatorjs/benchmark.js
 
 const isInBrowser = false;
 const isD8 = false;
@@ -52,7 +53,7 @@ var JetStreamParams = {
     testWorstCaseCountMap: {},
     testList: "validatorjs",
 };
-var __agentjsLoadEntry = (url) => readFile(url);
+var __agentjsLoadEntry = (url) => ({ __agentjsFile: url });
 var read = function (name, mode) {
     const text = readFile(name);
     if (mode !== "binary")

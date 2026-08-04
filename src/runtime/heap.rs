@@ -309,7 +309,7 @@ impl Heap {
 #[cfg(test)]
 mod tests {
     use crate::{
-        bytecode::Chunk,
+        bytecode::{Chunk, DynamicScopePolicy, LocalLayout},
         runtime::{Environment, Heap, JsFunction, JsObject, JsValue, PropertyDescriptor},
     };
 
@@ -332,6 +332,8 @@ mod tests {
             has_own_prototype_property: true,
             prototype_writable: true,
             uses_arguments: false,
+            local_layout: std::sync::Arc::new(LocalLayout::default()),
+            dynamic_scope: DynamicScopePolicy::Static,
             lexical_this: None,
             lexical_new_target: None,
             home_object: None,

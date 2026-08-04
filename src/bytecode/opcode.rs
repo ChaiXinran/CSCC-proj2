@@ -139,6 +139,12 @@ pub enum Instruction {
     /// popping the initializer off the stack.
     /// Stack: [value] → []
     DeclareLocal(u16),
+    /// Loads an activation-local binding without name lookup.
+    LoadLocal(super::LocalSlot),
+    /// Stores an activation-local binding and preserves the assigned value.
+    StoreLocal(super::LocalSlot),
+    /// Initializes an activation-local binding, consuming the value.
+    InitializeLocal(super::LocalSlot),
     /// EvalDeclarationInstantiation var creation. Existing bindings are left
     /// unchanged; absent bindings are created in the active eval environment.
     DeclareEvalVar(u16),
@@ -411,6 +417,7 @@ impl Instruction {
             | Self::TypeOfGlobal(_)
             | Self::CreateFunction(_)
             | Self::LoadName(_)
+            | Self::LoadLocal(_)
             | Self::TypeOfName(_)
             | Self::LoadThis
             | Self::LoadNewTarget
@@ -429,6 +436,7 @@ impl Instruction {
             | Self::Throw
             | Self::Return
             | Self::DeclareLocal(_)
+            | Self::InitializeLocal(_)
             | Self::DeclareEvalVar(_)
             | Self::EnterWithEnvironment
             | Self::InitializeBinding(_) => StackEffect::new(1, 0),
@@ -436,6 +444,7 @@ impl Instruction {
             // pop 1, push 1 (net 0)
             Self::StoreGlobal(_)
             | Self::StoreName(_)
+            | Self::StoreLocal(_)
             | Self::UnaryPlus
             | Self::ToString
             | Self::ToNumeric

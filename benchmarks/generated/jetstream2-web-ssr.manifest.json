@@ -5,7 +5,7 @@
   "officialIterations": 30,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 8782,
   "entryFiles": [
     "./utils/StartupBenchmark.js",
@@ -20,6 +20,6 @@
     "./web-ssr/benchmark.js": "sha256:dd1c96177dcd7837a85fac8ab080dee60f76c8f16095cfda2967a595dc56168a",
     "./web-ssr/dist/bundle.min.js": "sha256:f4a7de4431bd0d9c690415431cc4f1e2fe223acbca4737239f2f6117809391ea"
   },
-  "runnerSha256": "0b22063050ca26b8fbbb8b19adceb2b4e62cf48acdf0e16c9ab9dcf0cbd90ac2",
+  "runnerSha256": "150278d690e4b25cd5d13707ea98bd5887c7060b8b1fdd2ac51200e07c9795ca",
   "phaseMarkers": false
 }

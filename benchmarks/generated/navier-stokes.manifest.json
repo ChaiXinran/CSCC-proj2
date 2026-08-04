@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 13292,
   "entryFiles": [
     "./Octane/navier-stokes.js"
@@ -15,6 +15,6 @@
   "resourceHashes": {
     "./Octane/navier-stokes.js": "sha256:6df9501038437d93b53a03a86cb1590a54d0ac004c3e135181980c12531f16a6"
   },
-  "runnerSha256": "ac0cac57d91bd63456f1d004fd2eaa1f2f0f8da133621dc5a00b3ca51b70add8",
+  "runnerSha256": "438740bd103cdc10d82ad6d903a5d7a91ee5350221a142dd4974da96a3c7dd80",
   "phaseMarkers": false
 }

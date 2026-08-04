@@ -1,4 +1,5 @@
-
+// AGENTJS_RESOURCE:./utils/StartupBenchmark.js
+// AGENTJS_RESOURCE:./web-ssr/benchmark.js
 
 const isInBrowser = false;
 const isD8 = false;
@@ -52,7 +53,7 @@ var JetStreamParams = {
     testWorstCaseCountMap: {},
     testList: "web-ssr",
 };
-var __agentjsLoadEntry = (url) => readFile(url);
+var __agentjsLoadEntry = (url) => ({ __agentjsFile: url });
 var read = function (name, mode) {
     const text = readFile(name);
     if (mode !== "binary")

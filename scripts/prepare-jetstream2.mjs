@@ -207,12 +207,10 @@ const entrySourceBytes = entryFiles.reduce(
     (total, file) => total + fs.statSync(resolveResourcePath(file)).size,
     0,
 );
-// Small workloads retain the original isolated function semantics, but their
-// text comes from the Host at runtime and is never embedded in the runner.
-// Large workloads are parsed one file at a time to bound source duplication.
-const entryExecutionMode = entrySourceBytes > 640 * 1024
-    ? "staged"
-    : "isolated-host";
+// Every workload entry is read and evaluated individually by the Rust host.
+// Keeping a size-based inline path would still concatenate the complete source
+// of smaller workloads before compiling it through Function.
+const entryExecutionMode = "staged";
 const preloadEntries = Object.entries(
     plan.preload ?? Object.fromEntries(benchmark.preloadEntries ?? []),
 ).map(([name, resource]) => [name, normalizeResourcePath(resource)]);
