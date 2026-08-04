@@ -7,7 +7,88 @@ use std::{
 use crate::{
     backend::{BackendKind, RuntimeBackend, create_runtime, create_runtime_with_host},
     host::HostServices,
+    runtime::{GcMetrics, HeapStats},
 };
+
+/// A monotonic deadline shared by every stage of one host-controlled run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AbsoluteDeadline {
+    at: Option<Instant>,
+}
+
+impl AbsoluteDeadline {
+    #[must_use]
+    pub fn from_duration(start: Instant, duration: Option<Duration>) -> Self {
+        Self {
+            at: duration.and_then(|duration| start.checked_add(duration)),
+        }
+    }
+
+    pub fn check(self) -> Result<(), RuntimeLimitError> {
+        if self.is_expired() {
+            Err(RuntimeLimitError)
+        } else {
+            Ok(())
+        }
+    }
+
+    #[must_use]
+    pub fn remaining(self) -> Option<Duration> {
+        self.at
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+    }
+
+    #[must_use]
+    pub fn is_expired(self) -> bool {
+        self.at.is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    #[must_use]
+    pub(crate) const fn instant(self) -> Option<Instant> {
+        self.at
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RuntimeLimitError;
+
+impl fmt::Display for RuntimeLimitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("wall-clock deadline exceeded")
+    }
+}
+
+impl std::error::Error for RuntimeLimitError {}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RunControl {
+    pub deadline: AbsoluteDeadline,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrontendControl {
+    pub deadline: AbsoluteDeadline,
+}
+
+impl FrontendControl {
+    #[inline]
+    pub fn checkpoint(self) -> Result<(), RuntimeLimitError> {
+        self.deadline.check()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PhaseDiagnostics {
+    pub phase: &'static str,
+    pub elapsed_ms: u64,
+    pub source_bytes: usize,
+    pub token_count: Option<usize>,
+    pub instruction_count: Option<usize>,
+    pub constant_count: Option<usize>,
+    pub function_count: Option<usize>,
+    pub heap: HeapStats,
+    pub gc: GcMetrics,
+}
 
 /// Limits applied to one JavaScript isolate.
 #[derive(Debug, Clone, Copy)]
@@ -168,6 +249,16 @@ impl Runtime {
             output: result.output,
             elapsed: started.elapsed(),
         })
+    }
+
+    /// Installs or clears host-level controls shared by subsequent evaluations.
+    pub fn set_run_control(&mut self, control: Option<RunControl>) {
+        self.backend.set_run_control(control);
+    }
+
+    /// Selects the stable stage label used by diagnostics for the next evaluation.
+    pub fn set_diagnostic_phase(&mut self, phase: &'static str) {
+        self.backend.set_diagnostic_phase(phase);
     }
 
     /// Evaluates setup code without clearing captured output. Used by Test262.

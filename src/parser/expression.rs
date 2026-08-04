@@ -36,6 +36,7 @@ use crate::{
 impl Parser {
     /// Parses a full expression, including the comma/sequence operator.
     pub(super) fn parse_expression(&mut self) -> Result<Expression, ParseError> {
+        self.checkpoint()?;
         let first = self.parse_assignment()?;
         if !self.check_punctuator(',') {
             return Ok(unwrap_parenthesized(first));
@@ -63,6 +64,7 @@ impl Parser {
     /// Parses `target = value` and compound assignments `+= -= *= /= %=`.
     /// Assignment is right associative and binds looser than every binary operator.
     pub(super) fn parse_assignment(&mut self) -> Result<Expression, ParseError> {
+        self.checkpoint()?;
         // V9-A: `yield [*] [expr]` — only valid inside a generator function.
         if self.is_generator_context && self.check_keyword(Keyword::Yield) {
             self.advance();
@@ -191,14 +193,16 @@ impl Parser {
         if self.in_class_static_block
             && next_is_arrow(&self.tokens, self.cursor)
             && (matches!(self.peek().kind, TokenKind::Keyword(Keyword::Await))
-                || matches!(&self.peek().kind, TokenKind::Identifier(name) if name == "await"))
+                || (matches!(&self.peek().kind, TokenKind::Identifier(_))
+                    && self.peek_text() == "await"))
         {
             return Err(
                 self.error("`await` cannot be an arrow parameter in a class static block".into())
             );
         }
-        let params = match self.peek().kind.clone() {
-            TokenKind::Identifier(name) if next_is_arrow(&self.tokens, self.cursor) => {
+        let params = match self.peek().kind {
+            TokenKind::Identifier(_) if next_is_arrow(&self.tokens, self.cursor) => {
+                let name = self.peek_text().to_owned();
                 // In strict mode, binding identifiers like `eval` and `arguments`
                 // are forbidden as arrow function parameter names.
                 if self.is_strict
@@ -316,6 +320,7 @@ impl Parser {
 
     /// Precedence-climbing parser for binary and logical operators.
     fn parse_binary(&mut self, min_binding_power: u8) -> Result<Expression, ParseError> {
+        self.checkpoint()?;
         let mut left = self.parse_unary()?;
         while let Some((precedence, operator)) = self.peek_binary_operator() {
             if precedence < min_binding_power {
@@ -389,6 +394,7 @@ impl Parser {
     /// `delete`).
     /// Parses prefix unary operators (`+`, `-`, `!`, `typeof`, `void`, `delete`).
     fn parse_unary(&mut self) -> Result<Expression, ParseError> {
+        self.checkpoint()?;
         if self.is_async_context && self.check_keyword(Keyword::Await) {
             self.advance();
             self.enter_depth()?;
@@ -506,7 +512,8 @@ impl Parser {
         };
         loop {
             if self.eat_punctuator('.') {
-                if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+                if let TokenKind::PrivateName(_) = self.peek().kind {
+                    let name = self.peek_text().to_owned();
                     self.advance();
                     expression = Expression::Member {
                         object: Box::new(expression),
@@ -545,7 +552,8 @@ impl Parser {
                     if self.eat_operator("?.") {
                         steps.push(self.parse_optional_chain_first_step()?);
                     } else if self.eat_punctuator('.') {
-                        if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+                        if let TokenKind::PrivateName(_) = self.peek().kind {
+                            let name = self.peek_text().to_owned();
                             self.advance();
                             steps.push(OptionalChainStep::Member {
                                 property: Box::new(Expression::PrivateName(name)),
@@ -626,7 +634,8 @@ impl Parser {
                 computed: true,
                 optional: true,
             })
-        } else if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+        } else if let TokenKind::PrivateName(_) = self.peek().kind {
+            let name = self.peek_text().to_owned();
             self.advance();
             Ok(OptionalChainStep::Member {
                 property: Box::new(Expression::PrivateName(name)),
@@ -670,7 +679,8 @@ impl Parser {
             return Err(self.error("dynamic import cannot be used as a constructor".into()));
         }
         while self.eat_punctuator('.') {
-            if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+            if let TokenKind::PrivateName(_) = self.peek().kind {
+                let name = self.peek_text().to_owned();
                 self.advance();
                 callee = Expression::Member {
                     object: Box::new(callee),
@@ -726,6 +736,7 @@ impl Parser {
     /// Parses literals, identifiers, parenthesized groups, array literals,
     /// object literals, and function expressions.
     fn parse_primary(&mut self) -> Result<Expression, ParseError> {
+        self.checkpoint()?;
         let token = self.peek().clone();
         match token.kind {
             TokenKind::Number(value) => {
@@ -738,11 +749,12 @@ impl Parser {
                 self.advance();
                 Ok(Expression::Literal(Literal::Number(value)))
             }
-            TokenKind::BigInt(raw) => {
+            TokenKind::BigInt(_) => {
+                let raw = self.token_text_owned(&token);
                 self.advance();
                 Ok(Expression::Literal(Literal::BigInt(raw)))
             }
-            TokenKind::String(value) => {
+            TokenKind::String(_) => {
                 // Strict-mode early error: legacy octal/non-octal decimal
                 // escapes are forbidden inside strict-mode string literals.
                 if self.is_strict && token.has_legacy_escape {
@@ -753,17 +765,19 @@ impl Parser {
                                 .into(),
                     });
                 }
+                let value = self.token_text_owned(&token);
                 self.advance();
                 Ok(Expression::Literal(Literal::String(value)))
             }
-            TokenKind::Identifier(ref name) => {
+            TokenKind::Identifier(_) => {
+                let name = self.token_text_owned(&token);
                 if self.in_class_static_block && name == "await" {
                     return Err(self.error(
                         "`await` is not allowed as an identifier reference in a class static block"
                             .into(),
                     ));
                 }
-                if is_reserved_identifier_name(name) {
+                if is_reserved_identifier_name(&name) {
                     return Err(
                         self.error(format!("reserved word `{name}` cannot be an identifier"))
                     );
@@ -771,15 +785,15 @@ impl Parser {
                 // An escaped identifier whose StringValue is a keyword is always
                 // a SyntaxError (e.g. `let` = `let`).
                 if token.has_identifier_escape
-                    && (is_keyword_name(name)
-                        || (self.is_strict && is_strict_future_reserved_keyword(name)))
+                    && (is_keyword_name(&name)
+                        || (self.is_strict && is_strict_future_reserved_keyword(&name)))
                 {
                     return Err(self.error(format!(
                         "identifier escape sequence resolves to reserved word `{name}`"
                     )));
                 }
                 // In strict mode, future reserved words cannot be used as identifier references.
-                if self.is_strict && is_strict_future_reserved(name) {
+                if self.is_strict && is_strict_future_reserved(&name) {
                     return Err(self.error(format!("`{name}` is a reserved word in strict mode")));
                 }
                 // Unicode-escaped forms of context-reserved words (e.g. `await`
@@ -813,7 +827,6 @@ impl Parser {
                         return self.parse_async_expression();
                     }
                 }
-                let name = name.clone();
                 self.advance();
                 Ok(Expression::Identifier(name))
             }
@@ -847,16 +860,15 @@ impl Parser {
             // context-free lexer split it into.
             TokenKind::Operator(op) if op == "/" || op == "/=" => self.parse_regex_literal(),
             // V8-A: template literals
-            TokenKind::TemplateLiteral(value) => {
+            TokenKind::TemplateLiteral(_) => {
                 if self.peek().has_legacy_escape {
                     return Err(self.error(
                         "legacy escape sequences are not allowed in template literals".into(),
                     ));
                 }
+                let value = self.token_text_owned(&token);
                 let raw = self
-                    .peek()
-                    .template_raw
-                    .clone()
+                    .token_raw_text_owned(&token)
                     .unwrap_or_else(|| value.clone());
                 self.advance();
                 // No-substitution template: `...text...`
@@ -1066,7 +1078,8 @@ impl Parser {
         // Detection: `async` identifier not followed by a newline, followed by a valid
         // method key token (not `:`, `,`, `}`, `(`). This avoids consuming `async` when
         // it's used as a plain property name (`{ async: 1 }`) or shorthand (`{ async }`).
-        if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "async")
+        if matches!(&self.peek().kind, TokenKind::Identifier(_))
+            && self.peek_text() == "async"
             && !self.peek().has_identifier_escape
         {
             let next = self.tokens.get(self.cursor + 1);
@@ -1113,8 +1126,10 @@ impl Parser {
 
         // Detect `get` / `set` context keywords.  They are only context keywords
         // here — they remain valid as regular identifier property names too.
-        let is_get = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
-        let is_set = matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
+        let is_get =
+            matches!(&self.peek().kind, TokenKind::Identifier(_)) && self.peek_text() == "get";
+        let is_set =
+            matches!(&self.peek().kind, TokenKind::Identifier(_)) && self.peek_text() == "set";
         let escaped_accessor_keyword = (is_get || is_set)
             && self.peek().has_identifier_escape
             && self.tokens.get(self.cursor + 1).is_some_and(|next| {
@@ -1389,11 +1404,13 @@ impl Parser {
     fn parse_property_name(&mut self) -> Result<PropertyName, ParseError> {
         let token = self.peek().clone();
         match token.kind {
-            TokenKind::Identifier(name) => {
+            TokenKind::Identifier(_) => {
+                let name = self.token_text_owned(&token);
                 self.advance();
                 Ok(PropertyName::Identifier(name))
             }
-            TokenKind::String(s) | TokenKind::TemplateLiteral(s) => {
+            TokenKind::String(_) | TokenKind::TemplateLiteral(_) => {
+                let s = self.token_text_owned(&token);
                 self.advance();
                 Ok(PropertyName::String(s))
             }
@@ -1401,7 +1418,8 @@ impl Parser {
                 self.advance();
                 Ok(PropertyName::Number(n))
             }
-            TokenKind::BigInt(raw) => {
+            TokenKind::BigInt(_) => {
+                let raw = self.token_text_owned(&token);
                 self.advance();
                 Ok(PropertyName::String(
                     raw.strip_suffix('n').unwrap_or(&raw).to_owned(),
@@ -1434,8 +1452,9 @@ impl Parser {
         self.in_class_static_block = false;
         self.is_generator_context = is_generator;
         // Optional name for named function expressions (also accept keywords as names)
-        let name = match self.peek().kind.clone() {
-            TokenKind::Identifier(n) => {
+        let name = match self.peek().kind {
+            TokenKind::Identifier(_) => {
+                let n = self.peek_text().to_owned();
                 self.advance();
                 Some(n)
             }
@@ -1518,8 +1537,9 @@ impl Parser {
             let outer_generator = self.is_generator_context;
             self.is_async_context = true;
             self.is_generator_context = is_generator;
-            let name = match self.peek().kind.clone() {
-                TokenKind::Identifier(n) => {
+            let name = match self.peek().kind {
+                TokenKind::Identifier(_) => {
+                    let n = self.peek_text().to_owned();
                     self.advance();
                     Some(n)
                 }
@@ -1570,8 +1590,8 @@ impl Parser {
         // `async (params) =>` or `async param =>` — async arrow function.
         // We need lookahead to distinguish from a call expression like `async(x)`.
         let saved = self.cursor;
-        let params = match self.peek().kind.clone() {
-            TokenKind::Identifier(p)
+        let params = match self.peek().kind {
+            TokenKind::Identifier(_)
                 if matches!(
                     self.tokens.get(self.cursor + 1),
                     Some(crate::lexer::Token {
@@ -1581,6 +1601,7 @@ impl Parser {
                     }) if  *op == "=>"
                 ) =>
             {
+                let p = self.peek_text().to_owned();
                 self.advance(); // param name
                 vec![FunctionParam::Simple(p)]
             }
@@ -1605,7 +1626,8 @@ impl Parser {
 
         if self.tokens[saved..self.cursor].iter().any(|token| {
             matches!(token.kind, TokenKind::Keyword(Keyword::Await))
-                || matches!(&token.kind, TokenKind::Identifier(name) if name == "await")
+                || (matches!(&token.kind, TokenKind::Identifier(_))
+                    && token.text(self.source_text()) == "await")
         }) {
             return Err(self.error("`await` is not allowed in async arrow parameters".into()));
         }
@@ -1660,15 +1682,14 @@ impl Parser {
         &mut self,
         tagged: bool,
     ) -> Result<TemplateLiteral, ParseError> {
-        if let TokenKind::TemplateLiteral(value) = self.peek().kind.clone() {
+        if let TokenKind::TemplateLiteral(_) = self.peek().kind {
             if !tagged && self.peek().has_legacy_escape {
                 return Err(self
                     .error("legacy escape sequences are not allowed in template literals".into()));
             }
+            let value = self.peek_text().to_owned();
             let raw = self
-                .peek()
-                .template_raw
-                .clone()
+                .token_raw_text_owned(self.peek())
                 .unwrap_or_else(|| value.clone());
             self.advance();
             return Ok(TemplateLiteral {
@@ -1688,9 +1709,9 @@ impl Parser {
                 self.error("legacy escape sequences are not allowed in template literals".into())
             );
         }
-        raw_quasis.push(self.peek().template_raw.clone().unwrap_or_default());
+        raw_quasis.push(self.token_raw_text_owned(self.peek()).unwrap_or_default());
         let head_text = match &self.peek().kind {
-            TokenKind::TemplateHead(text) => text.clone(),
+            TokenKind::TemplateHead(_) => self.peek_text().to_owned(),
             _ => unreachable!("parse_template_literal called on non-TemplateHead"),
         };
         self.advance();
@@ -1706,22 +1727,20 @@ impl Parser {
                 return Err(self
                     .error("legacy escape sequences are not allowed in template literals".into()));
             }
-            match self.peek().kind.clone() {
-                TokenKind::TemplateMiddle(text) => {
+            match &self.peek().kind {
+                TokenKind::TemplateMiddle(_) => {
+                    let text = self.peek_text().to_owned();
                     raw_quasis.push(
-                        self.peek()
-                            .template_raw
-                            .clone()
+                        self.token_raw_text_owned(self.peek())
                             .unwrap_or_else(|| text.clone()),
                     );
                     self.advance();
                     quasis.push(text);
                 }
-                TokenKind::TemplateTail(text) => {
+                TokenKind::TemplateTail(_) => {
+                    let text = self.peek_text().to_owned();
                     raw_quasis.push(
-                        self.peek()
-                            .template_raw
-                            .clone()
+                        self.token_raw_text_owned(self.peek())
                             .unwrap_or_else(|| text.clone()),
                     );
                     self.advance();
@@ -1731,7 +1750,7 @@ impl Parser {
                 other => {
                     return Err(self.error(format!(
                         "expected template continuation but found {}",
-                        crate::parser::describe(&other)
+                        crate::parser::describe(other)
                     )));
                 }
             }
@@ -1868,7 +1887,8 @@ impl Parser {
                 continue;
             }
 
-            let is_auto_accessor_field = if matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "accessor")
+            let is_auto_accessor_field = if matches!(&self.peek().kind, TokenKind::Identifier(_))
+                && self.peek_text() == "accessor"
                 && !self.peek().has_identifier_escape
             {
                 let next = self.tokens.get(self.cursor + 1);
@@ -1891,7 +1911,8 @@ impl Parser {
             // Only treat it as a modifier when the token after `async` on the SAME LINE
             // looks like the start of a method key, AND the `async` token has no escape seqs.
             let is_async = if !is_auto_accessor_field
-                && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "async")
+                && matches!(&self.peek().kind, TokenKind::Identifier(_))
+                && self.peek_text() == "async"
                 && !self.peek().has_identifier_escape
             {
                 let next = self.tokens.get(self.cursor + 1);
@@ -1910,10 +1931,12 @@ impl Parser {
             };
 
             // Check for `get`/`set` accessor keywords.
-            let is_getter =
-                !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "get");
-            let is_setter =
-                !is_async && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "set");
+            let is_getter = !is_async
+                && matches!(&self.peek().kind, TokenKind::Identifier(_))
+                && self.peek_text() == "get";
+            let is_setter = !is_async
+                && matches!(&self.peek().kind, TokenKind::Identifier(_))
+                && self.peek_text() == "set";
 
             // For get/set: peek at the token after to distinguish `get(){}` (method named
             // "get") from `get foo(){}` (getter). Treat as accessor only when next-next
@@ -2236,7 +2259,8 @@ impl Parser {
 
     /// Parses a class member name: identifier, string, number, `#private`, or `[computed]`.
     fn parse_class_member_name(&mut self) -> Result<PropertyName, ParseError> {
-        if let TokenKind::PrivateName(name) = self.peek().kind.clone() {
+        if let TokenKind::PrivateName(_) = self.peek().kind {
+            let name = self.peek_text().to_owned();
             self.advance();
             return Ok(PropertyName::PrivateName(name));
         }

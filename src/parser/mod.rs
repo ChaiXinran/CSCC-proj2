@@ -9,6 +9,7 @@ use std::{fmt, sync::Arc};
 
 use crate::{
     ast::Program,
+    engine::FrontendControl,
     lexer::{Keyword, Span, Token, TokenKind},
 };
 
@@ -30,6 +31,22 @@ impl fmt::Display for ParseError {
 }
 
 impl std::error::Error for ParseError {}
+
+const FRONTEND_DEADLINE_MESSAGE: &str = "wall-clock deadline exceeded";
+
+impl ParseError {
+    fn runtime_limit(span: Span) -> Self {
+        Self {
+            span,
+            message: FRONTEND_DEADLINE_MESSAGE.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_runtime_limit(&self) -> bool {
+        self.message == FRONTEND_DEADLINE_MESSAGE
+    }
+}
 
 /// Maximum nesting depth for parenthesized expressions, unary chains, and
 /// statement blocks. Inputs that exceed this limit receive a `SyntaxError`
@@ -94,6 +111,11 @@ pub struct Parser {
     /// `while`, `for`, `for-in`, or `do-while` statement. Used to validate
     /// `break label` and `continue label` references.
     pub(super) label_stack: Vec<(String, bool)>,
+    frontend_control: FrontendControl,
+    next_token_checkpoint: usize,
+    statement_count: usize,
+    next_statement_checkpoint: usize,
+    missing_source: bool,
 }
 
 impl Parser {
@@ -103,6 +125,7 @@ impl Parser {
             matches!(tokens.last().map(|token| &token.kind), Some(TokenKind::Eof)),
             "token stream must be terminated by Eof"
         );
+        let missing_source = tokens.iter().any(Token::requires_source);
         Self {
             tokens,
             cursor: 0,
@@ -118,6 +141,11 @@ impl Parser {
             is_async_context: false,
             is_generator_context: false,
             label_stack: Vec::new(),
+            frontend_control: FrontendControl::default(),
+            next_token_checkpoint: 1024,
+            statement_count: 0,
+            next_statement_checkpoint: 256,
+            missing_source,
         }
     }
 
@@ -127,7 +155,37 @@ impl Parser {
     pub fn with_source(tokens: Vec<Token>, source: &str) -> Self {
         let mut parser = Self::new(tokens);
         parser.source = Some(source.into());
+        parser.missing_source = false;
         parser
+    }
+
+    #[must_use]
+    pub fn with_source_and_control(
+        tokens: Vec<Token>,
+        source: &str,
+        control: FrontendControl,
+    ) -> Self {
+        let mut parser = Self::with_source(tokens, source);
+        parser.frontend_control = control;
+        parser
+    }
+
+    pub(super) fn checkpoint(&mut self) -> Result<(), ParseError> {
+        if self.cursor < self.next_token_checkpoint
+            && self.statement_count < self.next_statement_checkpoint
+        {
+            return Ok(());
+        }
+        self.next_token_checkpoint = self.cursor.saturating_add(1024);
+        self.next_statement_checkpoint = self.statement_count.saturating_add(256);
+        self.frontend_control
+            .checkpoint()
+            .map_err(|_| ParseError::runtime_limit(self.peek().span))
+    }
+
+    pub(super) fn checkpoint_statement(&mut self) -> Result<(), ParseError> {
+        self.statement_count = self.statement_count.saturating_add(1);
+        self.checkpoint()
     }
 
     /// Increments the nesting counter and returns `Err` if the limit is exceeded.
@@ -148,9 +206,13 @@ impl Parser {
 
     /// Parses a complete script, consuming every token up to and including EOF.
     pub fn parse_program(&mut self) -> Result<Program, ParseError> {
+        if self.missing_source {
+            return Err(self.error("source-backed tokens require Parser::with_source".into()));
+        }
         self.consume_directive_prologue()?;
         let mut body = Vec::new();
         while !self.at_eof() {
+            self.checkpoint()?;
             body.push(self.parse_statement()?);
         }
         // Script-level function declarations are var-scoped (in both strict
@@ -163,6 +225,9 @@ impl Parser {
     /// Parses ECMAScript module source. Module code is always strict and may
     /// contain top-level import/export declarations.
     pub fn parse_module(&mut self) -> Result<Program, ParseError> {
+        if self.missing_source {
+            return Err(self.error("source-backed tokens require Parser::with_source".into()));
+        }
         let outer_strict = self.is_strict;
         let outer_async = self.is_async_context;
         self.is_strict = true;
@@ -174,6 +239,7 @@ impl Parser {
             self.consume_directive_prologue()?;
             let mut body = Vec::new();
             while !self.at_eof() {
+                self.checkpoint()?;
                 body.push(self.parse_module_item()?);
             }
             self.validate_lexical_declarations(&body)?;
@@ -189,6 +255,24 @@ impl Parser {
     /// Returns the token at the cursor. The EOF terminator keeps this in bounds.
     fn peek(&self) -> &Token {
         &self.tokens[self.cursor.min(self.tokens.len() - 1)]
+    }
+
+    fn source_text(&self) -> &str {
+        self.source.as_deref().unwrap_or("")
+    }
+
+    fn peek_text(&self) -> &str {
+        self.peek().text(self.source_text())
+    }
+
+    fn token_text_owned(&self, token: &Token) -> String {
+        token.text_owned(self.source_text())
+    }
+
+    fn token_raw_text_owned(&self, token: &Token) -> Option<String> {
+        token
+            .template_raw_text(self.source_text())
+            .map(str::to_owned)
     }
 
     /// Consumes the current token, never moving past EOF.
@@ -260,7 +344,8 @@ impl Parser {
         let tok = self.peek();
         if self.in_class_static_block
             && (matches!(&tok.kind, TokenKind::Keyword(Keyword::Await))
-                || matches!(&tok.kind, TokenKind::Identifier(name) if name == "await"))
+                || (matches!(&tok.kind, TokenKind::Identifier(_))
+                    && tok.text(self.source_text()) == "await"))
         {
             return Err(self.error(
                 "`await` cannot be used as a binding identifier in a class static block".into(),
@@ -273,7 +358,7 @@ impl Parser {
                     return Err(self
                         .error("`await` is not allowed as an identifier in async context".into()));
                 }
-                TokenKind::Identifier(n) if n == "await" => {
+                TokenKind::Identifier(_) if tok.text(self.source_text()) == "await" => {
                     return Err(self
                         .error("`await` is not allowed as an identifier in async context".into()));
                 }
@@ -288,7 +373,7 @@ impl Parser {
                         "`yield` is not allowed as an identifier in generator context".into(),
                     ));
                 }
-                TokenKind::Identifier(n) if n == "yield" => {
+                TokenKind::Identifier(_) if tok.text(self.source_text()) == "yield" => {
                     return Err(self.error(
                         "`yield` is not allowed as an identifier in generator context".into(),
                     ));
@@ -311,22 +396,22 @@ impl Parser {
             }
             _ => {}
         }
-        if let TokenKind::Identifier(name) = &self.peek().kind {
-            if is_reserved_identifier_name(name) {
+        if let TokenKind::Identifier(_) = &self.peek().kind {
+            let name = self.peek_text().to_owned();
+            if is_reserved_identifier_name(&name) {
                 return Err(self.error(format!("reserved word `{name}` cannot be an identifier")));
             }
             // In strict mode, `arguments`, `eval`, and future reserved words
             // cannot be used as binding identifiers.
             if self.is_strict
                 && (matches!(name.as_str(), "arguments" | "eval")
-                    || is_strict_future_reserved(name)
-                    || is_strict_future_reserved_keyword(name))
+                    || is_strict_future_reserved(&name)
+                    || is_strict_future_reserved_keyword(&name))
             {
                 return Err(self.error(format!(
                     "`{name}` cannot be used as a binding identifier in strict mode"
                 )));
             }
-            let name = name.clone();
             self.advance();
             Ok(name)
         } else {
@@ -340,8 +425,9 @@ impl Parser {
     /// Consumes an IdentifierName, which also permits keywords after `.` and
     /// in property-name positions.
     fn expect_identifier_name(&mut self) -> Result<String, ParseError> {
-        match self.peek().kind.clone() {
-            TokenKind::Identifier(name) => {
+        match self.peek().kind {
+            TokenKind::Identifier(_) => {
+                let name = self.peek_text().to_owned();
                 self.advance();
                 Ok(name)
             }
@@ -383,14 +469,14 @@ impl Parser {
 fn describe(kind: &TokenKind) -> String {
     match kind {
         TokenKind::Eof => "end of input".into(),
-        TokenKind::Identifier(name) => format!("identifier `{name}`"),
+        TokenKind::Identifier(_) => "identifier".into(),
         TokenKind::Number(_) => "number".into(),
         TokenKind::BigInt(_) => "bigint".into(),
         TokenKind::String(_) | TokenKind::TemplateLiteral(_) => "string".into(),
         TokenKind::Keyword(keyword) => format!("keyword `{keyword:?}`"),
         TokenKind::Punctuator(ch) => format!("`{ch}`"),
         TokenKind::Operator(op) => format!("`{op}`"),
-        TokenKind::PrivateName(name) => format!("`#{name}`"),
+        TokenKind::PrivateName(_) => "private name".into(),
         TokenKind::TemplateHead(_) => "template literal head".into(),
         TokenKind::TemplateMiddle(_) => "template literal middle".into(),
         TokenKind::TemplateTail(_) => "template literal tail".into(),

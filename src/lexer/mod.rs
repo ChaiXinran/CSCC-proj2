@@ -6,8 +6,10 @@ mod unicode_id;
 
 use std::fmt;
 
+use crate::engine::FrontendControl;
+
 pub use cursor::Cursor;
-pub use token::{Keyword, Span, Token, TokenKind};
+pub use token::{Keyword, Span, Token, TokenKind, TokenText};
 
 /// Error produced while converting source text into tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +29,22 @@ impl fmt::Display for LexError {
 }
 
 impl std::error::Error for LexError {}
+
+const FRONTEND_DEADLINE_MESSAGE: &str = "wall-clock deadline exceeded";
+
+impl LexError {
+    fn runtime_limit(offset: usize) -> Self {
+        Self {
+            span: Span::new(offset, offset),
+            message: FRONTEND_DEADLINE_MESSAGE.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_runtime_limit(&self) -> bool {
+        self.message == FRONTEND_DEADLINE_MESSAGE
+    }
+}
 
 /// Operators recognized by the lexer, ordered so that maximal munch is a
 /// simple linear scan: longer operators precede their shorter prefixes.
@@ -61,6 +79,9 @@ pub struct Lexer<'source> {
     /// at the very start of the input). Used to implement Annex B
     /// `SingleLineHTMLCloseComment` (`-->`), which is only valid at line start.
     at_line_start: bool,
+    control: FrontendControl,
+    next_deadline_checkpoint: usize,
+    use_source_slices: bool,
 }
 
 impl<'source> Lexer<'source> {
@@ -70,7 +91,31 @@ impl<'source> Lexer<'source> {
             cursor: Cursor::new(source),
             string_has_legacy_escape: false,
             at_line_start: true,
+            control: FrontendControl::default(),
+            next_deadline_checkpoint: 4096,
+            // Production parsers retain the source and resolve unescaped token
+            // text by span. Unit tests also construct standalone token streams,
+            // so keep their lexer output self-contained.
+            use_source_slices: !cfg!(test),
         }
+    }
+
+    #[must_use]
+    pub fn with_control(mut self, control: FrontendControl) -> Self {
+        self.control = control;
+        self.use_source_slices = true;
+        self
+    }
+
+    fn checkpoint(&mut self) -> Result<(), LexError> {
+        let offset = self.cursor.offset();
+        if offset < self.next_deadline_checkpoint {
+            return Ok(());
+        }
+        self.next_deadline_checkpoint = offset.saturating_add(4096);
+        self.control
+            .checkpoint()
+            .map_err(|_| LexError::runtime_limit(offset))
     }
 
     /// Converts source text into a token stream terminated by [`TokenKind::Eof`].
@@ -90,6 +135,7 @@ impl<'source> Lexer<'source> {
         let mut last_allows_regex = true;
 
         loop {
+            self.checkpoint()?;
             let line_terminator_before = self.skip_trivia()?;
             // After consuming trivia, we are about to produce a real token, so
             // the next trivia call starts NOT at line start (unless this token
@@ -224,6 +270,7 @@ impl<'source> Lexer<'source> {
         // we consume trivia so we can correctly gate '-->' recognition.
         let mut at_line_start = self.at_line_start;
         loop {
+            self.checkpoint()?;
             while let Some(ch) = self.cursor.peek() {
                 if is_line_terminator(ch) {
                     saw_line_terminator = true;
@@ -250,6 +297,7 @@ impl<'source> Lexer<'source> {
                 self.cursor.bump();
                 self.cursor.bump();
                 loop {
+                    self.checkpoint()?;
                     if self.cursor.rest().starts_with("*/") {
                         self.cursor.bump();
                         self.cursor.bump();
@@ -283,9 +331,11 @@ impl<'source> Lexer<'source> {
         let start = self.cursor.offset();
         self.cursor.bump(); // consume `#`
         let mut name = String::new();
+        let mut had_escape = false;
         // Private names follow IdentifierName: first code point must be
         // IdentifierStart; later code points may be IdentifierPart.
         if self.cursor.rest().starts_with("\\u") {
+            had_escape = true;
             let ch = self.read_identifier_escape(start)?;
             if !is_identifier_start(ch) {
                 return Err(LexError {
@@ -310,7 +360,9 @@ impl<'source> Lexer<'source> {
             name.push(self.cursor.bump().expect("private name start exists"));
         }
         loop {
+            self.checkpoint()?;
             if self.cursor.rest().starts_with("\\u") {
+                had_escape = true;
                 let saved = self.cursor.clone();
                 match self.read_identifier_escape(start) {
                     Ok(ch) if is_identifier_part(ch) => name.push(ch),
@@ -327,7 +379,11 @@ impl<'source> Lexer<'source> {
         }
         let end = self.cursor.offset();
         Ok(Token::new(
-            TokenKind::PrivateName(name),
+            TokenKind::PrivateName(if had_escape || !self.use_source_slices {
+                name.into()
+            } else {
+                TokenText::SourceSlice
+            }),
             Span::new(start, end),
         ))
     }
@@ -352,6 +408,7 @@ impl<'source> Lexer<'source> {
         }
 
         loop {
+            self.checkpoint()?;
             if self.cursor.rest().starts_with("\\u") {
                 let saved = self.cursor.clone();
                 had_escape = true;
@@ -371,7 +428,7 @@ impl<'source> Lexer<'source> {
         let end = self.cursor.offset();
         let kind = if had_escape {
             // Identifiers containing Unicode escapes cannot be contextual keywords.
-            let mut tok = Token::new(TokenKind::Identifier(text), Span::new(start, end));
+            let mut tok = Token::new(TokenKind::Identifier(text.into()), Span::new(start, end));
             tok.has_identifier_escape = true;
             return Ok(tok);
         } else {
@@ -416,7 +473,8 @@ impl<'source> Lexer<'source> {
                 "enum" => TokenKind::Keyword(Keyword::Enum),
                 "yield" => TokenKind::Keyword(Keyword::Yield),
                 "await" => TokenKind::Keyword(Keyword::Await),
-                _ => TokenKind::Identifier(text),
+                _ if self.use_source_slices => TokenKind::Identifier(TokenText::SourceSlice),
+                _ => TokenKind::Identifier(text.into()),
             }
         };
         Ok(Token::new(kind, Span::new(start, end)))
@@ -451,9 +509,15 @@ impl<'source> Lexer<'source> {
                                 .into(),
                         });
                     }
-                    let raw = self.cursor.slice(Span::new(start, self.cursor.offset()));
+                    let text = if self.use_source_slices {
+                        TokenText::SourceSlice
+                    } else {
+                        self.cursor
+                            .slice(Span::new(start, self.cursor.offset()))
+                            .into()
+                    };
                     return Ok(Token::new(
-                        TokenKind::BigInt(raw.into()),
+                        TokenKind::BigInt(text),
                         Span::new(start, self.cursor.offset()),
                     ));
                 }
@@ -544,9 +608,15 @@ impl<'source> Lexer<'source> {
                     message: "identifier cannot immediately follow a numeric literal".into(),
                 });
             }
-            let raw = self.cursor.slice(Span::new(start, self.cursor.offset()));
+            let text = if self.use_source_slices {
+                TokenText::SourceSlice
+            } else {
+                self.cursor
+                    .slice(Span::new(start, self.cursor.offset()))
+                    .into()
+            };
             return Ok(Token::new(
-                TokenKind::BigInt(raw.into()),
+                TokenKind::BigInt(text),
                 Span::new(start, self.cursor.offset()),
             ));
         }
@@ -580,6 +650,7 @@ impl<'source> Lexer<'source> {
         let mut digits = String::new();
         let mut previous_was_digit = false;
         while let Some(character) = self.cursor.peek() {
+            self.checkpoint()?;
             if character.is_digit(radix) {
                 digits.push(character);
                 previous_was_digit = true;
@@ -620,6 +691,7 @@ impl<'source> Lexer<'source> {
             .expect("template literal opens with a backtick");
         let mut value = String::new();
         loop {
+            self.checkpoint()?;
             match self.cursor.bump() {
                 None => {
                     if self.char_can_be_regex_body(start) {
@@ -633,11 +705,19 @@ impl<'source> Lexer<'source> {
                 }
                 Some('`') => {
                     let end = self.cursor.offset();
+                    let raw = &self.cursor.source()[start + 1..end - 1];
+                    let text = if self.use_source_slices && raw == value {
+                        TokenText::SourceSlice
+                    } else {
+                        value.into()
+                    };
                     let mut token =
-                        Token::new(TokenKind::TemplateLiteral(value), Span::new(start, end));
-                    token.template_raw = Some(normalize_template_line_terminators(
-                        &self.cursor.source()[start + 1..end - 1],
-                    ));
+                        Token::new(TokenKind::TemplateLiteral(text), Span::new(start, end));
+                    token.template_raw = Some(if !self.use_source_slices || raw.contains('\r') {
+                        normalize_template_line_terminators(raw).into()
+                    } else {
+                        TokenText::SourceSlice
+                    });
                     token.has_legacy_escape = self.string_has_legacy_escape;
                     return Ok(token);
                 }
@@ -653,11 +733,19 @@ impl<'source> Lexer<'source> {
                 Some('$') if self.cursor.peek() == Some('{') => {
                     self.cursor.bump(); // consume '{'
                     let end = self.cursor.offset();
+                    let raw = &self.cursor.source()[start + 1..end - 2];
+                    let text = if self.use_source_slices && raw == value {
+                        TokenText::SourceSlice
+                    } else {
+                        value.into()
+                    };
                     let mut token =
-                        Token::new(TokenKind::TemplateHead(value), Span::new(start, end));
-                    token.template_raw = Some(normalize_template_line_terminators(
-                        &self.cursor.source()[start + 1..end - 2],
-                    ));
+                        Token::new(TokenKind::TemplateHead(text), Span::new(start, end));
+                    token.template_raw = Some(if !self.use_source_slices || raw.contains('\r') {
+                        normalize_template_line_terminators(raw).into()
+                    } else {
+                        TokenText::SourceSlice
+                    });
                     token.has_legacy_escape = self.string_has_legacy_escape;
                     return Ok(token);
                 }
@@ -682,6 +770,7 @@ impl<'source> Lexer<'source> {
         self.string_has_legacy_escape = false;
         let mut value = String::new();
         loop {
+            self.checkpoint()?;
             match self.cursor.bump() {
                 None => {
                     return Err(LexError {
@@ -691,11 +780,19 @@ impl<'source> Lexer<'source> {
                 }
                 Some('`') => {
                     let end = self.cursor.offset();
+                    let raw = &self.cursor.source()[start + 1..end - 1];
+                    let text = if self.use_source_slices && raw == value {
+                        TokenText::SourceSlice
+                    } else {
+                        value.into()
+                    };
                     let mut token =
-                        Token::new(TokenKind::TemplateTail(value), Span::new(start, end));
-                    token.template_raw = Some(normalize_template_line_terminators(
-                        &self.cursor.source()[start + 1..end - 1],
-                    ));
+                        Token::new(TokenKind::TemplateTail(text), Span::new(start, end));
+                    token.template_raw = Some(if !self.use_source_slices || raw.contains('\r') {
+                        normalize_template_line_terminators(raw).into()
+                    } else {
+                        TokenText::SourceSlice
+                    });
                     token.has_legacy_escape = self.string_has_legacy_escape;
                     return Ok(token);
                 }
@@ -703,11 +800,19 @@ impl<'source> Lexer<'source> {
                 Some('$') if self.cursor.peek() == Some('{') => {
                     self.cursor.bump(); // consume '{'
                     let end = self.cursor.offset();
+                    let raw = &self.cursor.source()[start + 1..end - 2];
+                    let text = if self.use_source_slices && raw == value {
+                        TokenText::SourceSlice
+                    } else {
+                        value.into()
+                    };
                     let mut token =
-                        Token::new(TokenKind::TemplateMiddle(value), Span::new(start, end));
-                    token.template_raw = Some(normalize_template_line_terminators(
-                        &self.cursor.source()[start + 1..end - 2],
-                    ));
+                        Token::new(TokenKind::TemplateMiddle(text), Span::new(start, end));
+                    token.template_raw = Some(if !self.use_source_slices || raw.contains('\r') {
+                        normalize_template_line_terminators(raw).into()
+                    } else {
+                        TokenText::SourceSlice
+                    });
                     token.has_legacy_escape = self.string_has_legacy_escape;
                     return Ok(token);
                 }
@@ -731,6 +836,7 @@ impl<'source> Lexer<'source> {
         let mut value = String::new();
         self.string_has_legacy_escape = false;
         loop {
+            self.checkpoint()?;
             match self.cursor.bump() {
                 None => {
                     if self.char_can_be_regex_body(start) {
@@ -744,7 +850,13 @@ impl<'source> Lexer<'source> {
                 }
                 Some(ch) if ch == quote => {
                     let end = self.cursor.offset();
-                    let mut token = Token::new(TokenKind::String(value), Span::new(start, end));
+                    let raw = &self.cursor.source()[start + 1..end - 1];
+                    let text = if self.use_source_slices && raw == value {
+                        TokenText::SourceSlice
+                    } else {
+                        value.into()
+                    };
+                    let mut token = Token::new(TokenKind::String(text), Span::new(start, end));
                     token.has_legacy_escape = self.string_has_legacy_escape;
                     return Ok(token);
                 }
@@ -2460,7 +2572,7 @@ mod tests {
             [
                 TokenKind::String("a\n\"b".into()),
                 TokenKind::String("c'd".into()),
-                TokenKind::String(String::new()),
+                TokenKind::String(String::new().into()),
                 TokenKind::Eof,
             ]
         );
