@@ -238,14 +238,11 @@ impl NativeRuntime {
         if self.config.diagnostics {
             eprintln!("compile_end");
         }
-        let max_stack_depth = chunk
-            .analyze_stack()
-            .map_err(|error| {
-                NativeError::Execute(crate::vm::VmError::runtime(format!(
-                    "invalid bytecode stack: {error}"
-                )))
-            })?
-            .max_depth;
+        let metadata = chunk.cache_metadata().map_err(|error| {
+            NativeError::Execute(crate::vm::VmError::runtime(format!(
+                "invalid cache-safe bytecode: {error}"
+            )))
+        })?;
         let entry = NativeScriptCacheEntry {
             key,
             chunk: std::sync::Arc::clone(&chunk),
