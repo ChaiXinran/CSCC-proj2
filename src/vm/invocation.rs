@@ -182,6 +182,7 @@ impl Vm {
             prototype_writable: template.prototype_writable,
             uses_arguments: template.uses_arguments,
             local_layout: template.local_layout,
+            upvalue_layout: template.upvalue_layout,
             dynamic_scope: template.dynamic_scope,
             lexical_this,
             lexical_new_target,

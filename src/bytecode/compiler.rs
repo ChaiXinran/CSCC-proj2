@@ -1,9 +1,11 @@
 //! AST-to-bytecode compiler.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
+    time::Instant,
 };
 
 use crate::ast::{
@@ -16,6 +18,7 @@ use crate::ast::{
 use super::{
     Chunk, ChunkError, Constant, DynamicScopePolicy, EnvironmentCapturePolicy, ExceptionHandler,
     FunctionTemplate, HandlerKind, Instruction, LocalBindingLayout, LocalLayout, LocalSlot,
+    UpvalueBindingLayout, UpvalueDescriptor, UpvalueLayout, UpvalueSlot,
 };
 
 /// Compilation failure.
@@ -48,7 +51,10 @@ impl std::error::Error for CompileError {}
 
 /// Compiles an AST into stack-based AgentJS bytecode.
 #[derive(Debug, Default)]
-pub struct Compiler;
+pub struct Compiler {
+    deadline: Option<Instant>,
+    nodes_until_checkpoint: u16,
+}
 
 #[derive(Debug, Default)]
 struct CompileContext {
@@ -69,6 +75,9 @@ struct CompileContext {
     /// Number of enclosing function bodies; 0 = top-level script.
     function_depth: usize,
     local_slots: HashMap<String, LocalSlot>,
+    available_upvalues: HashMap<String, UpvalueDescriptor>,
+    upvalue_slots: RefCell<HashMap<String, UpvalueSlot>>,
+    upvalue_layout: RefCell<UpvalueLayout>,
 }
 
 #[derive(Debug)]
@@ -111,6 +120,14 @@ impl CompileContext {
             .any(|scope| scope.contains(name))
     }
 
+    fn is_block_lexical(&self, name: &str) -> bool {
+        self.lexical_scopes
+            .iter()
+            .skip(1)
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
     fn needs_dynamic_name_lookup(&self, name: &str) -> bool {
         self.inside_function() || self.with_depth > 0 || self.is_lexical(name)
     }
@@ -120,12 +137,70 @@ impl CompileContext {
             .then(|| self.local_slots.get(name).copied())
             .flatten()
     }
+
+    fn upvalue_slot(&self, name: &str) -> Option<UpvalueSlot> {
+        if self.with_depth != 0 || self.is_lexical(name) {
+            return None;
+        }
+        if let Some(slot) = self.upvalue_slots.borrow().get(name).copied() {
+            return Some(slot);
+        }
+        let descriptor = *self.available_upvalues.get(name)?;
+        let mut layout = self.upvalue_layout.borrow_mut();
+        let index = u16::try_from(layout.bindings.len()).ok()?;
+        let slot = UpvalueSlot(index);
+        layout.bindings.push(UpvalueBindingLayout {
+            name: name.to_owned(),
+            descriptor,
+            mutable: true,
+        });
+        self.upvalue_slots
+            .borrow_mut()
+            .insert(name.to_owned(), slot);
+        Some(slot)
+    }
 }
 
 impl Compiler {
     #[must_use]
     pub const fn new() -> Self {
-        Self
+        Self {
+            deadline: None,
+            nodes_until_checkpoint: 256,
+        }
+    }
+
+    /// Installs the absolute deadline used by cooperative compilation checks.
+    ///
+    /// Keeping the deadline as an `Instant` preserves the frontend dependency
+    /// direction: the bytecode compiler does not depend on the host engine.
+    pub(crate) fn set_deadline(&mut self, deadline: Option<Instant>) {
+        self.deadline = deadline;
+        self.nodes_until_checkpoint = 256;
+    }
+
+    fn checkpoint_now(&self) -> Result<(), CompileError> {
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            Err(CompileError {
+                message: "wall-clock deadline exceeded".into(),
+                is_syntax: false,
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    #[inline]
+    fn checkpoint_node(&mut self) -> Result<(), CompileError> {
+        self.nodes_until_checkpoint = self.nodes_until_checkpoint.saturating_sub(1);
+        if self.nodes_until_checkpoint == 0 {
+            self.nodes_until_checkpoint = 256;
+            self.checkpoint_now()?;
+        }
+        Ok(())
     }
 
     /// Compiles a script containing any statement forms.
@@ -136,6 +211,8 @@ impl Compiler {
         &mut self,
         program: &Program,
     ) -> Result<crate::bytecode::SharedChunk, CompileError> {
+        self.nodes_until_checkpoint = 256;
+        self.checkpoint_now()?;
         let mut chunk = Chunk::default();
         let mut context = CompileContext::default();
         let completion_expression = completion_expression_index(&program.body);
@@ -255,6 +332,7 @@ impl Compiler {
         context: &mut CompileContext,
         preserve_expression_value: bool,
     ) -> Result<(), CompileError> {
+        self.checkpoint_node()?;
         if statement_resets_completion(statement) {
             self.reset_completion_value(chunk, context)?;
         }
@@ -1663,6 +1741,8 @@ impl Compiler {
         let index = self.add_name(name, chunk)?;
         if let Some(slot) = context.local_slot(name) {
             chunk.emit(Instruction::StoreLocal(slot));
+        } else if let Some(slot) = context.upvalue_slot(name) {
+            chunk.emit(Instruction::StoreUpvalue(slot));
         } else if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::StoreName(index));
         } else {
@@ -1718,6 +1798,7 @@ impl Compiler {
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             local_layout: fn_chunk.local_layout,
+            upvalue_layout: fn_chunk.upvalue_layout,
             dynamic_scope: fn_chunk.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -1845,6 +1926,40 @@ impl Compiler {
             }
         }
 
+        let mut available_upvalues = HashMap::new();
+        if outer_context.with_depth == 0 {
+            let local_hops = u16::try_from(outer_context.environment_depth)
+                .map_err(|_| CompileError::unsupported("upvalue environment chain too deep"))?;
+            for (name, slot) in &outer_context.local_slots {
+                if outer_context.is_block_lexical(name) {
+                    continue;
+                }
+                available_upvalues.insert(
+                    name.clone(),
+                    UpvalueDescriptor {
+                        environment_hops: local_hops,
+                        local_slot: *slot,
+                    },
+                );
+            }
+            let inherited_hops = local_hops
+                .checked_add(1)
+                .ok_or_else(|| CompileError::unsupported("upvalue environment chain too deep"))?;
+            for (name, descriptor) in &outer_context.available_upvalues {
+                if outer_context.is_lexical(name) {
+                    continue;
+                }
+                available_upvalues
+                    .entry(name.clone())
+                    .or_insert_with(|| UpvalueDescriptor {
+                        environment_hops: descriptor
+                            .environment_hops
+                            .saturating_add(inherited_hops),
+                        local_slot: descriptor.local_slot,
+                    });
+            }
+        }
+
         let mut fn_chunk = Chunk::default();
         let mut fn_context = CompileContext {
             loops: Vec::new(),
@@ -1857,6 +1972,9 @@ impl Compiler {
             with_depth: 0,
             function_depth: outer_context.function_depth + 1,
             local_slots,
+            available_upvalues,
+            upvalue_slots: RefCell::new(HashMap::new()),
+            upvalue_layout: RefCell::new(UpvalueLayout::default()),
         };
         let mut lexical_scope =
             self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
@@ -2099,9 +2217,35 @@ impl Compiler {
                 };
             }
             local_layout.bindings.clear();
+            for offset in 0..fn_chunk.instructions.len() {
+                let (slot, store) = match fn_chunk.instructions[offset] {
+                    Instruction::LoadUpvalue(slot) => (slot, false),
+                    Instruction::StoreUpvalue(slot) => (slot, true),
+                    _ => continue,
+                };
+                let name = fn_context
+                    .upvalue_layout
+                    .borrow()
+                    .bindings
+                    .get(usize::from(slot.0))
+                    .ok_or_else(|| CompileError::unsupported("invalid upvalue slot"))?
+                    .name
+                    .clone();
+                let name_index = self.add_name(&name, &mut fn_chunk)?;
+                fn_chunk.instructions[offset] = if store {
+                    Instruction::StoreName(name_index)
+                } else {
+                    Instruction::LoadName(name_index)
+                };
+            }
+            fn_context.upvalue_layout.borrow_mut().bindings.clear();
+            for template in &mut fn_chunk.functions {
+                deoptimize_template_upvalues(template)?;
+            }
         }
         fn_chunk.validate().map_err(CompileError::from_chunk)?;
         let uses_arguments = function_needs_arguments_object(&fn_chunk);
+        let upvalue_layout = fn_context.upvalue_layout.into_inner();
         Ok(CompiledFunction {
             length,
             params: param_names,
@@ -2110,6 +2254,7 @@ impl Compiler {
             is_strict: body.is_strict,
             uses_arguments,
             local_layout: Arc::new(local_layout),
+            upvalue_layout: Arc::new(upvalue_layout),
             dynamic_scope,
         })
     }
@@ -2120,6 +2265,7 @@ impl Compiler {
         chunk: &mut Chunk,
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
+        self.checkpoint_node()?;
         match expression {
             Expression::Literal(literal) => self.compile_literal(literal, chunk),
             Expression::Unary { operator, argument } => {
@@ -2500,6 +2646,10 @@ impl Compiler {
             chunk.emit(Instruction::LoadLocal(slot));
             return Ok(());
         }
+        if let Some(slot) = context.upvalue_slot(name) {
+            chunk.emit(Instruction::LoadUpvalue(slot));
+            return Ok(());
+        }
         let name_index = self.add_name(name, chunk)?;
         if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::LoadName(name_index));
@@ -2533,6 +2683,11 @@ impl Compiler {
                 if let Expression::Identifier(name) = argument {
                     if let Some(slot) = context.local_slot(name) {
                         chunk.emit(Instruction::LoadLocal(slot));
+                        chunk.emit(Instruction::TypeOf);
+                        return Ok(());
+                    }
+                    if let Some(slot) = context.upvalue_slot(name) {
+                        chunk.emit(Instruction::LoadUpvalue(slot));
                         chunk.emit(Instruction::TypeOf);
                         return Ok(());
                     }
@@ -4144,6 +4299,7 @@ impl Compiler {
             prototype_writable: false,
             uses_arguments: compiled.uses_arguments,
             local_layout: compiled.local_layout,
+            upvalue_layout: compiled.upvalue_layout,
             dynamic_scope: compiled.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -4601,6 +4757,7 @@ impl Compiler {
             prototype_writable: false,
             uses_arguments: ctor_fn.uses_arguments,
             local_layout: ctor_fn.local_layout,
+            upvalue_layout: ctor_fn.upvalue_layout,
             dynamic_scope: ctor_fn.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -4673,6 +4830,7 @@ impl Compiler {
                     prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     local_layout: fn_compiled.local_layout,
+                    upvalue_layout: fn_compiled.upvalue_layout,
                     dynamic_scope: fn_compiled.dynamic_scope,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -4778,6 +4936,7 @@ impl Compiler {
                     prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     local_layout: fn_compiled.local_layout,
+                    upvalue_layout: fn_compiled.upvalue_layout,
                     dynamic_scope: fn_compiled.dynamic_scope,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -4874,6 +5033,7 @@ impl Compiler {
                             prototype_writable: false,
                             uses_arguments: init_fn.uses_arguments,
                             local_layout: init_fn.local_layout,
+                            upvalue_layout: init_fn.upvalue_layout,
                             dynamic_scope: init_fn.dynamic_scope,
                             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                         };
@@ -4935,6 +5095,7 @@ impl Compiler {
                         prototype_writable: true,
                         uses_arguments: block_fn.uses_arguments,
                         local_layout: block_fn.local_layout,
+                        upvalue_layout: block_fn.upvalue_layout,
                         dynamic_scope: block_fn.dynamic_scope,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
@@ -5334,6 +5495,7 @@ impl Compiler {
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             local_layout: fn_chunk.local_layout,
+            upvalue_layout: fn_chunk.upvalue_layout,
             dynamic_scope: fn_chunk.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -5612,7 +5774,39 @@ struct CompiledFunction {
     is_strict: bool,
     uses_arguments: bool,
     local_layout: Arc<LocalLayout>,
+    upvalue_layout: Arc<UpvalueLayout>,
     dynamic_scope: DynamicScopePolicy,
+}
+
+fn deoptimize_template_upvalues(template: &mut FunctionTemplate) -> Result<(), CompileError> {
+    let layout = template.upvalue_layout.clone();
+    let chunk = Arc::make_mut(&mut template.chunk);
+    for offset in 0..chunk.instructions.len() {
+        let (slot, store) = match chunk.instructions[offset] {
+            Instruction::LoadUpvalue(slot) => (slot, false),
+            Instruction::StoreUpvalue(slot) => (slot, true),
+            _ => continue,
+        };
+        let name = layout
+            .bindings
+            .get(usize::from(slot.0))
+            .ok_or_else(|| CompileError::unsupported("invalid nested upvalue slot"))?
+            .name
+            .clone();
+        let name_index = chunk
+            .add_constant(Constant::String(name))
+            .map_err(CompileError::from_chunk)?;
+        chunk.instructions[offset] = if store {
+            Instruction::StoreName(name_index)
+        } else {
+            Instruction::LoadName(name_index)
+        };
+    }
+    for child in &mut chunk.functions {
+        deoptimize_template_upvalues(child)?;
+    }
+    template.upvalue_layout = Arc::new(UpvalueLayout::default());
+    Ok(())
 }
 
 fn function_needs_arguments_object(chunk: &Chunk) -> bool {
@@ -6559,6 +6753,8 @@ impl CompileError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{Duration, Instant};
+
     use crate::{
         bytecode::{Constant, EnvironmentCapturePolicy, Instruction},
         lexer::Lexer,
@@ -6579,6 +6775,40 @@ mod tests {
         Compiler::new()
             .compile_program(&program)
             .expect("compilation succeeds")
+    }
+
+    #[test]
+    fn compiler_rejects_an_already_expired_deadline() {
+        let tokens = Lexer::new("let value = 1;")
+            .tokenize()
+            .expect("lexing succeeds");
+        let program = Parser::new(tokens)
+            .parse_program()
+            .expect("parsing succeeds");
+        let mut compiler = Compiler::new();
+        compiler.set_deadline(Some(Instant::now() - Duration::from_millis(1)));
+
+        let error = compiler
+            .compile_program(&program)
+            .expect_err("expired compilation must stop");
+
+        assert_eq!(error.message, "wall-clock deadline exceeded");
+        assert!(!error.is_syntax);
+    }
+
+    #[test]
+    fn compiler_checks_deadline_at_node_cadence() {
+        let mut compiler = Compiler::new();
+        compiler.set_deadline(Some(Instant::now() + Duration::from_secs(60)));
+        compiler.nodes_until_checkpoint = 1;
+        compiler.deadline = Some(Instant::now() - Duration::from_millis(1));
+
+        let error = compiler
+            .checkpoint_node()
+            .expect_err("node checkpoint must observe expiry");
+
+        assert_eq!(error.message, "wall-clock deadline exceeded");
+        assert_eq!(compiler.nodes_until_checkpoint, 256);
     }
 
     fn num_const(value: f64) -> Constant {

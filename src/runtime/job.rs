@@ -92,6 +92,26 @@ pub enum Job {
     HostCallback(NativeJob),
 }
 
+impl Job {
+    pub(crate) fn root_values(&self) -> Vec<JsValue> {
+        match self {
+            Self::PromiseReaction(job) => vec![job.value.clone()],
+            Self::PromiseCallback(job) => {
+                let mut roots = vec![job.value.clone(), job.resolve.clone(), job.reject.clone()];
+                roots.extend(job.on_fulfilled.iter().cloned());
+                roots.extend(job.on_rejected.iter().cloned());
+                roots
+            }
+            Self::PromiseResolveThenable(job) => vec![
+                job.promise_to_resolve.clone(),
+                job.thenable.clone(),
+                job.then.clone(),
+            ],
+            Self::HostCallback(_) => Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct JobQueue {
     queue: VecDeque<Job>,

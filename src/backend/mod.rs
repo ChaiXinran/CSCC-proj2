@@ -10,6 +10,7 @@ use std::{
     fs,
     hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
+    time::Instant,
 };
 
 use crate::{
@@ -19,7 +20,10 @@ use crate::{
         ChunkCacheMetadata, NativeContext, NativeError, NativePipeline, Program, SharedChunk,
         VmErrorKind,
     },
-    engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig, SourceKind},
+    engine::{
+        EvalFailure, ExecutionOptions, FailureKind, FrontendControl, PhaseDiagnostics, RunControl,
+        RuntimeConfig, SourceKind,
+    },
     host::HostServices,
     lexer::Lexer,
     parser::Parser,
@@ -77,6 +81,10 @@ pub(crate) trait RuntimeBackend {
     fn clear_output(&mut self);
 
     fn take_output(&mut self) -> Vec<String>;
+
+    fn set_run_control(&mut self, control: Option<RunControl>);
+
+    fn set_diagnostic_phase(&mut self, phase: &'static str);
 }
 
 pub(crate) fn create_runtime(
@@ -141,6 +149,9 @@ pub struct NativeRuntime {
     cache_stats: NativeScriptCacheStats,
     module_registry: ModuleRegistry,
     current_source_kind: SourceKind,
+    run_control: Option<RunControl>,
+    diagnostic_phase: &'static str,
+    last_token_count: usize,
 }
 
 impl NativeRuntime {
@@ -170,6 +181,9 @@ impl NativeRuntime {
             cache_stats: NativeScriptCacheStats::default(),
             module_registry: ModuleRegistry::default(),
             current_source_kind: SourceKind::Script,
+            run_control: None,
+            diagnostic_phase: "eval",
+            last_token_count: 0,
         }
     }
 
@@ -178,49 +192,159 @@ impl NativeRuntime {
         self.context
             .reset_call_depth(self.config.recursion_limit as u64);
         self.context.reset_stack_limit(self.config.stack_limit);
-        self.context.reset_deadline(self.config.wall_clock_limit);
+        if let Some(control) = self.run_control {
+            self.context
+                .set_absolute_deadline(control.deadline.instant());
+        } else {
+            self.context.reset_deadline(self.config.wall_clock_limit);
+        }
     }
 
     fn evaluate(&mut self, source: &str) -> Result<crate::runtime::JsValue, EvalFailure> {
         self.reset_limits();
+        self.check_run_deadline()?;
         let chunk = self.prepare_chunk(source).map_err(classify_native_error)?;
+        self.check_run_deadline()?;
         if self.config.diagnostics {
             eprintln!("execute_start");
             self.context.reset_name_resolution_metrics();
         }
+        let execute_started = Instant::now();
         let result = self
             .pipeline
             .execute(&chunk, &mut self.context)
             .map_err(classify_native_error);
         if self.config.diagnostics {
+            eprintln!("execute_end");
+            self.emit_phase_diagnostics(
+                match self.diagnostic_phase {
+                    "prelude" => "prelude_execute",
+                    "resource" => "resource_execute",
+                    "launch" => "launch_execute",
+                    _ => "execute",
+                },
+                execute_started,
+                source.len(),
+                Some(self.last_token_count),
+                chunk.cache_metadata().ok(),
+            );
             let metrics = self.context.name_resolution_metrics();
             eprintln!(
-                "name_resolution:load_local_count={} store_local_count={} load_name_count={} store_name_count={} environment_hops={}",
+                "name_resolution:load_local_count={} store_local_count={} load_name_count={} store_name_count={} environment_hops={} load_upvalue_count={} store_upvalue_count={} upvalue_environment_hops={}",
                 metrics.load_local_count,
                 metrics.store_local_count,
                 metrics.load_name_count,
                 metrics.store_name_count,
-                metrics.environment_hops
+                metrics.environment_hops,
+                metrics.load_upvalue_count,
+                metrics.store_upvalue_count,
+                metrics.upvalue_environment_hops
             );
         }
         result
     }
 
+    fn check_run_deadline(&self) -> Result<(), EvalFailure> {
+        self.context
+            .check_deadline()
+            .map_err(|error| classify_native_error(NativeError::Execute(error)))
+    }
+
+    fn emit_phase_diagnostics(
+        &self,
+        phase: &'static str,
+        started: Instant,
+        source_bytes: usize,
+        token_count: Option<usize>,
+        metadata: Option<ChunkCacheMetadata>,
+    ) {
+        if !self.config.diagnostics {
+            return;
+        }
+        let instruction_count = metadata.map(|value| value.total_instructions);
+        let constant_count = metadata.map(|value| value.total_constants);
+        let function_count = metadata.map(|value| value.total_functions);
+        let diagnostic = PhaseDiagnostics {
+            phase,
+            elapsed_ms: started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
+            source_bytes,
+            token_count,
+            instruction_count,
+            constant_count,
+            function_count,
+            heap: self.context.heap_stats(),
+            gc: self.context.gc_metrics(),
+        };
+        eprintln!(
+            "phase_diagnostics:phase={} elapsed_ms={} source_bytes={} token_count={} instruction_count={} constant_count={} function_count={} heap_estimated_bytes={} heap_live_objects={} heap_live_environments={} heap_live_functions={} gc_count={} gc_total_pause_ns={} gc_max_pause_ns={}",
+            diagnostic.phase,
+            diagnostic.elapsed_ms,
+            diagnostic.source_bytes,
+            diagnostic
+                .token_count
+                .map_or_else(|| "-".into(), |value| value.to_string()),
+            diagnostic
+                .instruction_count
+                .map_or_else(|| "-".into(), |value| value.to_string()),
+            diagnostic
+                .constant_count
+                .map_or_else(|| "-".into(), |value| value.to_string()),
+            diagnostic
+                .function_count
+                .map_or_else(|| "-".into(), |value| value.to_string()),
+            diagnostic.heap.estimated_bytes,
+            diagnostic.heap.live_objects,
+            diagnostic.heap.live_environments,
+            diagnostic.heap.live_functions,
+            diagnostic.gc.collection_count,
+            diagnostic.gc.total_pause_ns,
+            diagnostic.gc.max_pause_ns,
+        );
+    }
+
     fn prepare_chunk(&mut self, source: &str) -> Result<SharedChunk, NativeError> {
         if self.config.script_cache_capacity == 0 {
+            let parse_started = Instant::now();
             if self.config.diagnostics {
                 eprintln!("parse_start");
             }
             let program = self.parse_current_source(source)?;
+            self.emit_phase_diagnostics(
+                match self.diagnostic_phase {
+                    "prelude" => "prelude_parse",
+                    "resource" => "resource_parse",
+                    "launch" => "launch_parse",
+                    _ => "parse",
+                },
+                parse_started,
+                source.len(),
+                Some(self.last_token_count),
+                None,
+            );
             if self.config.diagnostics {
                 eprintln!("parse_end");
                 eprintln!("compile_start");
             }
-            let chunk = self.pipeline.compile(&program);
+            let compile_started = Instant::now();
+            let chunk = self.compile_current_program(&program);
             if self.config.diagnostics {
                 eprintln!("compile_end");
             }
-            return chunk;
+            let chunk = chunk?;
+            let metadata = chunk.cache_metadata().ok();
+            self.emit_phase_diagnostics(
+                match self.diagnostic_phase {
+                    "prelude" => "prelude_compile",
+                    "resource" => "resource_compile",
+                    "launch" => "launch_compile",
+                    _ => "compile",
+                },
+                compile_started,
+                source.len(),
+                None,
+                metadata,
+            );
+            return Ok(chunk);
         }
 
         let key = NativeScriptCacheKey {
@@ -243,12 +367,21 @@ impl NativeRuntime {
         if self.config.diagnostics {
             eprintln!("parse_start");
         }
+        let parse_started = Instant::now();
         let program = self.parse_current_source(source)?;
+        self.emit_phase_diagnostics(
+            "parse",
+            parse_started,
+            source.len(),
+            Some(self.last_token_count),
+            None,
+        );
         if self.config.diagnostics {
             eprintln!("parse_end");
             eprintln!("compile_start");
         }
-        let chunk = self.pipeline.compile(&program)?;
+        let compile_started = Instant::now();
+        let chunk = self.compile_current_program(&program)?;
         if self.config.diagnostics {
             eprintln!("compile_end");
         }
@@ -257,6 +390,13 @@ impl NativeRuntime {
                 "invalid cache-safe bytecode: {error}"
             )))
         })?;
+        self.emit_phase_diagnostics(
+            "compile",
+            compile_started,
+            source.len(),
+            None,
+            Some(metadata),
+        );
         let entry = NativeScriptCacheEntry {
             key,
             chunk: std::sync::Arc::clone(&chunk),
@@ -270,11 +410,37 @@ impl NativeRuntime {
     }
 
     fn parse_current_source(&mut self, source: &str) -> Result<Program, NativeError> {
+        let control = FrontendControl {
+            deadline: self.run_control.unwrap_or_default().deadline,
+        };
+        control.checkpoint().map_err(|error| {
+            NativeError::Execute(crate::vm::VmError::runtime_limit(error.to_string()))
+        })?;
         if self.current_source_kind == SourceKind::Module {
-            let tokens = Lexer::new(source).tokenize()?;
-            Ok(Parser::with_source(tokens, source).parse_module()?)
+            let tokens = Lexer::new(source).with_control(control).tokenize()?;
+            self.last_token_count = tokens.len();
+            Ok(Parser::with_source_and_control(tokens, source, control).parse_module()?)
         } else {
-            self.pipeline.parse(source)
+            let tokens = Lexer::new(source).with_control(control).tokenize()?;
+            self.last_token_count = tokens.len();
+            Ok(Parser::with_source_and_control(tokens, source, control).parse_program()?)
+        }
+    }
+
+    fn compile_current_program(&mut self, program: &Program) -> Result<SharedChunk, NativeError> {
+        let control = FrontendControl {
+            deadline: self.run_control.unwrap_or_default().deadline,
+        };
+        self.pipeline
+            .compiler
+            .set_deadline(control.deadline.instant());
+        let result = self.pipeline.compile(program);
+        self.pipeline.compiler.set_deadline(None);
+        match result {
+            Err(_) if control.deadline.is_expired() => Err(NativeError::Execute(
+                crate::vm::VmError::runtime_limit("wall-clock deadline exceeded"),
+            )),
+            result => result,
         }
     }
 
@@ -556,10 +722,21 @@ impl RuntimeBackend for NativeRuntime {
     }
 
     fn run_jobs(&mut self) -> Result<(), EvalFailure> {
-        self.pipeline
+        self.check_run_deadline()?;
+        let started = Instant::now();
+        if self.config.diagnostics {
+            eprintln!("job_drain_start");
+        }
+        let result = self
+            .pipeline
             .executor
             .drain_jobs(&mut self.context)
-            .map_err(|error| classify_native_error(NativeError::Execute(error)))
+            .map_err(|error| classify_native_error(NativeError::Execute(error)));
+        if self.config.diagnostics {
+            eprintln!("job_drain_end");
+            self.emit_phase_diagnostics("job_drain", started, 0, None, None);
+        }
+        result
     }
 
     fn set_strict(&mut self, strict: bool) {
@@ -576,6 +753,20 @@ impl RuntimeBackend for NativeRuntime {
 
     fn take_output(&mut self) -> Vec<String> {
         self.context.take_output()
+    }
+
+    fn set_run_control(&mut self, control: Option<RunControl>) {
+        self.run_control = control;
+        if let Some(control) = control {
+            self.context
+                .set_absolute_deadline(control.deadline.instant());
+        } else {
+            self.context.reset_deadline(None);
+        }
+    }
+
+    fn set_diagnostic_phase(&mut self, phase: &'static str) {
+        self.diagnostic_phase = phase;
     }
 }
 
@@ -631,6 +822,8 @@ fn push_dependency(dependencies: &mut Vec<String>, source: &str) {
 
 fn classify_native_error(error: NativeError) -> EvalFailure {
     let kind = match &error {
+        NativeError::Lex(error) if error.is_runtime_limit() => FailureKind::RuntimeLimit,
+        NativeError::Parse(error) if error.is_runtime_limit() => FailureKind::RuntimeLimit,
         NativeError::Lex(_) | NativeError::Parse(_) => FailureKind::Syntax,
         NativeError::Compile(e) => {
             if e.is_syntax {

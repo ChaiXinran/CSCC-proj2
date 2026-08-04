@@ -25,10 +25,11 @@ fn dynamic_import_with_options_lowers_to_the_runtime_instruction() {
 
 #[test]
 fn async_arrow_concise_body_keeps_await_context_for_dynamic_import() {
-    let tokens = agentjs::lexer::Lexer::new("async () => await import('./fixture.js')")
+    let source = "async () => await import('./fixture.js')";
+    let tokens = agentjs::lexer::Lexer::new(source)
         .tokenize()
         .expect("tokenize");
-    agentjs::parser::Parser::new(tokens)
+    agentjs::parser::Parser::with_source(tokens, source)
         .parse_program()
         .expect("async concise body parses");
 }

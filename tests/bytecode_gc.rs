@@ -146,6 +146,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
             prototype_writable: true,
             uses_arguments: false,
             local_layout: std::sync::Arc::new(agentjs::bytecode::LocalLayout::default()),
+            upvalue_layout: std::sync::Arc::new(agentjs::bytecode::UpvalueLayout::default()),
             dynamic_scope: agentjs::bytecode::DynamicScopePolicy::Static,
             environment_policy: EnvironmentCapturePolicy::None,
         }],

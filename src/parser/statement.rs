@@ -32,6 +32,7 @@ impl Parser {
 
     /// Parses a single statement.
     pub(super) fn parse_statement(&mut self) -> Result<Statement, ParseError> {
+        self.checkpoint_statement()?;
         match &self.peek().kind {
             TokenKind::Punctuator(';') => {
                 self.advance();
@@ -76,8 +77,8 @@ impl Parser {
             // V9-A: `async function` declaration (contextual: `async` is an Identifier)
             // Per spec, `async` with a Unicode escape (e.g. `async`) cannot serve
             // as the contextual keyword, so we check `has_identifier_escape` here.
-            TokenKind::Identifier(name)
-                if name == "async"
+            TokenKind::Identifier(_)
+                if self.peek_text() == "async"
                     && !self.peek().has_identifier_escape
                     && matches!(
                         self.tokens.get(self.cursor + 1).map(|t| &t.kind),
@@ -381,10 +382,10 @@ impl Parser {
         let Some(tok) = self.tokens.get(self.cursor + 1) else {
             return false;
         };
-        let TokenKind::String(s) = &tok.kind else {
+        let TokenKind::String(_) = &tok.kind else {
             return false;
         };
-        if s != "use strict" {
+        if tok.text(self.source_text()) != "use strict" {
             return false;
         }
         let Some(after) = self.tokens.get(self.cursor + 2) else {
@@ -503,7 +504,7 @@ impl Parser {
         loop {
             // A directive is a String literal token followed by an optional `;`.
             let tok = self.peek().clone();
-            let TokenKind::String(ref value) = tok.kind else {
+            let TokenKind::String(_) = tok.kind else {
                 break;
             };
             // Peek ahead: the token AFTER the string must be a `;`, `}`, a
@@ -525,7 +526,7 @@ impl Parser {
             if !next_is_directive_end {
                 break;
             }
-            let is_use_strict = value == "use strict";
+            let is_use_strict = tok.text(self.source_text()) == "use strict";
             // Strict-mode early error: once strict mode is active, any string
             // literal -- even one still inside the directive prologue -- must not
             // contain a legacy escape sequence.
@@ -590,7 +591,8 @@ impl Parser {
         self.advance(); // `import`
         let mut entries = Vec::new();
 
-        if let TokenKind::String(source) = self.peek().kind.clone() {
+        if let TokenKind::String(_) = self.peek().kind {
+            let source = self.peek_text().to_owned();
             self.advance();
             let attributes = self.parse_import_attributes()?;
             self.expect_semicolon()?;
@@ -622,7 +624,8 @@ impl Parser {
                 imported_name: "*".into(),
                 local_name,
             });
-        } else if let TokenKind::Identifier(local_name) = self.peek().kind.clone() {
+        } else if let TokenKind::Identifier(_) = self.peek().kind {
+            let local_name = self.peek_text().to_owned();
             self.advance();
             entries.push(crate::ast::ImportEntry {
                 imported_name: "default".into(),
@@ -880,8 +883,8 @@ impl Parser {
         if self.peek().has_identifier_escape {
             return false;
         }
-        match self.peek().kind.clone() {
-            TokenKind::Identifier(value) if value == name => {
+        match self.peek().kind {
+            TokenKind::Identifier(_) if self.peek_text() == name => {
                 self.advance();
                 true
             }
@@ -907,12 +910,13 @@ impl Parser {
     fn expect_string_literal(&mut self, label: &str) -> Result<String, ParseError> {
         let token = self.peek().clone();
         match token.kind {
-            TokenKind::String(value) => {
+            TokenKind::String(_) => {
                 if self.is_strict && token.has_legacy_escape {
                     return Err(self.error(format!(
                         "{label} cannot contain a legacy escape in strict mode"
                     )));
                 }
+                let value = self.token_text_owned(&token);
                 self.advance();
                 Ok(value)
             }
@@ -930,8 +934,9 @@ impl Parser {
     }
 
     fn expect_module_export_name(&mut self) -> Result<String, ParseError> {
-        match self.peek().kind.clone() {
-            TokenKind::String(value) => {
+        match self.peek().kind {
+            TokenKind::String(_) => {
+                let value = self.peek_text().to_owned();
                 // ponytail: the lexer currently maps lone surrogate escapes to U+FFFD.
                 // Upgrade path: carry an explicit ill-formed-string flag on Token.
                 if value.contains(char::REPLACEMENT_CHARACTER) {
@@ -1181,7 +1186,8 @@ impl Parser {
         let tok = self.peek().clone();
         let had_escape = tok.has_identifier_escape;
         match tok.kind {
-            TokenKind::String(s) => {
+            TokenKind::String(_) => {
+                let s = self.token_text_owned(&tok);
                 self.advance();
                 Ok((PropertyName::String(s), None, false))
             }
@@ -1189,7 +1195,8 @@ impl Parser {
                 self.advance();
                 Ok((PropertyName::Number(n), None, false))
             }
-            TokenKind::BigInt(raw) => {
+            TokenKind::BigInt(_) => {
+                let raw = self.token_text_owned(&tok);
                 self.advance();
                 Ok((
                     PropertyName::String(raw.strip_suffix('n').unwrap_or(&raw).to_owned()),
@@ -1223,7 +1230,8 @@ impl Parser {
                     had_escape,
                 ))
             }
-            TokenKind::Identifier(name) => {
+            TokenKind::Identifier(_) => {
+                let name = self.token_text_owned(&tok);
                 self.advance();
                 Ok((
                     PropertyName::Identifier(name.clone()),
@@ -1350,7 +1358,8 @@ impl Parser {
             return Err(self.error("`yield` cannot be used as a class name".into()));
         }
         // `static` and `let` are Identifiers/Keywords that resolve to restricted names.
-        if let TokenKind::Identifier(ref name) = tok.kind {
+        if let TokenKind::Identifier(_) = tok.kind {
+            let name = tok.text(self.source_text());
             // Check escaped forms resolving to strict-future keywords (let, static, yield).
             if tok.has_identifier_escape && is_strict_future_reserved_keyword(name) {
                 return Err(self.error(format!(
@@ -1371,7 +1380,8 @@ impl Parser {
     /// Returns true if the current Identifier token is a valid LabelIdentifier
     /// in the current context (`await` is reserved in async; `yield` in strict/generator).
     fn label_identifier_is_valid(&self) -> bool {
-        if let TokenKind::Identifier(name) = &self.peek().kind {
+        if let TokenKind::Identifier(_) = &self.peek().kind {
+            let name = self.peek_text();
             if self.peek().has_identifier_escape && crate::parser::is_keyword_name(name) {
                 return false;
             }
@@ -1390,8 +1400,9 @@ impl Parser {
 
     /// Parses `label: statement`.
     fn parse_labelled_statement(&mut self) -> Result<Statement, ParseError> {
-        let label = match self.peek().kind.clone() {
-            TokenKind::Identifier(name) => {
+        let label = match self.peek().kind {
+            TokenKind::Identifier(_) => {
+                let name = self.peek_text().to_owned();
                 self.advance();
                 name
             }
@@ -1469,7 +1480,8 @@ impl Parser {
     /// Returns `true` if the current token is the contextual keyword `of`.
     fn check_contextual_of(&self) -> bool {
         !self.peek().has_identifier_escape
-            && matches!(&self.peek().kind, TokenKind::Identifier(s) if s == "of")
+            && matches!(&self.peek().kind, TokenKind::Identifier(_))
+            && self.peek_text() == "of"
     }
 
     /// Parses both `for (init; test; update) body`, `for (left in right) body`,
@@ -1744,7 +1756,8 @@ impl Parser {
                     self.tokens.get(self.cursor - 1),
                     Some(token)
                         if !token.has_identifier_escape
-                            && matches!(&token.kind, TokenKind::Identifier(name) if name == "async")
+                            && matches!(&token.kind, TokenKind::Identifier(_))
+                            && token.text(self.source_text()) == "async"
                 );
             if !is_await && is_bare_unescaped_async {
                 return Err(
@@ -1994,7 +2007,8 @@ impl Parser {
         self.advance(); // `break`
         // Optional label: only if no line terminator before the identifier
         let label = if !self.peek().line_terminator_before {
-            if let TokenKind::Identifier(name) = self.peek().kind.clone() {
+            if let TokenKind::Identifier(_) = self.peek().kind {
+                let name = self.peek_text().to_owned();
                 self.advance();
                 Some(name)
             } else {
@@ -2028,7 +2042,8 @@ impl Parser {
         self.advance(); // `continue`
         // Optional label: only if no line terminator before the identifier
         let label = if !self.peek().line_terminator_before {
-            if let TokenKind::Identifier(name) = self.peek().kind.clone() {
+            if let TokenKind::Identifier(_) = self.peek().kind {
+                let name = self.peek_text().to_owned();
                 self.advance();
                 Some(name)
             } else {

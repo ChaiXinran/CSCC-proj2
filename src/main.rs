@@ -8,10 +8,14 @@ use std::{
 };
 
 use agentjs::{
-    BackendKind, Engine, ExecutionOptions, HostFileLoader, HostServices, RootedFileLoader, Runtime,
-    RuntimeConfig,
+    AbsoluteDeadline, BackendKind, Engine, ExecutionOptions, HostFileLoader, HostServices,
+    RootedFileLoader, RunControl, Runtime, RuntimeConfig,
     test262::{RunnerOptions, Status},
 };
+
+const DEFAULT_JETSTREAM_THREAD_STACK_MIB: usize = 32;
+const MIN_JETSTREAM_THREAD_STACK_MIB: usize = 4;
+const MAX_JETSTREAM_THREAD_STACK_MIB: usize = 256;
 
 fn main() -> ExitCode {
     match run() {
@@ -82,6 +86,7 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
     let mut resource_root = None;
     let mut gc_threshold = 1_000_000;
     let mut diagnostics = false;
+    let mut thread_stack_mib = DEFAULT_JETSTREAM_THREAD_STACK_MIB;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -111,13 +116,24 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
                 gc_threshold = parse_usize(required_value(args, index, "--gc-threshold")?)?;
             }
             "--diagnostics" => diagnostics = true,
+            "--thread-stack-mib" => {
+                index += 1;
+                thread_stack_mib = parse_usize(required_value(args, index, "--thread-stack-mib")?)?;
+                if !(MIN_JETSTREAM_THREAD_STACK_MIB..=MAX_JETSTREAM_THREAD_STACK_MIB)
+                    .contains(&thread_stack_mib)
+                {
+                    return Err(format!(
+                        "--thread-stack-mib must be in {MIN_JETSTREAM_THREAD_STACK_MIB}..={MAX_JETSTREAM_THREAD_STACK_MIB}"
+                    ));
+                }
+            }
             argument if argument.starts_with('-') => {
                 return Err(format!("unknown jetstream option {argument}"));
             }
             argument if path.is_none() => path = Some(argument.to_string()),
             _ => {
                 return Err(
-                    "usage: agentjs jetstream <generated-runner.js> --resource-root <JetStream2-root> [--loop-limit N] [--wall-clock-seconds N] [--gc-threshold N] [--diagnostics]"
+                    "usage: agentjs jetstream <generated-runner.js> --resource-root <JetStream2-root> [--loop-limit N] [--wall-clock-seconds N] [--gc-threshold N] [--thread-stack-mib N] [--diagnostics]"
                         .into(),
                 );
             }
@@ -125,28 +141,44 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
         index += 1;
     }
     let path = path.ok_or_else(|| {
-        "usage: agentjs jetstream <generated-runner.js> --resource-root <JetStream2-root> [--loop-limit N] [--wall-clock-seconds N] [--gc-threshold N] [--diagnostics]"
+        "usage: agentjs jetstream <generated-runner.js> --resource-root <JetStream2-root> [--loop-limit N] [--wall-clock-seconds N] [--gc-threshold N] [--thread-stack-mib N] [--diagnostics]"
             .to_string()
     })?;
     let resource_root = resource_root
         .ok_or_else(|| "--resource-root is required for JetStream runners".to_string())?;
+    let run_started = Instant::now();
+    let run_control = RunControl {
+        deadline: AbsoluteDeadline::from_duration(run_started, wall_clock_limit),
+    };
+    run_control
+        .deadline
+        .check()
+        .map_err(|error| error.to_string())?;
     if diagnostics {
         eprintln!("runner_read_start:{}", path);
     }
     let source = fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
     if diagnostics {
         eprintln!("runner_read_end:bytes={}", source.len());
+        eprintln!(
+            "run_control:thread_stack_mib={} deadline_ms={}",
+            thread_stack_mib,
+            wall_clock_limit.map_or_else(|| "none".into(), |limit| limit.as_millis().to_string())
+        );
     }
-    // Spawn on a dedicated thread with a large stack so deep-recursion benchmarks
-    // (e.g. crypto) don't hit the OS thread stack limit.
+    run_control
+        .deadline
+        .check()
+        .map_err(|error| error.to_string())?;
     std::thread::Builder::new()
-        .stack_size(256 * 1024 * 1024)
+        .stack_size(thread_stack_mib * 1024 * 1024)
         .spawn(move || {
             jetstream_run(
                 &source,
                 resource_root,
                 loop_limit,
-                wall_clock_limit,
+                run_control,
+                run_started,
                 gc_threshold,
                 diagnostics,
             )
@@ -160,10 +192,15 @@ fn jetstream_run(
     source: &str,
     resource_root: PathBuf,
     loop_limit: u64,
-    wall_clock_limit: Option<Duration>,
+    run_control: RunControl,
+    run_started: Instant,
     gc_threshold: usize,
     diagnostics: bool,
 ) -> Result<(), String> {
+    run_control
+        .deadline
+        .check()
+        .map_err(|error| error.to_string())?;
     let loader = Arc::new(RootedFileLoader::new(resource_root).map_err(|error| error.to_string())?);
     let host = HostServices {
         file_loader: Some(loader.clone()),
@@ -180,7 +217,7 @@ fn jetstream_run(
             diagnostics,
             heap_object_limit: usize::MAX,
             heap_byte_limit: usize::MAX,
-            wall_clock_limit,
+            wall_clock_limit: None,
             // Large benchmark-owned arrays are long-lived. Collecting in the
             // middle of a JetStream iteration distorts timing and can sweep
             // harness values that are still reachable through benchmark state.
@@ -189,9 +226,15 @@ fn jetstream_run(
         host,
     )
     .map_err(|error| error.to_string())?;
+    run_control
+        .deadline
+        .check()
+        .map_err(|error| error.to_string())?;
+    runtime.set_run_control(Some(run_control));
     let (prelude, launch) = source
         .split_once("/*__AGENTJS_LOAD_RESOURCES__*/")
         .ok_or_else(|| "JetStream runner is missing the resource-load boundary".to_string())?;
+    runtime.set_diagnostic_phase("prelude");
     runtime
         .eval(prelude, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
@@ -200,15 +243,28 @@ fn jetstream_run(
             continue;
         };
         if diagnostics {
-            eprintln!("resource_read:{path}");
+            eprintln!("resource_read_start:{path}");
         }
+        run_control
+            .deadline
+            .check()
+            .map_err(|error| error.to_string())?;
         let resource = loader
             .read_text(std::path::Path::new(path))
             .map_err(|error| error.to_string())?;
+        run_control
+            .deadline
+            .check()
+            .map_err(|error| error.to_string())?;
+        if diagnostics {
+            eprintln!("resource_read_end:{path}:bytes={}", resource.len());
+        }
+        runtime.set_diagnostic_phase("resource");
         runtime
             .eval(resource.as_ref(), ExecutionOptions::default())
             .map_err(|error| format!("{path}: {error}"))?;
     }
+    runtime.set_diagnostic_phase("launch");
     let report = runtime
         .eval(launch, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
@@ -220,6 +276,9 @@ fn jetstream_run(
     print_report(report);
     if let Some(failure) = benchmark_failure {
         return Err(failure);
+    }
+    if diagnostics {
+        eprintln!("run_end:elapsed_ms={}", run_started.elapsed().as_millis());
     }
     Ok(())
 }
@@ -552,7 +611,7 @@ USAGE:
   agentjs jetstream <generated-runner.js>
                   --resource-root <JetStream2-root>
                   [--loop-limit N] [--wall-clock-seconds N]
-                  [--gc-threshold N] [--diagnostics]
+                  [--gc-threshold N] [--thread-stack-mib N] [--diagnostics]
   agentjs repl [--backend native]
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend native] [--limit N] [--jobs N]

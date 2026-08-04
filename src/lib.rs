@@ -19,7 +19,8 @@ pub mod vm;
 pub use backend::BackendKind;
 pub use contracts::{ChunkExecutor, NativeError, NativePipeline, ProgramCompiler, SourceParser};
 pub use engine::{
-    Engine, EvalFailure, ExecutionOptions, ExecutionReport, FailureKind, Runtime, RuntimeConfig,
+    AbsoluteDeadline, Engine, EvalFailure, ExecutionOptions, ExecutionReport, FailureKind,
+    FrontendControl, PhaseDiagnostics, RunControl, Runtime, RuntimeConfig, RuntimeLimitError,
     SourceKind,
 };
 pub use host::{HostFileLoader, HostLoadError, HostServices, RootedFileLoader};

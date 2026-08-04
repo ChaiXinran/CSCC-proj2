@@ -2203,6 +2203,31 @@ impl Vm {
                         discard_saved_finally = true;
                     }
                 }
+                Instruction::LoadUpvalue(slot) => {
+                    let function = context.current_function().ok_or_else(|| {
+                        VmError::runtime("LoadUpvalue executed without a current function")
+                    })?;
+                    match context.get_upvalue(function, slot) {
+                        Ok(value) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::StoreUpvalue(slot) => {
+                    let value = self.pop_value()?;
+                    let function = context.current_function().ok_or_else(|| {
+                        VmError::runtime("StoreUpvalue executed without a current function")
+                    })?;
+                    match context.set_upvalue(function, slot, value.clone()) {
+                        Ok(()) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
                 Instruction::DeclareEvalVar(index) => {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
@@ -8037,23 +8062,27 @@ impl Vm {
 
     pub fn drain_jobs(&mut self, context: &mut NativeContext) -> Result<(), VmError> {
         while let Some(job) = context.pop_job() {
-            match job {
+            let root_base = context.push_temporary_roots(job.root_values());
+            let result = match job {
                 Job::HostCallback(crate::runtime::NativeJob::PushOutput(line)) => {
                     context.push_output(line);
+                    Ok(())
                 }
                 Job::PromiseReaction(job) => match job.reaction {
                     PromiseReaction::Fulfill => {
-                        context.fulfill_promise(job.promise, job.value)?;
+                        context.fulfill_promise(job.promise, job.value).map(|_| ())
                     }
                     PromiseReaction::Reject => {
-                        context.reject_promise(job.promise, job.value)?;
+                        context.reject_promise(job.promise, job.value).map(|_| ())
                     }
                 },
-                Job::PromiseCallback(job) => self.run_promise_callback_job(context, job)?,
+                Job::PromiseCallback(job) => self.run_promise_callback_job(context, job),
                 Job::PromiseResolveThenable(job) => {
-                    self.run_promise_resolve_thenable_job(context, job)?;
+                    self.run_promise_resolve_thenable_job(context, job)
                 }
-            }
+            };
+            context.truncate_temporary_roots(root_base);
+            result?;
         }
         Ok(())
     }

@@ -145,6 +145,8 @@ pub enum Instruction {
     StoreLocal(super::LocalSlot),
     /// Initializes an activation-local binding, consuming the value.
     InitializeLocal(super::LocalSlot),
+    LoadUpvalue(super::UpvalueSlot),
+    StoreUpvalue(super::UpvalueSlot),
     /// EvalDeclarationInstantiation var creation. Existing bindings are left
     /// unchanged; absent bindings are created in the active eval environment.
     DeclareEvalVar(u16),
@@ -418,6 +420,7 @@ impl Instruction {
             | Self::CreateFunction(_)
             | Self::LoadName(_)
             | Self::LoadLocal(_)
+            | Self::LoadUpvalue(_)
             | Self::TypeOfName(_)
             | Self::LoadThis
             | Self::LoadNewTarget
@@ -445,6 +448,7 @@ impl Instruction {
             Self::StoreGlobal(_)
             | Self::StoreName(_)
             | Self::StoreLocal(_)
+            | Self::StoreUpvalue(_)
             | Self::UnaryPlus
             | Self::ToString
             | Self::ToNumeric

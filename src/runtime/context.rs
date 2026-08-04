@@ -10,6 +10,9 @@ use std::{
 pub struct NameResolutionMetrics {
     pub load_local_count: u64,
     pub store_local_count: u64,
+    pub load_upvalue_count: u64,
+    pub store_upvalue_count: u64,
+    pub upvalue_environment_hops: u64,
     pub load_name_count: u64,
     pub store_name_count: u64,
     pub environment_hops: u64,
@@ -19,6 +22,9 @@ pub struct NameResolutionMetrics {
 struct NameResolutionMetricCells {
     load_local_count: Cell<u64>,
     store_local_count: Cell<u64>,
+    load_upvalue_count: Cell<u64>,
+    store_upvalue_count: Cell<u64>,
+    upvalue_environment_hops: Cell<u64>,
     load_name_count: Cell<u64>,
     store_name_count: Cell<u64>,
     environment_hops: Cell<u64>,
@@ -1822,6 +1828,9 @@ impl NativeContext {
     pub fn reset_name_resolution_metrics(&self) {
         self.name_resolution_metrics.load_local_count.set(0);
         self.name_resolution_metrics.store_local_count.set(0);
+        self.name_resolution_metrics.load_upvalue_count.set(0);
+        self.name_resolution_metrics.store_upvalue_count.set(0);
+        self.name_resolution_metrics.upvalue_environment_hops.set(0);
         self.name_resolution_metrics.load_name_count.set(0);
         self.name_resolution_metrics.store_name_count.set(0);
         self.name_resolution_metrics.environment_hops.set(0);
@@ -1832,6 +1841,9 @@ impl NativeContext {
         NameResolutionMetrics {
             load_local_count: self.name_resolution_metrics.load_local_count.get(),
             store_local_count: self.name_resolution_metrics.store_local_count.get(),
+            load_upvalue_count: self.name_resolution_metrics.load_upvalue_count.get(),
+            store_upvalue_count: self.name_resolution_metrics.store_upvalue_count.get(),
+            upvalue_environment_hops: self.name_resolution_metrics.upvalue_environment_hops.get(),
             load_name_count: self.name_resolution_metrics.load_name_count.get(),
             store_name_count: self.name_resolution_metrics.store_name_count.get(),
             environment_hops: self.name_resolution_metrics.environment_hops.get(),
@@ -1946,6 +1958,99 @@ impl NativeContext {
             .environment_mut(environment)
             .ok_or_else(|| VmError::runtime("missing lexical environment"))?
             .initialize_local(slot, value)
+    }
+
+    pub(crate) fn record_load_upvalue(&self, environment_hops: u16) {
+        self.name_resolution_metrics.load_upvalue_count.set(
+            self.name_resolution_metrics
+                .load_upvalue_count
+                .get()
+                .saturating_add(1),
+        );
+        self.name_resolution_metrics.upvalue_environment_hops.set(
+            self.name_resolution_metrics
+                .upvalue_environment_hops
+                .get()
+                .saturating_add(u64::from(environment_hops)),
+        );
+    }
+
+    pub(crate) fn record_store_upvalue(&self, environment_hops: u16) {
+        self.name_resolution_metrics.store_upvalue_count.set(
+            self.name_resolution_metrics
+                .store_upvalue_count
+                .get()
+                .saturating_add(1),
+        );
+        self.name_resolution_metrics.upvalue_environment_hops.set(
+            self.name_resolution_metrics
+                .upvalue_environment_hops
+                .get()
+                .saturating_add(u64::from(environment_hops)),
+        );
+    }
+
+    pub fn resolve_environment_hops(
+        &self,
+        start: EnvironmentId,
+        hops: u16,
+    ) -> Result<EnvironmentId, VmError> {
+        let mut environment = start;
+        for _ in 0..hops {
+            environment = self
+                .heap
+                .environment(environment)
+                .and_then(|environment| environment.outer)
+                .ok_or_else(|| VmError::runtime("upvalue environment chain is too short"))?;
+        }
+        Ok(environment)
+    }
+
+    fn resolve_upvalue(
+        &self,
+        function: FunctionId,
+        slot: crate::bytecode::UpvalueSlot,
+    ) -> Result<(EnvironmentId, crate::bytecode::LocalSlot, u16), VmError> {
+        let function = self
+            .heap
+            .function(function)
+            .ok_or_else(|| VmError::runtime("missing current function"))?;
+        let binding = function
+            .upvalue_layout
+            .bindings
+            .get(usize::from(slot.0))
+            .ok_or_else(|| VmError::runtime(format!("upvalue slot {} is out of bounds", slot.0)))?;
+        let environment = function
+            .environment
+            .ok_or_else(|| VmError::runtime("upvalue function has no captured environment"))?;
+        let environment =
+            self.resolve_environment_hops(environment, binding.descriptor.environment_hops)?;
+        Ok((
+            environment,
+            binding.descriptor.local_slot,
+            binding.descriptor.environment_hops,
+        ))
+    }
+
+    pub fn get_upvalue(
+        &self,
+        function: FunctionId,
+        slot: crate::bytecode::UpvalueSlot,
+    ) -> Result<JsValue, VmError> {
+        let (environment, local_slot, hops) = self.resolve_upvalue(function, slot)?;
+        self.record_load_upvalue(hops);
+        self.get_local(environment, local_slot)
+    }
+
+    pub fn set_upvalue(
+        &mut self,
+        function: FunctionId,
+        slot: crate::bytecode::UpvalueSlot,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        let (environment, local_slot, hops) = self.resolve_upvalue(function, slot)?;
+        self.record_store_upvalue(hops);
+        self.set_local(environment, local_slot, value)
     }
 
     pub fn push_with_environment(&mut self, value: JsValue) -> Result<EnvironmentId, VmError> {
@@ -4342,6 +4447,10 @@ impl NativeContext {
         self.budget.deadline = limit.map(|limit| Instant::now() + limit);
     }
 
+    pub fn set_absolute_deadline(&mut self, deadline: Option<Instant>) {
+        self.budget.deadline = deadline;
+    }
+
     pub fn check_deadline(&self) -> Result<(), VmError> {
         self.budget.check_deadline()
     }
@@ -4530,7 +4639,10 @@ impl NativeContext {
 
     pub fn drain_jobs(&mut self) -> Result<(), VmError> {
         while let Some(job) = self.job_queue.pop() {
-            self.run_job(job)?;
+            let root_base = self.push_temporary_roots(job.root_values());
+            let result = self.run_job(job);
+            self.truncate_temporary_roots(root_base);
+            result?;
         }
         Ok(())
     }

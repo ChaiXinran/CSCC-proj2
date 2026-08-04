@@ -1566,21 +1566,23 @@ fn array_map(
     require_callable(context, &callback, "Array.prototype.map")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let result = array_species_create(vm, context, receiver.clone(), length)?;
-    for i in 0..length.min(MAX_DENSE_ALLOC) {
-        if !array_index_exists(context, &receiver, object, i)? {
-            continue;
+    context.with_temporary_roots([result.clone()], |context| {
+        for i in 0..length.min(MAX_DENSE_ALLOC) {
+            if !array_index_exists(context, &receiver, object, i)? {
+                continue;
+            }
+            let val = get_existing_elem(vm, context, receiver.clone(), object, i)?;
+            let mapped = call_callback(
+                vm,
+                context,
+                callback.clone(),
+                this_arg.clone(),
+                vec![val, JsValue::Number(i as f64), callback_object.clone()],
+            )?;
+            create_array_data_property(context, &result, i, mapped)?;
         }
-        let val = get_existing_elem(vm, context, receiver.clone(), object, i)?;
-        let mapped = call_callback(
-            vm,
-            context,
-            callback.clone(),
-            this_arg.clone(),
-            vec![val, JsValue::Number(i as f64), callback_object.clone()],
-        )?;
-        create_array_data_property(context, &result, i, mapped)?;
-    }
-    Ok(result)
+        Ok(result)
+    })
 }
 
 fn array_filter(
@@ -1595,29 +1597,31 @@ fn array_filter(
     require_callable(context, &callback, "Array.prototype.filter")?;
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let result = array_species_create(vm, context, receiver.clone(), 0)?;
-    let mut target_index = 0usize;
-    for i in 0..length.min(MAX_DENSE_ALLOC) {
-        if !array_index_exists(context, &receiver, object, i)? {
-            continue;
+    context.with_temporary_roots([result.clone()], |context| {
+        let mut target_index = 0usize;
+        for i in 0..length.min(MAX_DENSE_ALLOC) {
+            if !array_index_exists(context, &receiver, object, i)? {
+                continue;
+            }
+            let val = get_existing_elem(vm, context, receiver.clone(), object, i)?;
+            let keep = call_callback(
+                vm,
+                context,
+                callback.clone(),
+                this_arg.clone(),
+                vec![
+                    val.clone(),
+                    JsValue::Number(i as f64),
+                    callback_object.clone(),
+                ],
+            )?;
+            if keep.to_boolean() {
+                create_array_data_property(context, &result, target_index, val)?;
+                target_index += 1;
+            }
         }
-        let val = get_existing_elem(vm, context, receiver.clone(), object, i)?;
-        let keep = call_callback(
-            vm,
-            context,
-            callback.clone(),
-            this_arg.clone(),
-            vec![
-                val.clone(),
-                JsValue::Number(i as f64),
-                callback_object.clone(),
-            ],
-        )?;
-        if keep.to_boolean() {
-            create_array_data_property(context, &result, target_index, val)?;
-            target_index += 1;
-        }
-    }
-    Ok(result)
+        Ok(result)
+    })
 }
 
 fn array_reduce(
@@ -1918,32 +1922,34 @@ fn array_flat_map(
     let callback = arguments.first().cloned().unwrap_or(JsValue::Undefined);
     let this_arg = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
     let result = array_species_create(vm, context, target.clone(), 0)?;
-    let mut target_index = 0usize;
-    for i in 0..length.min(MAX_DENSE_ALLOC) {
-        let val = get_elem(vm, context, target.clone(), i)?;
-        let mapped = call_callback(
-            vm,
-            context,
-            callback.clone(),
-            this_arg.clone(),
-            vec![val, JsValue::Number(i as f64), target.clone()],
-        )?;
-        if let Some(id) = context
-            .value_object(&mapped)
-            .filter(|&id| context.is_array_object(id).unwrap_or(false))
-        {
-            let inner_len = array_like_length(context, id);
-            for j in 0..inner_len {
-                let inner = get_elem(vm, context, mapped.clone(), j)?;
-                create_array_data_property(context, &result, target_index, inner)?;
-                target_index += 1;
+    context.with_temporary_roots([result.clone()], |context| {
+        let mut target_index = 0usize;
+        for i in 0..length.min(MAX_DENSE_ALLOC) {
+            let val = get_elem(vm, context, target.clone(), i)?;
+            let mapped = call_callback(
+                vm,
+                context,
+                callback.clone(),
+                this_arg.clone(),
+                vec![val, JsValue::Number(i as f64), target.clone()],
+            )?;
+            if let Some(id) = context
+                .value_object(&mapped)
+                .filter(|&id| context.is_array_object(id).unwrap_or(false))
+            {
+                let inner_len = array_like_length(context, id);
+                for j in 0..inner_len {
+                    let inner = get_elem(vm, context, mapped.clone(), j)?;
+                    create_array_data_property(context, &result, target_index, inner)?;
+                    target_index += 1;
+                }
+                continue;
             }
-            continue;
+            create_array_data_property(context, &result, target_index, mapped)?;
+            target_index += 1;
         }
-        create_array_data_property(context, &result, target_index, mapped)?;
-        target_index += 1;
-    }
-    Ok(result)
+        Ok(result)
+    })
 }
 
 fn array_sort(
