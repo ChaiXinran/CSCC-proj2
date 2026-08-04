@@ -634,7 +634,7 @@ fn regexp_exec_value(
         }
         return Ok(JsValue::Null);
     };
-    let Some(captures) = re.captures(&string[byte_start..]).map_err(|error| {
+    let Some(captures) = re.captures_from_pos(&string, byte_start).map_err(|error| {
         VmError::runtime(format!("regular expression execution failed: {error}"))
     })?
     else {
@@ -649,15 +649,14 @@ fn regexp_exec_value(
         }
         return Ok(JsValue::Null);
     };
-    if flags.contains('y') && full_match.start() != 0 {
+    if flags.contains('y') && full_match.start() != byte_start {
         set_last_index(vm, context, this_value, 0)?;
         return Ok(JsValue::Null);
     }
 
-    let absolute_start = byte_start + full_match.start();
-    let absolute_end = byte_start + full_match.end();
-    let match_index =
-        start_index + utf16_len_between_byte_indices(&string, byte_start, absolute_start);
+    let absolute_start = full_match.start();
+    let absolute_end = full_match.end();
+    let match_index = utf16_len_between_byte_indices(&string, 0, absolute_start);
     let match_end =
         match_index + utf16_len_between_byte_indices(&string, absolute_start, absolute_end);
     if global_or_sticky {
@@ -681,7 +680,7 @@ fn regexp_exec_value(
     )?;
     let groups = create_regexp_groups_object(context, &re, &captures)?;
     if flags.contains('d') {
-        let indices = create_regexp_indices_object(context, &re, &captures, &string, byte_start)?;
+        let indices = create_regexp_indices_object(context, &re, &captures, &string, 0)?;
         context.define_own_property(
             array,
             "indices".into(),
