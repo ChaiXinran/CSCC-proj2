@@ -20,7 +20,7 @@ use crate::{
     lexer::Lexer,
     parser::Parser,
     runtime::{
-        DynamicImportRequest, JsValue, ModuleEvaluationState, ModuleExportBinding,
+        DynamicImportRequest, GcMetrics, JsValue, ModuleEvaluationState, ModuleExportBinding,
         ModuleImportBinding, ModuleRegistry, ModuleStatus, NativeErrorKind,
         resolve_module_specifier,
     },
@@ -232,6 +232,10 @@ impl NativeRuntime {
 
     pub fn cache_stats(&self) -> NativeScriptCacheStats {
         self.cache_stats
+    }
+
+    pub fn gc_metrics(&self) -> GcMetrics {
+        self.context.gc_metrics()
     }
 
     pub fn module_registry_len(&self) -> usize {

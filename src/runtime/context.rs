@@ -10,13 +10,14 @@ use fancy_regex::Regex;
 use super::{
     AgentManager, ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction,
     BuiltinId, CollectionStats, Collector, DataViewId, DataViewRecord, Environment, EnvironmentId,
-    FunctionId, Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject,
-    JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind, NativeErrorValue,
-    NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
+    FunctionId, GcMetrics, Heap, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue,
+    JsFunction, JsObject, JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
+    NativeErrorValue, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
     PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
     PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind,
-    ProxyRecord, RootSet, SymbolId, SymbolRegistry, TypedArrayElementKind, TypedArrayView,
-    TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
+    ProxyRecord, RootSet, RootSink, SymbolId, SymbolRegistry, Tracer, TypedArrayElementKind,
+    TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind,
+    object::array_index,
 };
 use crate::vm::{CallFrame, Vm, VmError};
 use crate::{builtins::string, intl::IntlObjectData};
@@ -238,6 +239,7 @@ pub struct NativeContext {
     budget: ExecutionBudget,
     call_depth: u64,
     gc_allocation_threshold: usize,
+    gc_metrics: GcMetrics,
 }
 
 fn array_iterator_next_builtin(
@@ -333,6 +335,7 @@ impl NativeContext {
             budget: ExecutionBudget::default(),
             call_depth: 0,
             gc_allocation_threshold: 10_000,
+            gc_metrics: GcMetrics::default(),
         };
         context.install_core_global_bindings();
         context
@@ -396,6 +399,11 @@ impl NativeContext {
         self.heap.stats()
     }
 
+    #[must_use]
+    pub const fn gc_metrics(&self) -> GcMetrics {
+        self.gc_metrics
+    }
+
     pub fn ensure_heap_capacity(&mut self, additional_bytes: usize) -> Result<(), VmError> {
         if self.heap.charge_bytes(additional_bytes) {
             Ok(())
@@ -410,16 +418,26 @@ impl NativeContext {
     }
 
     pub fn maybe_collect_garbage(&mut self, roots: &RootSet) -> Result<CollectionStats, VmError> {
-        let roots = self.complete_root_set(roots);
+        let started = Instant::now();
         let mut collector = Collector;
-        let stats = collector.collect(&mut self.heap, &roots);
+        let stats = collector.collect(&mut self.heap, roots);
         self.prune_swept_metadata();
+        self.record_collection(started, stats);
         Ok(stats)
     }
 
     pub fn collect_garbage_for_vm(&mut self, vm: &Vm) -> Result<CollectionStats, VmError> {
-        let roots = self.root_set(vm);
-        self.maybe_collect_garbage(&roots)
+        let started = Instant::now();
+        let marks = {
+            let mut tracer = Tracer::new(&self.heap);
+            vm.trace_roots(&mut tracer);
+            self.trace_context_roots(&mut tracer);
+            tracer.into_marks()
+        };
+        let stats = self.heap.sweep(&marks);
+        self.prune_swept_metadata();
+        self.record_collection(started, stats);
+        Ok(stats)
     }
 
     #[must_use]
@@ -446,32 +464,69 @@ impl NativeContext {
         self.temporary_roots.truncate(base);
     }
 
-    fn complete_root_set(&self, roots: &RootSet) -> RootSet {
-        let mut roots = roots.clone();
-        self.add_internal_roots(&mut roots);
-        roots
+    fn record_collection(&mut self, started: Instant, stats: CollectionStats) {
+        let pause_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.gc_metrics.collection_count = self.heap.stats().collection_count;
+        self.gc_metrics.total_pause_ns = self.gc_metrics.total_pause_ns.saturating_add(pause_ns);
+        self.gc_metrics.max_pause_ns = self.gc_metrics.max_pause_ns.max(pause_ns);
+        self.gc_metrics.last_collection = stats;
     }
 
-    fn add_internal_roots(&self, roots: &mut RootSet) {
-        roots.object_roots.push(self.global_object);
-        roots.value_roots.push(self.top_level_this.clone());
-        roots
-            .value_roots
-            .extend(self.temporary_roots.iter().cloned());
-        roots.value_roots.extend(self.agent_manager.roots());
-        roots.value_roots.extend(
-            self.private_slots
-                .values()
-                .flat_map(|slots| slots.values().map(|slot| slot.value.clone())),
-        );
-        roots
-            .environment_stack
-            .extend(self.module_registry.environments());
-        roots
-            .value_roots
-            .extend(self.module_registry.namespaces().cloned());
+    fn trace_context_roots(&self, roots: &mut impl RootSink) {
+        roots.mark_environment_root(self.global_environment);
+        roots.mark_environment_root(self.current_environment);
+        for environment in &self.environment_stack {
+            roots.mark_environment_root(*environment);
+        }
+        for frame in &self.call_frames {
+            if let Some(function) = frame.function {
+                roots.mark_function_root(function);
+            }
+            roots.mark_environment_root(frame.environment);
+            roots.mark_value_root(&frame.this_value);
+            roots.mark_value_root(&frame.new_target);
+        }
+        self.add_internal_roots(roots);
+    }
+
+    fn add_internal_roots(&self, roots: &mut impl RootSink) {
+        roots.mark_object_root(self.global_object);
+        roots.mark_value_root(&self.top_level_this);
+        for value in &self.temporary_roots {
+            roots.mark_value_root(value);
+        }
+        for value in self.agent_manager.roots() {
+            roots.mark_value_root(&value);
+        }
+        for (value, _) in &self.pending_derived_this {
+            roots.mark_value_root(value);
+        }
+        for value in self.pending_module_imports.values() {
+            roots.mark_value_root(value);
+        }
+        for (environment, _) in self.pending_module_import_links.values() {
+            roots.mark_environment_root(*environment);
+        }
+        for ((environment, _), (target_environment, _)) in &self.module_import_links {
+            roots.mark_environment_root(*environment);
+            roots.mark_environment_root(*target_environment);
+        }
+        for slots in self.private_slots.values() {
+            for slot in slots.values() {
+                roots.mark_value_root(&slot.value);
+            }
+        }
+        for environment in self.module_registry.environments() {
+            roots.mark_environment_root(environment);
+        }
+        for namespace in self.module_registry.namespaces() {
+            roots.mark_value_root(namespace);
+        }
+        for value in self.module_registry.root_values() {
+            roots.mark_value_root(value);
+        }
         if let Some(intrinsics) = &self.intrinsics {
-            roots.object_roots.extend([
+            for object in [
                 intrinsics.object_prototype,
                 intrinsics.function_prototype,
                 intrinsics.array_prototype,
@@ -480,20 +535,24 @@ impl NativeContext {
                 intrinsics.boolean_prototype,
                 intrinsics.error_prototype,
                 intrinsics.regexp_prototype,
-            ]);
-            roots.value_roots.extend([
-                intrinsics.object_constructor.clone(),
-                intrinsics.function_constructor.clone(),
-                intrinsics.array_constructor.clone(),
-            ]);
+            ] {
+                roots.mark_object_root(object);
+            }
+            for value in [
+                &intrinsics.object_constructor,
+                &intrinsics.function_constructor,
+                &intrinsics.array_constructor,
+            ] {
+                roots.mark_value_root(value);
+            }
         }
         if let Some(array_iterator_prototype) = self.array_iterator_prototype {
-            roots.object_roots.push(array_iterator_prototype);
+            roots.mark_object_root(array_iterator_prototype);
         }
         for realm in &self.realms {
-            roots.object_roots.push(realm.global_object);
-            roots.environment_stack.push(realm.global_environment);
-            roots.object_roots.extend([
+            roots.mark_object_root(realm.global_object);
+            roots.mark_environment_root(realm.global_environment);
+            for object in [
                 realm.intrinsics.object_prototype,
                 realm.intrinsics.function_prototype,
                 realm.intrinsics.array_prototype,
@@ -502,14 +561,18 @@ impl NativeContext {
                 realm.intrinsics.boolean_prototype,
                 realm.intrinsics.error_prototype,
                 realm.intrinsics.regexp_prototype,
-            ]);
-            roots.value_roots.extend([
-                realm.intrinsics.object_constructor.clone(),
-                realm.intrinsics.function_constructor.clone(),
-                realm.intrinsics.array_constructor.clone(),
-            ]);
+            ] {
+                roots.mark_object_root(object);
+            }
+            for value in [
+                &realm.intrinsics.object_constructor,
+                &realm.intrinsics.function_constructor,
+                &realm.intrinsics.array_constructor,
+            ] {
+                roots.mark_value_root(value);
+            }
             if let Some(array_iterator_prototype) = realm.array_iterator_prototype {
-                roots.object_roots.push(array_iterator_prototype);
+                roots.mark_object_root(array_iterator_prototype);
             }
             for value in [
                 &realm.function_restricted_thrower,
@@ -520,15 +583,21 @@ impl NativeContext {
             .into_iter()
             .flatten()
             {
-                roots.value_roots.push(value.clone());
+                roots.mark_value_root(value);
             }
         }
-        roots
-            .object_roots
-            .extend(self.function_prototypes.values().copied());
-        roots
-            .object_roots
-            .extend(self.function_objects.values().copied());
+        for object in self.function_prototypes.values() {
+            roots.mark_object_root(*object);
+        }
+        for object in self.function_objects.values() {
+            roots.mark_object_root(*object);
+        }
+        for object in self.function_realm_globals.values() {
+            roots.mark_object_root(*object);
+        }
+        for object in self.builtin_realm_globals.values() {
+            roots.mark_object_root(*object);
+        }
         for value in [
             &self.function_restricted_thrower,
             &self.function_legacy_caller_getter,
@@ -538,58 +607,63 @@ impl NativeContext {
         .into_iter()
         .flatten()
         {
-            roots.value_roots.push(value.clone());
+            roots.mark_value_root(value);
         }
         for builtin in &self.builtin_registry {
-            roots.object_roots.push(builtin.object);
+            roots.mark_object_root(builtin.object);
             if let Some(bound) = &builtin.bound {
-                roots.value_roots.push(bound.target.clone());
-                roots.value_roots.push(bound.this_value.clone());
-                roots.value_roots.extend(bound.args.iter().cloned());
+                roots.mark_value_root(&bound.target);
+                roots.mark_value_root(&bound.this_value);
+                for value in &bound.args {
+                    roots.mark_value_root(value);
+                }
             }
         }
         for promise in &self.promises {
             match &promise.state {
                 PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => {
-                    roots.value_roots.push(value.clone());
+                    roots.mark_value_root(value);
                 }
                 PromiseState::Pending => {}
             }
             for reaction in &promise.reactions {
+                roots.mark_value_root(&reaction.resolve);
+                roots.mark_value_root(&reaction.reject);
                 if let Some(value) = &reaction.on_fulfilled {
-                    roots.value_roots.push(value.clone());
+                    roots.mark_value_root(value);
                 }
                 if let Some(value) = &reaction.on_rejected {
-                    roots.value_roots.push(value.clone());
+                    roots.mark_value_root(value);
                 }
             }
         }
         for job in self.job_queue.iter() {
             match job {
-                Job::PromiseReaction(job) => roots.value_roots.push(job.value.clone()),
+                Job::PromiseReaction(job) => roots.mark_value_root(&job.value),
                 Job::PromiseCallback(job) => {
-                    roots.value_roots.push(job.value.clone());
+                    roots.mark_value_root(&job.value);
+                    roots.mark_value_root(&job.resolve);
+                    roots.mark_value_root(&job.reject);
                     if let Some(value) = &job.on_fulfilled {
-                        roots.value_roots.push(value.clone());
+                        roots.mark_value_root(value);
                     }
                     if let Some(value) = &job.on_rejected {
-                        roots.value_roots.push(value.clone());
+                        roots.mark_value_root(value);
                     }
                 }
                 Job::PromiseResolveThenable(job) => {
-                    roots.value_roots.push(job.thenable.clone());
-                    roots.value_roots.push(job.then.clone());
+                    roots.mark_value_root(&job.promise_to_resolve);
+                    roots.mark_value_root(&job.thenable);
+                    roots.mark_value_root(&job.then);
                 }
                 Job::HostCallback(_) => {}
             }
         }
         for state in self.disposable_stacks.values() {
             for entry in &state.entries {
-                roots.value_roots.extend([
-                    entry.value.clone(),
-                    entry.disposer.clone(),
-                    entry.this_value.clone(),
-                ]);
+                roots.mark_value_root(&entry.value);
+                roots.mark_value_root(&entry.disposer);
+                roots.mark_value_root(&entry.this_value);
             }
         }
     }
@@ -606,6 +680,8 @@ impl NativeContext {
         });
         self.strict_functions
             .retain(|function| self.heap.contains_function(*function));
+        self.private_slots
+            .retain(|object, _| self.heap.contains_object(*object));
         self.object_values.retain(|object, value| {
             self.heap.contains_object(*object) && value_references_live_heap(value, &self.heap)
         });
@@ -613,9 +689,13 @@ impl NativeContext {
             .retain(|object| self.heap.contains_object(*object));
         self.arguments_objects
             .retain(|object| self.heap.contains_object(*object));
+        self.error_object_names
+            .retain(|object, _| self.heap.contains_object(*object));
         self.raw_json_objects
             .retain(|object, _| self.heap.contains_object(*object));
         self.disposable_stacks
+            .retain(|object, _| self.heap.contains_object(*object));
+        self.intl_objects
             .retain(|object, _| self.heap.contains_object(*object));
         let builtin_count = self.builtin_registry.len();
         self.builtin_realm_globals.retain(|builtin, global| {

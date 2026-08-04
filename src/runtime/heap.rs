@@ -209,6 +209,18 @@ impl Heap {
         self.live_objects()
     }
 
+    pub(crate) fn object_slots(&self) -> usize {
+        self.objects.len()
+    }
+
+    pub(crate) fn environment_slots(&self) -> usize {
+        self.environments.len()
+    }
+
+    pub(crate) fn function_slots(&self) -> usize {
+        self.functions.len()
+    }
+
     #[must_use]
     pub fn stats(&self) -> HeapStats {
         HeapStats {
@@ -225,19 +237,19 @@ impl Heap {
     pub(crate) fn sweep(&mut self, marks: &HeapMarks) -> CollectionStats {
         let before = self.stats();
         for (index, slot) in self.objects.iter_mut().enumerate() {
-            if slot.is_some() && !marks.objects.contains(&ObjectId(index as u32)) {
+            if slot.is_some() && !marks.contains_object(ObjectId(index as u32)) {
                 *slot = None;
                 self.free_objects.push(index as u32);
             }
         }
         for (index, slot) in self.environments.iter_mut().enumerate() {
-            if slot.is_some() && !marks.environments.contains(&EnvironmentId(index as u32)) {
+            if slot.is_some() && !marks.contains_environment(EnvironmentId(index as u32)) {
                 *slot = None;
                 self.free_environments.push(index as u32);
             }
         }
         for (index, slot) in self.functions.iter_mut().enumerate() {
-            if slot.is_some() && !marks.functions.contains(&FunctionId(index as u32)) {
+            if slot.is_some() && !marks.contains_function(FunctionId(index as u32)) {
                 *slot = None;
                 self.free_functions.push(index as u32);
             }
@@ -384,10 +396,10 @@ mod tests {
         let object = heap.allocate_object(JsObject::ordinary()).unwrap();
         let environment = heap.allocate_environment(Environment::default()).unwrap();
         let function = heap.allocate_function(empty_function()).unwrap();
-        let mut marks = HeapMarks::default();
-        marks.objects.insert(object);
-        marks.environments.insert(environment);
-        marks.functions.insert(function);
+        let mut marks = HeapMarks::for_heap(&heap);
+        assert!(marks.mark_object(object));
+        assert!(marks.mark_environment(environment));
+        assert!(marks.mark_function(function));
 
         heap.sweep(&marks);
 
