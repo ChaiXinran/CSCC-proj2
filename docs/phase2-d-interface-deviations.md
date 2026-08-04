@@ -18,3 +18,9 @@ D 组没有修改 `src/contracts.rs`、`src/runtime/mod.rs` 或 `src/lib.rs`。�
 ## 诊断统计边界
 
 名字解析计数按每次 `NativeRuntime::evaluate` 重置并输出。JetStream staged runner 会分别执行 driver、资源和 launch，因此诊断日志包含多个 `name_resolution:` 记录；汇总工具应累加同一进程的全部记录，不能只读取最后一条。
+
+## 非简单参数与 `arguments` 函数声明
+
+共享文档没有规定非简单参数列表的参数初始化环境细节。默认参数表达式必须先看到隐式 `arguments` 对象；函数体中同名的直接 `function arguments(){}` 声明不能提前遮蔽它。因此 D 组采用保守例外：只要存在参数 preamble，名为 `arguments` 的直接函数声明仍走名字绑定路径，不分配 Local Slot。普通直接函数声明继续进入函数 activation 的 Local Layout。
+
+这项例外由 Test262 `arguments-with-arguments-fn.js` 及本地 Annex B/arguments 回归测试覆盖，避免把函数体声明错误地提升进参数初始化环境。

@@ -625,3 +625,20 @@ former `isolated-host` path was removed, and multi-file ordering was exercised.
 --check`, `cargo check --locked --all-targets`, `cargo test --locked
 --all-targets`, and `cargo clippy --locked --all-targets -- -D warnings` all
 passed.
+
+## All-staged runner validation follow-up
+
+The generated-runner diagnostic script now aggregates every
+`name_resolution:` record emitted by staged driver/resource/launch evaluations,
+instead of retaining only the final evaluation. The full 19-runner protected
+matrix completed at one iteration with a 150-second timeout and 1.5 GiB
+working-set ceiling: 12 PASS, 5 MEMORY_LIMIT, 1 ASSERTION_FAILURE, and 1
+ENGINE_FAILURE, with no timeout or leaked process.
+
+This confirms that no canonical runner retains embedded or joined workload
+source, but it also exposes a remaining semantic boundary: regexp fails while
+executing a staged resource because separate top-level evaluations do not yet
+provide the original shell's shared function scope. The structural runner fix
+must not be reverted to whole-workload `new Function` compilation to hide this
+failure. Complete results and RSS values are in
+`docs/JetStream/jetstream-generated-all-staged-local-slot-2026-08-04.md`.

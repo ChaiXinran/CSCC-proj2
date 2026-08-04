@@ -1824,8 +1824,25 @@ impl Compiler {
         }
         let mut function_var_names = Vec::new();
         collect_var_names(&body.statements, &mut function_var_names);
+        let function_var_set: HashSet<String> = function_var_names.iter().cloned().collect();
         for name in &function_var_names {
             add_local(name.clone(), false)?;
+        }
+        // FunctionDeclarationInstantiation creates direct function-body
+        // declarations in the same variable environment as `var`. Do not
+        // include nested block functions here: their lexical/Annex B rules are
+        // handled by the existing declaration lowering.
+        for statement in &body.statements {
+            if let Statement::FunctionDeclaration { name, .. } = statement {
+                // Non-simple parameter lists have a distinct parameter
+                // environment. Its `arguments` object must remain visible to
+                // default expressions before a body declaration named
+                // `arguments` replaces the body binding.
+                if name == "arguments" && !preamble.is_empty() {
+                    continue;
+                }
+                add_local(name.clone(), false)?;
+            }
         }
 
         let mut fn_chunk = Chunk::default();
@@ -1868,7 +1885,11 @@ impl Compiler {
                     // if param === undefined, store the default value.
                     // Stack before: []
                     let name_idx = self.add_name(name, &mut fn_chunk)?;
-                    fn_chunk.emit(Instruction::LoadName(name_idx)); // [param_val]
+                    if let Some(slot) = fn_context.local_slot(name) {
+                        fn_chunk.emit(Instruction::LoadLocal(slot)); // [param_val]
+                    } else {
+                        fn_chunk.emit(Instruction::LoadName(name_idx)); // [param_val]
+                    }
                     fn_chunk.emit(Instruction::Duplicate); // [param_val, param_val]
                     let undef_c = fn_chunk
                         .add_constant(Constant::Undefined)
@@ -1885,7 +1906,11 @@ impl Compiler {
                     if is_anonymous_function_definition(default_expr) {
                         fn_chunk.emit(Instruction::SetFunctionName(name_idx));
                     }
-                    fn_chunk.emit(Instruction::StoreName(name_idx)); // [default]
+                    if let Some(slot) = fn_context.local_slot(name) {
+                        fn_chunk.emit(Instruction::StoreLocal(slot)); // [default]
+                    } else {
+                        fn_chunk.emit(Instruction::StoreName(name_idx)); // [default]
+                    }
                     fn_chunk.emit(Instruction::Pop); // []
                     let jump_end = fn_chunk.emit(Instruction::Jump(usize::MAX));
                     // NOT undefined path: [param_val, is_undef(=false)]
@@ -1904,7 +1929,11 @@ impl Compiler {
                 }
                 FunctionParam::Pattern(pattern, default_expr) => {
                     let ph_idx = self.add_name(placeholder, &mut fn_chunk)?;
-                    fn_chunk.emit(Instruction::LoadName(ph_idx)); // [arg_val]
+                    if let Some(slot) = fn_context.local_slot(placeholder) {
+                        fn_chunk.emit(Instruction::LoadLocal(slot)); // [arg_val]
+                    } else {
+                        fn_chunk.emit(Instruction::LoadName(ph_idx)); // [arg_val]
+                    }
                     if let Some(def) = default_expr {
                         self.emit_binding_default(def, &mut fn_chunk, &mut fn_context)?;
                     }
@@ -1917,7 +1946,11 @@ impl Compiler {
                 }
                 FunctionParam::RestPattern(pattern) => {
                     let ph_idx = self.add_name(placeholder, &mut fn_chunk)?;
-                    fn_chunk.emit(Instruction::LoadName(ph_idx)); // [rest_array]
+                    if let Some(slot) = fn_context.local_slot(placeholder) {
+                        fn_chunk.emit(Instruction::LoadLocal(slot)); // [rest_array]
+                    } else {
+                        fn_chunk.emit(Instruction::LoadName(ph_idx)); // [rest_array]
+                    }
                     self.compile_binding_pattern(
                         VariableKind::Var,
                         pattern,
@@ -1969,6 +2002,13 @@ impl Compiler {
                     std::collections::HashSet::new();
                 for name in annex_b_candidates {
                     if already_hoisted.contains(&name) {
+                        continue;
+                    }
+                    // An explicit `var name` was already initialized through
+                    // its activation slot above. Annex B reuses that binding;
+                    // initializing the same slot twice is a TypeError.
+                    if function_var_set.contains(&name) {
+                        already_hoisted.insert(name);
                         continue;
                     }
                     // Skip: already bound as a formal param, 'arguments' (always in paramNames),

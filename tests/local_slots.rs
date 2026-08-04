@@ -47,6 +47,47 @@ fn lowers_parameters_and_function_vars_to_local_slots() {
 }
 
 #[test]
+fn direct_function_declarations_are_activation_locals() {
+    let chunk = compile("function outer() { function helper() { return 1; } return helper(); }");
+    let outer = &chunk.functions[0];
+    assert!(
+        outer
+            .local_layout
+            .bindings
+            .iter()
+            .any(|binding| binding.name == "helper")
+    );
+    assert!(outer.chunk.instructions.iter().any(|instruction| matches!(
+        instruction,
+        Instruction::LoadLocal(slot)
+            if outer.local_layout.bindings[usize::from(slot.0)].name == "helper"
+    )));
+}
+
+#[test]
+fn parameter_preamble_uses_local_slots() {
+    let chunk = compile(
+        "function defaults(value = 1) { return value; }
+         function pattern({ item } = { item: 2 }) { return item; }
+         function rest(...[first]) { return first; }",
+    );
+    for function in &chunk.functions {
+        let preamble = &function.chunk.instructions[..function.chunk.function_body_start];
+        assert!(
+            preamble
+                .iter()
+                .any(|instruction| matches!(instruction, Instruction::LoadLocal(_))),
+            "missing preamble local load for {:?}",
+            function.name
+        );
+        assert!(!preamble.iter().any(|instruction| matches!(
+            instruction,
+            Instruction::LoadName(_) | Instruction::StoreName(_)
+        )));
+    }
+}
+
+#[test]
 fn closures_keep_parent_access_on_the_name_fallback() {
     let chunk = compile("function outer(value) { return function () { return value; }; }");
     let inner = &chunk.functions[0].chunk.functions[0];
@@ -106,6 +147,19 @@ fn local_slots_preserve_runtime_semantics() {
         )
         .unwrap();
     assert_eq!(report.value, "6:7");
+}
+
+#[test]
+fn function_slots_preserve_annex_b_and_arguments_bindings() {
+    let report = Engine::default()
+        .execute(
+            "function annex() { var helper; { function helper() {} } return typeof helper; }
+             function namedArguments() { function arguments() {} return typeof arguments; }
+             annex() + ':' + namedArguments();",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(report.value, "function:function");
 }
 
 #[test]
