@@ -2,56 +2,78 @@
 
 use std::collections::HashMap;
 
-use super::{PropertyDescriptor, Trace, Tracer};
+use super::{JsString, PropertyDescriptor, Trace, Tracer};
+
+pub type PropertyName = JsString;
+
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PropertySlotId(pub u32);
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropertyEntry {
-    pub key: String,
+    pub key: PropertyName,
     pub descriptor: PropertyDescriptor,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PropertyMap {
-    entries: Vec<PropertyEntry>,
-    index: HashMap<String, usize>,
+    entries: Vec<Option<PropertyEntry>>,
+    index: HashMap<PropertyName, PropertySlotId>,
+    tombstones: usize,
+    compaction_count: u64,
+    delete_count: u64,
 }
 
 impl PropertyMap {
     #[must_use]
     pub fn get(&self, key: &str) -> Option<&PropertyDescriptor> {
-        let index = self.index.get(key)?;
-        Some(&self.entries[*index].descriptor)
+        self.descriptor_at(self.slot_of(key)?)
     }
 
     pub fn get_mut(&mut self, key: &str) -> Option<&mut PropertyDescriptor> {
-        let index = *self.index.get(key)?;
-        Some(&mut self.entries[index].descriptor)
+        let slot = self.slot_of(key)?.0 as usize;
+        self.entries
+            .get_mut(slot)?
+            .as_mut()
+            .map(|entry| &mut entry.descriptor)
     }
 
-    pub fn define(&mut self, key: impl Into<String>, descriptor: PropertyDescriptor) {
+    pub fn define(&mut self, key: impl Into<PropertyName>, descriptor: PropertyDescriptor) {
         let key = key.into();
-        if let Some(index) = self.index.get(&key).copied() {
-            self.entries[index].descriptor = descriptor;
-            return;
+        if let Some(slot) = self.index.get(key.as_str()).copied() {
+            if let Some(entry) = self
+                .entries
+                .get_mut(slot.0 as usize)
+                .and_then(Option::as_mut)
+            {
+                entry.descriptor = descriptor;
+                return;
+            }
+            debug_assert!(false, "property index points at a tombstone");
+            self.index.remove(key.as_str());
         }
 
-        let index = self.entries.len();
-        self.entries.push(PropertyEntry {
+        let slot = PropertySlotId(
+            u32::try_from(self.entries.len()).expect("property slot count exceeds u32 range"),
+        );
+        self.entries.push(Some(PropertyEntry {
             key: key.clone(),
             descriptor,
-        });
-        self.index.insert(key, index);
+        }));
+        self.index.insert(key, slot);
     }
 
     pub fn delete(&mut self, key: &str) -> Option<PropertyDescriptor> {
-        let index = self.index.remove(key)?;
-        let entry = self.entries.remove(index);
-        for value in self.index.values_mut() {
-            if *value > index {
-                *value -= 1;
-            }
+        let slot = self.index.remove(key)?;
+        let entry = self.entries.get_mut(slot.0 as usize)?.take()?;
+        self.tombstones = self.tombstones.saturating_add(1);
+        self.delete_count = self.delete_count.saturating_add(1);
+        let descriptor = entry.descriptor;
+        if self.should_compact() {
+            self.compact();
         }
-        Some(entry.descriptor)
+        Some(descriptor)
     }
 
     #[must_use]
@@ -60,12 +82,12 @@ impl PropertyMap {
     }
 
     #[must_use]
-    pub fn keys(&self) -> Vec<String> {
+    pub fn keys(&self) -> Vec<PropertyName> {
         let mut array_indices = Vec::new();
         let mut ordinary = Vec::new();
 
-        for entry in &self.entries {
-            if let Some(index) = array_index(&entry.key) {
+        for entry in self.entries.iter().flatten() {
+            if let Some(index) = array_index(entry.key.as_str()) {
                 array_indices.push((index, entry.key.clone()));
             } else {
                 ordinary.push(entry.key.clone());
@@ -81,20 +103,83 @@ impl PropertyMap {
     }
 
     #[must_use]
-    pub fn enumerable_keys(&self) -> Vec<String> {
+    pub fn enumerable_keys(&self) -> Vec<PropertyName> {
         self.keys()
             .into_iter()
             .filter(|key| {
-                self.get(key)
+                self.get(key.as_str())
                     .is_some_and(|descriptor| descriptor.enumerable)
             })
             .collect()
+    }
+
+    #[must_use]
+    pub fn slot_of(&self, key: &str) -> Option<PropertySlotId> {
+        self.index.get(key).copied()
+    }
+
+    #[must_use]
+    pub fn descriptor_at(&self, slot: PropertySlotId) -> Option<&PropertyDescriptor> {
+        self.entries
+            .get(slot.0 as usize)?
+            .as_ref()
+            .map(|entry| &entry.descriptor)
+    }
+
+    #[must_use]
+    pub fn property_count(&self) -> usize {
+        self.index.len()
+    }
+
+    #[must_use]
+    pub fn tombstone_count(&self) -> usize {
+        self.tombstones
+    }
+
+    #[must_use]
+    pub fn compaction_count(&self) -> u64 {
+        self.compaction_count
+    }
+
+    #[must_use]
+    pub fn delete_count(&self) -> u64 {
+        self.delete_count
+    }
+
+    #[must_use]
+    pub fn property_key_bytes(&self) -> usize {
+        self.entries
+            .iter()
+            .flatten()
+            .map(|entry| entry.key.len())
+            .sum()
+    }
+
+    fn should_compact(&self) -> bool {
+        self.entries.len() >= 64 && self.tombstones.saturating_mul(4) >= self.entries.len()
+    }
+
+    fn compact(&mut self) {
+        let live_entries = self.entries.len().saturating_sub(self.tombstones);
+        let mut entries = Vec::with_capacity(live_entries);
+        let mut index = HashMap::with_capacity(live_entries);
+        for entry in self.entries.drain(..).flatten() {
+            let slot = PropertySlotId(
+                u32::try_from(entries.len()).expect("property slot count exceeds u32 range"),
+            );
+            index.insert(entry.key.clone(), slot);
+            entries.push(Some(entry));
+        }
+        self.entries = entries;
+        self.index = index;
+        self.tombstones = 0;
+        self.compaction_count = self.compaction_count.saturating_add(1);
     }
 }
 
 impl Trace for PropertyMap {
     fn trace(&self, tracer: &mut Tracer<'_>) {
-        for entry in &self.entries {
+        for entry in self.entries.iter().flatten() {
             entry.descriptor.trace(tracer);
         }
     }
@@ -103,19 +188,28 @@ impl Trace for PropertyMap {
 impl PropertyMap {
     #[must_use]
     pub(crate) fn estimated_bytes(&self) -> usize {
-        std::mem::size_of::<Self>().saturating_add(
-            self.entries
-                .iter()
-                .map(|entry| {
-                    entry
-                        .key
-                        .len()
-                        .saturating_add(entry.descriptor.estimated_bytes())
-                })
-                .sum::<usize>(),
-        )
+        std::mem::size_of::<Self>()
+            .saturating_add(
+                self.entries
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<Option<PropertyEntry>>()),
+            )
+            .saturating_add(
+                self.index
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<(PropertyName, PropertySlotId)>()),
+            )
+            .saturating_add(self.property_key_bytes())
+            .saturating_add(
+                self.entries
+                    .iter()
+                    .flatten()
+                    .map(|entry| entry.descriptor.estimated_bytes())
+                    .sum::<usize>(),
+            )
     }
 }
+
 fn array_index(key: &str) -> Option<usize> {
     if key.is_empty() || !key.chars().all(|ch| ch.is_ascii_digit()) {
         return None;
@@ -125,4 +219,64 @@ fn array_index(key: &str) -> Option<usize> {
         return None;
     }
     (index.to_string() == key).then_some(index as usize)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PropertyMap;
+    use crate::runtime::{JsString, JsValue, PropertyDescriptor};
+
+    fn descriptor(value: f64) -> PropertyDescriptor {
+        PropertyDescriptor::data(JsValue::Number(value))
+    }
+
+    fn key_strings(map: &PropertyMap) -> Vec<String> {
+        map.keys().into_iter().map(JsString::into_owned).collect()
+    }
+
+    #[test]
+    fn delete_and_redefine_appends_without_moving_other_slots() {
+        let mut map = PropertyMap::default();
+        map.define("a", descriptor(1.0));
+        map.define("b", descriptor(2.0));
+        let b_slot = map.slot_of("b").unwrap();
+
+        map.delete("a").unwrap();
+        map.define("a", descriptor(3.0));
+
+        assert_eq!(key_strings(&map), ["b", "a"]);
+        assert_eq!(map.slot_of("b"), Some(b_slot));
+        assert_eq!(map.tombstone_count(), 1);
+    }
+
+    #[test]
+    fn compaction_preserves_ecmascript_key_order() {
+        let mut map = PropertyMap::default();
+        for index in 0..80 {
+            map.define(format!("key-{index}"), descriptor(index as f64));
+        }
+        map.define("10", descriptor(10.0));
+        map.define("2", descriptor(2.0));
+        for index in 0..24 {
+            map.delete(&format!("key-{index}")).unwrap();
+        }
+
+        assert_eq!(map.compaction_count(), 1);
+        assert!(map.tombstone_count() * 4 < map.entries.len());
+        let keys = key_strings(&map);
+        assert_eq!(&keys[..2], ["2", "10"]);
+        assert_eq!(&keys[2..4], ["key-24", "key-25"]);
+    }
+
+    #[test]
+    fn updating_a_descriptor_does_not_change_order_or_slot() {
+        let mut map = PropertyMap::default();
+        map.define("a", descriptor(1.0));
+        let slot = map.slot_of("a").unwrap();
+        map.define("a", descriptor(2.0));
+
+        assert_eq!(map.slot_of("a"), Some(slot));
+        assert_eq!(key_strings(&map), ["a"]);
+        assert_eq!(map.property_count(), 1);
+    }
 }

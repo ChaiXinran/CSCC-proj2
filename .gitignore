@@ -20,6 +20,7 @@
 !/reports/.version-report/atomics-partC-report.md
 !/reports/.version-report/jetstream-b-report.md
 !/reports/.version-report/three-track-partB-report.md
+!/reports/.version-report/phase2-partE-report.md
 /reports/.native-test262-tmp
 # Local editor and agent state
 /.vscode/
