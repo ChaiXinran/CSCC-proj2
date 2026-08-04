@@ -557,7 +557,7 @@ impl JsObject {
     }
 
     pub fn define_property(&mut self, name: impl Into<String>, descriptor: PropertyDescriptor) {
-        self.properties.define(name, descriptor);
+        self.properties.define(name.into(), descriptor);
     }
 
     /// Update the logical length if an index write extends past the current length.
@@ -817,7 +817,7 @@ impl JsObject {
                         .properties
                         .get(&key)
                         .is_none_or(|descriptor| descriptor.configurable);
-                    (index, key, configurable)
+                    (index, key.into_owned(), configurable)
                 })
             })
             .collect();
@@ -983,7 +983,12 @@ impl JsObject {
         } else if let ObjectKind::TypedArray { length, .. } = &self.kind {
             keys.extend((0..(*length).min(MAX_DENSE_SIZE)).map(|index| index.to_string()));
         }
-        keys.extend(self.properties.keys());
+        keys.extend(
+            self.properties
+                .keys()
+                .into_iter()
+                .map(|key| key.into_owned()),
+        );
         keys
     }
 
@@ -1005,7 +1010,12 @@ impl JsObject {
         } else if let ObjectKind::TypedArray { length, .. } = &self.kind {
             keys.extend((0..(*length).min(MAX_DENSE_SIZE)).map(|index| index.to_string()));
         }
-        keys.extend(self.properties.enumerable_keys());
+        keys.extend(
+            self.properties
+                .enumerable_keys()
+                .into_iter()
+                .map(|key| key.into_owned()),
+        );
         keys
     }
 }

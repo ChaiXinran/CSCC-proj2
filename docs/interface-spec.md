@@ -352,3 +352,17 @@ shared operation helpers rather than native checked-integer operations.
 
 The normative parsing, operation, error, comparison, and resource-limit rules
 are defined in [Native V12 Shared Interface](version/native-v12-interface.md).
+
+## Phase 2 Compact Property Storage Contract
+
+Runtime property names use `JsString` through the `PropertyName` alias. A
+`PropertyMap` stores ordered `Option<PropertyEntry>` slots and maps each live
+name to `PropertySlotId`; deletion leaves a tombstone and must not move later
+slots. Compaction is delayed until at least 64 slots exist and tombstones reach
+25%, and it must preserve the order of all remaining properties.
+
+`keys()` and `enumerable_keys()` return shared `PropertyName` handles. Conversion
+to owned `String` is restricted to the final object enumeration API boundary.
+Array-index strings remain numerically sorted before ordinary string keys;
+updating an existing descriptor does not change order, while delete followed by
+redefinition appends a new entry. GC tracing skips tombstones.

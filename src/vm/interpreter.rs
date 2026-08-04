@@ -2098,6 +2098,48 @@ impl Vm {
                         false,
                     )?;
                 }
+                Instruction::LoadLocal(slot) => {
+                    context.record_load_local();
+                    let environment =
+                        context.current_activation_environment().ok_or_else(|| {
+                            VmError::runtime("LoadLocal executed without a function activation")
+                        })?;
+                    match context.get_local(environment, slot) {
+                        Ok(value) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::StoreLocal(slot) => {
+                    context.record_store_local();
+                    let value = self.pop_value()?;
+                    let environment =
+                        context.current_activation_environment().ok_or_else(|| {
+                            VmError::runtime("StoreLocal executed without a function activation")
+                        })?;
+                    match context.set_local(environment, slot, value.clone()) {
+                        Ok(()) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::InitializeLocal(slot) => {
+                    let value = self.pop_value()?;
+                    let environment =
+                        context.current_activation_environment().ok_or_else(|| {
+                            VmError::runtime(
+                                "InitializeLocal executed without a function activation",
+                            )
+                        })?;
+                    if let Err(error) = context.initialize_local(environment, slot, value) {
+                        abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                        discard_saved_finally = true;
+                    }
+                }
                 Instruction::DeclareEvalVar(index) => {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
@@ -2118,6 +2160,7 @@ impl Vm {
                     }
                 }
                 Instruction::LoadName(index) => {
+                    context.record_load_name();
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
@@ -2230,6 +2273,7 @@ impl Vm {
                     }
                 }
                 Instruction::StoreName(index) => {
+                    context.record_store_name();
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
@@ -4072,7 +4116,8 @@ impl Vm {
             )?;
             record.current_environment
         } else {
-            let environment = context.push_environment(function.environment)?;
+            let environment =
+                context.push_function_environment(function.environment, &function.local_layout)?;
             if let Err(error) = self.bind_function_environment(
                 record.function,
                 &function,
@@ -7361,7 +7406,8 @@ impl Vm {
         if function.is_generator {
             let stack_base = self.stack.len();
             let caller_environment_depth = context.environment_depth();
-            let environment = context.push_environment(function.environment)?;
+            let environment =
+                context.push_function_environment(function.environment, &function.local_layout)?;
             if let Err(error) = self.bind_function_environment(
                 function_id,
                 &function,
@@ -7441,7 +7487,8 @@ impl Vm {
         }
         let stack_base = self.stack.len();
         let caller_environment_depth = context.environment_depth();
-        let environment = context.push_environment(function.environment)?;
+        let environment =
+            context.push_function_environment(function.environment, &function.local_layout)?;
 
         for (index, parameter) in function.params.iter().enumerate() {
             let value = arguments.get(index).cloned().unwrap_or(JsValue::Undefined);

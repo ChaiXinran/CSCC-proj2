@@ -30,6 +30,13 @@ if (source.includes('scripts.join("\\n")'))
     throw new Error("runner concatenates workload scripts");
 if (Buffer.byteLength(source, "utf8") > 512 * 1024)
     throw new Error("runner exceeds the 512 KiB structural limit");
+if (manifest.entryExecutionMode !== "staged")
+    throw new Error("runner does not use per-file staged entry execution");
+
+const resourceDirectives = [...source.matchAll(/^\/\/ AGENTJS_RESOURCE:(.+)$/gm)]
+    .map((match) => match[1]);
+if (JSON.stringify(resourceDirectives) !== JSON.stringify(manifest.entryFiles))
+    throw new Error("runner resource directives do not match ordered manifest entries");
 
 const required = new Set([
     ...manifest.entryFiles,

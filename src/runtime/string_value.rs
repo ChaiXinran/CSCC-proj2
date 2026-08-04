@@ -1,4 +1,5 @@
 //! Shared runtime string storage.
+//! Shared runtime string handle used by phase-two hot paths.
 
 use std::{borrow::Borrow, fmt, ops::Deref, sync::Arc};
 
@@ -60,6 +61,7 @@ impl Borrow<str> for JsString {
 impl From<&str> for JsString {
     fn from(value: &str) -> Self {
         Self(Arc::from(value))
+        Self::new(value)
     }
 }
 
@@ -76,8 +78,8 @@ impl From<Arc<str>> for JsString {
 }
 
 impl fmt::Display for JsString {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
     }
 }
 
@@ -126,5 +128,9 @@ mod tests {
 
         assert_eq!(left.finish(), right.finish());
         assert_eq!(shared.into_owned(), source.as_ref());
+        let original = JsString::from("shared property name");
+        let clone = original.clone();
+        assert!(JsString::ptr_eq(&original, &clone));
+        assert_eq!(original, clone);
     }
 }

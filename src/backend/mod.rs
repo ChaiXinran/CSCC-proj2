@@ -186,10 +186,24 @@ impl NativeRuntime {
         let chunk = self.prepare_chunk(source).map_err(classify_native_error)?;
         if self.config.diagnostics {
             eprintln!("execute_start");
+            self.context.reset_name_resolution_metrics();
         }
-        self.pipeline
+        let result = self
+            .pipeline
             .execute(&chunk, &mut self.context)
-            .map_err(classify_native_error)
+            .map_err(classify_native_error);
+        if self.config.diagnostics {
+            let metrics = self.context.name_resolution_metrics();
+            eprintln!(
+                "name_resolution:load_local_count={} store_local_count={} load_name_count={} store_name_count={} environment_hops={}",
+                metrics.load_local_count,
+                metrics.store_local_count,
+                metrics.load_name_count,
+                metrics.store_name_count,
+                metrics.environment_hops
+            );
+        }
+        result
     }
 
     fn prepare_chunk(&mut self, source: &str) -> Result<SharedChunk, NativeError> {

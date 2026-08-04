@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 16329,
   "entryFiles": [
     "./Octane/richards.js"
@@ -15,6 +15,6 @@
   "resourceHashes": {
     "./Octane/richards.js": "sha256:18f3e84777925f18d4a4b4f0d612d2158a008064f4272facfc1c1b2bbf880c91"
   },
-  "runnerSha256": "b1e8b3cefebc886d28335d9da8d9cc25b2f95203a4e6cf315d3091aec244f491",
+  "runnerSha256": "8e25ac4090d57c7c7c7d3a6082e6f7ba76f3eb946c34c23d8de549e71aac19c3",
   "phaseMarkers": false
 }

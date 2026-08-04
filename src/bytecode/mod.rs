@@ -13,8 +13,9 @@ pub(crate) mod compiler;
 mod opcode;
 
 pub use chunk::{
-    Chunk, ChunkCacheMetadata, ChunkError, Constant, EnvironmentCapturePolicy, ExceptionHandler,
-    FunctionTemplate, HandlerKind, SharedChunk, StackAnalysis,
+    Chunk, ChunkCacheMetadata, ChunkError, Constant, DynamicScopePolicy, EnvironmentCapturePolicy,
+    ExceptionHandler, FunctionTemplate, HandlerKind, LocalBindingLayout, LocalLayout, LocalSlot,
+    SharedChunk, StackAnalysis,
 };
 pub use compiler::{CompileError, Compiler};
 pub use opcode::{Instruction, StackEffect};

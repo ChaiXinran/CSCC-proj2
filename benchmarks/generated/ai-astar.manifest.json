@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 516797,
   "entryFiles": [
     "./SeaMonster/ai-astar.js"
@@ -15,6 +15,6 @@
   "resourceHashes": {
     "./SeaMonster/ai-astar.js": "sha256:746e18ca6916026c211a1537064d3efdca3a41de295eb2291e6c5e73f5f7faa1"
   },
-  "runnerSha256": "8c2c02f51ce973f4d69d7bc2890193dc624b830dda44e249073d5be4738be822",
+  "runnerSha256": "2c014fc14bb321ad553989d230c45cbd063b6ea3c687e2b0f3d9102923d7b0c4",
   "phaseMarkers": false
 }

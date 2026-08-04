@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 30128,
   "entryFiles": [
     "./SeaMonster/sjlc.js",
@@ -17,6 +17,6 @@
     "./SeaMonster/sjlc.js": "sha256:83e2199533f9ce83b37ed28bc5008da2fa0fce2a07283a147d6952e832848225",
     "./SeaMonster/stanford-crypto-sha256.js": "sha256:4a2229598c3f7e30b0b7121803f092c728ff8bcd4355676b052fc0f426114008"
   },
-  "runnerSha256": "ca8b133f0aa211d082a804bde03fd49abf5614eb7b66769517d8d79b163a1e86",
+  "runnerSha256": "c72ddade0ac995e4c9316ff60abd6e44821a7f33ca0542ae2ebfacecfd853792",
   "phaseMarkers": false
 }

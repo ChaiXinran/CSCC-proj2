@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::bytecode::SharedChunk;
+use crate::bytecode::{DynamicScopePolicy, LocalLayout, SharedChunk};
 use crate::vm::{Vm, VmError};
 
 use super::{EnvironmentId, JsValue, NativeContext, ObjectId, Trace, Tracer};
@@ -32,6 +32,8 @@ pub struct JsFunction {
     pub has_own_prototype_property: bool,
     pub prototype_writable: bool,
     pub uses_arguments: bool,
+    pub local_layout: std::sync::Arc<LocalLayout>,
+    pub dynamic_scope: DynamicScopePolicy,
     pub lexical_this: Option<JsValue>,
     pub lexical_new_target: Option<JsValue>,
     pub home_object: Option<ObjectId>,

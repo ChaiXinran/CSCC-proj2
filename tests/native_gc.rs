@@ -65,6 +65,27 @@ fn gc_collects_unreachable_objects_and_preserves_global_roots() {
 }
 
 #[test]
+fn property_tombstone_does_not_retain_deleted_descriptor_value() {
+    let mut context = NativeContext::default();
+    let child = context.create_object([]).unwrap();
+    let child_id = object_id(&child);
+    let container = context.create_object([("child".into(), child)]).unwrap();
+    let container_id = object_id(&container);
+    context.declare_global("container", container);
+
+    context
+        .heap_mut()
+        .object_mut(container_id)
+        .unwrap()
+        .delete_own_property("child")
+        .unwrap();
+    context.collect_garbage_for_vm(&Vm::default()).unwrap();
+
+    assert!(context.heap().object(container_id).is_some());
+    assert!(context.heap().object(child_id).is_none());
+}
+
+#[test]
 fn gc_preserves_closure_environment_and_captured_values() {
     let mut context = NativeContext::default();
     let outer = context
@@ -102,6 +123,8 @@ fn gc_preserves_closure_environment_and_captured_values() {
         has_own_prototype_property: true,
         prototype_writable: true,
         uses_arguments: false,
+        local_layout: std::sync::Arc::new(agentjs::bytecode::LocalLayout::default()),
+        dynamic_scope: agentjs::bytecode::DynamicScopePolicy::Static,
         lexical_this: None,
         lexical_new_target: None,
         home_object: None,

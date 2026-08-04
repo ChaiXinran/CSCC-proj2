@@ -77,6 +77,27 @@ foreach ($manifestFile in $manifests) {
     $detail = if ($detailMatch.Success) {
         ($detailMatch.Groups[1].Value + $detailMatch.Groups[2].Value).Trim()
     } else { $null }
+    $nameResolution = @([regex]::Matches(
+        $combined,
+        'name_resolution:load_local_count=(\d+) store_local_count=(\d+) load_name_count=(\d+) store_name_count=(\d+) environment_hops=(\d+)'
+    ))
+    [long]$loadLocalCount = 0
+    [long]$storeLocalCount = 0
+    [long]$loadNameCount = 0
+    [long]$storeNameCount = 0
+    [long]$environmentHops = 0
+    foreach ($sample in $nameResolution) {
+        $loadLocalCount += [long]$sample.Groups[1].Value
+        $storeLocalCount += [long]$sample.Groups[2].Value
+        $loadNameCount += [long]$sample.Groups[3].Value
+        $storeNameCount += [long]$sample.Groups[4].Value
+        $environmentHops += [long]$sample.Groups[5].Value
+    }
+    $localAccesses = $loadLocalCount + $storeLocalCount
+    $namedAccesses = $loadNameCount + $storeNameCount
+    $localFastPathPercent = if ($localAccesses + $namedAccesses) {
+        [math]::Round(100 * $localAccesses / ($localAccesses + $namedAccesses), 2)
+    } else { 0 }
     $logPath = Join-Path $OutputDirectory ($runnerName -replace '\.js$', '.txt')
     Set-Content -LiteralPath $logPath -Encoding utf8 -Value $combined
     $result = [pscustomobject]@{
@@ -94,6 +115,13 @@ foreach ($manifestFile in $manifests) {
         lastPhase = $lastPhase
         completed = $combined -match 'JETSTREAM_RUN_COMPLETE'
         detail = $detail
+        nameResolutionSamples = $nameResolution.Count
+        loadLocalCount = $loadLocalCount
+        storeLocalCount = $storeLocalCount
+        loadNameCount = $loadNameCount
+        storeNameCount = $storeNameCount
+        environmentHops = $environmentHops
+        localFastPathPercent = $localFastPathPercent
         log = (Split-Path -Leaf $logPath)
     }
     $results += $result

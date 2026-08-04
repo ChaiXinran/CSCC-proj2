@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 49671,
   "entryFiles": [
     "./Octane/crypto.js"
@@ -15,6 +15,6 @@
   "resourceHashes": {
     "./Octane/crypto.js": "sha256:efab270d7bee0c97545be209ff1c28e687513e822c19b348bb7fb9e02e2ac6b7"
   },
-  "runnerSha256": "b221e25e1d5df6029b41deff49fe9f315a998ff255acf6def0dba71f10151cfe",
+  "runnerSha256": "b6d84eedc16c5d5e33a459e21abb899f3a1fd90aeb7f69cc70d5318d4e0ddd04",
   "phaseMarkers": false
 }

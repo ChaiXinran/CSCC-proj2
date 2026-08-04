@@ -61,7 +61,7 @@ pub use object::{
 };
 pub use private::{PrivateBrandId, PrivateSlot};
 pub use property::{PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind};
-pub use property_map::{PropertyEntry, PropertyMap};
+pub use property_map::{PropertyEntry, PropertyMap, PropertyName, PropertySlotId};
 pub use string_value::JsString;
 pub use symbol::{Symbol, SymbolId, SymbolRegistry, WellKnownSymbols};
 pub use value::{JsValue, NativeErrorKind, NativeErrorValue};

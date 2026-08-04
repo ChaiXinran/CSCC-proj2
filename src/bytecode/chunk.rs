@@ -89,6 +89,11 @@ pub enum ChunkError {
         offset: usize,
         index: u16,
     },
+    InvalidLocalSlot {
+        offset: usize,
+        slot: LocalSlot,
+        local_count: usize,
+    },
     InvalidHandlerRange {
         index: usize,
         start: usize,
@@ -168,6 +173,15 @@ impl fmt::Display for ChunkError {
                     "instruction at offset {offset} references missing function {index}"
                 )
             }
+            Self::InvalidLocalSlot {
+                offset,
+                slot,
+                local_count,
+            } => write!(
+                f,
+                "instruction at offset {offset} references local slot {}, but layout has {local_count} bindings",
+                slot.0
+            ),
             Self::InvalidHandlerRange { index, start, end } => {
                 write!(
                     f,
@@ -245,6 +259,35 @@ pub enum EnvironmentCapturePolicy {
     CaptureCurrent,
 }
 
+/// Index of a binding in one function activation's local layout.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LocalSlot(pub u16);
+
+/// Static metadata for one activation-local binding.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBindingLayout {
+    pub name: String,
+    pub mutable: bool,
+    pub initialized_at_entry: bool,
+    pub lexical: bool,
+}
+
+/// Ordered activation-local bindings shared by every instance of a function.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalLayout {
+    pub bindings: Vec<LocalBindingLayout>,
+}
+
+/// Whether a function must preserve dynamic name-resolution semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DynamicScopePolicy {
+    Static,
+    DirectEval,
+    With,
+    DirectEvalAndWith,
+}
+
 /// Compiled representation of one function definition, stored in the parent
 /// chunk's function table and referenced by index.
 #[derive(Debug, Clone, PartialEq)]
@@ -273,6 +316,8 @@ pub struct FunctionTemplate {
     pub prototype_writable: bool,
     /// True when this function body directly references the `arguments` binding.
     pub uses_arguments: bool,
+    pub local_layout: Arc<LocalLayout>,
+    pub dynamic_scope: DynamicScopePolicy,
     pub environment_policy: EnvironmentCapturePolicy,
 }
 
@@ -522,6 +567,31 @@ impl Chunk {
             }
         }
         self.analyze_environments()?;
+        for template in &self.functions {
+            template.chunk.validate()?;
+            template
+                .chunk
+                .validate_local_slots(template.local_layout.bindings.len())?;
+        }
+        Ok(())
+    }
+
+    fn validate_local_slots(&self, local_count: usize) -> Result<(), ChunkError> {
+        for (offset, instruction) in self.instructions.iter().copied().enumerate() {
+            let slot = match instruction {
+                Instruction::LoadLocal(slot)
+                | Instruction::StoreLocal(slot)
+                | Instruction::InitializeLocal(slot) => slot,
+                _ => continue,
+            };
+            if usize::from(slot.0) >= local_count {
+                return Err(ChunkError::InvalidLocalSlot {
+                    offset,
+                    slot,
+                    local_count,
+                });
+            }
+        }
         Ok(())
     }
 

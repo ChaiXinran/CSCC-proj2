@@ -181,6 +181,8 @@ impl Vm {
             has_own_prototype_property: template.has_own_prototype_property,
             prototype_writable: template.prototype_writable,
             uses_arguments: template.uses_arguments,
+            local_layout: template.local_layout,
+            dynamic_scope: template.dynamic_scope,
             lexical_this,
             lexical_new_target,
             home_object,

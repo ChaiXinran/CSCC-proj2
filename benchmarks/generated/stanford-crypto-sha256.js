@@ -1,4 +1,5 @@
-
+// AGENTJS_RESOURCE:./SeaMonster/sjlc.js
+// AGENTJS_RESOURCE:./SeaMonster/stanford-crypto-sha256.js
 
 const isInBrowser = false;
 const isD8 = false;
@@ -52,7 +53,7 @@ var JetStreamParams = {
     testWorstCaseCountMap: {},
     testList: "stanford-crypto-sha256",
 };
-var __agentjsLoadEntry = (url) => readFile(url);
+var __agentjsLoadEntry = (url) => ({ __agentjsFile: url });
 var read = function (name, mode) {
     const text = readFile(name);
     if (mode !== "binary")

@@ -5,7 +5,7 @@
   "officialIterations": 60,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 48557,
   "entryFiles": [
     "./cdjs/constants.js",
@@ -37,6 +37,6 @@
     "./cdjs/vector_2d.js": "sha256:121c553a2cf3c1b31c484b337beffdaf8a5150b307404b90a3443e4c81e222c4",
     "./cdjs/vector_3d.js": "sha256:e8675d83ff5f24e66938c1d6eef970195f011a213701fe1c2967d99383b987b7"
   },
-  "runnerSha256": "5bb44a352815b0556bfd4e1fb9e1f190929a396f54164d8acd083f78ab8951a6",
+  "runnerSha256": "b68cef63086476789ac71510e9b004b3038b125db97295b9faacf346c0ca2baa",
   "phaseMarkers": false
 }

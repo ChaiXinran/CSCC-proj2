@@ -1,9 +1,28 @@
 //! Persistent state shared by native execution and integration.
 
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NameResolutionMetrics {
+    pub load_local_count: u64,
+    pub store_local_count: u64,
+    pub load_name_count: u64,
+    pub store_name_count: u64,
+    pub environment_hops: u64,
+}
+
+#[derive(Debug, Default)]
+struct NameResolutionMetricCells {
+    load_local_count: Cell<u64>,
+    store_local_count: Cell<u64>,
+    load_name_count: Cell<u64>,
+    store_name_count: Cell<u64>,
+    environment_hops: Cell<u64>,
+}
 
 use fancy_regex::Regex;
 
@@ -243,6 +262,7 @@ pub struct NativeContext {
     gc_marks: HeapMarks,
     gc_metrics: GcMetrics,
     host_services: HostServices,
+    name_resolution_metrics: NameResolutionMetricCells,
 }
 
 fn array_iterator_next_builtin(
@@ -341,6 +361,7 @@ impl NativeContext {
             gc_marks: HeapMarks::default(),
             gc_metrics: GcMetrics::default(),
             host_services: HostServices::default(),
+            name_resolution_metrics: NameResolutionMetricCells::default(),
         };
         context.install_core_global_bindings();
         context
@@ -1793,6 +1814,70 @@ impl NativeContext {
         self.current_environment
     }
 
+    pub fn reset_name_resolution_metrics(&self) {
+        self.name_resolution_metrics.load_local_count.set(0);
+        self.name_resolution_metrics.store_local_count.set(0);
+        self.name_resolution_metrics.load_name_count.set(0);
+        self.name_resolution_metrics.store_name_count.set(0);
+        self.name_resolution_metrics.environment_hops.set(0);
+    }
+
+    #[must_use]
+    pub fn name_resolution_metrics(&self) -> NameResolutionMetrics {
+        NameResolutionMetrics {
+            load_local_count: self.name_resolution_metrics.load_local_count.get(),
+            store_local_count: self.name_resolution_metrics.store_local_count.get(),
+            load_name_count: self.name_resolution_metrics.load_name_count.get(),
+            store_name_count: self.name_resolution_metrics.store_name_count.get(),
+            environment_hops: self.name_resolution_metrics.environment_hops.get(),
+        }
+    }
+
+    pub(crate) fn record_load_local(&self) {
+        self.name_resolution_metrics.load_local_count.set(
+            self.name_resolution_metrics
+                .load_local_count
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    pub(crate) fn record_store_local(&self) {
+        self.name_resolution_metrics.store_local_count.set(
+            self.name_resolution_metrics
+                .store_local_count
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    pub(crate) fn record_load_name(&self) {
+        self.name_resolution_metrics.load_name_count.set(
+            self.name_resolution_metrics
+                .load_name_count
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    pub(crate) fn record_store_name(&self) {
+        self.name_resolution_metrics.store_name_count.set(
+            self.name_resolution_metrics
+                .store_name_count
+                .get()
+                .saturating_add(1),
+        );
+    }
+
+    fn record_environment_hop(&self) {
+        self.name_resolution_metrics.environment_hops.set(
+            self.name_resolution_metrics
+                .environment_hops
+                .get()
+                .saturating_add(1),
+        );
+    }
+
     pub fn push_environment(
         &mut self,
         outer: Option<EnvironmentId>,
@@ -1806,6 +1891,56 @@ impl NativeContext {
         self.environment_stack.push(self.current_environment);
         self.current_environment = id;
         Ok(id)
+    }
+
+    pub fn push_function_environment(
+        &mut self,
+        outer: Option<EnvironmentId>,
+        layout: &crate::bytecode::LocalLayout,
+    ) -> Result<EnvironmentId, VmError> {
+        let environment = Environment::with_local_layout(outer, layout);
+        let id = self
+            .heap
+            .allocate_environment(environment)
+            .ok_or_else(|| VmError::runtime_limit("environment arena exhausted"))?;
+        self.environment_stack.push(self.current_environment);
+        self.current_environment = id;
+        Ok(id)
+    }
+
+    pub fn get_local(
+        &self,
+        environment: EnvironmentId,
+        slot: crate::bytecode::LocalSlot,
+    ) -> Result<JsValue, VmError> {
+        self.heap
+            .environment(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .get_local(slot)
+    }
+
+    pub fn set_local(
+        &mut self,
+        environment: EnvironmentId,
+        slot: crate::bytecode::LocalSlot,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        self.heap
+            .environment_mut(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .set_local(slot, value)
+    }
+
+    pub fn initialize_local(
+        &mut self,
+        environment: EnvironmentId,
+        slot: crate::bytecode::LocalSlot,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        self.heap
+            .environment_mut(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .initialize_local(slot, value)
     }
 
     pub fn push_with_environment(&mut self, value: JsValue) -> Result<EnvironmentId, VmError> {
@@ -2213,6 +2348,7 @@ impl NativeContext {
     ) -> Result<Option<(EnvironmentId, JsValue)>, VmError> {
         let mut current = Some(self.current_environment);
         while let Some(id) = current {
+            self.record_environment_hop();
             let environment = self
                 .heap
                 .environment(id)
@@ -2254,6 +2390,7 @@ impl NativeContext {
     ) -> Result<(bool, Option<(EnvironmentId, JsValue)>), VmError> {
         let mut current = Some(self.current_environment);
         while let Some(id) = current {
+            self.record_environment_hop();
             let environment = self
                 .heap
                 .environment(id)
@@ -2349,6 +2486,7 @@ impl NativeContext {
     pub fn set_binding(&mut self, name: &str, value: JsValue) -> Result<(), VmError> {
         let mut current = Some(self.current_environment);
         while let Some(id) = current {
+            self.record_environment_hop();
             let (outer, with_object, has_binding) = {
                 let environment = self
                     .heap
@@ -2515,6 +2653,11 @@ impl NativeContext {
     #[must_use]
     pub fn current_function(&self) -> Option<FunctionId> {
         self.call_frames.last().and_then(|frame| frame.function)
+    }
+
+    #[must_use]
+    pub fn current_activation_environment(&self) -> Option<EnvironmentId> {
+        self.call_frames.last().map(|frame| frame.environment)
     }
 
     pub(crate) fn agent_start_worker(&mut self) -> usize {
