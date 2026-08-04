@@ -1,4 +1,10 @@
-
+// AGENTJS_RESOURCE:./intl/src/helper.js
+// AGENTJS_RESOURCE:./intl/src/RelativeTimeFormat.js
+// AGENTJS_RESOURCE:./intl/benchmark.js
+// AGENTJS_RESOURCE:./intl/src/PluralRules.js
+// AGENTJS_RESOURCE:./intl/src/NumberFormat.js
+// AGENTJS_RESOURCE:./intl/src/ListFormat.js
+// AGENTJS_RESOURCE:./intl/src/DateTimeFormat.js
 
 const isInBrowser = false;
 const isD8 = false;
@@ -52,7 +58,7 @@ var JetStreamParams = {
     testWorstCaseCountMap: {},
     testList: "intl",
 };
-var __agentjsLoadEntry = (url) => readFile(url);
+var __agentjsLoadEntry = (url) => ({ __agentjsFile: url });
 var read = function (name, mode) {
     const text = readFile(name);
     if (mode !== "binary")

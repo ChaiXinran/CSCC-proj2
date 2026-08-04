@@ -5,7 +5,7 @@
   "officialIterations": 15,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 9173,
   "entryFiles": [
     "./utils/StartupBenchmark.js",
@@ -24,6 +24,6 @@
     "./jsdom-d3-startup/dist/bundle.min.js": "sha256:6358b21e94e869171f2ba1e6ee15672e7cea327fea6e9f33907135883185fc43",
     "./utils/StartupBenchmark.js": "sha256:0f622fb59d12753526a8fc149483544ed43732bbc1c74cf1e78b6da38cde4351"
   },
-  "runnerSha256": "e4f2b12958bfa45fa3a8d9124a14bdc741c4118beb38f8e4bd63db61ee4fcfb2",
+  "runnerSha256": "968d4c881e09700b9918f9acc3c169ee60ce96d3c6025213f6ea0f007c809851",
   "phaseMarkers": false
 }

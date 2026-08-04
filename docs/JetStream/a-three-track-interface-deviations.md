@@ -25,8 +25,8 @@ A 组采用以下内部协议：
 
 CLI 顶层执行 `entryFiles`；`preloadFiles` 与 `runtimeDiscoveredFiles` 可能是 CSV、JSON 或其他数据，不应作为 JavaScript 执行。它们保留在 manifest 的哈希表中，并由运行期 `readFile()` 按需读取。共享文档只写了“验证 manifest 所列文件存在”，没有明确三类资源是否都应执行，本实现按资源语义区分。
 
-## 小型与大型入口的隔离策略
+## 入口隔离语义
 
-共享接口同时要求“逐文件避免大型拼接”和“保持同一 Realm/Global Environment”，但当前引擎没有可跨多次 Host evaluation 持久化的函数词法环境。全部顶层 staged 会改变小型 workload 的隔离语义并增加全局持有；全部放回 `new Function` 又会让 WSL/threejs 重新整包拼接。
+早期实现曾为不超过 640 KiB 的入口保留 `isolated-host` 路径。该路径虽然不把源码嵌入 runner，却仍会在 Driver 内拼接完整 workload，并通过 `new Function` 再次编译，违反共享接口的逐文件要求，现已删除。
 
-A 组暂采用 manifest 可见的有界策略：入口总量不超过 640 KiB 时使用 `isolated-host`，文本从 Host 读取且不嵌入 runner；超过阈值使用 `staged` 逐文件执行。inline harness 另设 1 MiB 硬限制，runner 设 512 KiB 硬限制。该阈值策略不进入 `contracts.rs`，未来若引擎提供持久 Host script environment，应统一替换为真正的逐文件隔离执行。
+所有入口现在统一使用 `staged`：CLI 按 manifest 顺序读取并在同一 Runtime、Realm 和 global environment 中逐文件执行。这个选择完全消除了 workload 的整包拼接和二次源码编译。当前引擎尚无独立且可持久化的 Host script function environment，因此少数依赖函数级隔离的 workload 可能暴露顶层声明冲突；这属于共享接口未定义的语义差异，不能通过恢复整包 `new Function` 规避。inline harness 的 1 MiB 上限和 runner 的 512 KiB 上限继续保留，但 inline harness 不包含 workload 入口源码。

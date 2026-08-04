@@ -1,4 +1,15 @@
-
+// AGENTJS_RESOURCE:./cdjs/constants.js
+// AGENTJS_RESOURCE:./cdjs/util.js
+// AGENTJS_RESOURCE:./cdjs/red_black_tree.js
+// AGENTJS_RESOURCE:./cdjs/call_sign.js
+// AGENTJS_RESOURCE:./cdjs/vector_2d.js
+// AGENTJS_RESOURCE:./cdjs/vector_3d.js
+// AGENTJS_RESOURCE:./cdjs/motion.js
+// AGENTJS_RESOURCE:./cdjs/reduce_collision_set.js
+// AGENTJS_RESOURCE:./cdjs/simulator.js
+// AGENTJS_RESOURCE:./cdjs/collision.js
+// AGENTJS_RESOURCE:./cdjs/collision_detector.js
+// AGENTJS_RESOURCE:./cdjs/benchmark.js
 
 const isInBrowser = false;
 const isD8 = false;
@@ -52,7 +63,7 @@ var JetStreamParams = {
     testWorstCaseCountMap: {},
     testList: "cdjs",
 };
-var __agentjsLoadEntry = (url) => readFile(url);
+var __agentjsLoadEntry = (url) => ({ __agentjsFile: url });
 var read = function (name, mode) {
     const text = readFile(name);
     if (mode !== "binary")

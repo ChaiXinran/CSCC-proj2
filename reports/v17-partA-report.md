@@ -596,3 +596,32 @@ Post-fix project gates all passed: formatting, all-target check, all-target
 tests, the fixed native Test262 integration gate, and clippy with warnings
 denied. Static audit passed for all 19 canonical runners, and deterministic
 regeneration produced identical SHA-256 pairs for every runner.
+
+### Remove the residual small-runner concatenation path
+
+The previous 640 KiB hybrid policy left smaller workloads on
+`isolated-host`: their source stayed outside the generated runner, but the
+driver still concatenated all entry text and compiled it again through
+`new Function`. Track A removed this size-based exception. Every manifest v2
+runner now declares `entryExecutionMode: "staged"`, and every ordered
+`entryFiles` item must have a matching `AGENTJS_RESOURCE` directive for the
+Rust host to read and evaluate separately.
+
+The verifier now rejects non-staged manifests and mismatches between ordered
+manifest entries and runner directives. The remaining bounded `new Function`
+path only compiles driver-generated facade/iteration harness text and never
+contains workload entry source. The resulting function-scope versus persistent
+global-environment tradeoff is recorded in
+`docs/JetStream/a-three-track-interface-deviations.md`.
+
+Verification completed with `node --check` for both generator and verifier,
+deterministic regeneration of all 19 canonical runner/manifest pairs, and a
+static 19/19 audit of staged mode, directive order, and forbidden embedded or
+joined source patterns. Release-mode focused runs of Richards, ai-astar, the
+12-entry cdjs workload, and the 7-entry Intl workload all reached
+`JETSTREAM_RUN_COMPLETE`; ai-astar therefore did not regress merely because its
+former `isolated-host` path was removed, and multi-file ordering was exercised.
+`cargo fmt --all --
+--check`, `cargo check --locked --all-targets`, `cargo test --locked
+--all-targets`, and `cargo clippy --locked --all-targets -- -D warnings` all
+passed.

@@ -1,6 +1,10 @@
 //! AST-to-bytecode compiler.
 
-use std::{collections::HashSet, fmt};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt,
+    sync::Arc,
+};
 
 use crate::ast::{
     ArrayElement, AssignmentOperator, BinaryOperator, CatchClause, Expression, FunctionBody,
@@ -10,8 +14,8 @@ use crate::ast::{
 };
 
 use super::{
-    Chunk, ChunkError, Constant, EnvironmentCapturePolicy, ExceptionHandler, FunctionTemplate,
-    HandlerKind, Instruction,
+    Chunk, ChunkError, Constant, DynamicScopePolicy, EnvironmentCapturePolicy, ExceptionHandler,
+    FunctionTemplate, HandlerKind, Instruction, LocalBindingLayout, LocalLayout, LocalSlot,
 };
 
 /// Compilation failure.
@@ -64,6 +68,7 @@ struct CompileContext {
     with_depth: u32,
     /// Number of enclosing function bodies; 0 = top-level script.
     function_depth: usize,
+    local_slots: HashMap<String, LocalSlot>,
 }
 
 #[derive(Debug)]
@@ -108,6 +113,12 @@ impl CompileContext {
 
     fn needs_dynamic_name_lookup(&self, name: &str) -> bool {
         self.inside_function() || self.with_depth > 0 || self.is_lexical(name)
+    }
+
+    fn local_slot(&self, name: &str) -> Option<LocalSlot> {
+        (self.with_depth == 0)
+            .then(|| self.local_slots.get(name).copied())
+            .flatten()
     }
 }
 
@@ -1650,7 +1661,9 @@ impl Compiler {
         context: &CompileContext,
     ) -> Result<(), CompileError> {
         let index = self.add_name(name, chunk)?;
-        if context.needs_dynamic_name_lookup(name) {
+        if let Some(slot) = context.local_slot(name) {
+            chunk.emit(Instruction::StoreLocal(slot));
+        } else if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::StoreName(index));
         } else {
             chunk.emit(Instruction::StoreGlobal(index));
@@ -1704,6 +1717,8 @@ impl Compiler {
             has_own_prototype_property: !is_async || is_generator,
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
+            local_layout: fn_chunk.local_layout,
+            dynamic_scope: fn_chunk.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -1784,6 +1799,35 @@ impl Compiler {
             }
         }
 
+        let mut local_layout = LocalLayout::default();
+        let mut local_slots = HashMap::new();
+        let mut add_local = |name: String, lexical: bool| -> Result<(), CompileError> {
+            if local_slots.contains_key(&name) {
+                return Ok(());
+            }
+            let index = u16::try_from(local_layout.bindings.len())
+                .map_err(|_| CompileError::unsupported("too many function-local bindings"))?;
+            local_slots.insert(name.clone(), LocalSlot(index));
+            local_layout.bindings.push(LocalBindingLayout {
+                name,
+                mutable: true,
+                initialized_at_entry: false,
+                lexical,
+            });
+            Ok(())
+        };
+        for name in &param_names {
+            add_local(name.clone(), true)?;
+        }
+        if let Some(name) = &rest_param {
+            add_local(name.clone(), true)?;
+        }
+        let mut function_var_names = Vec::new();
+        collect_var_names(&body.statements, &mut function_var_names);
+        for name in &function_var_names {
+            add_local(name.clone(), false)?;
+        }
+
         let mut fn_chunk = Chunk::default();
         let mut fn_context = CompileContext {
             loops: Vec::new(),
@@ -1795,6 +1839,7 @@ impl Compiler {
             environment_depth: 0,
             with_depth: 0,
             function_depth: outer_context.function_depth + 1,
+            local_slots,
         };
         let mut lexical_scope =
             self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
@@ -1886,12 +1931,10 @@ impl Compiler {
 
         // Hoist all var declarations to the top of the function scope (pre-declare as undefined).
         {
-            let mut var_names: Vec<String> = Vec::new();
-            collect_var_names(&body.statements, &mut var_names);
             // Exclude names that are already bound as parameters (those are DeclareLocal'd by the runtime).
             let param_set: std::collections::HashSet<&str> =
                 param_names.iter().map(|s| s.as_str()).collect();
-            let var_names: Vec<String> = var_names
+            let var_names: Vec<String> = function_var_names
                 .into_iter()
                 .filter(|name| !param_set.contains(name.as_str()))
                 .collect();
@@ -1900,9 +1943,11 @@ impl Compiler {
                     .add_constant(Constant::Undefined)
                     .map_err(CompileError::from_chunk)?;
                 for name in var_names {
-                    let idx = self.add_name(&name, &mut fn_chunk)?;
                     fn_chunk.emit(Instruction::Constant(undef_const));
-                    fn_chunk.emit(Instruction::DeclareLocal(idx));
+                    let slot = fn_context
+                        .local_slot(&name)
+                        .ok_or_else(|| CompileError::unsupported("missing local slot"))?;
+                    fn_chunk.emit(Instruction::InitializeLocal(slot));
                 }
             }
         }
@@ -1936,7 +1981,11 @@ impl Compiler {
                     }
                     let idx = self.add_name(&name, &mut fn_chunk)?;
                     fn_chunk.emit(Instruction::Constant(undef_const));
-                    fn_chunk.emit(Instruction::DeclareLocal(idx));
+                    if let Some(slot) = fn_context.local_slot(&name) {
+                        fn_chunk.emit(Instruction::InitializeLocal(slot));
+                    } else {
+                        fn_chunk.emit(Instruction::DeclareLocal(idx));
+                    }
                     already_hoisted.insert(name);
                 }
             }
@@ -1972,6 +2021,45 @@ impl Compiler {
         fn_context.lexical_scopes.pop();
         // Implicit undefined return at the end of the function
         fn_chunk.emit(Instruction::ReturnUndefined);
+        let has_direct_eval = fn_chunk
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::DirectEval(_)));
+        let has_with = fn_chunk
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::EnterWithEnvironment));
+        let dynamic_scope = match (has_direct_eval, has_with) {
+            (false, false) => DynamicScopePolicy::Static,
+            (true, false) => DynamicScopePolicy::DirectEval,
+            (false, true) => DynamicScopePolicy::With,
+            (true, true) => DynamicScopePolicy::DirectEvalAndWith,
+        };
+        if dynamic_scope != DynamicScopePolicy::Static {
+            for offset in 0..fn_chunk.instructions.len() {
+                let replacement = match fn_chunk.instructions[offset] {
+                    Instruction::LoadLocal(slot) => Some((slot, 0_u8)),
+                    Instruction::StoreLocal(slot) => Some((slot, 1)),
+                    Instruction::InitializeLocal(slot) => Some((slot, 2)),
+                    _ => None,
+                };
+                let Some((slot, kind)) = replacement else {
+                    continue;
+                };
+                let binding = local_layout
+                    .bindings
+                    .get(usize::from(slot.0))
+                    .ok_or_else(|| CompileError::unsupported("invalid local slot"))?;
+                let name = binding.name.clone();
+                let name_index = self.add_name(&name, &mut fn_chunk)?;
+                fn_chunk.instructions[offset] = match kind {
+                    0 => Instruction::LoadName(name_index),
+                    1 => Instruction::StoreName(name_index),
+                    _ => Instruction::DeclareLocal(name_index),
+                };
+            }
+            local_layout.bindings.clear();
+        }
         fn_chunk.validate().map_err(CompileError::from_chunk)?;
         let uses_arguments = function_needs_arguments_object(&fn_chunk);
         Ok(CompiledFunction {
@@ -1981,6 +2069,8 @@ impl Compiler {
             chunk: fn_chunk,
             is_strict: body.is_strict,
             uses_arguments,
+            local_layout: Arc::new(local_layout),
+            dynamic_scope,
         })
     }
 
@@ -2366,6 +2456,10 @@ impl Compiler {
             chunk.emit(Instruction::LoadThis);
             return Ok(());
         }
+        if let Some(slot) = context.local_slot(name) {
+            chunk.emit(Instruction::LoadLocal(slot));
+            return Ok(());
+        }
         let name_index = self.add_name(name, chunk)?;
         if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::LoadName(name_index));
@@ -2397,6 +2491,11 @@ impl Compiler {
             }
             UnaryOperator::TypeOf => {
                 if let Expression::Identifier(name) = argument {
+                    if let Some(slot) = context.local_slot(name) {
+                        chunk.emit(Instruction::LoadLocal(slot));
+                        chunk.emit(Instruction::TypeOf);
+                        return Ok(());
+                    }
                     let name_index = self.add_name(name, chunk)?;
                     if context.inside_function() || context.is_lexical(name) {
                         chunk.emit(Instruction::TypeOfName(name_index));
@@ -2543,7 +2642,11 @@ impl Compiler {
                     chunk.emit(Instruction::SetFunctionName(inferred_name_index));
                 }
                 if context.inside_function() {
-                    chunk.emit(Instruction::StoreName(name_index));
+                    if let Some(slot) = context.local_slot(name) {
+                        chunk.emit(Instruction::StoreLocal(slot));
+                    } else {
+                        chunk.emit(Instruction::StoreName(name_index));
+                    }
                 } else {
                     chunk.emit(Instruction::StoreGlobal(name_index));
                 }
@@ -4000,6 +4103,8 @@ impl Compiler {
             has_own_prototype_property: false,
             prototype_writable: false,
             uses_arguments: compiled.uses_arguments,
+            local_layout: compiled.local_layout,
+            dynamic_scope: compiled.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let index = chunk
@@ -4455,6 +4560,8 @@ impl Compiler {
             has_own_prototype_property: true,
             prototype_writable: false,
             uses_arguments: ctor_fn.uses_arguments,
+            local_layout: ctor_fn.local_layout,
+            dynamic_scope: ctor_fn.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let ctor_idx = chunk
@@ -4525,6 +4632,8 @@ impl Compiler {
                     has_own_prototype_property: false,
                     prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
+                    local_layout: fn_compiled.local_layout,
+                    dynamic_scope: fn_compiled.dynamic_scope,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
                 let fn_idx = chunk
@@ -4628,6 +4737,8 @@ impl Compiler {
                     has_own_prototype_property: false,
                     prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
+                    local_layout: fn_compiled.local_layout,
+                    dynamic_scope: fn_compiled.dynamic_scope,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
                 let fn_idx = chunk
@@ -4722,6 +4833,8 @@ impl Compiler {
                             has_own_prototype_property: false,
                             prototype_writable: false,
                             uses_arguments: init_fn.uses_arguments,
+                            local_layout: init_fn.local_layout,
+                            dynamic_scope: init_fn.dynamic_scope,
                             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                         };
                         let init_idx = chunk
@@ -4781,6 +4894,8 @@ impl Compiler {
                         has_own_prototype_property: false,
                         prototype_writable: true,
                         uses_arguments: block_fn.uses_arguments,
+                        local_layout: block_fn.local_layout,
+                        dynamic_scope: block_fn.dynamic_scope,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
                     let block_idx = chunk
@@ -5178,6 +5293,8 @@ impl Compiler {
                 && (!literal.is_async || literal.is_generator),
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
+            local_layout: fn_chunk.local_layout,
+            dynamic_scope: fn_chunk.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
         let function_index = chunk
@@ -5454,6 +5571,8 @@ struct CompiledFunction {
     chunk: Chunk,
     is_strict: bool,
     uses_arguments: bool,
+    local_layout: Arc<LocalLayout>,
+    dynamic_scope: DynamicScopePolicy,
 }
 
 fn function_needs_arguments_object(chunk: &Chunk) -> bool {
@@ -6530,7 +6649,7 @@ mod tests {
     }
 
     #[test]
-    fn function_body_uses_load_name_inside() {
+    fn function_body_uses_local_slots_for_parameters() {
         let chunk = compile("function add(a, b) { return a + b; }");
         let fn_template = &chunk.functions[0];
         assert!(
@@ -6538,7 +6657,7 @@ mod tests {
                 .chunk
                 .instructions
                 .iter()
-                .any(|i| matches!(i, Instruction::LoadName(_)))
+                .any(|i| matches!(i, Instruction::LoadLocal(_)))
         );
     }
 
@@ -6695,14 +6814,14 @@ mod tests {
     }
 
     #[test]
-    fn function_var_uses_declare_local() {
+    fn function_var_uses_local_slot_initialization() {
         let chunk = compile("function f() { var x = 1; }");
         let fn_chunk = &chunk.functions[0].chunk;
         assert!(
             fn_chunk
                 .instructions
                 .iter()
-                .any(|i| matches!(i, Instruction::DeclareLocal(_)))
+                .any(|i| matches!(i, Instruction::InitializeLocal(_)))
         );
     }
 

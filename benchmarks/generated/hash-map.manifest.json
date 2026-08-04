@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 17714,
   "entryFiles": [
     "./simple/hash-map.js"
@@ -15,6 +15,6 @@
   "resourceHashes": {
     "./simple/hash-map.js": "sha256:9789c4d06f12ee4e4836c669b5515a40c6caaf5e9321c08da548740225fb46fb"
   },
-  "runnerSha256": "55f7a81307530603352930373b84fee540abead643cfbef0e8bbfa89fd026bba",
+  "runnerSha256": "72f1cea881226012ff8fc02a9dd8472676e9d2f9958a61839de3786c1296bd57",
   "phaseMarkers": false
 }

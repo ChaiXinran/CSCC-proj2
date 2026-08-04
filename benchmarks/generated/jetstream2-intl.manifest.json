@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 19902,
   "entryFiles": [
     "./intl/src/helper.js",
@@ -27,6 +27,6 @@
     "./intl/src/RelativeTimeFormat.js": "sha256:fd6114313247ac71c765573b5feda123d5204f1bcb116eb9187d2ac0621ff228",
     "./intl/src/helper.js": "sha256:f0f5baefd2ceef21cecf5eca4ef73c2729932a1e2775c558a6322b1f50fea4a3"
   },
-  "runnerSha256": "7ccbb64aac33c79a40478edf5b015b22b455762ccee7dddbd27dc7bcc878cea5",
+  "runnerSha256": "b3182904dc209030e8ed05874b2a8df0b5ccebb479f85de4e20d53809d83f5f0",
   "phaseMarkers": false
 }

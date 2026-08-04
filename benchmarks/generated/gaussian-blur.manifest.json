@@ -5,7 +5,7 @@
   "officialIterations": 120,
   "requestedIterations": 1,
   "resourceRootMode": "cli",
-  "entryExecutionMode": "isolated-host",
+  "entryExecutionMode": "staged",
   "entrySourceBytes": 8614,
   "entryFiles": [
     "./SeaMonster/gaussian-blur.js"
@@ -15,6 +15,6 @@
   "resourceHashes": {
     "./SeaMonster/gaussian-blur.js": "sha256:3510d05710feaf16d3626b3bf738491f3ff7b2d21a20f5da6e8f205d52599b97"
   },
-  "runnerSha256": "2db76c6ed728a010307eade4685901d3f28cf1fd6df93a9281d589f0be171073",
+  "runnerSha256": "cc4c877d0d28fe736c3ca1a838b15283f5eb3bf41898dc5ce980d24d0ebfffde",
   "phaseMarkers": false
 }

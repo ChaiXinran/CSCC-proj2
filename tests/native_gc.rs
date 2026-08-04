@@ -102,6 +102,8 @@ fn gc_preserves_closure_environment_and_captured_values() {
         has_own_prototype_property: true,
         prototype_writable: true,
         uses_arguments: false,
+        local_layout: std::sync::Arc::new(agentjs::bytecode::LocalLayout::default()),
+        dynamic_scope: agentjs::bytecode::DynamicScopePolicy::Static,
         lexical_this: None,
         lexical_new_target: None,
         home_object: None,
