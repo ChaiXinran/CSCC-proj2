@@ -51,6 +51,7 @@
 | 已知 | A 组已修改 `scripts/` 和 generated runner | B/C 复测依赖这些生成物 | 应先合并 A，再合并 B/C |
 | 已接受 | 普通 `LoadName` 当前先构造 `name_resolution_chain`，随后再次遍历解析 binding | 涉及 `src/runtime/context.rs` 与 `src/vm/interpreter.rs`，可能与 B 的调用链或 C 的 runtime 工作重叠 | 已增加无 object-environment 快速路径；不改 `Instruction`、`contracts.rs` 或 chunk 格式。全量 Test262 -1 由用户明确接受 |
 | 暂缓 | `LoadLocal`/`StoreLocal` slot opcode | 会改变稳定的 `Instruction` 公共边界并要求 compiler/VM/chunk 同步 | 需要团队评审后单独实施，不与当前快速路径混合 |
+| 待调查 | A/B 合并后 raytrace 5 次复测 median 13.300 秒、p90 13.336 秒；旧报告单次为 7.413 秒 | 可能来自 A 的名称解析路径、B 的 RegExp 路径或合并版本其他变化 | 不直接归因；使用 `7bcd72a`、A-only、B-only、A+B 四点同输入复测后再修改代码 |
 
 ## A4 最终诊断结论
 
