@@ -3,6 +3,7 @@
 mod frame;
 mod interpreter;
 mod invocation;
+mod property_cache;
 
 pub use frame::{CallFrame, Completion};
 pub(crate) use interpreter::evaluate_local_module;
@@ -10,4 +11,7 @@ pub use interpreter::{Vm, VmError, VmErrorKind};
 pub(crate) use invocation::{
     CallRequest, ConstructRequest, FunctionEnvironmentMode, FunctionInstantiationRequest,
     InvocationOutcome,
+};
+pub use property_cache::{
+    BytecodeSite, GetPropertyCacheEntry, PropertyInlineCaches, SetPropertyCacheEntry,
 };

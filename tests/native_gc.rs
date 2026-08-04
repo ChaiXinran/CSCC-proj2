@@ -2,7 +2,7 @@ use std::path::Path;
 
 use agentjs::{
     backend::NativeRuntime,
-    bytecode::{Chunk, Instruction},
+    bytecode::{Chunk, Constant, Instruction},
     engine::{ExecutionOptions, RuntimeConfig},
     runtime::{
         JsFunction, JsValue, ModuleEvaluationPromise, ModuleEvaluationState, NativeContext,
@@ -83,6 +83,34 @@ fn property_tombstone_does_not_retain_deleted_descriptor_value() {
 
     assert!(context.heap().object(container_id).is_some());
     assert!(context.heap().object(child_id).is_none());
+}
+
+#[test]
+fn property_inline_cache_does_not_keep_receiver_alive() {
+    let mut context = NativeContext::default();
+    let object = context
+        .create_object([("value".into(), JsValue::Number(1.0))])
+        .unwrap();
+    let object_id = object_id(&object);
+    context.declare_global("cached_receiver", object);
+
+    let mut chunk = Chunk::default();
+    let object_name = chunk
+        .add_constant(Constant::String("cached_receiver".into()))
+        .unwrap();
+    let property_name = chunk
+        .add_constant(Constant::String("value".into()))
+        .unwrap();
+    chunk.emit(Instruction::LoadGlobal(object_name));
+    chunk.emit(Instruction::GetProperty(property_name));
+    chunk.emit(Instruction::Return);
+    let mut vm = Vm::default();
+    vm.execute_with_context(&chunk, &mut context).unwrap();
+    assert!(context.set_global("cached_receiver", JsValue::Undefined));
+
+    context.collect_garbage_for_vm(&vm).unwrap();
+
+    assert!(context.heap().object(object_id).is_none());
 }
 
 #[test]

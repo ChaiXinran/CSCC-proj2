@@ -28,11 +28,16 @@ pub use crate::{
         JsFunction, JsObject, JsString, JsValue, ModuleEvaluationState, ModuleExportBinding,
         ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus, NativeCall,
         NativeConstruct, NativeContext, NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind,
-        PropertyDescriptor, PropertyDescriptorUpdate, PropertyEntry, PropertyKind, PropertyMap,
-        PropertyName as RuntimePropertyName, PropertySlotId, RootSet, Symbol, SymbolId,
-        SymbolRegistry, Trace, Tracer, WellKnownSymbols, resolve_module_specifier,
+        PropertyAttributes, PropertyCacheMetrics, PropertyDescriptor, PropertyDescriptorUpdate,
+        PropertyEntry, PropertyKind, PropertyKindTag, PropertyMap,
+        PropertyName as RuntimePropertyName, PropertySlotId, RootSet, ShapeId, ShapeMode,
+        ShapeRecord, ShapeTable, Symbol, SymbolId, SymbolRegistry, Trace, Tracer, WellKnownSymbols,
+        resolve_module_specifier,
     },
-    vm::{CallFrame, Completion, Vm, VmError, VmErrorKind},
+    vm::{
+        BytecodeSite, CallFrame, Completion, GetPropertyCacheEntry, PropertyInlineCaches,
+        SetPropertyCacheEntry, Vm, VmError, VmErrorKind,
+    },
 };
 
 /// Unified failure type passed between native engine stages.

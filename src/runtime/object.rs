@@ -4,8 +4,9 @@ use crate::builtins::string;
 
 use super::iterator::IteratorKind;
 use super::{
-    ArrayBufferId, BigIntValue, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsString,
-    JsValue, PromiseId, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
+    ArrayBufferId, BigIntValue, DICTIONARY_SHAPE, DataViewId, EnvironmentId, FunctionId,
+    IteratorRecord, JsString, JsValue, PromiseId, PropertyDescriptor, PropertyMap,
+    PropertyMutation, ROOT_SHAPE, ShapeId, SymbolId, Trace, Tracer, TypedArrayViewId,
 };
 
 /// Stable handle into the runtime heap.
@@ -150,6 +151,8 @@ pub struct JsObject {
     pub prototype: Option<ObjectId>,
     pub kind: ObjectKind,
     pub properties: PropertyMap,
+    pub shape: ShapeId,
+    pub shape_generation: u64,
     /// Symbol-keyed own properties stored separately from the string property map.
     /// Insertion order is preserved; lookup is linear but the expected count is small.
     pub symbol_properties: Vec<(SymbolId, PropertyDescriptor)>,
@@ -461,6 +464,8 @@ impl Default for JsObject {
             prototype: None,
             kind: ObjectKind::default(),
             properties: PropertyMap::default(),
+            shape: ROOT_SHAPE,
+            shape_generation: 0,
             symbol_properties: Vec::new(),
             extensible: true,
         }
@@ -487,6 +492,8 @@ impl JsObject {
                 length_writable: true,
             },
             properties: PropertyMap::default(),
+            shape: ROOT_SHAPE,
+            shape_generation: 0,
             symbol_properties: Vec::new(),
             extensible: true,
         }
@@ -504,6 +511,8 @@ impl JsObject {
                 length_writable: true,
             },
             properties: PropertyMap::default(),
+            shape: ROOT_SHAPE,
+            shape_generation: 0,
             symbol_properties: Vec::new(),
             extensible: true,
         }
@@ -515,6 +524,8 @@ impl JsObject {
             prototype: None,
             kind: ObjectKind::Iterator { record },
             properties: PropertyMap::default(),
+            shape: ROOT_SHAPE,
+            shape_generation: 0,
             symbol_properties: Vec::new(),
             extensible: true,
         }
@@ -533,6 +544,8 @@ impl JsObject {
                 },
             },
             properties: PropertyMap::default(),
+            shape: ROOT_SHAPE,
+            shape_generation: 0,
             symbol_properties: Vec::new(),
             extensible: true,
         }
@@ -556,8 +569,21 @@ impl JsObject {
         }
     }
 
-    pub fn define_property(&mut self, name: impl Into<String>, descriptor: PropertyDescriptor) {
-        self.properties.define(name.into(), descriptor);
+    pub fn define_property(
+        &mut self,
+        name: impl Into<String>,
+        descriptor: PropertyDescriptor,
+    ) -> PropertyMutation {
+        let mutation = self.properties.define_with_outcome(name.into(), descriptor);
+        if mutation.structural {
+            self.shape_generation = self.shape_generation.wrapping_sub(1);
+        }
+        mutation
+    }
+
+    pub fn mark_dictionary_shape(&mut self) {
+        self.shape = DICTIONARY_SHAPE;
+        self.shape_generation = self.properties.generation();
     }
 
     /// Update the logical length if an index write extends past the current length.
@@ -745,7 +771,9 @@ impl JsObject {
                 .flatten();
             // huge index: fall through to property map
         }
-        self.properties.delete(name)
+        let descriptor = self.properties.delete(name)?;
+        self.mark_dictionary_shape();
+        Some(descriptor)
     }
 
     #[must_use]

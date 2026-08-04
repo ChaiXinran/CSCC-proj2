@@ -366,3 +366,19 @@ to owned `String` is restricted to the final object enumeration API boundary.
 Array-index strings remain numerically sorted before ordinary string keys;
 updating an existing descriptor does not change order, while delete followed by
 redefinition appends a new entry. GC tracing skips tombstones.
+
+## Phase 3 Shape and Monomorphic Property Cache Contract
+
+Each ordinary object carries a per-isolate `ShapeId` synchronized with its
+`PropertyMap::generation()`. Shapes describe property names, stable slots and
+descriptor attributes, but never contain property values or GC object handles.
+Deletion, prototype mutation, accessors and non-extensibility may move an object
+to dictionary mode, which permanently disables the first-stage inline cache.
+
+Named `GetProperty` and `SetProperty` sites use `(SharedChunk address,
+instruction offset)` as an execution-local cache key. Entries contain only the
+receiver shape, property generation and `PropertySlotId`; they never retain an
+`ObjectId`. Only own data properties on `ObjectKind::Ordinary` are eligible.
+Proxy, accessor, prototype, symbol, computed, array-index and exotic behavior
+must continue through the existing semantic slow path. Caches are cleared at
+top-level execution boundaries so allocator address reuse cannot alias scripts.

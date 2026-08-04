@@ -33,10 +33,11 @@ use super::{
     JsObject, JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
     NativeErrorValue, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
     PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
-    PromiseThenReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind,
-    ProxyRecord, RootSet, RootSink, SymbolId, SymbolRegistry, Tracer, TypedArrayElementKind,
-    TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind,
-    object::array_index,
+    PromiseThenReaction, PropertyAttributes, PropertyCacheMetrics, PropertyDescriptor,
+    PropertyDescriptorUpdate, PropertyKey, PropertyKind, PropertySlotId, ProxyRecord, ROOT_SHAPE,
+    RootSet, RootSink, ShapeId, ShapeTable, SymbolId, SymbolRegistry, Tracer,
+    TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint,
+    iterator::IteratorKind, object::array_index,
 };
 use crate::host::{HostLoadError, HostServices};
 use crate::vm::{CallFrame, Vm, VmError};
@@ -263,6 +264,8 @@ pub struct NativeContext {
     gc_metrics: GcMetrics,
     host_services: HostServices,
     name_resolution_metrics: NameResolutionMetricCells,
+    shape_table: ShapeTable,
+    property_cache_metrics: PropertyCacheMetrics,
 }
 
 fn array_iterator_next_builtin(
@@ -362,6 +365,8 @@ impl NativeContext {
             gc_metrics: GcMetrics::default(),
             host_services: HostServices::default(),
             name_resolution_metrics: NameResolutionMetricCells::default(),
+            shape_table: ShapeTable::default(),
+            property_cache_metrics: PropertyCacheMetrics::default(),
         };
         context.install_core_global_bindings();
         context
@@ -2983,6 +2988,168 @@ impl NativeContext {
         self.set_object_property(object, key, value, strict)
     }
 
+    #[must_use]
+    pub const fn property_cache_metrics(&self) -> PropertyCacheMetrics {
+        self.property_cache_metrics
+    }
+
+    pub fn object_shape(&mut self, object: ObjectId) -> Option<ShapeId> {
+        self.synchronize_ordinary_shape(object)
+    }
+
+    #[must_use]
+    pub fn shape_count(&self) -> usize {
+        self.shape_table.shape_count()
+    }
+
+    pub(crate) fn has_active_deadline(&self) -> bool {
+        self.budget.deadline.is_some()
+    }
+
+    pub(crate) fn record_property_get_cache(&mut self, hit: bool) {
+        if hit {
+            self.property_cache_metrics.get_hits =
+                self.property_cache_metrics.get_hits.saturating_add(1);
+        } else {
+            self.property_cache_metrics.get_misses =
+                self.property_cache_metrics.get_misses.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_property_set_cache(&mut self, hit: bool) {
+        if hit {
+            self.property_cache_metrics.set_hits =
+                self.property_cache_metrics.set_hits.saturating_add(1);
+        } else {
+            self.property_cache_metrics.set_misses =
+                self.property_cache_metrics.set_misses.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn record_property_cache_invalidation(&mut self) {
+        self.property_cache_metrics.invalidations =
+            self.property_cache_metrics.invalidations.saturating_add(1);
+    }
+
+    fn synchronize_ordinary_shape(&mut self, object: ObjectId) -> Option<ShapeId> {
+        let object_ref = self.heap.object(object)?;
+        if !matches!(object_ref.kind, ObjectKind::Ordinary) {
+            return None;
+        }
+        if object_ref.shape == super::DICTIONARY_SHAPE {
+            return None;
+        }
+        let generation = object_ref.properties.generation();
+        if object_ref.shape_generation == generation {
+            return Some(object_ref.shape);
+        }
+        let layout = object_ref
+            .properties
+            .shape_entries()
+            .map(|(name, slot, descriptor)| {
+                (
+                    name.clone(),
+                    slot,
+                    PropertyAttributes::from_descriptor(descriptor),
+                )
+            })
+            .collect::<Vec<_>>();
+        if layout
+            .iter()
+            .any(|(_, _, attributes)| matches!(attributes.kind, super::PropertyKindTag::Accessor))
+        {
+            let object_ref = self.heap.object_mut(object)?;
+            object_ref.mark_dictionary_shape();
+            self.property_cache_metrics.dictionary_objects = self
+                .property_cache_metrics
+                .dictionary_objects
+                .saturating_add(1);
+            return None;
+        }
+
+        let mut shape = ROOT_SHAPE;
+        for (name, slot, attributes) in layout {
+            let (next, created) = self.shape_table.transition(shape, name, slot, attributes);
+            if created {
+                self.property_cache_metrics.shape_transitions = self
+                    .property_cache_metrics
+                    .shape_transitions
+                    .saturating_add(1);
+            }
+            shape = next;
+        }
+        let object_ref = self.heap.object_mut(object)?;
+        object_ref.shape = shape;
+        object_ref.shape_generation = generation;
+        Some(shape)
+    }
+
+    pub(crate) fn own_data_property_cache_metadata(
+        &mut self,
+        object: ObjectId,
+        key: &str,
+        require_writable: bool,
+    ) -> Option<(ShapeId, u64, PropertySlotId)> {
+        // NUL-prefixed names are VM-internal encodings for private fields,
+        // brands, and class-field initialization. They must always pass
+        // through the semantic path that performs the corresponding checks.
+        if key.starts_with('\0') || matches!(key, "valueOf" | "toString") {
+            return None;
+        }
+        let shape = self.synchronize_ordinary_shape(object)?;
+        let object_ref = self.heap.object(object)?;
+        let slot = object_ref.properties.slot_of(key)?;
+        let descriptor = object_ref.properties.descriptor_at(slot)?;
+        match descriptor.kind {
+            PropertyKind::Data { writable, .. } if !require_writable || writable => {
+                Some((shape, object_ref.properties.generation(), slot))
+            }
+            _ => None,
+        }
+    }
+
+    pub(crate) fn get_cached_own_data_property(
+        &self,
+        object: ObjectId,
+        shape: ShapeId,
+        generation: u64,
+        slot: PropertySlotId,
+    ) -> Option<JsValue> {
+        let object_ref = self.heap.object(object)?;
+        if !matches!(object_ref.kind, ObjectKind::Ordinary)
+            || object_ref.shape != shape
+            || object_ref.shape_generation != generation
+            || object_ref.properties.generation() != generation
+        {
+            return None;
+        }
+        match &object_ref.properties.descriptor_at(slot)?.kind {
+            PropertyKind::Data { value, .. } => Some(value.clone()),
+            PropertyKind::Accessor { .. } => None,
+        }
+    }
+
+    pub(crate) fn set_cached_own_data_property(
+        &mut self,
+        object: ObjectId,
+        shape: ShapeId,
+        generation: u64,
+        slot: PropertySlotId,
+        value: JsValue,
+    ) -> bool {
+        let Some(object_ref) = self.heap.object_mut(object) else {
+            return false;
+        };
+        if !matches!(object_ref.kind, ObjectKind::Ordinary)
+            || object_ref.shape != shape
+            || object_ref.shape_generation != generation
+            || object_ref.properties.generation() != generation
+        {
+            return false;
+        }
+        object_ref.properties.set_data_value_at(slot, value)
+    }
+
     pub fn define_own_property(
         &mut self,
         object: ObjectId,
@@ -3024,7 +3191,10 @@ impl NativeContext {
             .heap
             .object_mut(object)
             .ok_or_else(|| VmError::runtime("missing object"))?;
-        object.define_property(key, descriptor);
+        let mutation = object.define_property(key, descriptor);
+        if mutation.structural {
+            self.record_property_cache_invalidation();
+        }
         if clear_string_prototype_cache {
             self.clear_string_prototype_property_cache();
         }
@@ -3181,6 +3351,9 @@ impl NativeContext {
             return Ok(true);
         }
         let removed = object.delete_own_property(key).is_some();
+        if removed {
+            self.record_property_cache_invalidation();
+        }
         if removed && clear_string_prototype_cache {
             self.clear_string_prototype_property_cache();
         }
@@ -3226,6 +3399,12 @@ impl NativeContext {
             .object_mut(object)
             .ok_or_else(|| VmError::runtime("missing object"))?;
         object.extensible = false;
+        object.mark_dictionary_shape();
+        self.property_cache_metrics.dictionary_objects = self
+            .property_cache_metrics
+            .dictionary_objects
+            .saturating_add(1);
+        self.record_property_cache_invalidation();
         Ok(true)
     }
 
@@ -3266,6 +3445,12 @@ impl NativeContext {
             .object_mut(object)
             .ok_or_else(|| VmError::runtime("missing object"))?;
         object.prototype = prototype;
+        object.mark_dictionary_shape();
+        self.property_cache_metrics.dictionary_objects = self
+            .property_cache_metrics
+            .dictionary_objects
+            .saturating_add(1);
+        self.record_property_cache_invalidation();
         Ok(true)
     }
 
@@ -5491,7 +5676,7 @@ fn native_error_is_instance_of(kind: &NativeErrorKind, constructor_name: &str) -
 
 #[cfg(test)]
 mod tests {
-    use super::{JsValue, NativeContext};
+    use super::{JsValue, NativeContext, PropertyDescriptor};
 
     #[test]
     fn installs_basic_global_values() {
@@ -5504,6 +5689,60 @@ mod tests {
             context.get_global("Infinity"),
             Some(JsValue::Number(f64::INFINITY))
         );
+    }
+
+    #[test]
+    fn same_ordinary_property_layout_shares_shape() {
+        let mut context = NativeContext::default();
+        let first = context
+            .create_object([
+                ("a".into(), JsValue::Number(1.0)),
+                ("b".into(), JsValue::Number(2.0)),
+            ])
+            .unwrap();
+        let second = context
+            .create_object([
+                ("a".into(), JsValue::Number(3.0)),
+                ("b".into(), JsValue::Number(4.0)),
+            ])
+            .unwrap();
+        let reversed = context
+            .create_object([
+                ("b".into(), JsValue::Number(5.0)),
+                ("a".into(), JsValue::Number(6.0)),
+            ])
+            .unwrap();
+        let first = context.require_object(&first, "first").unwrap();
+        let second = context.require_object(&second, "second").unwrap();
+        let reversed = context.require_object(&reversed, "reversed").unwrap();
+
+        let first_shape = context.object_shape(first).unwrap();
+        assert_eq!(context.object_shape(second), Some(first_shape));
+        assert_ne!(context.object_shape(reversed), Some(first_shape));
+
+        let generation = context
+            .heap()
+            .object(first)
+            .unwrap()
+            .properties
+            .generation();
+        context
+            .define_own_property(
+                first,
+                "a".into(),
+                PropertyDescriptor::data(JsValue::Number(9.0)),
+            )
+            .unwrap();
+        assert_eq!(
+            context
+                .heap()
+                .object(first)
+                .unwrap()
+                .properties
+                .generation(),
+            generation
+        );
+        assert_eq!(context.object_shape(first), Some(first_shape));
     }
 
     #[test]

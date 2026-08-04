@@ -134,6 +134,17 @@ fn equal_private_spellings_from_distinct_classes_have_distinct_brands() {
 }
 
 #[test]
+fn repeated_private_access_never_uses_the_ordinary_property_cache() {
+    let error = Engine::new(RuntimeConfig::default())
+        .execute(
+            "class A { #x = 'a'; read(value) { return value.#x; } } class B { #x = 'b'; } let reader = new A(); let other = new B(); reader.read(reader); reader.read(other)",
+            ExecutionOptions::default(),
+        )
+        .expect_err("a warmed property site must still perform the private brand check");
+    assert_eq!(error.kind.name(), "TypeError");
+}
+
+#[test]
 fn repeated_evaluation_of_one_class_expression_allocates_fresh_brands() {
     let error = Engine::new(RuntimeConfig::default())
         .execute(

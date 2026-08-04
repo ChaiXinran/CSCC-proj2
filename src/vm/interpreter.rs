@@ -18,8 +18,9 @@ use crate::{
         SymbolId, Trace, Tracer, TypedArrayViewId, array_index, bigint, to_property_key,
     },
     vm::{
-        CallFrame, CallRequest, Completion, ConstructRequest, FunctionEnvironmentMode,
-        FunctionInstantiationRequest, InvocationOutcome,
+        BytecodeSite, CallFrame, CallRequest, Completion, ConstructRequest,
+        FunctionEnvironmentMode, FunctionInstantiationRequest, GetPropertyCacheEntry,
+        InvocationOutcome, PropertyInlineCaches, SetPropertyCacheEntry,
     },
 };
 
@@ -971,6 +972,7 @@ pub struct Vm {
     pending_exception: Option<JsValue>,
     finally_stack: Vec<Completion>,
     name_references: HashMap<String, Vec<JsValue>>,
+    property_caches: PropertyInlineCaches,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1030,6 +1032,19 @@ fn trace_completion_roots(completion: &Completion, tracer: &mut Tracer<'_>) {
 }
 
 impl Vm {
+    pub fn set_property_inline_caches_enabled(&mut self, enabled: bool) {
+        if enabled {
+            self.property_caches.enable();
+        } else {
+            self.property_caches.disable();
+        }
+    }
+
+    #[must_use]
+    pub fn property_inline_caches_enabled(&self) -> bool {
+        self.property_caches.enabled()
+    }
+
     pub fn execute(&mut self, chunk: &Chunk) -> Result<JsValue, VmError> {
         self.execute_with_context(chunk, &mut NativeContext::default())
     }
@@ -1094,6 +1109,9 @@ impl Vm {
         chunk: &Chunk,
         context: &mut NativeContext,
     ) -> Result<JsValue, VmError> {
+        // Bytecode-site keys use the stable address only for one top-level run.
+        // Clearing here prevents allocator address reuse across unrelated scripts.
+        self.property_caches.clear();
         chunk
             .cache_metadata()
             .map_err(|error| VmError::runtime(format!("invalid bytecode chunk: {error}")))?;
@@ -1162,6 +1180,7 @@ impl Vm {
 
         let saved_depth = self.stack.len();
         let result = self.run_completion(chunk, context);
+        self.property_caches.remove_chunk(chunk);
         // Restore stack to pre-eval depth regardless of how execution ended.
         // The return value travels via Result, not via the operand stack.
         self.stack.truncate(saved_depth);
@@ -1911,8 +1930,52 @@ impl Vm {
                 Instruction::GetProperty(index) => {
                     let name = self.constant_string(chunk, index, current_instruction)?;
                     let object = self.pop_value()?;
+                    let site = BytecodeSite::new(chunk, current_instruction);
+                    let object_id = match &object {
+                        JsValue::Object(id) => Some(*id),
+                        _ => None,
+                    };
+                    let cache_allowed = !context.has_active_deadline();
+                    if cache_allowed
+                        && let Some(object_id) = object_id
+                        && let Some(cache) = self.property_caches.get(site)
+                    {
+                        if let Some(value) = context.get_cached_own_data_property(
+                            object_id,
+                            cache.receiver_shape,
+                            cache.property_generation,
+                            cache.slot,
+                        ) {
+                            context.record_property_get_cache(true);
+                            self.stack.push(value);
+                            continue 'dispatch;
+                        }
+                        context.record_property_cache_invalidation();
+                    }
                     match self.get_property_value_completion(object, name, context)? {
-                        OperationResult::Value(value) => self.stack.push(value),
+                        OperationResult::Value(value) => {
+                            if cache_allowed
+                                && self.property_caches.should_specialize_get(site)
+                                && let Some(object_id) = object_id
+                            {
+                                if let Some((shape, generation, slot)) =
+                                    context.own_data_property_cache_metadata(object_id, name, false)
+                                {
+                                    context.record_property_get_cache(false);
+                                    self.property_caches.update_get(
+                                        site,
+                                        GetPropertyCacheEntry {
+                                            receiver_shape: shape,
+                                            property_generation: generation,
+                                            slot,
+                                        },
+                                    );
+                                } else {
+                                    self.property_caches.reject_get(site);
+                                }
+                            }
+                            self.stack.push(value);
+                        }
                         OperationResult::Throw(value) => {
                             abrupt = Some(Completion::Throw(value));
                             discard_saved_finally = true;
@@ -2909,13 +2972,61 @@ impl Vm {
                     }
                 }
                 Instruction::SetProperty(index) => {
-                    let name = self
-                        .constant_string(chunk, index, current_instruction)?
-                        .to_string();
+                    let name = self.constant_string(chunk, index, current_instruction)?;
                     let value = self.pop_value()?;
                     let object = self.pop_value()?;
-                    match self.set_property_value(object, &name, value, context)? {
-                        OperationResult::Value(result) => self.stack.push(result),
+                    let site = BytecodeSite::new(chunk, current_instruction);
+                    let object_id = match &object {
+                        JsValue::Object(id) => Some(*id),
+                        _ => None,
+                    };
+                    let cache_allowed = !context.has_active_deadline();
+                    if cache_allowed
+                        && let Some(object_id) = object_id
+                        && let Some(cache) = self.property_caches.set(site)
+                    {
+                        if context.set_cached_own_data_property(
+                            object_id,
+                            cache.receiver_shape,
+                            cache.property_generation,
+                            cache.slot,
+                            value.clone(),
+                        ) {
+                            context.record_property_set_cache(true);
+                            context.synchronize_global_object_binding(
+                                &object,
+                                name,
+                                value.clone(),
+                            )?;
+                            self.stack.push(value);
+                            continue 'dispatch;
+                        }
+                        context.record_property_cache_invalidation();
+                    }
+                    match self.set_property_value(object, name, value, context)? {
+                        OperationResult::Value(result) => {
+                            if cache_allowed
+                                && self.property_caches.should_specialize_set(site)
+                                && let Some(object_id) = object_id
+                            {
+                                if let Some((shape, generation, slot)) =
+                                    context.own_data_property_cache_metadata(object_id, name, true)
+                                {
+                                    context.record_property_set_cache(false);
+                                    self.property_caches.update_set(
+                                        site,
+                                        SetPropertyCacheEntry {
+                                            receiver_shape: shape,
+                                            property_generation: generation,
+                                            slot,
+                                        },
+                                    );
+                                } else {
+                                    self.property_caches.reject_set(site);
+                                }
+                            }
+                            self.stack.push(result);
+                        }
                         OperationResult::Throw(value) => {
                             abrupt = Some(Completion::Throw(value));
                             discard_saved_finally = true;
@@ -8770,12 +8881,14 @@ fn js_scientific_number_to_string(value: f64) -> String {
 mod tests {
     use crate::{
         builtins,
-        bytecode::{Chunk, Constant, Instruction},
+        bytecode::{Chunk, Compiler, Constant, Instruction},
+        lexer::Lexer,
+        parser::Parser,
         runtime::{JsValue, NativeContext},
         vm::VmErrorKind,
     };
 
-    use super::{Vm, number_to_int32, number_to_uint32};
+    use super::{Completion, Vm, number_to_int32, number_to_uint32};
 
     fn constant(chunk: &mut Chunk, constant: Constant) -> u16 {
         chunk.add_constant(constant).unwrap()
@@ -9017,6 +9130,164 @@ mod tests {
                 .execute_with_context(&chunk, &mut context)
                 .unwrap(),
             JsValue::Undefined
+        );
+    }
+
+    #[test]
+    fn monomorphic_get_property_cache_hits_and_invalidates() {
+        let mut context = NativeContext::default();
+        let object = context
+            .create_object([("value".into(), JsValue::Number(1.0))])
+            .unwrap();
+        let object_id = context.require_object(&object, "test object").unwrap();
+        context.declare_global("cached", object);
+
+        let mut chunk = Chunk::default();
+        let object_name = constant(&mut chunk, Constant::String("cached".into()));
+        let property_name = constant(&mut chunk, Constant::String("value".into()));
+        chunk.emit(Instruction::LoadGlobal(object_name));
+        chunk.emit(Instruction::GetProperty(property_name));
+        chunk.emit(Instruction::Return);
+
+        let mut vm = Vm::default();
+        assert_eq!(
+            vm.run_completion(&chunk, &mut context).unwrap(),
+            Completion::Return(JsValue::Number(1.0))
+        );
+        assert_eq!(
+            vm.run_completion(&chunk, &mut context).unwrap(),
+            Completion::Return(JsValue::Number(1.0))
+        );
+        assert_eq!(
+            vm.run_completion(&chunk, &mut context).unwrap(),
+            Completion::Return(JsValue::Number(1.0))
+        );
+        let warm = context.property_cache_metrics();
+        assert_eq!(warm.get_misses, 1);
+        assert_eq!(warm.get_hits, 1);
+
+        context.delete_property(object_id, "value", false).unwrap();
+        context
+            .define_own_property(
+                object_id,
+                "value".into(),
+                crate::runtime::PropertyDescriptor::data(JsValue::Number(2.0)),
+            )
+            .unwrap();
+        assert_eq!(
+            vm.run_completion(&chunk, &mut context).unwrap(),
+            Completion::Return(JsValue::Number(2.0))
+        );
+        assert!(context.property_cache_metrics().invalidations > warm.invalidations);
+    }
+
+    #[test]
+    fn monomorphic_set_property_cache_updates_writable_data_slot() {
+        let mut context = NativeContext::default();
+        let object = context
+            .create_object([("value".into(), JsValue::Number(1.0))])
+            .unwrap();
+        context.declare_global("cached", object);
+
+        let mut chunk = Chunk::default();
+        let object_name = constant(&mut chunk, Constant::String("cached".into()));
+        let property_name = constant(&mut chunk, Constant::String("value".into()));
+        let replacement = constant(&mut chunk, Constant::Number(3.0));
+        chunk.emit(Instruction::LoadGlobal(object_name));
+        chunk.emit(Instruction::Constant(replacement));
+        chunk.emit(Instruction::SetProperty(property_name));
+        chunk.emit(Instruction::Return);
+
+        let mut vm = Vm::default();
+        vm.run_completion(&chunk, &mut context).unwrap();
+        vm.run_completion(&chunk, &mut context).unwrap();
+        vm.run_completion(&chunk, &mut context).unwrap();
+        let metrics = context.property_cache_metrics();
+        assert_eq!(metrics.set_misses, 1);
+        assert_eq!(metrics.set_hits, 1);
+    }
+
+    #[test]
+    fn ordinary_property_loop_reaches_required_cache_hit_rates() {
+        let source = r#"
+            var object = { value: 0 };
+            var index = 0;
+            while (index < 100) {
+                object.value = index;
+                var observed = object.value;
+                index = index + 1;
+            }
+            object.value;
+        "#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let program = Parser::with_source(tokens, source).parse_program().unwrap();
+        let chunk = Compiler::new().compile_program(&program).unwrap();
+        let mut context = NativeContext::default();
+
+        Vm::default()
+            .execute_with_context(&chunk, &mut context)
+            .unwrap();
+
+        let metrics = context.property_cache_metrics();
+        let get_total = metrics.get_hits + metrics.get_misses;
+        let set_total = metrics.set_hits + metrics.set_misses;
+        assert!(metrics.get_hits * 100 >= get_total * 70, "{metrics:?}");
+        assert!(metrics.set_hits * 100 >= set_total * 60, "{metrics:?}");
+    }
+
+    #[test]
+    fn accessor_and_prototype_properties_remain_on_the_slow_path() {
+        let source = r#"
+            var calls = 0;
+            var object = { get value() { calls = calls + 1; return calls; } };
+            var index = 0;
+            while (index < 10) {
+                var observed = object.value;
+                index = index + 1;
+            }
+            calls;
+        "#;
+        let tokens = Lexer::new(source).tokenize().unwrap();
+        let program = Parser::with_source(tokens, source).parse_program().unwrap();
+        let chunk = Compiler::new().compile_program(&program).unwrap();
+        let mut context = NativeContext::default();
+        assert_eq!(
+            Vm::default()
+                .execute_with_context(&chunk, &mut context)
+                .unwrap(),
+            JsValue::Number(10.0)
+        );
+
+        let parent = context
+            .create_object([("value".into(), JsValue::Number(1.0))])
+            .unwrap();
+        let parent_id = context.require_object(&parent, "parent").unwrap();
+        let child = context.create_object([]).unwrap();
+        let child_id = context.require_object(&child, "child").unwrap();
+        context.set_prototype_of(child_id, Some(parent_id)).unwrap();
+        context.declare_global("child", child);
+
+        let mut property_chunk = Chunk::default();
+        let child_name = constant(&mut property_chunk, Constant::String("child".into()));
+        let property_name = constant(&mut property_chunk, Constant::String("value".into()));
+        property_chunk.emit(Instruction::LoadGlobal(child_name));
+        property_chunk.emit(Instruction::GetProperty(property_name));
+        property_chunk.emit(Instruction::Return);
+        let mut vm = Vm::default();
+        assert_eq!(
+            vm.run_completion(&property_chunk, &mut context).unwrap(),
+            Completion::Return(JsValue::Number(1.0))
+        );
+        context
+            .define_own_property(
+                parent_id,
+                "value".into(),
+                crate::runtime::PropertyDescriptor::data(JsValue::Number(2.0)),
+            )
+            .unwrap();
+        assert_eq!(
+            vm.run_completion(&property_chunk, &mut context).unwrap(),
+            Completion::Return(JsValue::Number(2.0))
         );
     }
 

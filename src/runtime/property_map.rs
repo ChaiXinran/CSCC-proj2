@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use super::{JsString, PropertyDescriptor, Trace, Tracer};
+use super::{JsString, JsValue, PropertyDescriptor, PropertyKind, Trace, Tracer};
 
 pub type PropertyName = JsString;
 
@@ -16,6 +16,13 @@ pub struct PropertyEntry {
     pub descriptor: PropertyDescriptor,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PropertyMutation {
+    pub slot: Option<PropertySlotId>,
+    pub structural: bool,
+    pub compacted: bool,
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PropertyMap {
     entries: Vec<Option<PropertyEntry>>,
@@ -23,6 +30,7 @@ pub struct PropertyMap {
     tombstones: usize,
     compaction_count: u64,
     delete_count: u64,
+    generation: u64,
 }
 
 impl PropertyMap {
@@ -40,6 +48,14 @@ impl PropertyMap {
     }
 
     pub fn define(&mut self, key: impl Into<PropertyName>, descriptor: PropertyDescriptor) {
+        let _ = self.define_with_outcome(key, descriptor);
+    }
+
+    pub(crate) fn define_with_outcome(
+        &mut self,
+        key: impl Into<PropertyName>,
+        descriptor: PropertyDescriptor,
+    ) -> PropertyMutation {
         let key = key.into();
         if let Some(slot) = self.index.get(key.as_str()).copied() {
             if let Some(entry) = self
@@ -47,8 +63,16 @@ impl PropertyMap {
                 .get_mut(slot.0 as usize)
                 .and_then(Option::as_mut)
             {
+                let structural = !is_data_value_only_update(&entry.descriptor, &descriptor);
                 entry.descriptor = descriptor;
-                return;
+                if structural {
+                    self.bump_generation();
+                }
+                return PropertyMutation {
+                    slot: Some(slot),
+                    structural,
+                    compacted: false,
+                };
             }
             debug_assert!(false, "property index points at a tombstone");
             self.index.remove(key.as_str());
@@ -62,18 +86,41 @@ impl PropertyMap {
             descriptor,
         }));
         self.index.insert(key, slot);
+        self.bump_generation();
+        PropertyMutation {
+            slot: Some(slot),
+            structural: true,
+            compacted: false,
+        }
     }
 
     pub fn delete(&mut self, key: &str) -> Option<PropertyDescriptor> {
+        self.delete_with_outcome(key)
+            .map(|(descriptor, _)| descriptor)
+    }
+
+    pub(crate) fn delete_with_outcome(
+        &mut self,
+        key: &str,
+    ) -> Option<(PropertyDescriptor, PropertyMutation)> {
         let slot = self.index.remove(key)?;
         let entry = self.entries.get_mut(slot.0 as usize)?.take()?;
         self.tombstones = self.tombstones.saturating_add(1);
         self.delete_count = self.delete_count.saturating_add(1);
         let descriptor = entry.descriptor;
-        if self.should_compact() {
+        self.bump_generation();
+        let compacted = self.should_compact();
+        if compacted {
             self.compact();
         }
-        Some(descriptor)
+        Some((
+            descriptor,
+            PropertyMutation {
+                slot: Some(slot),
+                structural: true,
+                compacted,
+            },
+        ))
     }
 
     #[must_use]
@@ -126,6 +173,44 @@ impl PropertyMap {
             .map(|entry| &entry.descriptor)
     }
 
+    pub(crate) fn set_data_value_at(&mut self, slot: PropertySlotId, value: JsValue) -> bool {
+        let Some(descriptor) = self
+            .entries
+            .get_mut(slot.0 as usize)
+            .and_then(Option::as_mut)
+            .map(|entry| &mut entry.descriptor)
+        else {
+            return false;
+        };
+        let PropertyKind::Data {
+            value: current,
+            writable: true,
+        } = &mut descriptor.kind
+        else {
+            return false;
+        };
+        *current = value;
+        true
+    }
+
+    #[must_use]
+    pub const fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    pub(crate) fn shape_entries(
+        &self,
+    ) -> impl Iterator<Item = (&PropertyName, PropertySlotId, &PropertyDescriptor)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                let entry = entry.as_ref()?;
+                let slot = PropertySlotId(u32::try_from(index).ok()?);
+                Some((&entry.key, slot, &entry.descriptor))
+            })
+    }
+
     #[must_use]
     pub fn property_count(&self) -> usize {
         self.index.len()
@@ -174,7 +259,25 @@ impl PropertyMap {
         self.index = index;
         self.tombstones = 0;
         self.compaction_count = self.compaction_count.saturating_add(1);
+        self.bump_generation();
     }
+
+    fn bump_generation(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+    }
+}
+
+fn is_data_value_only_update(
+    current: &PropertyDescriptor,
+    replacement: &PropertyDescriptor,
+) -> bool {
+    matches!(
+        (&current.kind, &replacement.kind),
+        (PropertyKind::Data { writable: left, .. }, PropertyKind::Data { writable: right, .. })
+            if left == right
+                && current.enumerable == replacement.enumerable
+                && current.configurable == replacement.configurable
+    )
 }
 
 impl Trace for PropertyMap {
@@ -278,5 +381,27 @@ mod tests {
         assert_eq!(map.slot_of("a"), Some(slot));
         assert_eq!(key_strings(&map), ["a"]);
         assert_eq!(map.property_count(), 1);
+    }
+
+    #[test]
+    fn generation_changes_only_for_structural_mutations() {
+        let mut map = PropertyMap::default();
+        map.define("value", descriptor(1.0));
+        let after_insert = map.generation();
+        let slot = map.slot_of("value").unwrap();
+
+        map.define("value", descriptor(2.0));
+        assert_eq!(map.generation(), after_insert);
+        assert!(map.set_data_value_at(slot, JsValue::Number(3.0)));
+        assert_eq!(map.generation(), after_insert);
+
+        map.define(
+            "value",
+            PropertyDescriptor::data_with(JsValue::Number(4.0), false, true, true),
+        );
+        assert!(map.generation() > after_insert);
+        let after_reconfigure = map.generation();
+        map.delete("value").unwrap();
+        assert!(map.generation() > after_reconfigure);
     }
 }
