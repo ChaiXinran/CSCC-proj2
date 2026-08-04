@@ -3,7 +3,7 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     process::ExitCode,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use agentjs::{
@@ -74,24 +74,60 @@ fn command_run(args: &[String]) -> Result<(), String> {
 }
 
 fn command_jetstream(args: &[String]) -> Result<(), String> {
-    let path = args
-        .first()
-        .ok_or_else(|| "usage: agentjs jetstream <generated-runner.js>".to_string())?
-        .clone();
+    let mut path = None;
+    let mut loop_limit = u64::MAX;
+    let mut wall_clock_limit = None;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--loop-limit" => {
+                index += 1;
+                loop_limit = required_value(args, index, "--loop-limit")?
+                    .parse::<u64>()
+                    .map_err(|_| "--loop-limit must be an unsigned integer".to_string())?;
+            }
+            "--wall-clock-seconds" => {
+                index += 1;
+                let seconds = required_value(args, index, "--wall-clock-seconds")?
+                    .parse::<u64>()
+                    .map_err(|_| "--wall-clock-seconds must be an unsigned integer".to_string())?;
+                wall_clock_limit = Some(Duration::from_secs(seconds));
+            }
+            argument if argument.starts_with('-') => {
+                return Err(format!("unknown jetstream option {argument}"));
+            }
+            argument if path.is_none() => path = Some(argument.to_string()),
+            _ => {
+                return Err(
+                    "usage: agentjs jetstream <generated-runner.js> [--loop-limit N] [--wall-clock-seconds N]"
+                        .into(),
+                );
+            }
+        }
+        index += 1;
+    }
+    let path = path.ok_or_else(|| {
+        "usage: agentjs jetstream <generated-runner.js> [--loop-limit N] [--wall-clock-seconds N]"
+            .to_string()
+    })?;
     let source = fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
     // Spawn on a dedicated thread with a large stack so deep-recursion benchmarks
     // (e.g. crypto) don't hit the OS thread stack limit.
     std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
-        .spawn(move || jetstream_run(&source))
+        .spawn(move || jetstream_run(&source, loop_limit, wall_clock_limit))
         .map_err(|error| error.to_string())?
         .join()
         .map_err(|_| "JetStream thread panicked".to_string())?
 }
 
-fn jetstream_run(source: &str) -> Result<(), String> {
+fn jetstream_run(
+    source: &str,
+    loop_limit: u64,
+    wall_clock_limit: Option<Duration>,
+) -> Result<(), String> {
     let mut runtime = Runtime::new(RuntimeConfig {
-        loop_limit: u64::MAX,
+        loop_limit,
         recursion_limit: 8_192,
         stack_limit: 8 * 1024 * 1024,
         backtrace_limit: 20,
@@ -99,8 +135,11 @@ fn jetstream_run(source: &str) -> Result<(), String> {
         install_test262_host: true,
         heap_object_limit: usize::MAX,
         heap_byte_limit: usize::MAX,
-        wall_clock_limit: None,
-        gc_allocation_threshold: 100_000,
+        wall_clock_limit,
+        // Large benchmark-owned arrays are long-lived. Collecting in the
+        // middle of a JetStream iteration distorts timing and can sweep
+        // harness values that are still reachable through benchmark state.
+        gc_allocation_threshold: 1_000_000,
     })
     .map_err(|error| error.to_string())?;
     let report = runtime
@@ -444,6 +483,7 @@ USAGE:
   agentjs eval [--backend native] <source>
   agentjs run [--backend native] <file.js>
   agentjs jetstream <generated-runner.js>
+                  [--loop-limit N] [--wall-clock-seconds N]
   agentjs repl [--backend native]
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend native] [--limit N] [--jobs N]

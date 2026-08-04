@@ -4,17 +4,19 @@
 //! prototypes, descriptors, and deterministic Intl option objects. Operations
 //! that need real typed storage are present only when they can fail explicitly.
 
-use super::{function, install_foundation, install_test262_harness, string};
+use super::{function, install_foundation, install_test262_harness, proxy, string};
 use crate::{
     intl::{
         CollatorRecord, DateTimeFieldStyle, DateTimeFormatRecord, DateTimeStyle, HourCycle,
         IntlDataProvider, IntlObjectData, IntlService, LocaleOptions, MinimalIntlProvider,
-        NumberFormatRecord, TimeZoneNameStyle, canonicalize_language_tag, resolve_locale,
+        NumberFormatRecord, NumberValue, TimeZoneNameStyle, canonicalize_language_tag,
+        format_number, resolve_locale, unicode_extension_value,
     },
     runtime::{
         ArrayBufferId, BigIntValue, DataViewId, IteratorMode, JsObject, JsValue, NativeCall,
-        NativeContext, ObjectId, ObjectKind, PreferredType, PropertyDescriptor, PropertyKind,
-        TypedArrayElementKind, TypedArrayViewId, abstract_ops, bigint,
+        NativeContext, ObjectId, ObjectKind, PreferredType, PrimitiveValue, PropertyDescriptor,
+        PropertyKey, PropertyKind, SymbolId, TypedArrayElementKind, TypedArrayViewId, abstract_ops,
+        bigint,
     },
     vm::{Vm, VmError},
 };
@@ -33,6 +35,8 @@ const DATA_VIEW_BUFFER: &str = "__agentjs_data_view_buffer__";
 const DATA_VIEW_BYTE_LENGTH: &str = "__agentjs_data_view_byte_length__";
 const DATA_VIEW_BYTE_OFFSET: &str = "__agentjs_data_view_byte_offset__";
 const INTL_KIND: &str = "__agentjs_intl_kind__";
+const NUMBER_FORMAT_BOUND_FORMAT: &str = "__agentjs_number_format_bound_format__";
+const INTL_FALLBACK_SYMBOL: &str = "__agentjs_intl_fallback_symbol__";
 const MAX_SKELETON_BUFFER_BYTES: usize = 1 << 24;
 const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
 
@@ -384,7 +388,6 @@ fn install_array_buffer(context: &mut NativeContext) -> Result<(), VmError> {
         species,
         PropertyDescriptor::accessor(Some(species_getter), None, false, true),
     )?;
-
     let to_string_tag = context.well_known_symbols().to_string_tag;
     context.define_symbol_own_property(
         prototype,
@@ -4156,6 +4159,8 @@ fn typed_array_to_string_tag_get(
 
 fn install_intl(context: &mut NativeContext) -> Result<(), VmError> {
     let intl = new_ordinary_object(context, context.object_prototype())?;
+    let fallback_symbol = context.create_symbol(Some("IntlLegacyConstructedSymbol".into()));
+    define_hidden(context, intl, INTL_FALLBACK_SYMBOL, fallback_symbol)?;
     let to_string_tag = context.well_known_symbols().to_string_tag;
     context.define_symbol_own_property(
         intl,
@@ -4184,6 +4189,16 @@ fn install_intl(context: &mut NativeContext) -> Result<(), VmError> {
         },
     ] {
         install_intl_constructor(context, intl, spec)?;
+    }
+
+    if let Some(number_prototype) = context.number_prototype() {
+        define_method(
+            context,
+            number_prototype,
+            "toLocaleString",
+            0,
+            intl_number_to_locale_string,
+        )?;
     }
 
     declare_standard_global(context, "Intl", JsValue::Object(intl))?;
@@ -4240,7 +4255,13 @@ fn install_intl_constructor(
         spec.resolved_options,
     )?;
     if spec.kind == "NumberFormat" {
-        define_method(context, prototype, "format", 1, intl_number_format_format)?;
+        let getter =
+            context.register_builtin("get format", 0, intl_number_format_format_get, None)?;
+        context.define_own_property(
+            prototype,
+            "format".into(),
+            PropertyDescriptor::accessor(Some(getter), None, false, true),
+        )?;
     } else if spec.kind == "Collator" {
         define_method(context, prototype, "compare", 2, intl_collator_compare)?;
     }
@@ -4301,10 +4322,25 @@ fn intl_date_time_format_construct(
 fn intl_number_format_call(
     vm: &mut Vm,
     context: &mut NativeContext,
-    _this: JsValue,
+    this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    construct_intl_object(vm, context, arguments, "NumberFormat", "Intl.NumberFormat")
+    let number_format =
+        construct_intl_object(vm, context, arguments, "NumberFormat", "Intl.NumberFormat")?;
+    let constructor = context
+        .get_global("Intl")
+        .and_then(|intl| context.value_object(&intl))
+        .and_then(|intl| context.get_own_property_descriptor(intl, "NumberFormat"))
+        .and_then(|descriptor| descriptor.value_cloned())
+        .ok_or_else(|| VmError::runtime("Intl.NumberFormat missing"))?;
+    if context.instance_of(this_value.clone(), constructor)?
+        && let Some(object) = context.value_object(&this_value)
+        && let Some(symbol) = intl_fallback_symbol(context)
+    {
+        context.define_symbol_own_property(object, symbol, constant_descriptor(number_format))?;
+        return Ok(this_value);
+    }
+    Ok(number_format)
 }
 
 fn intl_number_format_construct(
@@ -4362,23 +4398,60 @@ fn construct_intl_object_with_new_target(
         "DateTimeFormat" => {
             IntlObjectData::DateTimeFormat(initialize_date_time_format(vm, context, arguments)?)
         }
-        "NumberFormat" => {
-            validate_number_format_arguments(vm, context, arguments)?;
-            IntlObjectData::NumberFormat(NumberFormatRecord::default())
-        }
+        "NumberFormat" => IntlObjectData::NumberFormat(Box::new(initialize_number_format(
+            vm, context, arguments,
+        )?)),
         "Collator" => IntlObjectData::Collator(CollatorRecord {
             locale: "en-US".into(),
         }),
         _ => return Err(VmError::type_error("unsupported Intl constructor")),
     };
-    let prototype = context
-        .constructor_prototype(&new_target)?
-        .or_else(|| context.object_prototype())
-        .ok_or_else(|| VmError::runtime("Intl prototype missing"))?;
+    let prototype = intl_prototype_from_constructor(vm, context, new_target, kind)?;
     let object = new_ordinary_object(context, Some(prototype))?;
     define_hidden(context, object, INTL_KIND, JsValue::String(kind.into()))?;
     context.set_intl_object_data(object, data);
     Ok(JsValue::Object(object))
+}
+
+fn intl_prototype_from_constructor(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    new_target: JsValue,
+    kind: &str,
+) -> Result<ObjectId, VmError> {
+    let prototype = match vm.get_property_value_catching_from_builtin(
+        new_target.clone(),
+        "prototype",
+        context,
+    )? {
+        Ok(value) => value,
+        Err(error) => return Err(vm.throw_value_from_builtin(error)),
+    };
+    if let Some(prototype) = context.value_object(&prototype) {
+        return Ok(prototype);
+    }
+
+    let global = context.global_object_for_callable(&new_target);
+    let intl = match vm.get_property_value_catching_from_builtin(
+        JsValue::Object(global),
+        "Intl",
+        context,
+    )? {
+        Ok(value) => value,
+        Err(error) => return Err(vm.throw_value_from_builtin(error)),
+    };
+    let constructor = match vm.get_property_value_catching_from_builtin(intl, kind, context)? {
+        Ok(value) => value,
+        Err(error) => return Err(vm.throw_value_from_builtin(error)),
+    };
+    let prototype =
+        match vm.get_property_value_catching_from_builtin(constructor, "prototype", context)? {
+            Ok(value) => value,
+            Err(error) => return Err(vm.throw_value_from_builtin(error)),
+        };
+    context
+        .value_object(&prototype)
+        .ok_or_else(|| VmError::runtime(format!("Intl.{kind} prototype missing")))
 }
 
 fn date_time_string_option(
@@ -4615,7 +4688,10 @@ fn number_format_option(
     options: &JsValue,
     key: &str,
 ) -> Result<JsValue, VmError> {
-    vm.get_property_value(options.clone(), key, context)
+    match vm.get_property_value_catching_from_builtin(options.clone(), key, context)? {
+        Ok(value) => Ok(value),
+        Err(error) => Err(vm.throw_value_from_builtin(error)),
+    }
 }
 
 fn number_format_string_option(
@@ -4674,15 +4750,6 @@ fn number_format_get_digit_option(
 ) -> Result<Option<f64>, VmError> {
     let value = number_format_option(vm, context, options, key)?;
     number_format_digit_option(vm, context, value, minimum, maximum)
-}
-
-fn number_format_get_use_grouping(
-    vm: &mut Vm,
-    context: &mut NativeContext,
-    options: &JsValue,
-) -> Result<(), VmError> {
-    let value = number_format_option(vm, context, options, "useGrouping")?;
-    validate_number_format_use_grouping(vm, context, value)
 }
 
 fn is_well_formed_numbering_system(value: &str) -> bool {
@@ -4755,76 +4822,89 @@ fn is_well_formed_unit(value: &str) -> bool {
     })
 }
 
-fn validate_number_format_use_grouping(
-    vm: &mut Vm,
-    context: &mut NativeContext,
-    value: JsValue,
-) -> Result<(), VmError> {
-    match value {
-        JsValue::Undefined | JsValue::Boolean(_) | JsValue::Null => Ok(()),
-        JsValue::Number(0.0) => Ok(()),
-        JsValue::String(value)
-            if matches!(
-                value.as_str(),
-                "" | "auto" | "always" | "min2" | "true" | "false"
-            ) =>
-        {
-            Ok(())
-        }
-        other => {
-            let value = vm.to_string_coerce(other, context)?;
-            if matches!(value.as_str(), "auto" | "always" | "min2") {
-                Ok(())
-            } else {
-                Err(VmError::range("invalid Intl.NumberFormat useGrouping"))
-            }
-        }
-    }
-}
-
-fn validate_number_format_arguments(
+fn initialize_number_format(
     vm: &mut Vm,
     context: &mut NativeContext,
     arguments: &[JsValue],
-) -> Result<(), VmError> {
+) -> Result<NumberFormatRecord, VmError> {
     if matches!(arguments.first(), Some(JsValue::Null)) {
         return Err(VmError::type_error(
             "Intl.NumberFormat locales cannot be null",
         ));
     }
+    let requested = collect_locale_list(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+    )?
+    .into_iter()
+    .map(|locale| {
+        canonicalize_language_tag(&locale)
+            .map_err(|_| VmError::range("invalid Intl.NumberFormat locale"))
+    })
+    .collect::<Result<Vec<_>, _>>()?;
     let options = arguments.get(1).cloned().unwrap_or(JsValue::Undefined);
-    if matches!(options, JsValue::Undefined) {
-        return Ok(());
-    }
     if matches!(options, JsValue::Null) {
         return Err(VmError::type_error(
             "Intl.NumberFormat options cannot be null",
         ));
     }
-    if !matches!(
+    let is_object = matches!(
         options,
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_)
-    ) {
-        return Ok(());
+    );
+    let mut locale_options = LocaleOptions::default();
+    let mut record = NumberFormatRecord::default();
+    if !is_object {
+        let resolved = resolve_locale(
+            &MinimalIntlProvider,
+            IntlService::NumberFormat,
+            &requested,
+            &locale_options,
+        )
+        .map_err(VmError::range)?;
+        let base_locale = resolved
+            .locale
+            .split("-u-")
+            .next()
+            .unwrap_or(&resolved.locale);
+        let extension_numbering = requested
+            .first()
+            .and_then(|locale| unicode_extension_value(locale, "nu"))
+            .filter(|numbering| {
+                MinimalIntlProvider
+                    .available_numbering_systems()
+                    .contains(&numbering.as_str())
+            });
+        record.numbering_system = extension_numbering.clone().unwrap_or_else(|| "latn".into());
+        record.locale = extension_numbering.map_or_else(
+            || base_locale.to_string(),
+            |numbering| format!("{base_locale}-u-nu-{numbering}"),
+        );
+        return Ok(record);
     }
 
-    number_format_get_string_option(
+    locale_options.locale_matcher = number_format_get_string_option(
         vm,
         context,
         &options,
         "localeMatcher",
         &["lookup", "best fit"],
     )?;
-
-    let numbering_system = number_format_option(vm, context, &options, "numberingSystem")?;
-    if !matches!(numbering_system, JsValue::Undefined) {
-        let numbering_system = vm.to_string_coerce(numbering_system, context)?;
-        if !is_well_formed_numbering_system(&numbering_system) {
+    let numbering_value = number_format_option(vm, context, &options, "numberingSystem")?;
+    if !matches!(numbering_value, JsValue::Undefined) {
+        let numbering = vm.to_string_coerce(numbering_value, context)?;
+        if !is_well_formed_numbering_system(&numbering) {
             return Err(VmError::range("invalid Intl.NumberFormat numberingSystem"));
         }
+        if MinimalIntlProvider
+            .available_numbering_systems()
+            .contains(&numbering.as_str())
+        {
+            locale_options.numbering_system = Some(numbering);
+        }
     }
-
-    let style = number_format_get_string_option(
+    record.style = number_format_get_string_option(
         vm,
         context,
         &options,
@@ -4834,120 +4914,155 @@ fn validate_number_format_arguments(
     .unwrap_or_else(|| "decimal".into());
 
     let currency_value = number_format_option(vm, context, &options, "currency")?;
-    let currency = if matches!(currency_value, JsValue::Undefined) {
-        None
-    } else {
-        let currency = vm.to_string_coerce(currency_value, context)?;
+    if !matches!(currency_value, JsValue::Undefined) {
+        let currency = vm
+            .to_string_coerce(currency_value, context)?
+            .to_ascii_uppercase();
         if !is_well_formed_currency(&currency) {
             return Err(VmError::range("invalid Intl.NumberFormat currency"));
         }
-        Some(currency)
-    };
-    if style == "currency" && currency.is_none() {
+        record.currency = Some(currency);
+    }
+    if record.style == "currency" && record.currency.is_none() {
         return Err(VmError::type_error(
             "currency style requires a currency option",
         ));
     }
-
-    number_format_get_string_option(
+    record.currency_display = number_format_get_string_option(
         vm,
         context,
         &options,
         "currencyDisplay",
         &["code", "symbol", "narrowSymbol", "name"],
-    )?;
-    number_format_get_string_option(
+    )?
+    .unwrap_or_else(|| "symbol".into());
+    record.currency_sign = number_format_get_string_option(
         vm,
         context,
         &options,
         "currencySign",
         &["standard", "accounting"],
-    )?;
+    )?
+    .unwrap_or_else(|| "standard".into());
 
     let unit_value = number_format_option(vm, context, &options, "unit")?;
-    let unit = if matches!(unit_value, JsValue::Undefined) {
-        None
-    } else {
+    if !matches!(unit_value, JsValue::Undefined) {
         let unit = vm.to_string_coerce(unit_value, context)?;
         if !is_well_formed_unit(&unit) {
             return Err(VmError::range("invalid Intl.NumberFormat unit"));
         }
-        Some(unit)
-    };
-    if style == "unit" && unit.is_none() {
+        record.unit = Some(unit);
+    }
+    if record.style == "unit" && record.unit.is_none() {
         return Err(VmError::type_error("unit style requires a unit option"));
     }
-    number_format_get_string_option(
+    record.unit_display = number_format_get_string_option(
         vm,
         context,
         &options,
         "unitDisplay",
         &["short", "narrow", "long"],
-    )?;
-
-    number_format_get_string_option(
+    )?
+    .unwrap_or_else(|| "short".into());
+    record.notation = number_format_get_string_option(
         vm,
         context,
         &options,
         "notation",
         &["standard", "scientific", "engineering", "compact"],
-    )?;
-    number_format_get_digit_option(vm, context, &options, "minimumIntegerDigits", 1.0, 21.0)?;
-    let minimum_fraction =
+    )?
+    .unwrap_or_else(|| "standard".into());
+    record.minimum_integer_digits =
+        number_format_get_digit_option(vm, context, &options, "minimumIntegerDigits", 1.0, 21.0)?
+            .unwrap_or(1.0) as u8;
+    let min_fraction =
         number_format_get_digit_option(vm, context, &options, "minimumFractionDigits", 0.0, 100.0)?;
-    let maximum_fraction =
+    let max_fraction =
         number_format_get_digit_option(vm, context, &options, "maximumFractionDigits", 0.0, 100.0)?;
-    if minimum_fraction
-        .zip(maximum_fraction)
-        .is_some_and(|(minimum, maximum)| maximum < minimum)
-    {
+    let currency_default: f64 = record
+        .currency
+        .as_deref()
+        .map(|currency| match currency {
+            "BHD" | "IQD" | "JOD" | "KWD" | "LYD" | "OMR" | "TND" => 3.0,
+            "CLF" => 4.0,
+            "JPY" | "KRW" => 0.0,
+            _ => 2.0,
+        })
+        .unwrap_or(0.0);
+    let default_min_fraction = if record.notation != "standard" {
+        0.0
+    } else if record.style == "currency" {
+        max_fraction.map_or(currency_default, |maximum| currency_default.min(maximum))
+    } else {
+        0.0
+    };
+    let default_max_fraction = if record.notation == "compact" {
+        0.0
+    } else if matches!(record.notation.as_str(), "scientific" | "engineering") {
+        3.0
+    } else if record.style == "currency" {
+        currency_default
+    } else if record.style == "percent" {
+        0.0
+    } else {
+        3.0
+    };
+    record.minimum_fraction_digits = min_fraction.unwrap_or(default_min_fraction).min(100.0) as u8;
+    record.maximum_fraction_digits = max_fraction
+        .unwrap_or(default_max_fraction.max(f64::from(record.minimum_fraction_digits)))
+        .min(100.0) as u8;
+    if record.maximum_fraction_digits < record.minimum_fraction_digits {
         return Err(VmError::range(
             "maximumFractionDigits is less than minimumFractionDigits",
         ));
     }
-    let minimum_significant = number_format_get_digit_option(
+    let minimum_significant_digits = number_format_get_digit_option(
         vm,
         context,
         &options,
         "minimumSignificantDigits",
         1.0,
         21.0,
-    )?;
-    let maximum_significant = number_format_get_digit_option(
+    )?
+    .map(|value| value as u8);
+    record.minimum_significant_digits_explicit = minimum_significant_digits.is_some();
+    record.minimum_significant_digits = minimum_significant_digits;
+    record.maximum_significant_digits = number_format_get_digit_option(
         vm,
         context,
         &options,
         "maximumSignificantDigits",
         1.0,
         21.0,
-    )?;
-    if maximum_significant
-        .zip(minimum_significant.or(Some(1.0)))
-        .is_some_and(|(maximum, minimum)| maximum < minimum)
-    {
-        return Err(VmError::range(
-            "maximumSignificantDigits is less than minimumSignificantDigits",
-        ));
+    )?
+    .map(|value| value as u8);
+    if record.minimum_significant_digits.is_some() || record.maximum_significant_digits.is_some() {
+        record.minimum_significant_digits = Some(record.minimum_significant_digits.unwrap_or(1));
+        record.maximum_significant_digits = Some(record.maximum_significant_digits.unwrap_or(21));
     }
-
-    let rounding_increment_value =
-        number_format_option(vm, context, &options, "roundingIncrement")?;
-    let rounding_increment = if matches!(rounding_increment_value, JsValue::Undefined) {
-        1.0
-    } else {
-        let value = vm.to_number(rounding_increment_value, context)?;
+    if let Some(maximum) = record.maximum_significant_digits {
+        let minimum = record.minimum_significant_digits.unwrap_or(1);
+        if maximum < minimum {
+            return Err(VmError::range(
+                "maximumSignificantDigits is less than minimumSignificantDigits",
+            ));
+        }
+    }
+    let increment_value = number_format_option(vm, context, &options, "roundingIncrement")?;
+    if !matches!(increment_value, JsValue::Undefined) {
+        let increment = vm.to_number(increment_value, context)?;
         const ALLOWED: &[f64] = &[
             1.0, 2.0, 5.0, 10.0, 20.0, 25.0, 50.0, 100.0, 200.0, 250.0, 500.0, 1000.0, 2000.0,
             2500.0, 5000.0,
         ];
-        if !ALLOWED.contains(&value) {
+        if !ALLOWED.contains(&increment) {
             return Err(VmError::range(
                 "invalid Intl.NumberFormat roundingIncrement",
             ));
         }
-        value
-    };
-    number_format_get_string_option(
+        record.rounding_increment = increment as u16;
+    }
+    record.rounding_mode = number_format_get_string_option(
         vm,
         context,
         &options,
@@ -4963,8 +5078,9 @@ fn validate_number_format_arguments(
             "halfTrunc",
             "halfEven",
         ],
-    )?;
-    let rounding_priority = number_format_get_string_option(
+    )?
+    .unwrap_or_else(|| "halfExpand".into());
+    record.rounding_priority = number_format_get_string_option(
         vm,
         context,
         &options,
@@ -4972,43 +5088,101 @@ fn validate_number_format_arguments(
         &["auto", "morePrecision", "lessPrecision"],
     )?
     .unwrap_or_else(|| "auto".into());
-    number_format_get_string_option(
+    record.trailing_zero_display = number_format_get_string_option(
         vm,
         context,
         &options,
         "trailingZeroDisplay",
         &["auto", "stripIfInteger"],
-    )?;
-
-    if rounding_increment != 1.0 {
-        if rounding_priority != "auto"
-            || minimum_significant.is_some()
-            || maximum_significant.is_some()
+    )?
+    .unwrap_or_else(|| "auto".into());
+    if record.rounding_increment != 1 {
+        if record.rounding_priority != "auto"
+            || record.minimum_significant_digits.is_some()
+            || record.maximum_significant_digits.is_some()
         {
             return Err(VmError::type_error(
                 "roundingIncrement is incompatible with significant-digit rounding",
             ));
         }
-        if minimum_fraction
-            .zip(maximum_fraction)
-            .is_some_and(|(minimum, maximum)| minimum != maximum)
-        {
+        if record.minimum_fraction_digits != record.maximum_fraction_digits {
             return Err(VmError::range(
                 "roundingIncrement requires equal fraction digit bounds",
             ));
         }
     }
-
-    number_format_get_string_option(vm, context, &options, "compactDisplay", &["short", "long"])?;
-    number_format_get_use_grouping(vm, context, &options)?;
-    number_format_get_string_option(
+    record.compact_display = number_format_get_string_option(
+        vm,
+        context,
+        &options,
+        "compactDisplay",
+        &["short", "long"],
+    )?
+    .unwrap_or_else(|| "short".into());
+    record.use_grouping = match number_format_option(vm, context, &options, "useGrouping")? {
+        JsValue::Boolean(false) | JsValue::Null | JsValue::Number(0.0) => "false".into(),
+        JsValue::Boolean(true) => "always".into(),
+        JsValue::Undefined => {
+            if record.notation == "compact" {
+                "min2".into()
+            } else {
+                "auto".into()
+            }
+        }
+        JsValue::String(value) if value.is_empty() => "false".into(),
+        JsValue::String(value) if value == "false" => "auto".into(),
+        JsValue::String(value) if value == "true" => "auto".into(),
+        JsValue::String(value) if matches!(value.as_str(), "auto" | "always" | "min2") => value,
+        other => {
+            let value = vm.to_string_coerce(other, context)?;
+            if matches!(value.as_str(), "auto" | "always" | "min2") {
+                value
+            } else {
+                return Err(VmError::range("invalid Intl.NumberFormat useGrouping"));
+            }
+        }
+    };
+    record.sign_display = number_format_get_string_option(
         vm,
         context,
         &options,
         "signDisplay",
         &["auto", "never", "always", "exceptZero", "negative"],
-    )?;
-    Ok(())
+    )?
+    .unwrap_or_else(|| "auto".into());
+
+    let resolved = resolve_locale(
+        &MinimalIntlProvider,
+        IntlService::NumberFormat,
+        &requested,
+        &locale_options,
+    )
+    .map_err(VmError::range)?;
+    let base_locale = resolved
+        .locale
+        .split("-u-")
+        .next()
+        .unwrap_or(&resolved.locale)
+        .to_string();
+    let extension_numbering = requested
+        .first()
+        .and_then(|locale| unicode_extension_value(locale, "nu"))
+        .filter(|numbering| {
+            MinimalIntlProvider
+                .available_numbering_systems()
+                .contains(&numbering.as_str())
+        });
+    record.numbering_system = locale_options
+        .numbering_system
+        .clone()
+        .or_else(|| extension_numbering.clone())
+        .unwrap_or_else(|| "latn".into());
+    record.locale = if extension_numbering.as_deref() == Some(record.numbering_system.as_str()) {
+        format!("{base_locale}-u-nu-{}", record.numbering_system)
+    } else {
+        base_locale
+    };
+    Ok(record)
 }
 
 fn require_intl_kind(
@@ -5023,6 +5197,42 @@ fn require_intl_kind(
             "receiver is not an Intl.{expected} object"
         ))),
     }
+}
+
+fn intl_fallback_symbol(context: &NativeContext) -> Option<SymbolId> {
+    let intl = context.get_global("Intl")?;
+    let intl = context.value_object(&intl)?;
+    match own_data_value(context, intl, INTL_FALLBACK_SYMBOL) {
+        Some(JsValue::Symbol(symbol)) => Some(symbol),
+        _ => None,
+    }
+}
+
+fn unwrap_number_format(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: &JsValue,
+) -> Result<ObjectId, VmError> {
+    if let Some(object) = context.value_object(this_value)
+        && matches!(
+            own_data_value(context, object, INTL_KIND),
+            Some(JsValue::String(kind)) if kind == "NumberFormat"
+        )
+    {
+        return Ok(object);
+    }
+
+    object_from_this(context, this_value, "Intl.NumberFormat receiver")?;
+    let symbol = intl_fallback_symbol(context)
+        .ok_or_else(|| VmError::runtime("Intl fallback symbol missing"))?;
+    let fallback = proxy::internal_get(
+        vm,
+        context,
+        this_value.clone(),
+        &PropertyKey::Symbol(symbol),
+        this_value.clone(),
+    )?;
+    require_intl_kind(context, &fallback, "NumberFormat")
 }
 
 fn object_from_pairs(
@@ -5070,39 +5280,80 @@ fn intl_date_time_format_resolved_options(
 }
 
 fn intl_number_format_resolved_options(
-    _vm: &mut Vm,
+    vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let object = require_intl_kind(context, &this_value, "NumberFormat")?;
+    let object = unwrap_number_format(vm, context, &this_value)?;
     let record = match context.intl_object_data(object) {
-        Some(IntlObjectData::NumberFormat(record)) => record.clone(),
+        Some(IntlObjectData::NumberFormat(record)) => record.as_ref().clone(),
         _ => return Err(VmError::type_error("invalid Intl.NumberFormat state")),
     };
-    object_from_pairs(
-        context,
-        [
-            ("locale", JsValue::String(record.locale)),
-            ("numberingSystem", JsValue::String(record.numbering_system)),
-            ("style", JsValue::String(record.style)),
-            (
-                "minimumIntegerDigits",
-                JsValue::Number(record.minimum_integer_digits.into()),
-            ),
-            (
-                "minimumFractionDigits",
-                JsValue::Number(record.minimum_fraction_digits.into()),
-            ),
-            (
-                "maximumFractionDigits",
-                JsValue::Number(record.maximum_fraction_digits.into()),
-            ),
-            ("useGrouping", JsValue::String(record.use_grouping)),
-            ("notation", JsValue::String(record.notation)),
-            ("signDisplay", JsValue::String(record.sign_display)),
-        ],
-    )
+    let mut pairs = vec![
+        ("locale", JsValue::String(record.locale)),
+        ("numberingSystem", JsValue::String(record.numbering_system)),
+        ("style", JsValue::String(record.style.clone())),
+    ];
+    if record.style == "currency" {
+        if let Some(currency) = record.currency {
+            pairs.push(("currency", JsValue::String(currency)));
+        }
+        pairs.push(("currencyDisplay", JsValue::String(record.currency_display)));
+        pairs.push(("currencySign", JsValue::String(record.currency_sign)));
+    } else if record.style == "unit" {
+        if let Some(unit) = record.unit {
+            pairs.push(("unit", JsValue::String(unit)));
+        }
+        pairs.push(("unitDisplay", JsValue::String(record.unit_display)));
+    }
+    pairs.push((
+        "minimumIntegerDigits",
+        JsValue::Number(record.minimum_integer_digits.into()),
+    ));
+    if let Some(minimum) = record.minimum_significant_digits {
+        pairs.push(("minimumSignificantDigits", JsValue::Number(minimum.into())));
+        pairs.push((
+            "maximumSignificantDigits",
+            JsValue::Number(record.maximum_significant_digits.unwrap_or(21).into()),
+        ));
+    } else {
+        pairs.push((
+            "minimumFractionDigits",
+            JsValue::Number(record.minimum_fraction_digits.into()),
+        ));
+        pairs.push((
+            "maximumFractionDigits",
+            JsValue::Number(record.maximum_fraction_digits.into()),
+        ));
+    }
+    pairs.push((
+        "useGrouping",
+        if record.use_grouping == "false" {
+            JsValue::Boolean(false)
+        } else {
+            JsValue::String(record.use_grouping)
+        },
+    ));
+    pairs.push(("notation", JsValue::String(record.notation.clone())));
+    if record.notation == "compact" {
+        pairs.push(("compactDisplay", JsValue::String(record.compact_display)));
+    }
+    pairs.push(("signDisplay", JsValue::String(record.sign_display)));
+    pairs.push((
+        "roundingIncrement",
+        JsValue::Number(record.rounding_increment.into()),
+    ));
+    pairs.push(("roundingMode", JsValue::String(record.rounding_mode)));
+    pairs.push((
+        "roundingPriority",
+        JsValue::String(record.rounding_priority),
+    ));
+    pairs.push((
+        "trailingZeroDisplay",
+        JsValue::String(record.trailing_zero_display),
+    ));
+    object_from_pairs(context, pairs)
 }
 
 fn intl_collator_resolved_options(
@@ -5154,20 +5405,31 @@ fn collect_locale_list(
         JsValue::Undefined => Ok(Vec::new()),
         JsValue::String(locale) => Ok(vec![locale]),
         other => {
-            let object = match context.value_object(&other) {
-                Some(object) => object,
-                None => return Ok(vec![vm.to_string_coerce(other, context)?]),
-            };
-            let length = context
-                .get_property(context.object_value(object), "length")?
-                .to_number()
-                .unwrap_or(0.0)
-                .max(0.0) as usize;
+            let object = vm.to_object(other, context)?;
+            let object_value = context.object_value(object);
+            let length_value = vm.get_property_value(object_value.clone(), "length", context)?;
+            let length = vm.to_number(length_value, context)?.max(0.0) as usize;
             let mut locales = Vec::new();
             for index in 0..length {
-                let value =
-                    context.get_property(context.object_value(object), &index.to_string())?;
-                if !matches!(value, JsValue::Undefined) {
+                let key = index.to_string();
+                if proxy::internal_has_property(
+                    vm,
+                    context,
+                    object_value.clone(),
+                    &PropertyKey::String(key.clone()),
+                )? {
+                    let value = vm.get_property_value(object_value.clone(), &key, context)?;
+                    if !matches!(
+                        value,
+                        JsValue::String(_)
+                            | JsValue::Object(_)
+                            | JsValue::Function(_)
+                            | JsValue::BuiltinFunction(_)
+                    ) {
+                        return Err(VmError::type_error(
+                            "Intl locale list elements must be strings or objects",
+                        ));
+                    }
                     locales.push(vm.to_string_coerce(value, context)?);
                 }
             }
@@ -5182,14 +5444,69 @@ fn intl_number_format_format(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "NumberFormat")?;
+    let object = require_intl_kind(context, &this_value, "NumberFormat")?;
+    let record = match context.intl_object_data(object) {
+        Some(IntlObjectData::NumberFormat(record)) => record.as_ref().clone(),
+        _ => return Err(VmError::type_error("invalid Intl.NumberFormat state")),
+    };
     let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
-    let text = vm.to_string_coerce(value, context)?;
-    Ok(JsValue::String(match text.as_str() {
-        "Infinity" => "∞".into(),
-        "-Infinity" => "-∞".into(),
-        _ => text,
-    }))
+    let formatted = if let JsValue::String(text) = &value
+        && !matches!(text.as_str(), "Infinity" | "-Infinity" | "+Infinity")
+    {
+        format_number(&record, NumberValue::Decimal(text))
+    } else {
+        match vm.to_numeric(value, context)? {
+            JsValue::Number(number) => format_number(&record, NumberValue::Number(number)),
+            JsValue::BigInt(number) => {
+                let text = number.to_string();
+                format_number(&record, NumberValue::BigInt(&text))
+            }
+            _ => unreachable!("ToNumeric must return Number or BigInt"),
+        }
+    };
+    Ok(JsValue::String(formatted.text))
+}
+
+fn intl_number_to_locale_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let number = match &this_value {
+        JsValue::Number(number) => *number,
+        _ => context
+            .value_object(&this_value)
+            .and_then(|object| context.primitive_value(object))
+            .and_then(|value| match value {
+                PrimitiveValue::Number(number) => Some(*number),
+                _ => None,
+            })
+            .ok_or_else(|| {
+                VmError::type_error("Number.prototype.toLocaleString called on a non-Number")
+            })?,
+    };
+    let record = initialize_number_format(vm, context, arguments)?;
+    Ok(JsValue::String(
+        format_number(&record, NumberValue::Number(number)).text,
+    ))
+}
+
+fn intl_number_format_format_get(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: JsValue,
+    _arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let object = unwrap_number_format(vm, context, &this_value)?;
+    if let Some(bound) = own_data_value(context, object, NUMBER_FORMAT_BOUND_FORMAT) {
+        return Ok(bound);
+    }
+    let target = context.register_builtin("", 1, intl_number_format_format, None)?;
+    let bound =
+        context.register_bound_function(target, this_value, Vec::new(), 1.0, String::new())?;
+    define_hidden(context, object, NUMBER_FORMAT_BOUND_FORMAT, bound.clone())?;
+    Ok(bound)
 }
 
 fn intl_collator_compare(
