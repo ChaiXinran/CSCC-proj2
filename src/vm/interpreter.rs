@@ -14,8 +14,8 @@ use crate::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
         Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
         PreferredType, PrimitiveValue, PrivateBrandId, PromiseCallbackJob, PromiseReaction,
-        PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, SymbolId,
-        TypedArrayViewId, array_index, bigint, to_property_key,
+        PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, SymbolId, Trace,
+        Tracer, TypedArrayViewId, array_index, bigint, to_property_key,
     },
     vm::{
         CallFrame, CallRequest, Completion, ConstructRequest, FunctionEnvironmentMode,
@@ -997,17 +997,75 @@ struct RunBaseline {
     environment_depth: usize,
 }
 
+fn append_completion_roots(completion: &Completion, roots: &mut Vec<JsValue>) {
+    match completion {
+        Completion::Normal(value)
+        | Completion::Return(value)
+        | Completion::Yield { value, .. }
+        | Completion::Throw(value) => roots.push(value.clone()),
+        Completion::YieldDelegate {
+            iterator, value, ..
+        } => {
+            roots.push(iterator.clone());
+            roots.push(value.clone());
+        }
+        Completion::Break(_) | Completion::Continue(_) => {}
+    }
+}
+
+fn trace_completion_roots(completion: &Completion, tracer: &mut Tracer<'_>) {
+    match completion {
+        Completion::Normal(value)
+        | Completion::Return(value)
+        | Completion::Yield { value, .. }
+        | Completion::Throw(value) => value.trace(tracer),
+        Completion::YieldDelegate {
+            iterator, value, ..
+        } => {
+            iterator.trace(tracer);
+            value.trace(tracer);
+        }
+        Completion::Break(_) | Completion::Continue(_) => {}
+    }
+}
+
 impl Vm {
     pub fn execute(&mut self, chunk: &Chunk) -> Result<JsValue, VmError> {
         self.execute_with_context(chunk, &mut NativeContext::default())
     }
 
     pub(crate) fn operand_stack_roots(&self) -> Vec<JsValue> {
-        self.stack.clone()
+        let mut roots = self.stack.clone();
+        for completion in &self.finally_stack {
+            append_completion_roots(completion, &mut roots);
+        }
+        roots.extend(
+            self.name_references
+                .values()
+                .flat_map(|values| values.iter().cloned()),
+        );
+        roots
     }
 
     pub(crate) fn pending_exception_root(&self) -> Option<JsValue> {
         self.pending_exception.clone()
+    }
+
+    pub(crate) fn trace_roots(&self, tracer: &mut Tracer<'_>) {
+        for value in &self.stack {
+            value.trace(tracer);
+        }
+        if let Some(value) = &self.pending_exception {
+            value.trace(tracer);
+        }
+        for completion in &self.finally_stack {
+            trace_completion_roots(completion, tracer);
+        }
+        for values in self.name_references.values() {
+            for value in values {
+                value.trace(tracer);
+            }
+        }
     }
 
     pub(crate) fn take_pending_exception_from_builtin(&mut self) -> Option<JsValue> {

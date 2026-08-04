@@ -240,6 +240,20 @@ impl ModuleRegistry {
         self.namespaces.values()
     }
 
+    pub(crate) fn root_values(&self) -> impl Iterator<Item = &JsValue> {
+        self.evaluation_states
+            .values()
+            .filter_map(|state| match state {
+                ModuleEvaluationState::Rejected(value) => Some(value),
+                ModuleEvaluationState::Pending | ModuleEvaluationState::Fulfilled => None,
+            })
+            .chain(
+                self.evaluation_promises
+                    .values()
+                    .map(|promise| &promise.promise),
+            )
+    }
+
     pub fn namespace_exports_for_binding(
         &self,
         environment: EnvironmentId,

@@ -1,7 +1,5 @@
 //! Garbage-collection boundary.
 
-use std::collections::HashSet;
-
 use super::{EnvironmentId, FunctionId, Heap, JsValue, ObjectId};
 use crate::vm::CallFrame;
 
@@ -30,11 +28,75 @@ pub struct CollectionStats {
     pub bytes_after: usize,
 }
 
+/// Cumulative garbage-collection timing and last-pass statistics.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct GcMetrics {
+    pub collection_count: u64,
+    pub total_pause_ns: u64,
+    pub max_pause_ns: u64,
+    pub last_collection: CollectionStats,
+}
+
+pub(crate) trait RootSink {
+    fn mark_object_root(&mut self, id: ObjectId);
+    fn mark_environment_root(&mut self, id: EnvironmentId);
+    fn mark_function_root(&mut self, id: FunctionId);
+    fn mark_value_root(&mut self, value: &JsValue);
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct HeapMarks {
-    pub objects: HashSet<ObjectId>,
-    pub environments: HashSet<EnvironmentId>,
-    pub functions: HashSet<FunctionId>,
+    objects: Vec<bool>,
+    environments: Vec<bool>,
+    functions: Vec<bool>,
+}
+
+impl HeapMarks {
+    pub(crate) fn for_heap(heap: &Heap) -> Self {
+        Self {
+            objects: vec![false; heap.object_slots()],
+            environments: vec![false; heap.environment_slots()],
+            functions: vec![false; heap.function_slots()],
+        }
+    }
+
+    pub(crate) fn mark_object(&mut self, id: ObjectId) -> bool {
+        mark_slot(&mut self.objects, id.0 as usize)
+    }
+
+    pub(crate) fn mark_environment(&mut self, id: EnvironmentId) -> bool {
+        mark_slot(&mut self.environments, id.0 as usize)
+    }
+
+    pub(crate) fn mark_function(&mut self, id: FunctionId) -> bool {
+        mark_slot(&mut self.functions, id.0 as usize)
+    }
+
+    pub(crate) fn contains_object(&self, id: ObjectId) -> bool {
+        self.objects.get(id.0 as usize).copied().unwrap_or(false)
+    }
+
+    pub(crate) fn contains_environment(&self, id: EnvironmentId) -> bool {
+        self.environments
+            .get(id.0 as usize)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn contains_function(&self, id: FunctionId) -> bool {
+        self.functions.get(id.0 as usize).copied().unwrap_or(false)
+    }
+}
+
+fn mark_slot(slots: &mut [bool], index: usize) -> bool {
+    let Some(marked) = slots.get_mut(index) else {
+        return false;
+    };
+    if *marked {
+        return false;
+    }
+    *marked = true;
+    true
 }
 
 /// Explicit roots supplied by NativeContext and the VM before a collection.
@@ -95,6 +157,35 @@ impl RootSet {
     }
 }
 
+impl RootSink for RootSet {
+    fn mark_object_root(&mut self, id: ObjectId) {
+        if !self.object_roots.contains(&id) {
+            self.object_roots.push(id);
+        }
+    }
+
+    fn mark_environment_root(&mut self, id: EnvironmentId) {
+        if !self.environment_stack.contains(&id)
+            && id != self.global_environment
+            && id != self.current_environment
+        {
+            self.environment_stack.push(id);
+        }
+    }
+
+    fn mark_function_root(&mut self, id: FunctionId) {
+        if !self.function_roots.contains(&id) {
+            self.function_roots.push(id);
+        }
+    }
+
+    fn mark_value_root(&mut self, value: &JsValue) {
+        if !self.value_roots.iter().any(|root| root == value) {
+            self.value_roots.push(value.clone());
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallFrameRoots {
     pub function: Option<FunctionId>,
@@ -141,12 +232,12 @@ impl<'a> Tracer<'a> {
     pub fn new(heap: &'a Heap) -> Self {
         Self {
             heap,
-            marks: HeapMarks::default(),
+            marks: HeapMarks::for_heap(heap),
         }
     }
 
     pub fn mark_object(&mut self, id: ObjectId) {
-        if !self.marks.objects.insert(id) {
+        if !self.marks.mark_object(id) {
             return;
         }
         if let Some(object) = self.heap.object(id) {
@@ -155,7 +246,7 @@ impl<'a> Tracer<'a> {
     }
 
     pub fn mark_environment(&mut self, id: EnvironmentId) {
-        if !self.marks.environments.insert(id) {
+        if !self.marks.mark_environment(id) {
             return;
         }
         if let Some(environment) = self.heap.environment(id) {
@@ -164,7 +255,7 @@ impl<'a> Tracer<'a> {
     }
 
     pub fn mark_function(&mut self, id: FunctionId) {
-        if !self.marks.functions.insert(id) {
+        if !self.marks.mark_function(id) {
             return;
         }
         if let Some(function) = self.heap.function(id) {
@@ -172,8 +263,26 @@ impl<'a> Tracer<'a> {
         }
     }
 
-    fn into_marks(self) -> HeapMarks {
+    pub(crate) fn into_marks(self) -> HeapMarks {
         self.marks
+    }
+}
+
+impl RootSink for Tracer<'_> {
+    fn mark_object_root(&mut self, id: ObjectId) {
+        self.mark_object(id);
+    }
+
+    fn mark_environment_root(&mut self, id: EnvironmentId) {
+        self.mark_environment(id);
+    }
+
+    fn mark_function_root(&mut self, id: FunctionId) {
+        self.mark_function(id);
+    }
+
+    fn mark_value_root(&mut self, value: &JsValue) {
+        value.trace(self);
     }
 }
 
