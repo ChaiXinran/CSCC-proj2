@@ -151,11 +151,11 @@ fn build_property_list(
         context.consume_loop_iteration()?;
         let value = vm.get_property_value(replacer.clone(), &index.to_string(), context)?;
         let key = match value {
-            JsValue::String(value) => Some(value),
-            JsValue::Number(_) => Some(vm.to_string_coerce(value, context)?),
+            JsValue::String(value) => Some(value.into_owned()),
+            JsValue::Number(_) => Some(vm.to_string_coerce(value, context)?.into_owned()),
             JsValue::Object(object) => match context.primitive_value(object) {
                 Some(PrimitiveValue::String(_) | PrimitiveValue::Number(_)) => {
-                    Some(vm.to_string_coerce(value, context)?)
+                    Some(vm.to_string_coerce(value, context)?.into_owned())
                 }
                 Some(
                     PrimitiveValue::Boolean(_)
@@ -405,7 +405,9 @@ impl Parser<'_> {
                 self.expect_keyword("false")?;
                 Ok(JsValue::Boolean(false))
             }
-            Some(b'"') => self.parse_string().map(JsValue::String),
+            Some(b'"') => self
+                .parse_string()
+                .map(|value: String| JsValue::String(value.into())),
             Some(b'[') => self.parse_array(),
             Some(b'{') => self.parse_object(),
             Some(b'-' | b'0'..=b'9') => self.parse_number().map(JsValue::Number),

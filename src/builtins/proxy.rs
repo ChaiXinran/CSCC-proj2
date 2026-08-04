@@ -92,7 +92,12 @@ fn proxy_revocable(
         context.define_own_property(
             object,
             "name".into(),
-            PropertyDescriptor::data_with(JsValue::String(String::new()), false, false, true),
+            PropertyDescriptor::data_with(
+                JsValue::String(String::new().into()),
+                false,
+                false,
+                true,
+            ),
         )?;
     }
     context.create_object([("proxy".into(), proxy), ("revoke".into(), revoke)])
@@ -161,7 +166,7 @@ pub(crate) fn to_property_key(
     value: JsValue,
 ) -> Result<PropertyKey, VmError> {
     match vm.to_property_key_from_builtin(value, context)? {
-        JsValue::String(key) => Ok(PropertyKey::String(key)),
+        JsValue::String(key) => Ok(PropertyKey::String(key.to_string())),
         JsValue::Symbol(symbol) => Ok(PropertyKey::Symbol(symbol)),
         _ => unreachable!("ToPropertyKey returns a string or symbol"),
     }
@@ -1309,7 +1314,7 @@ fn create_list_from_array_like(
             context,
         )?;
         match value {
-            JsValue::String(key) => keys.push(PropertyKey::String(key)),
+            JsValue::String(key) => keys.push(PropertyKey::String(key.to_string())),
             JsValue::Symbol(symbol) => keys.push(PropertyKey::Symbol(symbol)),
             _ => {
                 return Err(VmError::type_error(

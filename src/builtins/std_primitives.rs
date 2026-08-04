@@ -10,9 +10,9 @@
 
 use super::{boolean, error, json, math, number, proxy, regexp, string};
 use crate::runtime::{
-    BigIntValue, IteratorMode, JsObject, JsValue, NativeCall, NativeConstruct, NativeContext,
-    NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue, PropertyDescriptor,
-    PropertyDescriptorUpdate, PropertyKind, abstract_ops, bigint,
+    BigIntValue, IteratorMode, JsObject, JsString, JsValue, NativeCall, NativeConstruct,
+    NativeContext, NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind, PrimitiveValue,
+    PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind, abstract_ops, bigint,
 };
 use crate::vm::{Vm, VmError, VmErrorKind};
 
@@ -77,7 +77,7 @@ fn arg_string(
     context: &mut NativeContext,
     arguments: &[JsValue],
     index: usize,
-) -> Result<String, VmError> {
+) -> Result<JsString, VmError> {
     vm.to_string_coerce(arg(arguments, index), context)
 }
 
@@ -149,7 +149,11 @@ fn map_number_format_error(error: number::NumberFormatError) -> VmError {
 
 // ── `this` coercion for primitive-wrapper prototypes ─────────────────────────
 
-fn this_string(vm: &mut Vm, context: &mut NativeContext, this: JsValue) -> Result<String, VmError> {
+fn this_string(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this: JsValue,
+) -> Result<JsString, VmError> {
     match this {
         JsValue::String(value) => Ok(value),
         JsValue::Null | JsValue::Undefined => Err(VmError::type_error(
@@ -166,7 +170,7 @@ fn this_string(vm: &mut Vm, context: &mut NativeContext, this: JsValue) -> Resul
     }
 }
 
-fn this_string_value(context: &NativeContext, this: JsValue) -> Result<String, VmError> {
+fn this_string_value(context: &NativeContext, this: JsValue) -> Result<JsString, VmError> {
     match this {
         JsValue::String(value) => Ok(value),
         other => {
@@ -269,7 +273,7 @@ fn install_error(context: &mut NativeContext) -> Result<(), VmError> {
         context.define_own_property(
             prototype,
             "message".into(),
-            method_descriptor(JsValue::String(String::new())),
+            method_descriptor(JsValue::String(String::new().into())),
         )?;
         context.declare_global(spec.name, constructor.clone());
         context.define_own_property(
@@ -362,7 +366,7 @@ fn json_stringify(
             vm,
             context,
         )? {
-            Some(value) => JsValue::String(value),
+            Some(value) => JsValue::String(value.into()),
             None => JsValue::Undefined,
         },
     )
@@ -404,7 +408,7 @@ fn json_raw_json(
         .heap_mut()
         .allocate_object(object)
         .ok_or_else(|| VmError::runtime("heap exhausted"))?;
-    context.mark_raw_json_object(id, raw_json);
+    context.mark_raw_json_object(id, raw_json.to_string());
     Ok(JsValue::Object(id))
 }
 
@@ -666,13 +670,13 @@ fn error_to_string(
     let name = if matches!(name_value, JsValue::Undefined) {
         "Error".to_string()
     } else {
-        vm.to_string_coerce(name_value, context)?
+        vm.to_string_coerce(name_value, context)?.to_string()
     };
     let message_value = context.get_property(this, "message")?;
     let message = if matches!(message_value, JsValue::Undefined) {
         String::new()
     } else {
-        vm.to_string_coerce(message_value, context)?
+        vm.to_string_coerce(message_value, context)?.to_string()
     };
 
     let record = error::create_error_record(error_name_static(&name), Some(message.clone()));
@@ -683,7 +687,7 @@ fn error_to_string(
     } else {
         format_error(&name, &message)
     };
-    Ok(JsValue::String(formatted))
+    Ok(JsValue::String(formatted.into()))
 }
 
 fn error_stack_get(
@@ -707,7 +711,7 @@ fn error_stack_get(
         .get_property(this, "message")?
         .to_js_string()
         .unwrap_or_default();
-    Ok(JsValue::String(format_error(&name, &message)))
+    Ok(JsValue::String(format_error(&name, &message).into()))
 }
 
 fn error_stack_set(
@@ -911,7 +915,7 @@ fn number_to_string(
         }
     };
     number::number_to_string(value, radix)
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .map_err(map_number_format_error)
 }
 
@@ -927,7 +931,7 @@ fn number_to_fixed(
         return Err(VmError::range("fraction digits must be between 0 and 100"));
     }
     number::to_fixed(value, digits as u32)
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .map_err(map_number_format_error)
 }
 
@@ -946,7 +950,7 @@ fn number_to_exponential(
         }
     };
     number::to_exponential(value, fraction_digits)
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .map_err(map_number_format_error)
 }
 
@@ -965,7 +969,7 @@ fn number_to_precision(
         }
     };
     number::to_precision(value, precision)
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .map_err(map_number_format_error)
 }
 fn number_to_locale_string(
@@ -976,7 +980,7 @@ fn number_to_locale_string(
 ) -> Result<JsValue, VmError> {
     let value = this_number(context, &this)?;
     number::number_to_string(value, None)
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .map_err(map_number_format_error)
 }
 
@@ -1134,10 +1138,9 @@ fn bigint_to_string(
     if !(2..=36).contains(&radix) {
         return Err(VmError::range("radix must be between 2 and 36"));
     }
-    Ok(JsValue::String(bigint::to_radix_string(
-        &value,
-        radix as u32,
-    )))
+    Ok(JsValue::String(
+        bigint::to_radix_string(&value, radix as u32).into(),
+    ))
 }
 
 fn bigint_to_locale_string(
@@ -1147,7 +1150,7 @@ fn bigint_to_locale_string(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_bigint(context, &this)?;
-    Ok(JsValue::String(value.to_string()))
+    Ok(JsValue::String(value.to_string().into()))
 }
 
 fn bigint_as_int_n(
@@ -1322,7 +1325,9 @@ fn boolean_to_string(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     Ok(JsValue::String(
-        boolean::boolean_to_string(this_boolean(context, &this)?).to_string(),
+        boolean::boolean_to_string(this_boolean(context, &this)?)
+            .to_string()
+            .into(),
     ))
 }
 
@@ -1423,10 +1428,12 @@ fn string_call(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     if arguments.is_empty() {
-        return Ok(JsValue::String(String::new()));
+        return Ok(JsValue::String(String::new().into()));
     }
     if let JsValue::Symbol(id) = arg(arguments, 0) {
-        return Ok(JsValue::String(symbol_descriptive_string(context, id)));
+        return Ok(JsValue::String(
+            symbol_descriptive_string(context, id).into(),
+        ));
     }
     Ok(JsValue::String(
         vm.to_string_coerce(arg(arguments, 0), context)?,
@@ -1441,14 +1448,14 @@ fn string_construct(
 ) -> Result<JsValue, VmError> {
     let value = match arguments.first().cloned() {
         None => String::new(),
-        Some(JsValue::String(value)) => value,
-        Some(other) => vm.to_string_coerce(other, context)?,
+        Some(JsValue::String(value)) => value.to_string(),
+        Some(other) => vm.to_string_coerce(other, context)?.to_string(),
     };
     let prototype = context
         .constructor_prototype(&new_target)?
         .or_else(|| context.string_prototype())
         .ok_or_else(|| VmError::runtime("String prototype not installed"))?;
-    context.create_primitive_wrapper(PrimitiveValue::String(value), prototype)
+    context.create_primitive_wrapper(PrimitiveValue::String(value.into()), prototype)
 }
 
 fn string_symbol_iterator(
@@ -1485,7 +1492,7 @@ fn string_char_at(
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
     let index = arg_index(vm, context, arguments, 0)?;
-    Ok(JsValue::String(string::char_at(&value, index)))
+    Ok(JsValue::String(string::char_at(&value, index).into()))
 }
 
 fn string_char_code_at(
@@ -1511,7 +1518,7 @@ fn string_at(
     let value = this_string(vm, context, this)?;
     let index = arg_index(vm, context, arguments, 0)?;
     Ok(match string::at(&value, index) {
-        Some(unit) => JsValue::String(unit),
+        Some(unit) => JsValue::String(unit.into()),
         None => JsValue::Undefined,
     })
 }
@@ -1540,8 +1547,8 @@ fn string_concat(
     for index in 0..arguments.len() {
         parts.push(arg_string(vm, context, arguments, index)?);
     }
-    let borrowed: Vec<&str> = parts.iter().map(String::as_str).collect();
-    Ok(JsValue::String(string::concat(&value, &borrowed)))
+    let borrowed: Vec<&str> = parts.iter().map(JsString::as_str).collect();
+    Ok(JsValue::String(string::concat(&value, &borrowed).into()))
 }
 
 /// Returns `true` if `value` is a `JsValue::Object` whose internal kind is
@@ -1736,7 +1743,7 @@ fn string_slice(
         None | Some(JsValue::Undefined) => None,
         Some(_) => Some(arg_index(vm, context, arguments, 1)?),
     };
-    Ok(JsValue::String(string::slice(&value, start, end)))
+    Ok(JsValue::String(string::slice(&value, start, end).into()))
 }
 
 fn string_substring(
@@ -1751,7 +1758,9 @@ fn string_substring(
         None | Some(JsValue::Undefined) => None,
         Some(_) => Some(arg_index(vm, context, arguments, 1)?),
     };
-    Ok(JsValue::String(string::substring(&value, start, end)))
+    Ok(JsValue::String(
+        string::substring(&value, start, end).into(),
+    ))
 }
 
 fn string_substr(
@@ -1766,7 +1775,9 @@ fn string_substr(
         None | Some(JsValue::Undefined) => None,
         Some(_) => Some(arg_index(vm, context, arguments, 1)?),
     };
-    Ok(JsValue::String(string::substr(&value, start, length)))
+    Ok(JsValue::String(
+        string::substr(&value, start, length).into(),
+    ))
 }
 
 fn string_starts_with(
@@ -1825,7 +1836,7 @@ fn string_repeat(
         context.ensure_heap_capacity(units.saturating_mul(2))?;
     }
     string::repeat(&value, count)
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .map_err(map_string_error)
 }
 
@@ -1859,7 +1870,11 @@ fn string_split(
         // regexp::split includes capture groups as per ES spec.
         let parts = regexp::split(&re, &value, limit)
             .into_iter()
-            .map(|v| v.map_or(JsValue::Undefined, JsValue::String))
+            .map(|v| {
+                v.map_or(JsValue::Undefined, |value: String| {
+                    JsValue::String(value.into())
+                })
+            })
             .collect();
         return context.create_array(parts);
     }
@@ -1870,7 +1885,7 @@ fn string_split(
     let limit32 = limit.map_or(u32::MAX, |l| l.min(u32::MAX as usize) as u32);
     let parts = string::split(&value, separator.as_deref(), limit32)
         .into_iter()
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .collect();
     context.create_array(parts)
 }
@@ -1898,7 +1913,7 @@ fn string_search(
     let pattern = if matches!(first_arg, JsValue::Undefined) {
         String::new()
     } else {
-        vm.to_string_coerce(first_arg, context)?
+        vm.to_string_coerce(first_arg, context)?.to_string()
     };
     let regexp = context.create_regexp(pattern, String::new())?;
     let method = get_symbol_method(vm, context, regexp.clone(), sym)?
@@ -1943,7 +1958,7 @@ fn string_replace(
             regexp::replace_first(&re, &value, &replacement)
         }
         .map_err(map_regexp_replacement_error)?;
-        return Ok(JsValue::String(result));
+        return Ok(JsValue::String(result.into()));
     }
 
     // String search value.
@@ -1960,22 +1975,16 @@ fn string_replace(
             let repl_val =
                 vm.call_value_from_builtin(replace_arg, JsValue::Undefined, args, context)?;
             let repl = vm.to_string_coerce(repl_val, context)?;
-            return Ok(JsValue::String(format!(
-                "{}{}{}",
-                &value[..pos],
-                repl,
-                &value[pos + search.len()..]
-            )));
+            return Ok(JsValue::String(
+                format!("{}{}{}", &value[..pos], repl, &value[pos + search.len()..]).into(),
+            ));
         }
         return Ok(JsValue::String(value));
     }
     let replacement = vm.to_string_coerce(replace_arg, context)?;
-    Ok(JsValue::String(replace_string_substitution(
-        &value,
-        &search,
-        &replacement,
-        false,
-    )?))
+    Ok(JsValue::String(
+        replace_string_substitution(&value, &search, &replacement, false)?.into(),
+    ))
 }
 
 /// Calls `replace_fn` for every match of `re` in `text` and builds the result.
@@ -1989,7 +1998,7 @@ fn apply_replace_fn(
 ) -> Result<JsValue, VmError> {
     let details = regexp::matches_with_detail(re, text, global);
     if details.is_empty() {
-        return Ok(JsValue::String(text.to_owned()));
+        return Ok(JsValue::String(text.to_owned().into()));
     }
 
     let mut result = String::new();
@@ -1999,16 +2008,16 @@ fn apply_replace_fn(
         result.push_str(&text[last_end_utf8..detail.byte_start]);
 
         // Build args: (match, p1, p2, ..., offset, inputString)
-        let mut args = vec![JsValue::String(detail.full_match.clone())];
+        let mut args = vec![JsValue::String(detail.full_match.clone().into())];
         // Capture groups (skip index 0 = full match)
         for cap in detail.captures.iter().skip(1) {
             args.push(
                 cap.as_deref()
-                    .map_or(JsValue::Undefined, |s| JsValue::String(s.to_owned())),
+                    .map_or(JsValue::Undefined, |s| JsValue::String(s.to_owned().into())),
             );
         }
         args.push(JsValue::Number(detail.index as f64));
-        args.push(JsValue::String(text.to_owned()));
+        args.push(JsValue::String(text.to_owned().into()));
 
         let repl_val =
             vm.call_value_from_builtin(replace_fn.clone(), JsValue::Undefined, args, context)?;
@@ -2017,7 +2026,7 @@ fn apply_replace_fn(
         last_end_utf8 = detail.byte_end;
     }
     result.push_str(&text[last_end_utf8..]);
-    Ok(JsValue::String(result))
+    Ok(JsValue::String(result.into()))
 }
 
 fn replace_string_substitution(
@@ -2130,7 +2139,9 @@ fn string_replace_all(
         }
         let replacement = vm.to_string_coerce(replace_arg, context)?;
         return Ok(JsValue::String(
-            regexp::replace_all(&re, &value, &replacement).map_err(map_regexp_replacement_error)?,
+            regexp::replace_all(&re, &value, &replacement)
+                .map_err(map_regexp_replacement_error)?
+                .into(),
         ));
     }
 
@@ -2187,15 +2198,12 @@ fn string_replace_all(
                 }
             }
         }
-        return Ok(JsValue::String(result));
+        return Ok(JsValue::String(result.into()));
     }
     let replacement = vm.to_string_coerce(replace_arg, context)?;
-    Ok(JsValue::String(replace_string_substitution(
-        &value,
-        &search,
-        &replacement,
-        true,
-    )?))
+    Ok(JsValue::String(
+        replace_string_substitution(&value, &search, &replacement, true)?.into(),
+    ))
 }
 
 fn string_match(
@@ -2232,7 +2240,10 @@ fn string_match(
             if matches.is_empty() {
                 return Ok(JsValue::Null);
             }
-            let elements = matches.into_iter().map(JsValue::String).collect();
+            let elements = matches
+                .into_iter()
+                .map(|value: String| JsValue::String(value.into()))
+                .collect();
             return context.create_array(elements);
         }
         // Non-global match: return first match array (like exec) or null.
@@ -2246,7 +2257,11 @@ fn string_match(
             .unwrap_or(0);
         let elements = caps
             .into_iter()
-            .map(|c| c.map_or(JsValue::Undefined, JsValue::String))
+            .map(|c| {
+                c.map_or(JsValue::Undefined, |value: String| {
+                    JsValue::String(value.into())
+                })
+            })
             .collect();
         let result = context.create_array(elements)?;
         if let JsValue::Object(object) = result {
@@ -2267,7 +2282,7 @@ fn string_match(
     let pattern = if matches!(first_arg, JsValue::Undefined) {
         String::new()
     } else {
-        vm.to_string_coerce(first_arg, context)?
+        vm.to_string_coerce(first_arg, context)?.to_string()
     };
     let regexp = context.create_regexp(pattern, String::new())?;
     let method = get_symbol_method(vm, context, regexp.clone(), sym)?
@@ -2315,7 +2330,7 @@ fn string_match_all(
             context,
         );
     }
-    invoke_regexp_match_all_fallback(vm, context, first_arg, value)
+    invoke_regexp_match_all_fallback(vm, context, first_arg, value.to_string())
 }
 
 fn invoke_regexp_match_all_fallback(
@@ -2331,7 +2346,7 @@ fn invoke_regexp_match_all_fallback(
             let s = if matches!(pattern_value, JsValue::Undefined) {
                 String::new()
             } else {
-                vm.to_string_coerce(pattern_value, context)?
+                vm.to_string_coerce(pattern_value, context)?.to_string()
             };
             (s, String::new())
         }
@@ -2342,7 +2357,12 @@ fn invoke_regexp_match_all_fallback(
         return Err(VmError::type_error("RegExp @@matchAll is not callable"));
     };
     if !is_builtin_regexp_symbol_match_all(context, &method) {
-        return vm.call_value_from_builtin(method, rx, vec![JsValue::String(string)], context);
+        return vm.call_value_from_builtin(
+            method,
+            rx,
+            vec![JsValue::String(string.into())],
+            context,
+        );
     }
     let re = compile_cached_regexp(context, &pattern, &engine_flags)?;
 
@@ -2364,7 +2384,7 @@ fn invoke_regexp_match_all_fallback(
         let elements: Vec<JsValue> = (0..caps.len())
             .map(|i| {
                 caps.get(i).map_or(JsValue::Undefined, |c| {
-                    JsValue::String(c.as_str().to_owned())
+                    JsValue::String(c.as_str().to_owned().into())
                 })
             })
             .collect();
@@ -2378,7 +2398,12 @@ fn invoke_regexp_match_all_fallback(
             context.define_own_property(
                 oid,
                 "input".into(),
-                PropertyDescriptor::data_with(JsValue::String(string.clone()), true, true, true),
+                PropertyDescriptor::data_with(
+                    JsValue::String(string.clone().into()),
+                    true,
+                    true,
+                    true,
+                ),
             )?;
             entries.push(JsValue::Object(oid));
         }
@@ -2444,14 +2469,16 @@ fn string_pad(
     };
     let fill = match arguments.get(1) {
         None | Some(JsValue::Undefined) => " ".to_string(),
-        Some(_) => arg_string(vm, context, arguments, 1)?,
+        Some(_) => arg_string(vm, context, arguments, 1)?.to_string(),
     };
     let result = if at_start {
         string::pad_start(&value, target, &fill)
     } else {
         string::pad_end(&value, target, &fill)
     };
-    result.map(JsValue::String).map_err(map_string_error)
+    result
+        .map(|value: String| JsValue::String(value.into()))
+        .map_err(map_string_error)
 }
 
 fn string_trim(
@@ -2461,7 +2488,7 @@ fn string_trim(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::trim(&value)))
+    Ok(JsValue::String(string::trim(&value).into()))
 }
 
 fn string_trim_start(
@@ -2471,7 +2498,7 @@ fn string_trim_start(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::trim_start(&value)))
+    Ok(JsValue::String(string::trim_start(&value).into()))
 }
 
 fn string_trim_end(
@@ -2481,7 +2508,7 @@ fn string_trim_end(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::trim_end(&value)))
+    Ok(JsValue::String(string::trim_end(&value).into()))
 }
 
 fn string_to_lower_case(
@@ -2491,7 +2518,7 @@ fn string_to_lower_case(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::to_lower_case(&value)))
+    Ok(JsValue::String(string::to_lower_case(&value).into()))
 }
 
 fn string_to_upper_case(
@@ -2501,7 +2528,7 @@ fn string_to_upper_case(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::to_upper_case(&value)))
+    Ok(JsValue::String(string::to_upper_case(&value).into()))
 }
 
 fn string_locale_compare(
@@ -2524,7 +2551,7 @@ fn string_to_locale_lower_case(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::to_lower_case(&value)))
+    Ok(JsValue::String(string::to_lower_case(&value).into()))
 }
 
 fn string_to_locale_upper_case(
@@ -2534,7 +2561,7 @@ fn string_to_locale_upper_case(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::to_upper_case(&value)))
+    Ok(JsValue::String(string::to_upper_case(&value).into()))
 }
 
 fn string_normalize(
@@ -2546,12 +2573,12 @@ fn string_normalize(
     let value = this_string(vm, context, this)?;
     let form = match arguments.first() {
         None | Some(JsValue::Undefined) => "NFC".to_string(),
-        Some(_) => arg_string(vm, context, arguments, 0)?,
+        Some(_) => arg_string(vm, context, arguments, 0)?.to_string(),
     };
     if !matches!(form.as_str(), "NFC" | "NFD" | "NFKC" | "NFKD") {
         return Err(VmError::range("invalid normalization form"));
     }
-    Ok(JsValue::String(string::normalize(&value)))
+    Ok(JsValue::String(string::normalize(&value).into()))
 }
 
 fn string_is_well_formed(
@@ -2571,7 +2598,7 @@ fn string_to_well_formed(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let value = this_string(vm, context, this)?;
-    Ok(JsValue::String(string::to_well_formed(&value)))
+    Ok(JsValue::String(string::to_well_formed(&value).into()))
 }
 
 fn string_from_char_code(
@@ -2585,7 +2612,7 @@ fn string_from_char_code(
         units.push(to_uint16(arg_number(vm, context, arguments, index)?));
     }
     let units = string::from_char_codes(&units);
-    Ok(JsValue::String(string::decode_utf16(&units)))
+    Ok(JsValue::String(string::decode_utf16(&units).into()))
 }
 
 fn string_from_code_point(
@@ -2603,7 +2630,7 @@ fn string_from_code_point(
         points.push(value as u32);
     }
     let units = string::from_code_points(&points).map_err(map_string_error)?;
-    Ok(JsValue::String(string::decode_utf16(&units)))
+    Ok(JsValue::String(string::decode_utf16(&units).into()))
 }
 
 fn string_raw(
@@ -2619,7 +2646,7 @@ fn string_raw(
     let length_value = vm.get_property_value(JsValue::Object(raw_object), "length", context)?;
     let length = to_length(vm.to_number(length_value, context)?);
     if length == 0 {
-        return Ok(JsValue::String(String::new()));
+        return Ok(JsValue::String(String::new().into()));
     }
 
     let mut result = String::new();
@@ -2633,7 +2660,7 @@ fn string_raw(
             result.push_str(&vm.to_string_coerce(substitution.clone(), context)?);
         }
     }
-    Ok(JsValue::String(result))
+    Ok(JsValue::String(result.into()))
 }
 
 // ── Math ─────────────────────────────────────────────────────────────────────
@@ -3434,7 +3461,7 @@ fn dispose_stack_entries(
                 suppressed_error_create(
                     vm,
                     context,
-                    &[error, suppressed, JsValue::String(String::new())],
+                    &[error, suppressed, JsValue::String(String::new().into())],
                     constructor,
                 )?
             } else {
@@ -3560,7 +3587,7 @@ fn decode_uri(
     let input = arg_string(vm, context, arguments, 0)?;
     let decoded =
         percent_decode_uri(&input, true).map_err(|message| uri_error(vm, context, message))?;
-    Ok(JsValue::String(decoded))
+    Ok(JsValue::String(decoded.into()))
 }
 
 fn encode_uri(
@@ -3570,7 +3597,7 @@ fn encode_uri(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let input = arg_string(vm, context, arguments, 0)?;
-    Ok(JsValue::String(percent_encode_uri(&input, true)))
+    Ok(JsValue::String(percent_encode_uri(&input, true).into()))
 }
 
 fn decode_uri_component(
@@ -3582,7 +3609,7 @@ fn decode_uri_component(
     let input = arg_string(vm, context, arguments, 0)?;
     let decoded =
         percent_decode_uri(&input, false).map_err(|message| uri_error(vm, context, message))?;
-    Ok(JsValue::String(decoded))
+    Ok(JsValue::String(decoded.into()))
 }
 
 fn encode_uri_component(
@@ -3592,7 +3619,7 @@ fn encode_uri_component(
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let input = arg_string(vm, context, arguments, 0)?;
-    Ok(JsValue::String(percent_encode_uri(&input, false)))
+    Ok(JsValue::String(percent_encode_uri(&input, false).into()))
 }
 
 fn percent_encode_uri(input: &str, preserve_uri_reserved: bool) -> String {
@@ -3774,7 +3801,7 @@ fn regexp_make(context: &mut NativeContext, arguments: &[JsValue]) -> Result<JsV
     if let Some((pattern, src_flags)) = regexp_data(context, &first) {
         let flags = match arguments.get(1) {
             None | Some(JsValue::Undefined) => src_flags,
-            Some(JsValue::String(f)) => f.clone(),
+            Some(JsValue::String(f)) => f.to_string(),
             _ => {
                 return Err(VmError::type_error(
                     "RegExp flags must be a string or undefined",
@@ -3785,7 +3812,7 @@ fn regexp_make(context: &mut NativeContext, arguments: &[JsValue]) -> Result<JsV
     }
     let pattern = match &first {
         JsValue::Undefined => String::new(),
-        JsValue::String(s) => s.clone(),
+        JsValue::String(s) => s.to_string(),
         _ => {
             return Err(VmError::type_error(
                 "RegExp pattern must be a string or RegExp",
@@ -3794,7 +3821,7 @@ fn regexp_make(context: &mut NativeContext, arguments: &[JsValue]) -> Result<JsV
     };
     let flags = match arguments.get(1) {
         None | Some(JsValue::Undefined) => String::new(),
-        Some(JsValue::String(f)) => f.clone(),
+        Some(JsValue::String(f)) => f.to_string(),
         _ => {
             return Err(VmError::type_error(
                 "RegExp flags must be a string or undefined",
@@ -3860,7 +3887,11 @@ fn regexp_exec(
         .unwrap_or(0);
     let elements: Vec<JsValue> = caps
         .into_iter()
-        .map(|c| c.map_or(JsValue::Undefined, JsValue::String))
+        .map(|c| {
+            c.map_or(JsValue::Undefined, |value: String| {
+                JsValue::String(value.into())
+            })
+        })
         .collect();
     let result = context.create_array(elements)?;
     if let JsValue::Object(object) = result {
@@ -3891,7 +3922,7 @@ fn regexp_to_string(
             "RegExp.prototype.toString called on non-RegExp",
         ));
     };
-    Ok(JsValue::String(format!("/{pattern}/{flags}")))
+    Ok(JsValue::String(format!("/{pattern}/{flags}").into()))
 }
 
 // ── RegExp.prototype[@@symbol] methods ────────────────────────────────────────
@@ -3928,7 +3959,7 @@ fn regexp_symbol_replace(
         regexp::replace_first(&re, &string, &replacement)
     }
     .map_err(map_regexp_replacement_error)?;
-    Ok(JsValue::String(result))
+    Ok(JsValue::String(result.into()))
 }
 
 fn regexp_symbol_match(
@@ -3948,7 +3979,10 @@ fn regexp_symbol_match(
         if matches.is_empty() {
             return Ok(JsValue::Null);
         }
-        let elements = matches.into_iter().map(JsValue::String).collect();
+        let elements = matches
+            .into_iter()
+            .map(|value: String| JsValue::String(value.into()))
+            .collect();
         return context.create_array(elements);
     }
     let Some(caps) = regexp::exec_once(&re, &string) else {
@@ -3961,7 +3995,11 @@ fn regexp_symbol_match(
         .unwrap_or(0);
     let elements = caps
         .into_iter()
-        .map(|c| c.map_or(JsValue::Undefined, JsValue::String))
+        .map(|c| {
+            c.map_or(JsValue::Undefined, |value: String| {
+                JsValue::String(value.into())
+            })
+        })
         .collect();
     let result = context.create_array(elements)?;
     if let JsValue::Object(oid) = result {
@@ -4004,7 +4042,7 @@ fn regexp_symbol_match_all(
         let elements: Vec<JsValue> = (0..caps.len())
             .map(|i| {
                 caps.get(i).map_or(JsValue::Undefined, |c| {
-                    JsValue::String(c.as_str().to_owned())
+                    JsValue::String(c.as_str().to_owned().into())
                 })
             })
             .collect();
@@ -4041,7 +4079,11 @@ fn regexp_symbol_split(
     let re = compile_cached_regexp(context, &pattern, &flags)?;
     let parts = regexp::split(&re, &string, limit)
         .into_iter()
-        .map(|v| v.map_or(JsValue::Undefined, JsValue::String))
+        .map(|v| {
+            v.map_or(JsValue::Undefined, |value: String| {
+                JsValue::String(value.into())
+            })
+        })
         .collect();
     context.create_array(parts)
 }
@@ -4631,7 +4673,9 @@ fn symbol_call(
                 "Cannot convert a Symbol value to a string",
             ));
         }
-        Some(other) => other.to_js_string(),
+        Some(other) => other
+            .to_js_string()
+            .map(crate::runtime::JsString::into_owned),
     };
     Ok(context.create_symbol(description))
 }
@@ -4643,7 +4687,9 @@ fn symbol_proto_to_string(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let sym_id = extract_symbol(context, this)?;
-    Ok(JsValue::String(symbol_descriptive_string(context, sym_id)))
+    Ok(JsValue::String(
+        symbol_descriptive_string(context, sym_id).into(),
+    ))
 }
 
 fn symbol_descriptive_string(context: &NativeContext, sym_id: crate::runtime::SymbolId) -> String {
@@ -4693,11 +4739,11 @@ fn vm_to_string(
             let to_string_fn = vm.get_property_value(value.clone(), "toString", context)?;
             let result = vm.call_value_from_builtin(to_string_fn, value, Vec::new(), context)?;
             result
-                .to_js_string()
+                .to_js_string_owned()
                 .ok_or_else(|| VmError::type_error("toString did not return a string"))
         }
         other => other
-            .to_js_string()
+            .to_js_string_owned()
             .ok_or_else(|| VmError::type_error("Cannot convert value to string")),
     }
 }

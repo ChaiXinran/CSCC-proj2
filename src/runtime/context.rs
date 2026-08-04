@@ -811,7 +811,7 @@ impl NativeContext {
         );
         object.define_property(
             "name",
-            PropertyDescriptor::data_with(JsValue::String(display_name), false, false, true),
+            PropertyDescriptor::data_with(JsValue::String(display_name.into()), false, false, true),
         );
         let object_id = self
             .heap
@@ -2464,7 +2464,12 @@ impl NativeContext {
         );
         function_object.define_property(
             "name",
-            PropertyDescriptor::data_with(JsValue::String(function_name), false, false, true),
+            PropertyDescriptor::data_with(
+                JsValue::String(function_name.into()),
+                false,
+                false,
+                true,
+            ),
         );
         if let Some(prototype_id) = prototype_id {
             function_object.define_property(
@@ -2724,7 +2729,7 @@ impl NativeContext {
         // inside `assert.throws` and similar harness helpers.
         if let JsValue::Error(ref error) = receiver {
             return match key {
-                "message" => Ok(JsValue::String(error.message.clone())),
+                "message" => Ok(JsValue::String(error.message.clone().into())),
                 "name" => Ok(JsValue::String(error_kind_name(&error.kind).into())),
                 "constructor" => Ok(self.error_constructor_value(error)),
                 "stack" | "cause" => Ok(JsValue::Undefined),
@@ -2977,7 +2982,7 @@ impl NativeContext {
                 && let Some(unit) = string::utf16_code_unit_at(value, index)
             {
                 return Some(PropertyDescriptor::data_with(
-                    JsValue::String(string::decode_utf16(&[unit])),
+                    JsValue::String(string::decode_utf16(&[unit]).into()),
                     false,
                     true,
                     false,
@@ -3343,7 +3348,7 @@ impl NativeContext {
 
     pub fn get_iterator(&mut self, value: JsValue) -> Result<IteratorRecord, VmError> {
         match value {
-            JsValue::String(string) => Ok(IteratorRecord::string(string)),
+            JsValue::String(string) => Ok(IteratorRecord::string(string.to_string())),
             value => {
                 let object = self.require_object(&value, "iterate")?;
                 if let Some((_, length)) = self.typed_array_indexed_view(object) {
@@ -3360,7 +3365,7 @@ impl NativeContext {
                     ..
                 }) = self.heap.object(object)
                 {
-                    Ok(IteratorRecord::string(string.clone()))
+                    Ok(IteratorRecord::string(string.to_string()))
                 } else if let Some(length) = self
                     .heap
                     .object(object)
@@ -3418,7 +3423,7 @@ impl NativeContext {
                     iterator.done = true;
                     return Ok(None);
                 }
-                let value = JsValue::String(chars[*index].clone());
+                let value = JsValue::String(chars[*index].clone().into());
                 *index += 1;
                 Ok(Some(value))
             }
@@ -5113,17 +5118,18 @@ fn value_references_live_heap(value: &JsValue, heap: &Heap) -> bool {
 pub fn to_property_key(value: &JsValue) -> Result<PropertyKey, VmError> {
     match value {
         JsValue::Symbol(symbol) => Ok(PropertyKey::Symbol(*symbol)),
-        JsValue::String(value) => Ok(PropertyKey::String(value.clone())),
+        JsValue::String(value) => Ok(PropertyKey::String(value.to_string())),
         JsValue::BigInt(value) => Ok(PropertyKey::String(value.to_string())),
         // This is the pure primitive half of ToPropertyKey. Reuse the
         // runtime's ECMAScript Number::toString spelling so property creation,
         // lookup, and descriptor operations agree for -0, infinities, and the
         // fixed/scientific notation boundaries.
-        JsValue::Number(_) => {
-            Ok(PropertyKey::String(value.to_js_string().expect(
-                "numeric primitives always have a string spelling",
-            )))
-        }
+        JsValue::Number(_) => Ok(PropertyKey::String(
+            value
+                .to_js_string()
+                .expect("numeric primitives always have a string spelling")
+                .to_string(),
+        )),
         JsValue::Boolean(value) => Ok(PropertyKey::String(value.to_string())),
         JsValue::Null => Ok(PropertyKey::String("null".into())),
         JsValue::Undefined => Ok(PropertyKey::String("undefined".into())),

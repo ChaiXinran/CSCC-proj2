@@ -146,7 +146,7 @@ fn own_data_value(context: &NativeContext, object: ObjectId, key: &str) -> Optio
 
 fn own_string(context: &NativeContext, object: ObjectId, key: &str) -> Option<String> {
     match own_data_value(context, object, key)? {
-        JsValue::String(value) => Some(value),
+        JsValue::String(value) => Some(value.to_string()),
         _ => None,
     }
 }
@@ -537,9 +537,9 @@ fn temporal_date_slots_from_iso(
         ("isoDay", JsValue::Number(iso_day as f64)),
         ("year", JsValue::Number(calendar_year as f64)),
         ("month", JsValue::Number(calendar_month as f64)),
-        ("monthCode", JsValue::String(month_code)),
+        ("monthCode", JsValue::String(month_code.into())),
         ("day", JsValue::Number(calendar_day as f64)),
-        ("calendarId", JsValue::String(calendar_id.clone())),
+        ("calendarId", JsValue::String(calendar_id.clone().into())),
         (
             "dayOfWeek",
             JsValue::Number(temporal_day_of_week_from_day_number(day_number) as f64),
@@ -1547,7 +1547,9 @@ fn date_call(
     _this: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(format_date_string(current_time_ms())))
+    Ok(JsValue::String(
+        format_date_string(current_time_ms()).into(),
+    ))
 }
 
 fn date_construct(
@@ -1668,10 +1670,9 @@ fn date_to_iso_string(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(format_iso(date_value_from_this(
-        context,
-        &this_value,
-    )?)?))
+    Ok(JsValue::String(
+        format_iso(date_value_from_this(context, &this_value)?)?.into(),
+    ))
 }
 
 fn date_to_json(
@@ -1718,10 +1719,9 @@ fn date_to_string(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(format_date_string(date_value_from_this(
-        context,
-        &this_value,
-    )?)))
+    Ok(JsValue::String(
+        format_date_string(date_value_from_this(context, &this_value)?).into(),
+    ))
 }
 
 fn date_to_utc_string(
@@ -1730,10 +1730,9 @@ fn date_to_utc_string(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(format_utc_string(date_value_from_this(
-        context,
-        &this_value,
-    )?)))
+    Ok(JsValue::String(
+        format_utc_string(date_value_from_this(context, &this_value)?).into(),
+    ))
 }
 
 fn date_to_date_string(
@@ -1744,7 +1743,7 @@ fn date_to_date_string(
 ) -> Result<JsValue, VmError> {
     let value = date_value_from_this(context, &this_value)?;
     Ok(JsValue::String(match decompose_time(value) {
-        Some(fields) => iso_date_from_fields(fields),
+        Some(fields) => iso_date_from_fields(fields).into(),
         None => "Invalid Date".into(),
     }))
 }
@@ -1757,7 +1756,7 @@ fn date_to_time_string(
 ) -> Result<JsValue, VmError> {
     let value = date_value_from_this(context, &this_value)?;
     Ok(JsValue::String(match decompose_time(value) {
-        Some(fields) => format!("{} GMT+0000 (UTC)", iso_time_from_fields(fields)),
+        Some(fields) => format!("{} GMT+0000 (UTC)", iso_time_from_fields(fields)).into(),
         None => "Invalid Date".into(),
     }))
 }
@@ -2420,7 +2419,7 @@ fn install_intl_constructor(
     context.define_symbol_own_property(
         prototype,
         tag,
-        readonly_configurable_descriptor(JsValue::String(format!("Intl.{name}"))),
+        readonly_configurable_descriptor(JsValue::String(format!("Intl.{name}").into())),
     )?;
     context.define_own_property(intl, name.into(), method_descriptor(constructor))?;
     Ok(())
@@ -2698,7 +2697,7 @@ fn intl_locale_construct(
         }
     };
     define_hidden(context, object, INTL_KIND, JsValue::String("Locale".into()))?;
-    define_hidden(context, object, INTL_LOCALE, JsValue::String(locale))?;
+    define_hidden(context, object, INTL_LOCALE, JsValue::String(locale.into()))?;
     Ok(JsValue::Object(object))
 }
 
@@ -3014,7 +3013,7 @@ fn intl_get_canonical_locales(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?
     .into_iter()
-    .map(JsValue::String)
+    .map(|value: String| JsValue::String(value.into()))
     .collect();
     context.create_array(locales)
 }
@@ -3032,7 +3031,7 @@ fn intl_supported_locales_of(
     )?
     .into_iter()
     .filter(|locale| matches!(locale.as_str(), "en" | "en-US" | "und"))
-    .map(JsValue::String)
+    .map(|value: String| JsValue::String(value.into()))
     .collect();
     context.create_array(locales)
 }
@@ -3115,7 +3114,7 @@ fn intl_date_time_format_format(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    Ok(JsValue::String(format_date_time_record(&record, ms)))
+    Ok(JsValue::String(format_date_time_record(&record, ms).into()))
 }
 
 fn date_time_format_record(
@@ -3138,7 +3137,7 @@ fn part(
         context,
         [
             ("type", JsValue::String(kind.into())),
-            ("value", JsValue::String(value)),
+            ("value", JsValue::String(value.into())),
         ],
     )
 }
@@ -3153,7 +3152,7 @@ fn source_part(
         context,
         [
             ("type", JsValue::String(kind.into())),
-            ("value", JsValue::String(value)),
+            ("value", JsValue::String(value.into())),
             ("source", JsValue::String(source.into())),
         ],
     )
@@ -3215,11 +3214,14 @@ fn intl_date_time_format_format_range(
         context,
         arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
     )?;
-    Ok(JsValue::String(format!(
-        "{} - {}",
-        format_date_time_record(&record, start),
-        format_date_time_record(&record, end)
-    )))
+    Ok(JsValue::String(
+        format!(
+            "{} - {}",
+            format_date_time_record(&record, start),
+            format_date_time_record(&record, end)
+        )
+        .into(),
+    ))
 }
 
 fn intl_date_time_format_format_range_to_parts(
@@ -3424,20 +3426,20 @@ fn intl_number_format_format_range(
     let record = number_format_record(context, &this_value)?;
     let (start, end) = intl_number_format_range_pair(vm, context, &this_value, arguments)?;
     Ok(JsValue::String(if start == end {
-        format!("~{start}")
+        format!("~{start}").into()
     } else if start.starts_with("+$") && end.starts_with("+$") {
-        format!("{start}–{}", end.trim_start_matches("+$"))
+        format!("{start}–{}", end.trim_start_matches("+$")).into()
     } else if let (Some(start_number), Some(end_number)) =
         (start.strip_suffix(" €"), end.strip_suffix(" €"))
     {
-        format!("{start_number} - {} €", end_number.trim_start_matches('+'))
+        format!("{start_number} - {} €", end_number.trim_start_matches('+')).into()
     } else if matches!(arguments.first(), Some(JsValue::String(_)))
         && matches!(arguments.get(1), Some(JsValue::String(_)))
     {
         if record.locale.starts_with("pt") {
-            format!("{start} - {end}")
+            format!("{start} - {end}").into()
         } else {
-            format!("{start}–{end}")
+            format!("{start}–{end}").into()
         }
     } else {
         let separator = if start.contains('€') && end.contains('€') {
@@ -3445,7 +3447,7 @@ fn intl_number_format_format_range(
         } else {
             " – "
         };
-        format!("{start}{separator}{end}")
+        format!("{start}{separator}{end}").into()
     }))
 }
 
@@ -3591,7 +3593,7 @@ fn intl_relative_time_format_format(
             .unwrap_or(JsValue::String("second".into())),
         context,
     )?;
-    Ok(JsValue::String(relative_time_text(value, &unit)))
+    Ok(JsValue::String(relative_time_text(value, &unit).into()))
 }
 
 fn intl_relative_time_format_format_to_parts(
@@ -3646,10 +3648,13 @@ fn collect_list_items(
         .max(0.0) as usize;
     let mut values = Vec::new();
     for index in 0..length {
-        values.push(vm.to_string_coerce(
-            context.get_property(context.object_value(object), &index.to_string())?,
-            context,
-        )?);
+        values.push(
+            vm.to_string_coerce(
+                context.get_property(context.object_value(object), &index.to_string())?,
+                context,
+            )?
+            .to_string(),
+        );
     }
     Ok(values)
 }
@@ -3680,7 +3685,7 @@ fn intl_list_format_format(
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    Ok(JsValue::String(list_format_text(&items)))
+    Ok(JsValue::String(list_format_text(&items).into()))
 }
 
 fn intl_list_format_format_to_parts(
@@ -3710,10 +3715,9 @@ fn intl_locale_base_name_get(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(locale_base_name(&intl_locale_value(
-        context,
-        &this_value,
-    )?)))
+    Ok(JsValue::String(
+        locale_base_name(&intl_locale_value(context, &this_value)?).into(),
+    ))
 }
 
 fn intl_locale_language_get(
@@ -3794,7 +3798,7 @@ fn intl_locale_script_get(
     let locale = intl_locale_value(context, &this_value)?;
     Ok(locale_base_components(&locale)
         .1
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .unwrap_or(JsValue::Undefined))
 }
 
@@ -3807,7 +3811,7 @@ fn intl_locale_region_get(
     let locale = intl_locale_value(context, &this_value)?;
     Ok(locale_base_components(&locale)
         .2
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .unwrap_or(JsValue::Undefined))
 }
 
@@ -3822,7 +3826,7 @@ fn intl_locale_variants_get(
     Ok(if variants.is_empty() {
         JsValue::Undefined
     } else {
-        JsValue::String(variants.join("-"))
+        JsValue::String(variants.join("-").into())
     })
 }
 
@@ -3833,7 +3837,7 @@ fn intl_locale_keyword_get(
 ) -> Result<JsValue, VmError> {
     let locale = intl_locale_value(context, this_value)?;
     Ok(locale_unicode_keyword(&locale, key)
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .unwrap_or(JsValue::Undefined))
 }
 
@@ -3876,7 +3880,9 @@ fn intl_locale_to_string(
     this_value: JsValue,
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    Ok(JsValue::String(intl_locale_value(context, &this_value)?))
+    Ok(JsValue::String(
+        intl_locale_value(context, &this_value)?.into(),
+    ))
 }
 
 fn locale_suffix(locale: &str) -> &str {
@@ -3999,7 +4005,7 @@ fn create_locale_from_receiver(
         .or_else(|| context.object_prototype());
     let object = new_ordinary_object(context, prototype)?;
     define_hidden(context, object, INTL_KIND, JsValue::String("Locale".into()))?;
-    define_hidden(context, object, INTL_LOCALE, JsValue::String(locale))?;
+    define_hidden(context, object, INTL_LOCALE, JsValue::String(locale.into()))?;
     Ok(JsValue::Object(object))
 }
 
@@ -4045,7 +4051,7 @@ fn intl_locale_get_calendars(
 ) -> Result<JsValue, VmError> {
     let locale = intl_locale_value(context, &this_value)?;
     if let Some(calendar) = locale_unicode_keyword(&locale, "ca") {
-        context.create_array(vec![JsValue::String(calendar)])
+        context.create_array(vec![JsValue::String(calendar.into())])
     } else {
         intl_locale_preferred_array(context, &this_value, &["gregory"])
     }
@@ -4508,7 +4514,9 @@ fn temporal_string_slot_get(
         .unwrap_or_else(|| ("".into(), "".into()));
     let object = require_temporal_kind(context, &this_value, Box::leak(kind.into_boxed_str()))?;
     Ok(JsValue::String(
-        own_string(context, object, &slot).unwrap_or_default(),
+        own_string(context, object, &slot)
+            .unwrap_or_default()
+            .into(),
     ))
 }
 
@@ -5004,7 +5012,7 @@ fn duration_round_options(
     values: DurationValues,
 ) -> Result<(String, String, u64, TemporalRoundMode), VmError> {
     if let JsValue::String(unit) = value {
-        let smallest = normalize_temporal_unit(unit)?;
+        let smallest = normalize_temporal_unit(unit.to_string())?;
         let largest = duration_largest_unit(values);
         let largest = if temporal_unit_nanoseconds(&smallest) > temporal_unit_nanoseconds(&largest)
         {
@@ -5572,7 +5580,7 @@ fn duration_total_unit(
     let value = value.unwrap_or(JsValue::Undefined);
     match value {
         JsValue::String(unit) => Ok(DurationTotalOptions {
-            unit: normalize_temporal_unit(unit)?,
+            unit: normalize_temporal_unit(unit.to_string())?,
             has_relative_to: false,
             relative_to: None,
         }),
@@ -5590,7 +5598,7 @@ fn duration_total_unit(
                 None
             };
             Ok(DurationTotalOptions {
-                unit: normalize_temporal_unit(vm.to_string_coerce(unit, context)?)?,
+                unit: normalize_temporal_unit(vm.to_string_coerce(unit, context)?.to_string())?,
                 has_relative_to,
                 relative_to: relative_to_data,
             })
@@ -5943,10 +5951,10 @@ fn temporal_string_or_object_to_string(
     error: &str,
 ) -> Result<String, VmError> {
     match value {
-        JsValue::String(text) => Ok(text),
-        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
-            vm.to_string_coerce(value, context)
-        }
+        JsValue::String(text) => Ok(text.to_string()),
+        JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => vm
+            .to_string_coerce(value, context)
+            .map(crate::runtime::JsString::into_owned),
         _ => Err(VmError::type_error(error)),
     }
 }
@@ -5957,7 +5965,7 @@ fn temporal_month_code_to_string(
     value: JsValue,
 ) -> Result<String, VmError> {
     let primitive = match value {
-        JsValue::String(text) => return Ok(text),
+        JsValue::String(text) => return Ok(text.to_string()),
         JsValue::Object(_) | JsValue::Function(_) | JsValue::BuiltinFunction(_) => {
             vm.to_primitive(value, PreferredType::String, context)?
         }
@@ -5968,7 +5976,7 @@ fn temporal_month_code_to_string(
         }
     };
     match primitive {
-        JsValue::String(text) => Ok(text),
+        JsValue::String(text) => Ok(text.to_string()),
         _ => Err(VmError::type_error(
             "Temporal monthCode property must be a string",
         )),
@@ -6401,7 +6409,9 @@ fn temporal_duration_to_string(
     {
         values = balance_duration(values);
     }
-    Ok(JsValue::String(format_duration(values, options.precision)))
+    Ok(JsValue::String(
+        format_duration(values, options.precision).into(),
+    ))
 }
 
 fn temporal_duration_to_json(
@@ -6911,14 +6921,17 @@ fn temporal_instant_to_string(
         options.precision,
         options.minute_only,
     );
-    Ok(JsValue::String(format!(
-        "{}-{}-{}T{}{}",
-        iso_year(year),
-        two_digit(month),
-        two_digit(day),
-        time,
-        suffix
-    )))
+    Ok(JsValue::String(
+        format!(
+            "{}-{}-{}T{}{}",
+            iso_year(year),
+            two_digit(month),
+            two_digit(day),
+            time,
+            suffix
+        )
+        .into(),
+    ))
 }
 
 fn temporal_instant_additive(
@@ -7217,7 +7230,7 @@ fn option_string(
     if matches!(value, JsValue::Undefined) {
         Ok(None)
     } else {
-        Ok(Some(vm.to_string_coerce(value, context)?))
+        Ok(Some(vm.to_string_coerce(value, context)?.to_string()))
     }
 }
 
@@ -7264,7 +7277,7 @@ fn instant_round_options(
     value: JsValue,
 ) -> Result<(String, u64, TemporalRoundMode), VmError> {
     if let JsValue::String(unit) = value {
-        let unit = normalize_temporal_unit(unit)?;
+        let unit = normalize_temporal_unit(unit.to_string())?;
         if matches!(unit.as_str(), "year" | "month" | "week" | "day") {
             return Err(VmError::range("day is not a valid Instant rounding unit"));
         }
@@ -7894,12 +7907,15 @@ fn temporal_plain_date_to_string(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let object = require_temporal_kind(context, &this_value, "PlainDate")?;
-    Ok(JsValue::String(format!(
-        "{}-{}-{}",
-        iso_year(temporal_number_slot(context, object, "year") as i32),
-        two_digit(temporal_number_slot(context, object, "month") as u32),
-        two_digit(temporal_number_slot(context, object, "day") as u32)
-    )))
+    Ok(JsValue::String(
+        format!(
+            "{}-{}-{}",
+            iso_year(temporal_number_slot(context, object, "year") as i32),
+            two_digit(temporal_number_slot(context, object, "month") as u32),
+            two_digit(temporal_number_slot(context, object, "day") as u32)
+        )
+        .into(),
+    ))
 }
 
 fn temporal_calendar_from_argument(
@@ -9566,11 +9582,14 @@ fn temporal_plain_time_to_string(
     )?;
     let total = plain_time_nanoseconds_i128(plain_time_values_from_temporal(context, object));
     let rounded = round_i128(total, options.quantum, options.mode).rem_euclid(NS_PER_DAY_I128);
-    Ok(JsValue::String(format_plain_time_precision(
-        plain_time_from_nanoseconds_i128(rounded),
-        options.precision,
-        options.minute_only,
-    )))
+    Ok(JsValue::String(
+        format_plain_time_precision(
+            plain_time_from_nanoseconds_i128(rounded),
+            options.precision,
+            options.minute_only,
+        )
+        .into(),
+    ))
 }
 
 struct TemporalStringOptions {
@@ -10316,7 +10335,7 @@ fn temporal_plain_date_time_to_string(
         "auto" if calendar_id != "iso8601" => format!("[u-ca={calendar_id}]"),
         _ => String::new(),
     };
-    Ok(JsValue::String(format!("{date}T{time}{annotation}")))
+    Ok(JsValue::String(format!("{date}T{time}{annotation}").into()))
 }
 
 fn temporal_calendar_name_option(
@@ -10335,7 +10354,7 @@ fn temporal_calendar_name_option(
         vm.to_string_coerce(value, context)?
     };
     match name.as_str() {
-        "auto" | "always" | "never" | "critical" => Ok(name),
+        "auto" | "always" | "never" | "critical" => Ok(name.to_string()),
         _ => Err(VmError::range("invalid Temporal calendarName")),
     }
 }
@@ -10787,7 +10806,7 @@ fn plain_date_time_round_options(
     value: JsValue,
 ) -> Result<(String, u64, TemporalRoundMode), VmError> {
     if let JsValue::String(unit) = value {
-        let unit = normalize_temporal_unit(unit)?;
+        let unit = normalize_temporal_unit(unit.to_string())?;
         if matches!(unit.as_str(), "year" | "month" | "week") {
             return Err(VmError::range("invalid PlainDateTime rounding unit"));
         }
@@ -11320,8 +11339,8 @@ fn create_plain_year_month(
             ("year", JsValue::Number(year.trunc())),
             ("month", JsValue::Number(month.trunc())),
             ("referenceISODay", JsValue::Number(reference_day.trunc())),
-            ("monthCode", JsValue::String(month_code(month))),
-            ("calendarId", JsValue::String(calendar_id.clone())),
+            ("monthCode", JsValue::String(month_code(month).into())),
+            ("calendarId", JsValue::String(calendar_id.clone().into())),
             (
                 "daysInMonth",
                 JsValue::Number(calendar_month_day_count(&calendar_id, year_i, month_u) as f64),
@@ -11371,8 +11390,8 @@ fn create_plain_year_month_from_iso(
             ("referenceISODay", JsValue::Number(reference_day.trunc())),
             ("year", JsValue::Number(converted.year as f64)),
             ("month", JsValue::Number(converted.month as f64)),
-            ("monthCode", JsValue::String(converted.month_code)),
-            ("calendarId", JsValue::String(calendar_id)),
+            ("monthCode", JsValue::String(converted.month_code.into())),
+            ("calendarId", JsValue::String(calendar_id.into())),
             (
                 "daysInMonth",
                 JsValue::Number(converted.days_in_month as f64),
@@ -11405,8 +11424,8 @@ fn create_plain_year_month_from_calendar_date(
                 "referenceISODay",
                 JsValue::Number(reference_iso_day.trunc()),
             ),
-            ("monthCode", JsValue::String(date.month_code)),
-            ("calendarId", JsValue::String(calendar_id)),
+            ("monthCode", JsValue::String(date.month_code.into())),
+            ("calendarId", JsValue::String(calendar_id.into())),
             ("daysInMonth", JsValue::Number(date.days_in_month as f64)),
             ("daysInYear", JsValue::Number(date.days_in_year as f64)),
             ("monthsInYear", JsValue::Number(date.months_in_year as f64)),
@@ -11592,20 +11611,26 @@ fn temporal_plain_year_month_to_string(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
     if matches!(calendar_name.as_str(), "always" | "critical") {
-        return Ok(JsValue::String(format!(
-            "{}-{}-{}[{}u-ca={}]",
-            iso_year(temporal_number_slot(context, object, "year") as i32),
-            two_digit(temporal_number_slot(context, object, "month") as u32),
-            two_digit(temporal_number_slot(context, object, "referenceISODay") as u32),
-            if calendar_name == "critical" { "!" } else { "" },
-            own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into())
-        )));
+        return Ok(JsValue::String(
+            format!(
+                "{}-{}-{}[{}u-ca={}]",
+                iso_year(temporal_number_slot(context, object, "year") as i32),
+                two_digit(temporal_number_slot(context, object, "month") as u32),
+                two_digit(temporal_number_slot(context, object, "referenceISODay") as u32),
+                if calendar_name == "critical" { "!" } else { "" },
+                own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into())
+            )
+            .into(),
+        ));
     }
-    Ok(JsValue::String(format!(
-        "{}-{}",
-        iso_year(temporal_number_slot(context, object, "year") as i32),
-        two_digit(temporal_number_slot(context, object, "month") as u32)
-    )))
+    Ok(JsValue::String(
+        format!(
+            "{}-{}",
+            iso_year(temporal_number_slot(context, object, "year") as i32),
+            two_digit(temporal_number_slot(context, object, "month") as u32)
+        )
+        .into(),
+    ))
 }
 
 fn temporal_plain_year_month_to_plain_date(
@@ -12021,8 +12046,8 @@ fn create_plain_month_day(
         [
             ("month", JsValue::Number(month.trunc())),
             ("day", JsValue::Number(day.trunc())),
-            ("monthCode", JsValue::String(month_code(month))),
-            ("calendarId", JsValue::String(calendar_id)),
+            ("monthCode", JsValue::String(month_code(month).into())),
+            ("calendarId", JsValue::String(calendar_id.into())),
             ("referenceISOYear", JsValue::Number(reference_year.trunc())),
         ],
     )
@@ -12057,8 +12082,8 @@ fn create_plain_month_day_from_iso(
             ("referenceISOYear", JsValue::Number(reference_year.trunc())),
             ("month", JsValue::Number(converted.month as f64)),
             ("day", JsValue::Number(converted.day as f64)),
-            ("monthCode", JsValue::String(converted.month_code)),
-            ("calendarId", JsValue::String(calendar_id)),
+            ("monthCode", JsValue::String(converted.month_code.into())),
+            ("calendarId", JsValue::String(calendar_id.into())),
         ],
     )
 }
@@ -12218,20 +12243,26 @@ fn temporal_plain_month_day_to_string(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
     if matches!(calendar_name.as_str(), "always" | "critical") {
-        return Ok(JsValue::String(format!(
-            "{}-{}-{}[{}u-ca={}]",
-            iso_year(temporal_number_slot(context, object, "referenceISOYear") as i32),
-            two_digit(temporal_number_slot(context, object, "month") as u32),
-            two_digit(temporal_number_slot(context, object, "day") as u32),
-            if calendar_name == "critical" { "!" } else { "" },
-            own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into())
-        )));
+        return Ok(JsValue::String(
+            format!(
+                "{}-{}-{}[{}u-ca={}]",
+                iso_year(temporal_number_slot(context, object, "referenceISOYear") as i32),
+                two_digit(temporal_number_slot(context, object, "month") as u32),
+                two_digit(temporal_number_slot(context, object, "day") as u32),
+                if calendar_name == "critical" { "!" } else { "" },
+                own_string(context, object, "calendarId").unwrap_or_else(|| "iso8601".into())
+            )
+            .into(),
+        ));
     }
-    Ok(JsValue::String(format!(
-        "{}-{}",
-        two_digit(temporal_number_slot(context, object, "month") as u32),
-        two_digit(temporal_number_slot(context, object, "day") as u32)
-    )))
+    Ok(JsValue::String(
+        format!(
+            "{}-{}",
+            two_digit(temporal_number_slot(context, object, "month") as u32),
+            two_digit(temporal_number_slot(context, object, "day") as u32)
+        )
+        .into(),
+    ))
 }
 
 fn temporal_plain_month_day_to_plain_date(
@@ -12590,9 +12621,9 @@ fn create_zoned_date_time(
             ("epochNanoseconds", epoch_nanoseconds_value),
             ("epochNanosecondsNumber", JsValue::Number(epoch_nanoseconds)),
             ("epochMilliseconds", JsValue::Number(epoch_milliseconds)),
-            ("timeZoneId", JsValue::String(time_zone_id)),
-            ("calendarId", JsValue::String(calendar_id)),
-            ("offset", JsValue::String(offset_string)),
+            ("timeZoneId", JsValue::String(time_zone_id.into())),
+            ("calendarId", JsValue::String(calendar_id.into())),
+            ("offset", JsValue::String(offset_string.into())),
             (
                 "offsetNanoseconds",
                 JsValue::Number(offset_nanoseconds as f64),
@@ -12602,7 +12633,10 @@ fn create_zoned_date_time(
             ("isoDay", JsValue::Number(fields.day as f64)),
             ("year", JsValue::Number(calendar_date.year as f64)),
             ("month", JsValue::Number(calendar_date.month as f64)),
-            ("monthCode", JsValue::String(calendar_date.month_code)),
+            (
+                "monthCode",
+                JsValue::String(calendar_date.month_code.into()),
+            ),
             ("day", JsValue::Number(calendar_date.day as f64)),
             ("hour", JsValue::Number(fields.hour as f64)),
             ("minute", JsValue::Number(fields.minute as f64)),
@@ -12877,7 +12911,7 @@ fn temporal_time_zone_string(
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '-' | '+'))
         && !text.chars().next().is_some_and(|ch| ch.is_ascii_digit())
     {
-        Ok(text)
+        Ok(text.to_string())
     } else {
         Err(VmError::range("invalid Temporal time zone"))
     }
@@ -14218,9 +14252,9 @@ fn temporal_zoned_date_time_to_string(
         "auto" if calendar_id != "iso8601" => format!("[u-ca={calendar_id}]"),
         _ => String::new(),
     };
-    Ok(JsValue::String(format!(
-        "{date_time}{offset}{zone_annotation}{calendar_annotation}"
-    )))
+    Ok(JsValue::String(
+        format!("{date_time}{offset}{zone_annotation}{calendar_annotation}").into(),
+    ))
 }
 
 fn temporal_zoned_date_time_string_options(

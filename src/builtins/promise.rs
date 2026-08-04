@@ -983,14 +983,14 @@ fn increment_aggregate_remaining(
 
 fn property_key_value(key: &PropertyKey) -> JsValue {
     match key {
-        PropertyKey::String(value) => JsValue::String(value.clone()),
+        PropertyKey::String(value) => JsValue::String(value.clone().into()),
         PropertyKey::Symbol(value) => JsValue::Symbol(*value),
     }
 }
 
 fn keyed_callback_key(arguments: &[JsValue]) -> Result<PropertyKey, VmError> {
     match arguments.get(1) {
-        Some(JsValue::String(value)) => Ok(PropertyKey::String(value.clone())),
+        Some(JsValue::String(value)) => Ok(PropertyKey::String(value.to_string())),
         Some(JsValue::Symbol(value)) => Ok(PropertyKey::Symbol(*value)),
         _ => Err(VmError::runtime("invalid Promise keyed callback key")),
     }
@@ -1249,7 +1249,7 @@ fn construct_error_value(
         .ok_or_else(|| VmError::runtime(format!("{name} constructor missing")))?;
     vm.construct_value_from_builtin(
         constructor,
-        vec![JsValue::String(message.to_string())],
+        vec![JsValue::String(message.to_string().into())],
         context,
     )
 }

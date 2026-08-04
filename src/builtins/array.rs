@@ -302,7 +302,7 @@ fn string_index_value(value: &str, index: usize) -> Option<JsValue> {
     value
         .encode_utf16()
         .nth(index)
-        .map(|unit| JsValue::String(String::from_utf16_lossy(&[unit])))
+        .map(|unit| JsValue::String(String::from_utf16_lossy(&[unit]).into()))
 }
 
 fn string_index_value_for_array_like(
@@ -1114,17 +1114,17 @@ fn array_join(
     let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let sep = match arguments.first() {
         None | Some(JsValue::Undefined) => ",".to_string(),
-        Some(value) => vm.to_string_coerce(value.clone(), context)?,
+        Some(value) => vm.to_string_coerce(value.clone(), context)?.to_string(),
     };
     let mut parts: Vec<String> = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, target.clone(), i)?;
         parts.push(match val {
             JsValue::Undefined | JsValue::Null => String::new(),
-            value => vm.to_string_coerce(value, context)?,
+            value => vm.to_string_coerce(value, context)?.to_string(),
         });
     }
-    Ok(JsValue::String(parts.join(&sep)))
+    Ok(JsValue::String(parts.join(&sep).into()))
 }
 
 fn array_reverse(
@@ -2208,10 +2208,11 @@ fn array_to_locale_string(
             } else {
                 vm.to_string_coerce(elem, context)?
             }
+            .to_string()
         };
         parts.push(part);
     }
-    Ok(JsValue::String(parts.join(",")))
+    Ok(JsValue::String(parts.join(",").into()))
 }
 
 fn array_to_reversed(

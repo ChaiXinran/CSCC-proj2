@@ -129,7 +129,7 @@ fn own_data_value(context: &NativeContext, object: ObjectId, key: &str) -> Optio
 
 fn own_string(context: &NativeContext, object: ObjectId, key: &str) -> Option<String> {
     match own_data_value(context, object, key)? {
-        JsValue::String(value) => Some(value),
+        JsValue::String(value) => Some(value.to_string()),
         _ => None,
     }
 }
@@ -852,7 +852,7 @@ fn iterator_zip_keyed(
     let helper_object = context.require_object(&helper, "Iterator.zipKeyed result")?;
     for (index, key) in keys.into_iter().enumerate() {
         let value = match key {
-            PropertyKey::String(key) => JsValue::String(key),
+            PropertyKey::String(key) => JsValue::String(key.into()),
             PropertyKey::Symbol(symbol) => JsValue::Symbol(symbol),
         };
         define_hidden(context, helper_object, zip_result_key(index), value)?;
@@ -1961,7 +1961,7 @@ fn create_zip_keyed_row(
     for (index, value) in values.into_iter().enumerate() {
         match own_data_value(context, helper, &zip_result_key(index)) {
             Some(JsValue::String(key)) => {
-                object.define_property(key, PropertyDescriptor::data(value));
+                object.define_property(key.into_owned(), PropertyDescriptor::data(value));
             }
             Some(JsValue::Symbol(symbol)) => {
                 object.define_symbol_property(symbol, PropertyDescriptor::data(value));

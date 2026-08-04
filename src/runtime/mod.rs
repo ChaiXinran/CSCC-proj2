@@ -18,6 +18,7 @@ mod private;
 mod property;
 mod property_map;
 pub mod realm;
+mod string_value;
 mod symbol;
 mod value;
 
@@ -61,5 +62,6 @@ pub use object::{
 pub use private::{PrivateBrandId, PrivateSlot};
 pub use property::{PropertyDescriptor, PropertyDescriptorUpdate, PropertyKind};
 pub use property_map::{PropertyEntry, PropertyMap};
+pub use string_value::JsString;
 pub use symbol::{Symbol, SymbolId, SymbolRegistry, WellKnownSymbols};
 pub use value::{JsValue, NativeErrorKind, NativeErrorValue};

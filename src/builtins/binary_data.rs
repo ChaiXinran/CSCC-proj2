@@ -1158,12 +1158,12 @@ fn atomics_wait_result(
             .buffer;
         let marker = context.agent_register_wait(buffer, index, timeout);
         if !async_result {
-            return Ok(JsValue::String(marker));
+            return Ok(JsValue::String(marker.into()));
         }
         let promise_value = if timeout.is_infinite() {
             JsValue::String("ok".into())
         } else {
-            JsValue::String(marker)
+            JsValue::String(marker.into())
         };
         let promise = context.create_promise()?;
         let prototype = context
@@ -2599,7 +2599,12 @@ fn create_typed_array_object_with_tracking(
         },
     )?;
     define_hidden(context, object, TYPED_ARRAY_MARKER, JsValue::Boolean(true))?;
-    define_hidden(context, object, TYPED_ARRAY_NAME, JsValue::String(name))?;
+    define_hidden(
+        context,
+        object,
+        TYPED_ARRAY_NAME,
+        JsValue::String(name.into()),
+    )?;
     define_hidden(
         context,
         object,
@@ -3261,7 +3266,7 @@ fn typed_array_join(
         typed_array_parts(context, &this_value, "TypedArray.prototype.join")?;
     let sep = match arguments.first() {
         None | Some(JsValue::Undefined) => ",".to_string(),
-        Some(value) => vm.to_string_coerce(value.clone(), context)?,
+        Some(value) => vm.to_string_coerce(value.clone(), context)?.to_string(),
     };
     let mut parts = Vec::with_capacity(length);
     for index in 0..length {
@@ -3269,10 +3274,10 @@ fn typed_array_join(
         parts.push(if matches!(value, JsValue::Undefined | JsValue::Null) {
             String::new()
         } else {
-            vm.to_string_coerce(value, context)?
+            vm.to_string_coerce(value, context)?.to_string()
         });
     }
-    Ok(JsValue::String(parts.join(&sep)))
+    Ok(JsValue::String(parts.join(&sep).into()))
 }
 
 fn typed_array_to_locale_string(
@@ -3297,9 +3302,9 @@ fn typed_array_to_locale_string(
             ));
         }
         let localized = vm.call_value_from_builtin(to_locale, element, Vec::new(), context)?;
-        parts.push(vm.to_string_coerce(localized, context)?);
+        parts.push(vm.to_string_coerce(localized, context)?.to_string());
     }
-    Ok(JsValue::String(parts.join(",")))
+    Ok(JsValue::String(parts.join(",").into()))
 }
 
 fn typed_array_fill(
@@ -4269,7 +4274,7 @@ fn install_intl_constructor(
     context.define_symbol_own_property(
         prototype,
         tag,
-        readonly_configurable_descriptor(JsValue::String(format!("Intl.{}", spec.name))),
+        readonly_configurable_descriptor(JsValue::String(format!("Intl.{}", spec.name).into())),
     )?;
     context.define_own_property(intl, spec.name.into(), method_descriptor(constructor))?;
     Ok(())
@@ -4471,7 +4476,7 @@ fn date_time_string_option(
             "invalid Intl.DateTimeFormat {key} option"
         )));
     }
-    Ok(Some(value))
+    Ok(Some(value.to_string()))
 }
 
 fn initialize_date_time_format(
@@ -4707,7 +4712,7 @@ fn number_format_string_option(
     if !allowed.contains(&value.as_str()) {
         return Err(VmError::range("invalid Intl.NumberFormat option"));
     }
-    Ok(Some(value))
+    Ok(Some(value.to_string()))
 }
 
 fn number_format_get_string_option(
@@ -4901,7 +4906,7 @@ fn initialize_number_format(
             .available_numbering_systems()
             .contains(&numbering.as_str())
         {
-            locale_options.numbering_system = Some(numbering);
+            locale_options.numbering_system = Some(numbering.to_string());
         }
     }
     record.style = number_format_get_string_option(
@@ -4951,7 +4956,7 @@ fn initialize_number_format(
         if !is_well_formed_unit(&unit) {
             return Err(VmError::range("invalid Intl.NumberFormat unit"));
         }
-        record.unit = Some(unit);
+        record.unit = Some(unit.to_string());
     }
     if record.style == "unit" && record.unit.is_none() {
         return Err(VmError::type_error("unit style requires a unit option"));
@@ -5132,11 +5137,13 @@ fn initialize_number_format(
         JsValue::String(value) if value.is_empty() => "false".into(),
         JsValue::String(value) if value == "false" => "auto".into(),
         JsValue::String(value) if value == "true" => "auto".into(),
-        JsValue::String(value) if matches!(value.as_str(), "auto" | "always" | "min2") => value,
+        JsValue::String(value) if matches!(value.as_str(), "auto" | "always" | "min2") => {
+            value.to_string()
+        }
         other => {
             let value = vm.to_string_coerce(other, context)?;
             if matches!(value.as_str(), "auto" | "always" | "min2") {
-                value
+                value.to_string()
             } else {
                 return Err(VmError::range("invalid Intl.NumberFormat useGrouping"));
             }
@@ -5258,10 +5265,13 @@ fn intl_date_time_format_resolved_options(
         _ => return Err(VmError::type_error("invalid Intl.DateTimeFormat state")),
     };
     let mut pairs = vec![
-        ("locale", JsValue::String(record.locale)),
-        ("calendar", JsValue::String(record.calendar)),
-        ("numberingSystem", JsValue::String(record.numbering_system)),
-        ("timeZone", JsValue::String(record.time_zone)),
+        ("locale", JsValue::String(record.locale.into())),
+        ("calendar", JsValue::String(record.calendar.into())),
+        (
+            "numberingSystem",
+            JsValue::String(record.numbering_system.into()),
+        ),
+        ("timeZone", JsValue::String(record.time_zone.into())),
     ];
     if let Some(hour_cycle) = record.hour_cycle {
         let hour_cycle = match hour_cycle {
@@ -5291,21 +5301,27 @@ fn intl_number_format_resolved_options(
         _ => return Err(VmError::type_error("invalid Intl.NumberFormat state")),
     };
     let mut pairs = vec![
-        ("locale", JsValue::String(record.locale)),
-        ("numberingSystem", JsValue::String(record.numbering_system)),
-        ("style", JsValue::String(record.style.clone())),
+        ("locale", JsValue::String(record.locale.into())),
+        (
+            "numberingSystem",
+            JsValue::String(record.numbering_system.into()),
+        ),
+        ("style", JsValue::String(record.style.clone().into())),
     ];
     if record.style == "currency" {
         if let Some(currency) = record.currency {
-            pairs.push(("currency", JsValue::String(currency)));
+            pairs.push(("currency", JsValue::String(currency.into())));
         }
-        pairs.push(("currencyDisplay", JsValue::String(record.currency_display)));
-        pairs.push(("currencySign", JsValue::String(record.currency_sign)));
+        pairs.push((
+            "currencyDisplay",
+            JsValue::String(record.currency_display.into()),
+        ));
+        pairs.push(("currencySign", JsValue::String(record.currency_sign.into())));
     } else if record.style == "unit" {
         if let Some(unit) = record.unit {
-            pairs.push(("unit", JsValue::String(unit)));
+            pairs.push(("unit", JsValue::String(unit.into())));
         }
-        pairs.push(("unitDisplay", JsValue::String(record.unit_display)));
+        pairs.push(("unitDisplay", JsValue::String(record.unit_display.into())));
     }
     pairs.push((
         "minimumIntegerDigits",
@@ -5332,26 +5348,29 @@ fn intl_number_format_resolved_options(
         if record.use_grouping == "false" {
             JsValue::Boolean(false)
         } else {
-            JsValue::String(record.use_grouping)
+            JsValue::String(record.use_grouping.into())
         },
     ));
-    pairs.push(("notation", JsValue::String(record.notation.clone())));
+    pairs.push(("notation", JsValue::String(record.notation.clone().into())));
     if record.notation == "compact" {
-        pairs.push(("compactDisplay", JsValue::String(record.compact_display)));
+        pairs.push((
+            "compactDisplay",
+            JsValue::String(record.compact_display.into()),
+        ));
     }
-    pairs.push(("signDisplay", JsValue::String(record.sign_display)));
+    pairs.push(("signDisplay", JsValue::String(record.sign_display.into())));
     pairs.push((
         "roundingIncrement",
         JsValue::Number(record.rounding_increment.into()),
     ));
-    pairs.push(("roundingMode", JsValue::String(record.rounding_mode)));
+    pairs.push(("roundingMode", JsValue::String(record.rounding_mode.into())));
     pairs.push((
         "roundingPriority",
-        JsValue::String(record.rounding_priority),
+        JsValue::String(record.rounding_priority.into()),
     ));
     pairs.push((
         "trailingZeroDisplay",
-        JsValue::String(record.trailing_zero_display),
+        JsValue::String(record.trailing_zero_display.into()),
     ));
     object_from_pairs(context, pairs)
 }
@@ -5391,7 +5410,7 @@ fn intl_supported_locales_of(
     let supported = locales
         .into_iter()
         .filter(|locale| matches!(locale.as_str(), "en" | "en-US" | "und"))
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .collect();
     context.create_array(supported)
 }
@@ -5403,7 +5422,7 @@ fn collect_locale_list(
 ) -> Result<Vec<String>, VmError> {
     match value {
         JsValue::Undefined => Ok(Vec::new()),
-        JsValue::String(locale) => Ok(vec![locale]),
+        JsValue::String(locale) => Ok(vec![locale.to_string()]),
         other => {
             let object = vm.to_object(other, context)?;
             let object_value = context.object_value(object);
@@ -5430,7 +5449,7 @@ fn collect_locale_list(
                             "Intl locale list elements must be strings or objects",
                         ));
                     }
-                    locales.push(vm.to_string_coerce(value, context)?);
+                    locales.push(vm.to_string_coerce(value, context)?.to_string());
                 }
             }
             Ok(locales)
@@ -5464,7 +5483,7 @@ fn intl_number_format_format(
             _ => unreachable!("ToNumeric must return Number or BigInt"),
         }
     };
-    Ok(JsValue::String(formatted.text))
+    Ok(JsValue::String(formatted.text.into()))
 }
 
 fn intl_number_to_locale_string(
@@ -5488,7 +5507,9 @@ fn intl_number_to_locale_string(
     };
     let record = initialize_number_format(vm, context, arguments)?;
     Ok(JsValue::String(
-        format_number(&record, NumberValue::Number(number)).text,
+        format_number(&record, NumberValue::Number(number))
+            .text
+            .into(),
     ))
 }
 
@@ -5596,7 +5617,7 @@ fn test262_agent_start(
         context,
     )?;
     context.agent_start_worker();
-    let isolated_source = JsValue::String(format!("\"use strict\";\n{source}"));
+    let isolated_source = JsValue::String(format!("\"use strict\";\n{source}").into());
     let result = function::eval_direct_call(
         vm,
         context,
@@ -5654,7 +5675,7 @@ fn test262_agent_report(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    context.agent_report(report);
+    context.agent_report(report.to_string());
     Ok(JsValue::Undefined)
 }
 
@@ -5666,7 +5687,7 @@ fn test262_agent_get_report(
 ) -> Result<JsValue, VmError> {
     Ok(context
         .agent_get_report()
-        .map(JsValue::String)
+        .map(|value: String| JsValue::String(value.into()))
         .unwrap_or(JsValue::Null))
 }
 
@@ -5737,7 +5758,7 @@ fn test262_build_string(
         }
     }
 
-    Ok(JsValue::String(string::decode_utf16(&units)))
+    Ok(JsValue::String(string::decode_utf16(&units).into()))
 }
 
 fn append_code_point_array(
