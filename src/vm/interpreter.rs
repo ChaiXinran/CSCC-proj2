@@ -5,7 +5,9 @@ use std::{collections::HashMap, fmt, fs, path::Path};
 use crate::{
     ast::{ModuleDeclaration, Statement},
     builtins::{proxy, string},
-    bytecode::{Chunk, Compiler, Constant, ExceptionHandler, HandlerKind, Instruction},
+    bytecode::{
+        Chunk, Compiler, Constant, ExceptionHandler, HandlerKind, Instruction, SharedChunk,
+    },
     lexer::Lexer,
     parser::Parser,
     runtime::{
@@ -25,7 +27,7 @@ use crate::{
 struct LoadedModule {
     id: crate::runtime::ModuleId,
     program: crate::ast::Program,
-    chunk: Chunk,
+    chunk: SharedChunk,
     imports: Vec<crate::runtime::ModuleImportBinding>,
     exports: Vec<crate::runtime::ModuleExportBinding>,
     dependencies: Vec<String>,
@@ -8738,6 +8740,7 @@ mod tests {
             functions: Vec::new(),
             handlers: Vec::new(),
             function_body_start: 0,
+            constant_index: None,
         };
         let error = Vm::default().execute(&chunk).unwrap_err();
 
@@ -8980,6 +8983,7 @@ mod tests {
             functions: Vec::new(),
             handlers: Vec::new(),
             function_body_start: 0,
+            constant_index: None,
         };
 
         let error = Vm::default()

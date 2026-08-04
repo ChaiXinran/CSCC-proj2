@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "raytrace",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 16390,
   "entryFiles": [
     "./Octane/raytrace.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./Octane/raytrace.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "f8c9b10c2faa473f8119e0246e3445b2d913b8a8674f92321d625b1f2fec8a94",
+  "resourceHashes": {
+    "./Octane/raytrace.js": "sha256:ab8b0cd8260b785765f89bf20725c6112c829c697a48ced99194f307dff39b03"
+  },
+  "runnerSha256": "39cf7d9694d93f54b549980a1d9fbf4cae0dac430f0a287051a3a0318af79e84",
   "phaseMarkers": false
 }

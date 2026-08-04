@@ -1,10 +1,12 @@
 
+
 const isInBrowser = false;
 const isD8 = false;
 const isSpiderMonkey = false;
-const jetStreamHostPrint = typeof globalThis.print === "function"
+const jetStreamRawPrint = typeof globalThis.print === "function"
     ? globalThis.print
     : (...args) => globalThis.console.log(...args);
+const jetStreamHostPrint = jetStreamRawPrint;
 globalThis.print = jetStreamHostPrint;
 var __jetstreamPhase = (phase) =>
     jetStreamHostPrint("JETSTREAM_PHASE:" + Date.now() + ":" + phase);
@@ -18,8 +20,14 @@ var console = {
     },
 };
 var runString = () => {
-    globalThis.loadString = (source) =>
-        new Function("top", source)(globalThis.top);
+    globalThis.loadString = (source) => {
+        // Entry files are executed by the Rust host before launch. Only the
+        // small driver-generated facade and iteration harness may reach this
+        // compiler boundary; reject accidental workload re-concatenation.
+        if (source.length > 1024 * 1024)
+            throw new Error("JetStream inline harness unexpectedly exceeds 1 MiB");
+        return new Function("top", source)(globalThis.top);
+    };
     return globalThis;
 };
 var load = (name) => globalThis.loadString(readFile(name));
@@ -44,13 +52,7 @@ var JetStreamParams = {
     testWorstCaseCountMap: {},
     testList: "gaussian-blur",
 };
-var __jetstreamResources = {"./SeaMonster/gaussian-blur.js":"// Taken from: https://github.com/nodeca/glur\n\n/*\n* The MIT License (MIT)\n* \n* Copyright (c) 2014 Andrei Tupitcyn\n* \n* Permission is hereby granted, free of charge, to any person obtaining a copy\n* of this software and associated documentation files (the \"Software\"), to deal\n* in the Software without restriction, including without limitation the rights\n* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\n* copies of the Software, and to permit persons to whom the Software is\n* furnished to do so, subject to the following conditions:\n* \n* The above copyright notice and this permission notice shall be included in all\n* copies or substantial portions of the Software.\n* \n* THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\n* IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\n* FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\n* AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\n* LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\n* OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\n* SOFTWARE.\n*/\n\n// Calculate Gaussian blur of an image using IIR filter\n// The method is taken from Intel's white paper and code example attached to it:\n// https://software.intel.com/en-us/articles/iir-gaussian-blur-filter\n// -implementation-using-intel-advanced-vector-extensions\n\nvar a0, a1, a2, a3, b1, b2, left_corner, right_corner;\n\nfunction gaussCoef(sigma) {\n  if (sigma < 0.5) {\n    sigma = 0.5;\n  }\n\n  var a = Math.exp(0.726 * 0.726) / sigma,\n      g1 = Math.exp(-a),\n      g2 = Math.exp(-2 * a),\n      k = (1 - g1) * (1 - g1) / (1 + 2 * a * g1 - g2);\n\n  a0 = k;\n  a1 = k * (a - 1) * g1;\n  a2 = k * (a + 1) * g1;\n  a3 = -k * g2;\n  b1 = 2 * g1;\n  b2 = -g2;\n  left_corner = (a0 + a1) / (1 - b1 - b2);\n  right_corner = (a2 + a3) / (1 - b1 - b2);\n\n  // Attempt to force type to FP32.\n  return new Float32Array([ a0, a1, a2, a3, b1, b2, left_corner, right_corner ]);\n}\n\nfunction convolveRGBA(src, out, line, coeff, width, height) {\n  // takes src image and writes the blurred and transposed result into out\n\n  var rgba;\n  var prev_src_r, prev_src_g, prev_src_b, prev_src_a;\n  var curr_src_r, curr_src_g, curr_src_b, curr_src_a;\n  var curr_out_r, curr_out_g, curr_out_b, curr_out_a;\n  var prev_out_r, prev_out_g, prev_out_b, prev_out_a;\n  var prev_prev_out_r, prev_prev_out_g, prev_prev_out_b, prev_prev_out_a;\n\n  var src_index, out_index, line_index;\n  var i, j;\n  var coeff_a0, coeff_a1, coeff_b1, coeff_b2;\n\n  for (i = 0; i < height; i++) {\n    src_index = i * width;\n    out_index = i;\n    line_index = 0;\n\n    // left to right\n    rgba = src[src_index];\n\n    prev_src_r = rgba & 0xff;\n    prev_src_g = (rgba >> 8) & 0xff;\n    prev_src_b = (rgba >> 16) & 0xff;\n    prev_src_a = (rgba >> 24) & 0xff;\n\n    prev_prev_out_r = prev_src_r * coeff[6];\n    prev_prev_out_g = prev_src_g * coeff[6];\n    prev_prev_out_b = prev_src_b * coeff[6];\n    prev_prev_out_a = prev_src_a * coeff[6];\n\n    prev_out_r = prev_prev_out_r;\n    prev_out_g = prev_prev_out_g;\n    prev_out_b = prev_prev_out_b;\n    prev_out_a = prev_prev_out_a;\n\n    coeff_a0 = coeff[0];\n    coeff_a1 = coeff[1];\n    coeff_b1 = coeff[4];\n    coeff_b2 = coeff[5];\n\n    for (j = 0; j < width; j++) {\n      rgba = src[src_index];\n      curr_src_r = rgba & 0xff;\n      curr_src_g = (rgba >> 8) & 0xff;\n      curr_src_b = (rgba >> 16) & 0xff;\n      curr_src_a = (rgba >> 24) & 0xff;\n\n      curr_out_r = curr_src_r * coeff_a0 + prev_src_r * coeff_a1 + prev_out_r * coeff_b1 + prev_prev_out_r * coeff_b2;\n      curr_out_g = curr_src_g * coeff_a0 + prev_src_g * coeff_a1 + prev_out_g * coeff_b1 + prev_prev_out_g * coeff_b2;\n      curr_out_b = curr_src_b * coeff_a0 + prev_src_b * coeff_a1 + prev_out_b * coeff_b1 + prev_prev_out_b * coeff_b2;\n      curr_out_a = curr_src_a * coeff_a0 + prev_src_a * coeff_a1 + prev_out_a * coeff_b1 + prev_prev_out_a * coeff_b2;\n\n      prev_prev_out_r = prev_out_r;\n      prev_prev_out_g = prev_out_g;\n      prev_prev_out_b = prev_out_b;\n      prev_prev_out_a = prev_out_a;\n\n      prev_out_r = curr_out_r;\n      prev_out_g = curr_out_g;\n      prev_out_b = curr_out_b;\n      prev_out_a = curr_out_a;\n\n      prev_src_r = curr_src_r;\n      prev_src_g = curr_src_g;\n      prev_src_b = curr_src_b;\n      prev_src_a = curr_src_a;\n\n      line[line_index] = prev_out_r;\n      line[line_index + 1] = prev_out_g;\n      line[line_index + 2] = prev_out_b;\n      line[line_index + 3] = prev_out_a;\n      line_index += 4;\n      src_index++;\n    }\n\n    src_index--;\n    line_index -= 4;\n    out_index += height * (width - 1);\n\n    // right to left\n    rgba = src[src_index];\n\n    prev_src_r = rgba & 0xff;\n    prev_src_g = (rgba >> 8) & 0xff;\n    prev_src_b = (rgba >> 16) & 0xff;\n    prev_src_a = (rgba >> 24) & 0xff;\n\n    prev_prev_out_r = prev_src_r * coeff[7];\n    prev_prev_out_g = prev_src_g * coeff[7];\n    prev_prev_out_b = prev_src_b * coeff[7];\n    prev_prev_out_a = prev_src_a * coeff[7];\n\n    prev_out_r = prev_prev_out_r;\n    prev_out_g = prev_prev_out_g;\n    prev_out_b = prev_prev_out_b;\n    prev_out_a = prev_prev_out_a;\n\n    curr_src_r = prev_src_r;\n    curr_src_g = prev_src_g;\n    curr_src_b = prev_src_b;\n    curr_src_a = prev_src_a;\n\n    coeff_a0 = coeff[2];\n    coeff_a1 = coeff[3];\n\n    for (j = width - 1; j >= 0; j--) {\n      curr_out_r = curr_src_r * coeff_a0 + prev_src_r * coeff_a1 + prev_out_r * coeff_b1 + prev_prev_out_r * coeff_b2;\n      curr_out_g = curr_src_g * coeff_a0 + prev_src_g * coeff_a1 + prev_out_g * coeff_b1 + prev_prev_out_g * coeff_b2;\n      curr_out_b = curr_src_b * coeff_a0 + prev_src_b * coeff_a1 + prev_out_b * coeff_b1 + prev_prev_out_b * coeff_b2;\n      curr_out_a = curr_src_a * coeff_a0 + prev_src_a * coeff_a1 + prev_out_a * coeff_b1 + prev_prev_out_a * coeff_b2;\n\n      prev_prev_out_r = prev_out_r;\n      prev_prev_out_g = prev_out_g;\n      prev_prev_out_b = prev_out_b;\n      prev_prev_out_a = prev_out_a;\n\n      prev_out_r = curr_out_r;\n      prev_out_g = curr_out_g;\n      prev_out_b = curr_out_b;\n      prev_out_a = curr_out_a;\n\n      prev_src_r = curr_src_r;\n      prev_src_g = curr_src_g;\n      prev_src_b = curr_src_b;\n      prev_src_a = curr_src_a;\n\n      rgba = src[src_index];\n      curr_src_r = rgba & 0xff;\n      curr_src_g = (rgba >> 8) & 0xff;\n      curr_src_b = (rgba >> 16) & 0xff;\n      curr_src_a = (rgba >> 24) & 0xff;\n\n      rgba = ((line[line_index] + prev_out_r) << 0) +\n        ((line[line_index + 1] + prev_out_g) << 8) +\n        ((line[line_index + 2] + prev_out_b) << 16) +\n        ((line[line_index + 3] + prev_out_a) << 24);\n\n      out[out_index] = rgba;\n\n      src_index--;\n      line_index -= 4;\n      out_index -= height;\n    }\n  }\n}\n\n\nfunction blurRGBA(src, width, height, radius) {\n  // Quick exit on zero radius\n  if (!radius) { return; }\n\n  // Unify input data type, to keep convolver calls isomorphic\n  var src32 = new Uint32Array(src.buffer);\n\n  var out      = new Uint32Array(src32.length),\n      tmp_line = new Float32Array(Math.max(width, height) * 4);\n\n  var coeff = gaussCoef(radius);\n\n  convolveRGBA(src32, out, tmp_line, coeff, width, height, radius);\n  convolveRGBA(out, src32, tmp_line, coeff, height, width, radius);\n}\n\nclass Benchmark {\n    constructor() {\n        this.width = 800;\n        this.height = 450;\n        this.radius = 15;\n\n        const randUint32 = (function() {\n            let seed = 49734321;\n            return function() {\n                // Robert Jenkins' 32 bit integer hash function.\n                seed = ((seed + 0x7ed55d16) + (seed << 12))  & 0xffffffff;\n                seed = ((seed ^ 0xc761c23c) ^ (seed >>> 19)) & 0xffffffff;\n                seed = ((seed + 0x165667b1) + (seed << 5))   & 0xffffffff;\n                seed = ((seed + 0xd3a2646c) ^ (seed << 9))   & 0xffffffff;\n                seed = ((seed + 0xfd7046c5) + (seed << 3))   & 0xffffffff;\n                seed = ((seed ^ 0xb55a4f09) ^ (seed >>> 16)) & 0xffffffff;\n                return (seed & 0xfffffff);\n            };\n        })();\n\n        const buffer = new Uint32Array(this.width * this.height);\n        for (let i = 0; i < buffer.length; ++i)\n            buffer[i] = randUint32();\n\n        this.buffer = buffer;\n    }\n\n    runIteration() {\n         blurRGBA(this.buffer, this.width, this.height, this.radius);\n    }\n}\n"};
-var readFile = function (name) {
-    const normalized = String(name).replaceAll("\\", "/");
-    if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
-        throw new Error("JetStream resource not embedded: " + normalized);
-    return __jetstreamResources[normalized];
-};
+var __agentjsLoadEntry = (url) => readFile(url);
 var read = function (name, mode) {
     const text = readFile(name);
     if (mode !== "binary")
@@ -61,6 +63,7 @@ var read = function (name, mode) {
     return bytes;
 };
 
+(function () {
 "use strict";
 
 /*
@@ -232,7 +235,7 @@ class ShellFileLoader {
 
         // If we aren't supposed to prefetch this then return code snippet that will load the url on-demand.
         if (!JetStreamParams.prefetchResources)
-            return readFile(url);
+            return __agentjsLoadEntry(url);
 
         if (this.requests.has(url)) {
             return this.requests.get(url);
@@ -868,7 +871,7 @@ class ShellScripts extends Scripts {
         }
 
         globalObject.performance ??= performance;
-        globalObject.loadString(this.scripts.join("\n"));
+        globalObject.loadString(this.scripts.reduce((joined, script) => script && script.__agentjsFile ? joined : joined + "\n" + script, ""));
 
         return isD8 ? realm : globalObject;
     }
@@ -895,7 +898,7 @@ class BrowserScripts extends Scripts {
     }
 
     run() {
-        const string = this.scripts.join("\n");
+        const string = this.scripts.reduce((joined, script) => joined + "\n" + script, "");
         const magic = document.getElementById("magic");
         magic.contentDocument.body.textContent = "";
         magic.contentDocument.body.innerHTML = `<iframe id="magicframe" frameborder="0">`;
@@ -3326,8 +3329,10 @@ if (JetStreamParams.testList.length) {
     benchmarks = findBenchmarksByTag("Default", defaultDisabledTags)
 }
 
-this.JetStream = new Driver(benchmarks);
+globalThis.JetStream = new Driver(benchmarks);
 
+})();
+/*__AGENTJS_LOAD_RESOURCES__*/
 
 JetStream.initialize()
     .then(() => JetStream.start())

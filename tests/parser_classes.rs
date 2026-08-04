@@ -2,7 +2,7 @@
 
 use agentjs::{bytecode::Instruction, lexer::Lexer, parser::Parser};
 
-fn compile(source: &str) -> agentjs::bytecode::Chunk {
+fn compile(source: &str) -> agentjs::bytecode::SharedChunk {
     let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
     let program = Parser::with_source(tokens, source)
         .parse_program()

@@ -19,6 +19,7 @@ use super::{
     TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint, iterator::IteratorKind,
     object::array_index,
 };
+use crate::host::{HostLoadError, HostServices};
 use crate::vm::{CallFrame, Vm, VmError};
 use crate::{builtins::string, intl::IntlObjectData};
 
@@ -240,6 +241,7 @@ pub struct NativeContext {
     call_depth: u64,
     gc_allocation_threshold: usize,
     gc_metrics: GcMetrics,
+    host_services: HostServices,
 }
 
 fn array_iterator_next_builtin(
@@ -336,6 +338,7 @@ impl NativeContext {
             call_depth: 0,
             gc_allocation_threshold: 10_000,
             gc_metrics: GcMetrics::default(),
+            host_services: HostServices::default(),
         };
         context.install_core_global_bindings();
         context
@@ -349,6 +352,21 @@ impl NativeContext {
 }
 
 impl NativeContext {
+    pub(crate) fn install_host_services(&mut self, host: HostServices) {
+        self.host_services = host;
+    }
+
+    pub(crate) fn read_host_text(&self, path: &str) -> Result<std::sync::Arc<str>, VmError> {
+        let loader = self
+            .host_services
+            .file_loader
+            .as_ref()
+            .ok_or_else(|| VmError::runtime(HostLoadError::Disabled.to_string()))?;
+        loader
+            .read_text(std::path::Path::new(path))
+            .map_err(|error| VmError::runtime(error.to_string()))
+    }
+
     #[must_use]
     pub fn heap(&self) -> &Heap {
         &self.heap

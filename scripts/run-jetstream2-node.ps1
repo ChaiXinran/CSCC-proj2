@@ -19,10 +19,9 @@ foreach ($test in $Tests) {
         $runner | Set-Content (Join-Path $reportDirectory "$test-plan.json")
 
     $started = Get-Date
-    node scripts/node-jetstream2-shell.mjs $runner |
+    node scripts/node-jetstream2-shell.mjs $runner $JetStreamRoot |
         Tee-Object -FilePath (Join-Path $reportDirectory "$test.txt")
     $elapsed = (Get-Date) - $started
     "wall_time_ms=$([math]::Round($elapsed.TotalMilliseconds))" |
         Add-Content (Join-Path $reportDirectory "$test.txt")
 }
-

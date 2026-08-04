@@ -21,7 +21,7 @@ foreach ($test in $Tests) {
         $runner | Set-Content (Join-Path $reportDirectory "$test-plan.json")
 
     $verificationJson = node scripts/verify-generated-runner.mjs `
-        $runner $binary ($TimeoutSeconds * 1000)
+        $runner $binary ($TimeoutSeconds * 1000) $JetStreamRoot
     if ($LASTEXITCODE -ne 0) {
         throw "generated runner verification failed for '$test'"
     }

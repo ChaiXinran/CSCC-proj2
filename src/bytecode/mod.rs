@@ -14,7 +14,7 @@ mod opcode;
 
 pub use chunk::{
     Chunk, ChunkCacheMetadata, ChunkError, Constant, EnvironmentCapturePolicy, ExceptionHandler,
-    FunctionTemplate, HandlerKind, StackAnalysis,
+    FunctionTemplate, HandlerKind, SharedChunk, StackAnalysis,
 };
 pub use compiler::{CompileError, Compiler};
 pub use opcode::{Instruction, StackEffect};

@@ -255,6 +255,8 @@ impl Default for RunnerOptions {
                 backtrace_limit: 20,
                 script_cache_capacity: 0,
                 install_test262_host: true,
+                install_jetstream_host: false,
+                diagnostics: false,
                 heap_object_limit: 500_000,
                 heap_byte_limit: 512 * 1024 * 1024,
                 // 10 s per test case: kills infinite loops before they hang the whole

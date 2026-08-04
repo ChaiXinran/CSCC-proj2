@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "regexp-octane",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 128519,
   "entryFiles": [
     "./Octane/regexp.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./Octane/regexp.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "6a5586f74040ecad1d6b049280842f40172f36ea934b4664b077131f41056c68",
+  "resourceHashes": {
+    "./Octane/regexp.js": "sha256:63a9edd3cfe990f6cdcd10ae1fe6ee776dd49395e2319d2e886668ba4a605ad7"
+  },
+  "runnerSha256": "fb6960fc3e73106061dc613e54e52e8f3d3b6adad93ed0ee92d67a1764731d4f",
   "phaseMarkers": false
 }

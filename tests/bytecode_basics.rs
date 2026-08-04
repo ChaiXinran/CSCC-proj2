@@ -909,6 +909,7 @@ fn chunk_reports_constant_pool_overflow_without_truncating() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
 
     assert_eq!(
@@ -916,6 +917,39 @@ fn chunk_reports_constant_pool_overflow_without_truncating() {
         Err(ChunkError::ConstantPoolOverflow)
     );
     assert_eq!(chunk.constants.len(), usize::from(u16::MAX) + 1);
+}
+
+#[test]
+fn constant_pool_hash_index_preserves_bitwise_deduplication() {
+    let mut chunk = Chunk::default();
+
+    let string = chunk
+        .add_constant(Constant::String("repeated-name".into()))
+        .unwrap();
+    assert_eq!(
+        chunk
+            .add_constant(Constant::String("repeated-name".into()))
+            .unwrap(),
+        string
+    );
+
+    let nan_bits = 0x7ff8_0000_0000_0042_u64;
+    let nan = chunk
+        .add_constant(Constant::Number(f64::from_bits(nan_bits)))
+        .unwrap();
+    assert_eq!(
+        chunk
+            .add_constant(Constant::Number(f64::from_bits(nan_bits)))
+            .unwrap(),
+        nan
+    );
+
+    let positive_zero = chunk.add_constant(Constant::Number(0.0)).unwrap();
+    let negative_zero = chunk.add_constant(Constant::Number(-0.0)).unwrap();
+    assert_ne!(positive_zero, negative_zero);
+
+    let shared = chunk.into_shared();
+    assert!(shared.constant_index.is_none());
 }
 
 #[test]
@@ -969,6 +1003,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(
         invalid_constant.validate(),
@@ -984,6 +1019,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(
         invalid_jump.validate(),
@@ -1004,6 +1040,7 @@ fn chunk_rejects_invalid_patch_locations_and_malformed_bytecode() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(
         invalid_name.validate(),
@@ -1022,6 +1059,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(
         underflow.validate(),
@@ -1038,6 +1076,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(
         empty_condition.validate(),
@@ -1058,6 +1097,7 @@ fn chunk_stack_analysis_detects_underflow_and_invalid_return_depths() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(
         extra_value.validate(),
@@ -1084,6 +1124,7 @@ fn chunk_stack_analysis_rejects_inconsistent_branch_merges() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
 
     assert_eq!(

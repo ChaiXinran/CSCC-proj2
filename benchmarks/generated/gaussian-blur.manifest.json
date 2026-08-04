@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "gaussian-blur",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 8614,
   "entryFiles": [
     "./SeaMonster/gaussian-blur.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./SeaMonster/gaussian-blur.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "ebdac3700a922a07931c4bcc62d9de5adbcc4d4cbf0bba1f0f9eacb4dff3410c",
+  "resourceHashes": {
+    "./SeaMonster/gaussian-blur.js": "sha256:3510d05710feaf16d3626b3bf738491f3ff7b2d21a20f5da6e8f205d52599b97"
+  },
+  "runnerSha256": "2db76c6ed728a010307eade4685901d3f28cf1fd6df93a9281d589f0be171073",
   "phaseMarkers": false
 }

@@ -5,7 +5,7 @@ mod statement;
 #[cfg(test)]
 mod token_tests;
 
-use std::fmt;
+use std::{fmt, sync::Arc};
 
 use crate::{
     ast::Program,
@@ -73,7 +73,7 @@ pub struct Parser {
     /// Original source text kept for regex literal relexing. When the parser
     /// encounters `/` in a primary-expression position it uses this to re-read
     /// the bytes that the context-free lexer split into separate tokens.
-    source: Option<Box<str>>,
+    source: Option<Arc<str>>,
     /// Current recursive nesting depth across parenthesized expressions, unary
     /// chains, and statement blocks. Checked against [`MAX_PARSE_DEPTH`].
     nesting_depth: usize,
@@ -191,13 +191,14 @@ impl Parser {
         &self.tokens[self.cursor.min(self.tokens.len() - 1)]
     }
 
-    /// Consumes and returns the current token, never moving past EOF.
-    fn advance(&mut self) -> Token {
-        let token = self.peek().clone();
-        if !matches!(token.kind, TokenKind::Eof) {
+    /// Consumes the current token, never moving past EOF.
+    ///
+    /// Payload-bearing tokens stay in the token buffer, avoiding a deep clone
+    /// of identifiers and string/template literals on every parser step.
+    fn advance(&mut self) {
+        if !matches!(self.peek().kind, TokenKind::Eof) {
             self.cursor += 1;
         }
-        token
     }
 
     fn at_eof(&self) -> bool {

@@ -1,19 +1,22 @@
 {
+  "schemaVersion": 2,
   "benchmark": "validatorjs",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 346168,
   "entryFiles": [
     "./validatorjs/dist/bundle.es6.min.js",
     "./validatorjs/benchmark.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./validatorjs/benchmark.js",
-    "./validatorjs/dist/bundle.es6.min.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "15c7290f6c0052bf16dae0a3ce0e86a626acee1d442f09326422c3c60220c2cc",
+  "resourceHashes": {
+    "./validatorjs/benchmark.js": "sha256:a331a0af2188b882841927560d1560cce0373c730dc98dc6f1a39ab2b14dc820",
+    "./validatorjs/dist/bundle.es6.min.js": "sha256:346294fd5d03754f2606e244e6b7ae55c77a0a0686e7d163b09bf654be7fea43"
+  },
+  "runnerSha256": "1b5f1324693af8f5652bf3f476dbde58801b053f9ebbcd52f49e7bc69a9f7714",
   "phaseMarkers": false
 }

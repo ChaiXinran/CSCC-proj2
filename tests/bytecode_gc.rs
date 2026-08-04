@@ -124,6 +124,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     let parent = Chunk {
         instructions: vec![Instruction::CreateFunction(0), Instruction::Return],
@@ -133,7 +134,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
             params: Vec::new(),
             rest_param: None,
             length_override: None,
-            chunk: invalid_child,
+            chunk: invalid_child.into(),
             is_strict: false,
             is_async: false,
             is_generator: false,
@@ -148,6 +149,7 @@ fn cache_metadata_rejects_invalid_nested_function_chunks() {
         }],
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
 
     assert_eq!(

@@ -962,12 +962,13 @@ impl Parser {
 
     /// Parses `var`/`let`/`const` declarations.
     fn parse_variable_declaration(&mut self) -> Result<Statement, ParseError> {
-        let kind = match self.advance().kind {
+        let kind = match self.peek().kind {
             TokenKind::Keyword(Keyword::Var) => VariableKind::Var,
             TokenKind::Keyword(Keyword::Let) => VariableKind::Let,
             TokenKind::Keyword(Keyword::Const) => VariableKind::Const,
             _ => unreachable!("variable declaration starts with a declaration keyword"),
         };
+        self.advance();
 
         // Destructuring: `let [a, b] = ...` or `const { x } = ...`
         if self.check_punctuator('[') || self.check_punctuator('{') {

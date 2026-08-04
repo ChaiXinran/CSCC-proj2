@@ -9,10 +9,11 @@ const engine = process.argv[3]
     ? path.resolve(process.argv[3])
     : path.resolve("target/release/agentjs.exe");
 const timeoutMs = Number(process.argv[4] ?? 150_000);
+const resourceRoot = path.resolve(process.argv[5] ?? "benchmarks/JetStream2");
 
 if (!process.argv[2]) {
     throw new Error(
-        "usage: node scripts/verify-generated-runner.mjs <runner.js> [engine] [timeout-ms]",
+        "usage: node scripts/verify-generated-runner.mjs <runner.js> [engine] [timeout-ms] [resource-root]",
     );
 }
 
@@ -23,24 +24,28 @@ new vm.Script(source, { filename: runner });
 const runnerSha256 = createHash("sha256").update(source).digest("hex");
 if (runnerSha256 !== manifest.runnerSha256)
     throw new Error("runner SHA-256 does not match manifest");
+if (source.includes("__jetstreamResources"))
+    throw new Error("runner embeds JetStream resources");
+if (source.includes('scripts.join("\\n")'))
+    throw new Error("runner concatenates workload scripts");
+if (Buffer.byteLength(source, "utf8") > 512 * 1024)
+    throw new Error("runner exceeds the 512 KiB structural limit");
 
 const required = new Set([
     ...manifest.entryFiles,
     ...manifest.preloadFiles,
     ...manifest.runtimeDiscoveredFiles,
 ]);
-const embedded = new Set(manifest.embeddedFiles);
-const missingFromRunner = [...required].filter((file) => !embedded.has(file));
-if (manifest.missingFiles.length || missingFromRunner.length) {
+const missingResources = [...required].filter(
+    (file) => !fs.existsSync(path.resolve(resourceRoot, file.replace(/^\.\//, ""))),
+);
+if (manifest.schemaVersion !== 2 || missingResources.length) {
     throw new Error(
-        `manifest is incomplete: ${[
-            ...manifest.missingFiles,
-            ...missingFromRunner,
-        ].join(", ")}`,
+        `manifest is incomplete: ${missingResources.join(", ")}`,
     );
 }
 
-const execution = spawnSync(engine, ["jetstream", runner], {
+const execution = spawnSync(engine, ["jetstream", runner, "--resource-root", resourceRoot], {
     cwd: process.cwd(),
     encoding: "utf8",
     timeout: timeoutMs,

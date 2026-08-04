@@ -89,7 +89,9 @@ fn gc_preserves_closure_environment_and_captured_values() {
             functions: Vec::new(),
             handlers: Vec::new(),
             function_body_start: 0,
-        },
+            constant_index: None,
+        }
+        .into(),
         environment: Some(outer),
         is_async: false,
         is_generator: false,

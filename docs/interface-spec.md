@@ -12,7 +12,7 @@
 | 部分 | 所有目录 | 输入 | 输出 | 公共接口 |
 |---|---|---|---|---|
 | A. 前端 | `lexer/`、`ast/`、`parser/` | UTF-8 源码 | `Program` | `SourceParser` |
-| B. 编译器 | `bytecode/` | `&Program` | `Chunk` | `ProgramCompiler` |
+| B. 编译器 | `bytecode/` | `&Program` | `SharedChunk` (`Arc<Chunk>`) | `ProgramCompiler` |
 | C. 执行内核 | `vm/`、`runtime/`、`builtins/` | `&Chunk`、`&mut NativeContext` | `JsValue` | `ChunkExecutor` |
 | D. 集成层 | `backend/native.rs`、CLI、Test262 | 源码与执行配置 | `ExecutionReport` | `NativePipeline`、`RuntimeBackend` |
 
@@ -27,7 +27,7 @@
 Program
   │ ProgramCompiler::compile_program
   ▼
-Chunk
+SharedChunk (`Arc<Chunk>`)
   │ ChunkExecutor::execute_chunk（同时接收 NativeContext）
   ▼
 JsValue
@@ -85,7 +85,7 @@ pub trait SourceParser {
 ```rust
 pub trait ProgramCompiler {
     fn compile_program(&mut self, program: &Program)
-        -> Result<Chunk, NativeError>;
+        -> Result<SharedChunk, NativeError>;
 }
 ```
 
@@ -103,6 +103,8 @@ pub trait ProgramCompiler {
 - 指令的栈效果必须确定；编译器不得依赖 VM 猜测缺失操作数。
 - 常量池索引超过 `u16` 范围时必须返回错误，不得截断。
 - `Chunk::validate()` 必须在编译成功返回前检查常量索引、跳转目标和终止指令。
+- 编译器必须在返回前冻结 `Chunk` 为 `SharedChunk`；函数模板与脚本缓存共享同一份不可变字节码，不得深拷贝常量池或嵌套函数块。
+- 常量池去重索引只允许在构建期存在，冻结后的 `SharedChunk` 不得保留该哈希索引。
 
 V1 指令操作数约定：
 

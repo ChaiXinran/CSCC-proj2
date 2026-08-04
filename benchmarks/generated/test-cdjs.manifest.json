@@ -1,8 +1,12 @@
 {
+  "schemaVersion": 2,
   "benchmark": "cdjs",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 60,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 48557,
   "entryFiles": [
     "./cdjs/constants.js",
     "./cdjs/util.js",
@@ -19,21 +23,20 @@
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./cdjs/benchmark.js",
-    "./cdjs/call_sign.js",
-    "./cdjs/collision.js",
-    "./cdjs/collision_detector.js",
-    "./cdjs/constants.js",
-    "./cdjs/motion.js",
-    "./cdjs/red_black_tree.js",
-    "./cdjs/reduce_collision_set.js",
-    "./cdjs/simulator.js",
-    "./cdjs/util.js",
-    "./cdjs/vector_2d.js",
-    "./cdjs/vector_3d.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "6d30e825a71153a638e28b1f350a87fa3040cb853bfb2327448987556306c894",
+  "resourceHashes": {
+    "./cdjs/benchmark.js": "sha256:1bc507611818eb3560af0c4bef260b25e752a6b296d924af0899c82b037b3b05",
+    "./cdjs/call_sign.js": "sha256:d163579b2db08821c02eee9dd99a103ee4dd6400f4ed292d9ad2ff96c725d591",
+    "./cdjs/collision.js": "sha256:b5f7dd27c603353b66e66aaf48c91138786b8d8b6db3999d5aec2feaf157c86b",
+    "./cdjs/collision_detector.js": "sha256:5db494f06a87d343340363cbc76394ab656315ada0f8fc7f8d75165387022de6",
+    "./cdjs/constants.js": "sha256:428ca49173278366f1fbb06f6525d2ec5a31b3d78bde4125fbedb3817ba0d43b",
+    "./cdjs/motion.js": "sha256:369900c8f63a59d15ec0a280262c8b6e5b470a3677ff04c8dbc8077304f0f041",
+    "./cdjs/red_black_tree.js": "sha256:f784d71d2a743f8417d85e44e85d68599aaa88885d9ff092ead37818bc910e69",
+    "./cdjs/reduce_collision_set.js": "sha256:d6b96cd39e6cbfdc2589d8468d336e579d46ba2e4ee0d9fbdb1980360c38c433",
+    "./cdjs/simulator.js": "sha256:49643d0ae4977f6edeba24322a82284e5df41c7aa5dfb0c1613220299eabf9e7",
+    "./cdjs/util.js": "sha256:a58922518b97a1fa65f435c8e056c042efe70fef386053c1ae161f5e4fa68033",
+    "./cdjs/vector_2d.js": "sha256:121c553a2cf3c1b31c484b337beffdaf8a5150b307404b90a3443e4c81e222c4",
+    "./cdjs/vector_3d.js": "sha256:e8675d83ff5f24e66938c1d6eef970195f011a213701fe1c2967d99383b987b7"
+  },
+  "runnerSha256": "5bb44a352815b0556bfd4e1fb9e1f190929a396f54164d8acd083f78ab8951a6",
   "phaseMarkers": false
 }

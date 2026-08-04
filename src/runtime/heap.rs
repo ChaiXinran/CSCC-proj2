@@ -321,7 +321,7 @@ mod tests {
             params: Vec::new(),
             rest_param: None,
             length_override: None,
-            chunk: Chunk::default(),
+            chunk: Chunk::default().into(),
             environment: None,
             is_async: false,
             is_generator: false,

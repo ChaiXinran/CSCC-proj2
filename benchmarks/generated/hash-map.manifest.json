@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "hash-map",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 17714,
   "entryFiles": [
     "./simple/hash-map.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./simple/hash-map.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "9a82de15f2b2a0c69125f78db74c0ac45fa6310b5fdcea1b08bf982a9bf45522",
+  "resourceHashes": {
+    "./simple/hash-map.js": "sha256:9789c4d06f12ee4e4836c669b5515a40c6caaf5e9321c08da548740225fb46fb"
+  },
+  "runnerSha256": "55f7a81307530603352930373b84fee540abead643cfbef0e8bbfa89fd026bba",
   "phaseMarkers": false
 }

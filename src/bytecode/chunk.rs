@@ -1,6 +1,10 @@
 //! Function bytecode and constant pool.
 
-use std::{collections::VecDeque, fmt};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    sync::Arc,
+};
 
 use super::Instruction;
 use crate::runtime::BigIntValue;
@@ -32,6 +36,30 @@ pub enum Constant {
     Number(f64),
     BigInt(BigIntValue),
     String(String),
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ConstantKey {
+    Undefined,
+    Null,
+    Boolean(bool),
+    Number(u64),
+    BigInt(BigIntValue),
+    String(String),
+}
+
+impl From<&Constant> for ConstantKey {
+    fn from(constant: &Constant) -> Self {
+        match constant {
+            Constant::Undefined => Self::Undefined,
+            Constant::Null => Self::Null,
+            Constant::Boolean(value) => Self::Boolean(*value),
+            Constant::Number(value) => Self::Number(value.to_bits()),
+            Constant::BigInt(value) => Self::BigInt(value.clone()),
+            Constant::String(value) => Self::String(value.clone()),
+        }
+    }
 }
 
 /// Error produced while constructing bytecode.
@@ -230,7 +258,7 @@ pub struct FunctionTemplate {
     /// Defaults to params.len() when 0 (for manually constructed templates).
     pub length_override: Option<u32>,
     /// Bytecode for the function body.
-    pub chunk: Chunk,
+    pub chunk: SharedChunk,
     pub is_strict: bool,
     pub is_async: bool,
     pub is_generator: bool,
@@ -252,20 +280,6 @@ pub struct FunctionTemplate {
 // Chunk
 // ---------------------------------------------------------------------------
 
-/// Structural equality for constants. Uses bit-level comparison for f64 so
-/// that two `NaN` literals share the same pool slot.
-fn constant_eq(a: &Constant, b: &Constant) -> bool {
-    match (a, b) {
-        (Constant::Undefined, Constant::Undefined) => true,
-        (Constant::Null, Constant::Null) => true,
-        (Constant::Boolean(x), Constant::Boolean(y)) => x == y,
-        (Constant::Number(x), Constant::Number(y)) => x.to_bits() == y.to_bits(),
-        (Constant::BigInt(x), Constant::BigInt(y)) => x == y,
-        (Constant::String(x), Constant::String(y)) => x == y,
-        _ => false,
-    }
-}
-
 /// Bytecode for one script or function.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Chunk {
@@ -279,7 +293,15 @@ pub struct Chunk {
     /// For function chunks, the first instruction belonging to the executable
     /// body after parameter/default/destructuring and declaration instantiation.
     pub function_body_start: usize,
+    /// Build-time-only lookup, discarded when the chunk is shared.
+    /// Transient compiler-side index. `into_shared` drops it before the chunk
+    /// becomes immutable runtime bytecode.
+    #[doc(hidden)]
+    pub constant_index: Option<HashMap<ConstantKey, u16>>,
 }
+
+/// Immutable, cheaply cloneable handle to compiled bytecode.
+pub type SharedChunk = Arc<Chunk>;
 
 /// Stack requirements computed from all reachable bytecode paths.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -305,17 +327,37 @@ pub struct ChunkCacheMetadata {
 impl Chunk {
     /// Adds a constant and returns its `u16` index, deduplicating equal entries.
     pub fn add_constant(&mut self, constant: Constant) -> Result<u16, ChunkError> {
-        // Deduplicate: reuse an existing equal constant to avoid pool overflow for
-        // scripts with many repeated literals (e.g. large embedded data arrays).
-        for (i, existing) in self.constants.iter().enumerate() {
-            if constant_eq(existing, &constant) {
-                return Ok(i as u16);
+        if self.constant_index.is_none() {
+            let mut index = HashMap::with_capacity(self.constants.len());
+            for (position, existing) in self.constants.iter().enumerate() {
+                let position =
+                    u16::try_from(position).map_err(|_| ChunkError::ConstantPoolOverflow)?;
+                index.entry(ConstantKey::from(existing)).or_insert(position);
             }
+            self.constant_index = Some(index);
+        }
+        let key = ConstantKey::from(&constant);
+        if let Some(index) = self
+            .constant_index
+            .as_ref()
+            .and_then(|index| index.get(&key))
+        {
+            return Ok(*index);
         }
         let index =
             u16::try_from(self.constants.len()).map_err(|_| ChunkError::ConstantPoolOverflow)?;
         self.constants.push(constant);
+        if let Some(constant_index) = &mut self.constant_index {
+            constant_index.insert(key, index);
+        }
         Ok(index)
+    }
+
+    /// Freezes this fully patched chunk behind a shared immutable handle.
+    #[must_use]
+    pub fn into_shared(mut self) -> SharedChunk {
+        self.constant_index = None;
+        Arc::new(self)
     }
 
     /// Adds a function template and returns its lossless `u16` index.
