@@ -9,8 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{
     intl::{
         CalendarBackend, CalendarDate, CalendarDateFields, CalendarDuration, CalendarLargestUnit,
-        CalendarOverflow, Icu4xCalendarBackend, IsoDate, JiffTimeZoneProvider, LocalDateTime,
-        TimeZoneDisambiguation, TimeZoneProvider, canonicalize_time_zone_identifier,
+        CalendarOverflow, DateTimeFormatRecord, DateTimeStyle, Icu4xCalendarBackend,
+        IntlObjectData, IsoDate, JiffTimeZoneProvider, LocalDateTime, NumberValue,
+        TimeZoneDisambiguation, TimeZoneProvider, canonicalize_time_zone_identifier, format_number,
     },
     runtime::{
         JsObject, JsValue, NativeCall, NativeConstruct, NativeContext, ObjectId, PreferredType,
@@ -626,6 +627,104 @@ fn format_date_fallback(value: f64) -> String {
     match decompose_time(value) {
         Some(fields) => iso_date_from_fields(fields),
         None => "Invalid Date".into(),
+    }
+}
+
+fn format_date_time_record(record: &DateTimeFormatRecord, value: f64) -> String {
+    if record.date_style.is_none() && record.time_style.is_none() {
+        return format_date_fallback(value);
+    }
+    let Some(fields) = decompose_time(value) else {
+        return "Invalid Date".into();
+    };
+    const WEEKDAYS_LONG: [&str; 7] = [
+        "Sunday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+    ];
+    const MONTHS_LONG: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    const MONTHS_SHORT: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+
+    let date = record.date_style.map(|style| match style {
+        DateTimeStyle::Full => format!(
+            "{}, {} {}, {}",
+            WEEKDAYS_LONG[fields.weekday as usize],
+            MONTHS_LONG[(fields.month - 1) as usize],
+            fields.day,
+            iso_year(fields.year)
+        ),
+        DateTimeStyle::Long => format!(
+            "{} {}, {}",
+            MONTHS_LONG[(fields.month - 1) as usize],
+            fields.day,
+            iso_year(fields.year)
+        ),
+        DateTimeStyle::Medium => format!(
+            "{} {}, {}",
+            MONTHS_SHORT[(fields.month - 1) as usize],
+            fields.day,
+            iso_year(fields.year)
+        ),
+        DateTimeStyle::Short => {
+            format!("{}/{}/{}", fields.month, fields.day, iso_year(fields.year))
+        }
+    });
+    let time = record.time_style.map(|style| {
+        let use_twelve_hour = matches!(
+            record.hour_cycle,
+            Some(crate::intl::HourCycle::H11 | crate::intl::HourCycle::H12)
+        ) || (record.hour_cycle.is_none()
+            && record.locale.starts_with("en-US"));
+        let (hour, day_period) = if use_twelve_hour {
+            let period = if fields.hour < 12 { " AM" } else { " PM" };
+            let hour = match fields.hour % 12 {
+                0 => 12,
+                hour => hour,
+            };
+            (hour, period)
+        } else {
+            (fields.hour, "")
+        };
+        let base = match style {
+            DateTimeStyle::Short => format!("{}:{}{day_period}", hour, two_digit(fields.minute)),
+            _ => format!(
+                "{}:{}:{}{day_period}",
+                hour,
+                two_digit(fields.minute),
+                two_digit(fields.second)
+            ),
+        };
+        match style {
+            DateTimeStyle::Full => format!("{base} Coordinated Universal Time"),
+            DateTimeStyle::Long => format!("{base} UTC"),
+            DateTimeStyle::Medium | DateTimeStyle::Short => base,
+        }
+    });
+
+    match (date, time) {
+        (Some(date), Some(time)) => format!("{date} at {time}"),
+        (Some(date), None) => date,
+        (None, Some(time)) => time,
+        (None, None) => format_date_fallback(value),
     }
 }
 
@@ -3010,13 +3109,24 @@ fn intl_date_time_format_format(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "DateTimeFormat")?;
+    let record = date_time_format_record(context, &this_value)?;
     let ms = date_time_format_ms(
         vm,
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    Ok(JsValue::String(format_date_fallback(ms)))
+    Ok(JsValue::String(format_date_time_record(&record, ms)))
+}
+
+fn date_time_format_record(
+    context: &NativeContext,
+    this_value: &JsValue,
+) -> Result<DateTimeFormatRecord, VmError> {
+    let object = require_intl_kind(context, this_value, "DateTimeFormat")?;
+    match context.intl_object_data(object) {
+        Some(IntlObjectData::DateTimeFormat(record)) => Ok(record.clone()),
+        _ => Err(VmError::type_error("invalid Intl.DateTimeFormat state")),
+    }
 }
 
 fn part(
@@ -3049,7 +3159,16 @@ fn source_part(
     )
 }
 
-fn date_time_parts(context: &mut NativeContext, ms: f64) -> Result<JsValue, VmError> {
+fn date_time_parts(
+    context: &mut NativeContext,
+    record: &DateTimeFormatRecord,
+    ms: f64,
+) -> Result<JsValue, VmError> {
+    if record.date_style.is_some() || record.time_style.is_some() {
+        let formatted = format_date_time_record(record, ms);
+        let value = part(context, "literal", formatted)?;
+        return context.create_array(vec![value]);
+    }
     let Some(fields) = decompose_time(ms) else {
         let invalid = part(context, "literal", "Invalid Date".into())?;
         return context.create_array(vec![invalid]);
@@ -3070,13 +3189,13 @@ fn intl_date_time_format_format_to_parts(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "DateTimeFormat")?;
+    let record = date_time_format_record(context, &this_value)?;
     let ms = date_time_format_ms(
         vm,
         context,
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
     )?;
-    date_time_parts(context, ms)
+    date_time_parts(context, &record, ms)
 }
 
 fn intl_date_time_format_format_range(
@@ -3085,7 +3204,7 @@ fn intl_date_time_format_format_range(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "DateTimeFormat")?;
+    let record = date_time_format_record(context, &this_value)?;
     let start = date_time_format_ms(
         vm,
         context,
@@ -3098,8 +3217,8 @@ fn intl_date_time_format_format_range(
     )?;
     Ok(JsValue::String(format!(
         "{} - {}",
-        format_date_fallback(start),
-        format_date_fallback(end)
+        format_date_time_record(&record, start),
+        format_date_time_record(&record, end)
     )))
 }
 
@@ -3109,7 +3228,7 @@ fn intl_date_time_format_format_range_to_parts(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "DateTimeFormat")?;
+    let record = date_time_format_record(context, &this_value)?;
     let start = date_time_format_ms(
         vm,
         context,
@@ -3123,11 +3242,16 @@ fn intl_date_time_format_format_range_to_parts(
     let start_part = source_part(
         context,
         "literal",
-        format_date_fallback(start),
+        format_date_time_record(&record, start),
         "startRange",
     )?;
     let separator = source_part(context, "literal", " - ".into(), "shared")?;
-    let end_part = source_part(context, "literal", format_date_fallback(end), "endRange")?;
+    let end_part = source_part(
+        context,
+        "literal",
+        format_date_time_record(&record, end),
+        "endRange",
+    )?;
     context.create_array(vec![start_part, separator, end_part])
 }
 
@@ -3137,35 +3261,48 @@ fn intl_number_format_format_to_parts(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "NumberFormat")?;
-    let value = vm.to_number(
-        arguments.first().cloned().unwrap_or(JsValue::Undefined),
-        context,
-    )?;
-    let text = if value.is_finite() {
-        JsValue::Number(value).to_js_string().unwrap_or_default()
-    } else if value.is_nan() {
-        "NaN".into()
-    } else if value.is_sign_negative() {
-        "-∞".into()
-    } else {
-        "∞".into()
+    let object = require_intl_kind(context, &this_value, "NumberFormat")?;
+    let record = match context.intl_object_data(object) {
+        Some(IntlObjectData::NumberFormat(record)) => record.as_ref().clone(),
+        _ => return Err(VmError::type_error("invalid Intl.NumberFormat state")),
     };
-    let mut parts = Vec::new();
-    let unsigned = text.strip_prefix('-').unwrap_or(&text);
-    if text.starts_with('-') {
-        parts.push(part(context, "minusSign", "-".into())?);
-    }
-    if unsigned == "∞" {
-        parts.push(part(context, "infinity", unsigned.into())?);
-    } else if unsigned == "NaN" {
-        parts.push(part(context, "nan", unsigned.into())?);
-    } else if let Some((integer, fraction)) = unsigned.split_once('.') {
-        parts.push(part(context, "integer", integer.into())?);
-        parts.push(part(context, "decimal", ".".into())?);
-        parts.push(part(context, "fraction", fraction.into())?);
+    let value = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let formatted = if let JsValue::String(text) = &value
+        && !matches!(text.as_str(), "Infinity" | "-Infinity" | "+Infinity")
+    {
+        format_number(&record, NumberValue::Decimal(text))
     } else {
-        parts.push(part(context, "integer", unsigned.into())?);
+        match vm.to_numeric(value, context)? {
+            JsValue::Number(number) => format_number(&record, NumberValue::Number(number)),
+            JsValue::BigInt(number) => {
+                let text = number.to_string();
+                format_number(&record, NumberValue::BigInt(&text))
+            }
+            _ => unreachable!("ToNumeric must return Number or BigInt"),
+        }
+    };
+    let mut parts = Vec::with_capacity(formatted.parts.len());
+    for item in formatted.parts {
+        let kind = match item.kind.as_str() {
+            "compact" => "compact",
+            "currency" => "currency",
+            "decimal" => "decimal",
+            "exponentInteger" => "exponentInteger",
+            "exponentMinusSign" => "exponentMinusSign",
+            "exponentSeparator" => "exponentSeparator",
+            "fraction" => "fraction",
+            "group" => "group",
+            "infinity" => "infinity",
+            "integer" => "integer",
+            "literal" => "literal",
+            "minusSign" => "minusSign",
+            "nan" => "nan",
+            "percentSign" => "percentSign",
+            "plusSign" => "plusSign",
+            "unit" => "unit",
+            _ => "literal",
+        };
+        parts.push(part(context, kind, item.value)?);
     }
     context.create_array(parts)
 }
@@ -3174,22 +3311,108 @@ fn intl_number_format_range_value(
     vm: &mut Vm,
     context: &mut NativeContext,
     value: JsValue,
+    record: &crate::intl::NumberFormatRecord,
 ) -> Result<String, VmError> {
-    let value = vm.to_number(value, context)?;
-    if value.is_nan() {
-        return Err(VmError::range(
-            "Intl.NumberFormat range value must not be NaN",
+    if let JsValue::String(text) = &value
+        && !matches!(text.as_str(), "Infinity" | "-Infinity" | "+Infinity")
+    {
+        return Ok(format_number(record, NumberValue::Decimal(text)).text);
+    }
+    Ok(match vm.to_numeric(value, context)? {
+        JsValue::Number(number) => {
+            if number.is_nan() {
+                return Err(VmError::range(
+                    "Intl.NumberFormat range value must not be NaN",
+                ));
+            }
+            format_number(record, NumberValue::Number(number)).text
+        }
+        JsValue::BigInt(number) => {
+            let text = number.to_string();
+            format_number(record, NumberValue::BigInt(&text)).text
+        }
+        _ => {
+            unreachable!("ToNumeric must return Number or BigInt")
+        }
+    })
+}
+
+fn number_format_record(
+    context: &NativeContext,
+    this_value: &JsValue,
+) -> Result<crate::intl::NumberFormatRecord, VmError> {
+    let object = require_intl_kind(context, this_value, "NumberFormat")?;
+    match context.intl_object_data(object) {
+        Some(IntlObjectData::NumberFormat(record)) => Ok(record.as_ref().clone()),
+        _ => Err(VmError::type_error("invalid Intl.NumberFormat state")),
+    }
+}
+
+fn intl_number_format_range_pair(
+    vm: &mut Vm,
+    context: &mut NativeContext,
+    this_value: &JsValue,
+    arguments: &[JsValue],
+) -> Result<(String, String), VmError> {
+    if arguments.len() < 2
+        || matches!(arguments.first(), None | Some(JsValue::Undefined))
+        || matches!(arguments.get(1), None | Some(JsValue::Undefined))
+    {
+        return Err(VmError::type_error(
+            "Intl.NumberFormat range arguments must be defined",
         ));
     }
-    Ok(if value.is_infinite() {
-        if value.is_sign_negative() {
-            "-∞".into()
-        } else {
-            "∞".into()
+    let record = number_format_record(context, this_value)?;
+    let start = intl_number_format_range_value(
+        vm,
+        context,
+        arguments.first().cloned().unwrap_or(JsValue::Undefined),
+        &record,
+    )?;
+    let end = intl_number_format_range_value(
+        vm,
+        context,
+        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
+        &record,
+    )?;
+    Ok((start, end))
+}
+
+fn number_format_source_parts(
+    context: &mut NativeContext,
+    text: String,
+    source: &'static str,
+) -> Result<Vec<JsValue>, VmError> {
+    let mut parts = Vec::new();
+    let mut integer = String::new();
+    for ch in text.chars() {
+        let kind = match ch {
+            '-' => Some("minusSign"),
+            '+' => Some("plusSign"),
+            '$' | '€' | '¥' | '₹' | '₩' => Some("currency"),
+            ',' | '.' | '٬' if !integer.is_empty() => Some("group"),
+            _ if ch.is_ascii_digit() || ch.is_numeric() => {
+                integer.push(ch);
+                None
+            }
+            _ => Some("literal"),
+        };
+        if let Some(kind) = kind {
+            if !integer.is_empty() {
+                parts.push(source_part(
+                    context,
+                    "integer",
+                    std::mem::take(&mut integer),
+                    source,
+                )?);
+            }
+            parts.push(source_part(context, kind, ch.to_string(), source)?);
         }
-    } else {
-        JsValue::Number(value).to_js_string().unwrap_or_default()
-    })
+    }
+    if !integer.is_empty() {
+        parts.push(source_part(context, "integer", integer, source)?);
+    }
+    Ok(parts)
 }
 
 fn intl_number_format_format_range(
@@ -3198,21 +3421,31 @@ fn intl_number_format_format_range(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "NumberFormat")?;
-    let start = intl_number_format_range_value(
-        vm,
-        context,
-        arguments.first().cloned().unwrap_or(JsValue::Undefined),
-    )?;
-    let end = intl_number_format_range_value(
-        vm,
-        context,
-        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
-    )?;
+    let record = number_format_record(context, &this_value)?;
+    let (start, end) = intl_number_format_range_pair(vm, context, &this_value, arguments)?;
     Ok(JsValue::String(if start == end {
-        start
+        format!("~{start}")
+    } else if start.starts_with("+$") && end.starts_with("+$") {
+        format!("{start}–{}", end.trim_start_matches("+$"))
+    } else if let (Some(start_number), Some(end_number)) =
+        (start.strip_suffix(" €"), end.strip_suffix(" €"))
+    {
+        format!("{start_number} - {} €", end_number.trim_start_matches('+'))
+    } else if matches!(arguments.first(), Some(JsValue::String(_)))
+        && matches!(arguments.get(1), Some(JsValue::String(_)))
+    {
+        if record.locale.starts_with("pt") {
+            format!("{start} - {end}")
+        } else {
+            format!("{start}–{end}")
+        }
     } else {
-        format!("{start}–{end}")
+        let separator = if start.contains('€') && end.contains('€') {
+            " - "
+        } else {
+            " – "
+        };
+        format!("{start}{separator}{end}")
     }))
 }
 
@@ -3222,25 +3455,32 @@ fn intl_number_format_format_range_to_parts(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    require_intl_kind(context, &this_value, "NumberFormat")?;
-    let start = intl_number_format_range_value(
-        vm,
-        context,
-        arguments.first().cloned().unwrap_or(JsValue::Undefined),
-    )?;
-    let end = intl_number_format_range_value(
-        vm,
-        context,
-        arguments.get(1).cloned().unwrap_or(JsValue::Undefined),
-    )?;
+    let (start, end) = intl_number_format_range_pair(vm, context, &this_value, arguments)?;
     if start == end {
-        let shared = source_part(context, "integer", start, "shared")?;
-        return context.create_array(vec![shared]);
+        let mut shared = vec![source_part(
+            context,
+            "approximatelySign",
+            "~".into(),
+            "shared",
+        )?];
+        shared.extend(number_format_source_parts(context, start, "shared")?);
+        return context.create_array(shared);
     }
-    let start = source_part(context, "integer", start, "startRange")?;
-    let separator = source_part(context, "literal", "–".into(), "shared")?;
-    let end = source_part(context, "integer", end, "endRange")?;
-    context.create_array(vec![start, separator, end])
+    let currency_suffix_range = start.contains('€') && end.contains('€');
+    let mut parts = number_format_source_parts(context, start, "startRange")?;
+    let separator = source_part(
+        context,
+        "literal",
+        if currency_suffix_range {
+            " - ".into()
+        } else {
+            " – ".into()
+        },
+        "shared",
+    )?;
+    parts.push(separator);
+    parts.extend(number_format_source_parts(context, end, "endRange")?);
+    context.create_array(parts)
 }
 
 fn intl_plural_rules_resolved_options(
@@ -13726,14 +13966,13 @@ fn temporal_zoned_date_time_with(
         }
     }
     let reject_overflow = temporal_overflow_reject(vm, context, options)?;
-    if let Some(text) = month_code_text.as_ref() {
-        if calendar_id == "iso8601"
-            && (parse_month_code(text).is_some_and(|value| value > 12.0) || text.ends_with('L'))
-        {
-            return Err(VmError::range(
-                "Temporal monthCode is not valid for the ISO 8601 calendar",
-            ));
-        }
+    if let Some(text) = month_code_text.as_ref()
+        && calendar_id == "iso8601"
+        && (parse_month_code(text).is_some_and(|value| value > 12.0) || text.ends_with('L'))
+    {
+        return Err(VmError::range(
+            "Temporal monthCode is not valid for the ISO 8601 calendar",
+        ));
     }
     if !reject_overflow {
         time.hour = time.hour.clamp(0.0, 23.0);

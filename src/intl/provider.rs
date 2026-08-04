@@ -41,7 +41,16 @@ const CALENDARS: &[&str] = &[
     "persian",
     "roc",
 ];
-const NUMBERING_SYSTEMS: &[&str] = &["arab", "arabext", "deva", "fullwide", "hanidec", "latn"];
+const NUMBERING_SYSTEMS: &[&str] = &[
+    "adlm", "ahom", "arab", "arabext", "bali", "beng", "bhks", "brah", "cakm", "cham", "deva",
+    "diak", "fullwide", "gara", "gong", "gonm", "gujr", "gukh", "guru", "hanidec", "hmng", "hmnp",
+    "java", "kali", "kawi", "khmr", "knda", "krai", "lana", "lanatham", "laoo", "latn", "lepc",
+    "limb", "mathbold", "mathdbl", "mathmono", "mathsanb", "mathsans", "mlym", "modi", "mong",
+    "mroo", "mtei", "mymr", "mymrepka", "mymrpao", "mymrshan", "mymrtlng", "nagm", "newa", "nkoo",
+    "olck", "onao", "orya", "osma", "outlined", "rohg", "saur", "segment", "shrd", "sind", "sinh",
+    "sora", "sund", "sunu", "takr", "talu", "tamldec", "telu", "thai", "tibt", "tirh", "tnsa",
+    "tols", "vaii", "wara", "wcho",
+];
 
 impl IntlDataProvider for MinimalIntlProvider {
     fn canonicalize_locale(&self, locale: &str) -> Result<String, String> {

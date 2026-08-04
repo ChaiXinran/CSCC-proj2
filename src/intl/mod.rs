@@ -2,6 +2,7 @@
 
 mod calendar;
 mod locale;
+mod number_format;
 mod provider;
 mod records;
 mod temporal_bridge;
@@ -15,6 +16,7 @@ pub use locale::{
     LocaleOptions, ResolvedLocale, canonicalize_language_tag, resolve_locale,
     unicode_extension_value,
 };
+pub use number_format::{FormattedNumber, NumberFormatPart, NumberValue, format_number};
 pub use provider::{IntlDataProvider, IntlService, MinimalIntlProvider};
 pub use records::{
     CollatorRecord, DateTimeFieldStyle, DateTimeFormatRecord, DateTimeStyle, HourCycle,

@@ -91,6 +91,17 @@ pub struct NumberFormatRecord {
     pub use_grouping: String,
     pub notation: String,
     pub sign_display: String,
+    pub currency_display: String,
+    pub currency_sign: String,
+    pub unit_display: String,
+    pub compact_display: String,
+    pub minimum_significant_digits: Option<u8>,
+    pub maximum_significant_digits: Option<u8>,
+    pub minimum_significant_digits_explicit: bool,
+    pub rounding_increment: u16,
+    pub rounding_mode: String,
+    pub rounding_priority: String,
+    pub trailing_zero_display: String,
 }
 
 impl Default for NumberFormatRecord {
@@ -107,6 +118,17 @@ impl Default for NumberFormatRecord {
             use_grouping: "auto".into(),
             notation: "standard".into(),
             sign_display: "auto".into(),
+            currency_display: "symbol".into(),
+            currency_sign: "standard".into(),
+            unit_display: "short".into(),
+            compact_display: "short".into(),
+            minimum_significant_digits: None,
+            maximum_significant_digits: None,
+            minimum_significant_digits_explicit: false,
+            rounding_increment: 1,
+            rounding_mode: "halfExpand".into(),
+            rounding_priority: "auto".into(),
+            trailing_zero_display: "auto".into(),
         }
     }
 }
@@ -135,7 +157,7 @@ pub struct ListFormatRecord {
 #[derive(Debug, Clone, PartialEq)]
 pub enum IntlObjectData {
     DateTimeFormat(DateTimeFormatRecord),
-    NumberFormat(NumberFormatRecord),
+    NumberFormat(Box<NumberFormatRecord>),
     Collator(CollatorRecord),
     Locale(LocaleRecord),
     PluralRules(PluralRulesRecord),
