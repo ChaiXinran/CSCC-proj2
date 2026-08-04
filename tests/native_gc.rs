@@ -124,6 +124,7 @@ fn gc_preserves_closure_environment_and_captured_values() {
         prototype_writable: true,
         uses_arguments: false,
         local_layout: std::sync::Arc::new(agentjs::bytecode::LocalLayout::default()),
+        upvalue_layout: std::sync::Arc::new(agentjs::bytecode::UpvalueLayout::default()),
         dynamic_scope: agentjs::bytecode::DynamicScopePolicy::Static,
         lexical_this: None,
         lexical_new_target: None,

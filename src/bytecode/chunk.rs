@@ -94,6 +94,11 @@ pub enum ChunkError {
         slot: LocalSlot,
         local_count: usize,
     },
+    InvalidUpvalueSlot {
+        offset: usize,
+        slot: UpvalueSlot,
+        upvalue_count: usize,
+    },
     InvalidHandlerRange {
         index: usize,
         start: usize,
@@ -182,6 +187,15 @@ impl fmt::Display for ChunkError {
                 "instruction at offset {offset} references local slot {}, but layout has {local_count} bindings",
                 slot.0
             ),
+            Self::InvalidUpvalueSlot {
+                offset,
+                slot,
+                upvalue_count,
+            } => write!(
+                f,
+                "instruction at offset {offset} references upvalue slot {}, but layout has {upvalue_count} bindings",
+                slot.0
+            ),
             Self::InvalidHandlerRange { index, start, end } => {
                 write!(
                     f,
@@ -264,6 +278,28 @@ pub enum EnvironmentCapturePolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LocalSlot(pub u16);
 
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UpvalueSlot(pub u16);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct UpvalueDescriptor {
+    pub environment_hops: u16,
+    pub local_slot: LocalSlot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpvalueBindingLayout {
+    pub name: String,
+    pub descriptor: UpvalueDescriptor,
+    pub mutable: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpvalueLayout {
+    pub bindings: Vec<UpvalueBindingLayout>,
+}
+
 /// Static metadata for one activation-local binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalBindingLayout {
@@ -317,6 +353,7 @@ pub struct FunctionTemplate {
     /// True when this function body directly references the `arguments` binding.
     pub uses_arguments: bool,
     pub local_layout: Arc<LocalLayout>,
+    pub upvalue_layout: Arc<UpvalueLayout>,
     pub dynamic_scope: DynamicScopePolicy,
     pub environment_policy: EnvironmentCapturePolicy,
 }
@@ -572,6 +609,9 @@ impl Chunk {
             template
                 .chunk
                 .validate_local_slots(template.local_layout.bindings.len())?;
+            template
+                .chunk
+                .validate_upvalue_slots(template.upvalue_layout.bindings.len())?;
         }
         Ok(())
     }
@@ -589,6 +629,23 @@ impl Chunk {
                     offset,
                     slot,
                     local_count,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_upvalue_slots(&self, upvalue_count: usize) -> Result<(), ChunkError> {
+        for (offset, instruction) in self.instructions.iter().copied().enumerate() {
+            let slot = match instruction {
+                Instruction::LoadUpvalue(slot) | Instruction::StoreUpvalue(slot) => slot,
+                _ => continue,
+            };
+            if usize::from(slot.0) >= upvalue_count {
+                return Err(ChunkError::InvalidUpvalueSlot {
+                    offset,
+                    slot,
+                    upvalue_count,
                 });
             }
         }

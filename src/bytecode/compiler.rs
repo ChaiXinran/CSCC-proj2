@@ -1,6 +1,7 @@
 //! AST-to-bytecode compiler.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     fmt,
     sync::Arc,
@@ -16,6 +17,7 @@ use crate::ast::{
 use super::{
     Chunk, ChunkError, Constant, DynamicScopePolicy, EnvironmentCapturePolicy, ExceptionHandler,
     FunctionTemplate, HandlerKind, Instruction, LocalBindingLayout, LocalLayout, LocalSlot,
+    UpvalueBindingLayout, UpvalueDescriptor, UpvalueLayout, UpvalueSlot,
 };
 
 /// Compilation failure.
@@ -69,6 +71,9 @@ struct CompileContext {
     /// Number of enclosing function bodies; 0 = top-level script.
     function_depth: usize,
     local_slots: HashMap<String, LocalSlot>,
+    available_upvalues: HashMap<String, UpvalueDescriptor>,
+    upvalue_slots: RefCell<HashMap<String, UpvalueSlot>>,
+    upvalue_layout: RefCell<UpvalueLayout>,
 }
 
 #[derive(Debug)]
@@ -111,6 +116,14 @@ impl CompileContext {
             .any(|scope| scope.contains(name))
     }
 
+    fn is_block_lexical(&self, name: &str) -> bool {
+        self.lexical_scopes
+            .iter()
+            .skip(1)
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
     fn needs_dynamic_name_lookup(&self, name: &str) -> bool {
         self.inside_function() || self.with_depth > 0 || self.is_lexical(name)
     }
@@ -119,6 +132,28 @@ impl CompileContext {
         (self.with_depth == 0)
             .then(|| self.local_slots.get(name).copied())
             .flatten()
+    }
+
+    fn upvalue_slot(&self, name: &str) -> Option<UpvalueSlot> {
+        if self.with_depth != 0 || self.is_lexical(name) {
+            return None;
+        }
+        if let Some(slot) = self.upvalue_slots.borrow().get(name).copied() {
+            return Some(slot);
+        }
+        let descriptor = *self.available_upvalues.get(name)?;
+        let mut layout = self.upvalue_layout.borrow_mut();
+        let index = u16::try_from(layout.bindings.len()).ok()?;
+        let slot = UpvalueSlot(index);
+        layout.bindings.push(UpvalueBindingLayout {
+            name: name.to_owned(),
+            descriptor,
+            mutable: true,
+        });
+        self.upvalue_slots
+            .borrow_mut()
+            .insert(name.to_owned(), slot);
+        Some(slot)
     }
 }
 
@@ -1663,6 +1698,8 @@ impl Compiler {
         let index = self.add_name(name, chunk)?;
         if let Some(slot) = context.local_slot(name) {
             chunk.emit(Instruction::StoreLocal(slot));
+        } else if let Some(slot) = context.upvalue_slot(name) {
+            chunk.emit(Instruction::StoreUpvalue(slot));
         } else if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::StoreName(index));
         } else {
@@ -1718,6 +1755,7 @@ impl Compiler {
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             local_layout: fn_chunk.local_layout,
+            upvalue_layout: fn_chunk.upvalue_layout,
             dynamic_scope: fn_chunk.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -1845,6 +1883,40 @@ impl Compiler {
             }
         }
 
+        let mut available_upvalues = HashMap::new();
+        if outer_context.with_depth == 0 {
+            let local_hops = u16::try_from(outer_context.environment_depth)
+                .map_err(|_| CompileError::unsupported("upvalue environment chain too deep"))?;
+            for (name, slot) in &outer_context.local_slots {
+                if outer_context.is_block_lexical(name) {
+                    continue;
+                }
+                available_upvalues.insert(
+                    name.clone(),
+                    UpvalueDescriptor {
+                        environment_hops: local_hops,
+                        local_slot: *slot,
+                    },
+                );
+            }
+            let inherited_hops = local_hops
+                .checked_add(1)
+                .ok_or_else(|| CompileError::unsupported("upvalue environment chain too deep"))?;
+            for (name, descriptor) in &outer_context.available_upvalues {
+                if outer_context.is_lexical(name) {
+                    continue;
+                }
+                available_upvalues
+                    .entry(name.clone())
+                    .or_insert_with(|| UpvalueDescriptor {
+                        environment_hops: descriptor
+                            .environment_hops
+                            .saturating_add(inherited_hops),
+                        local_slot: descriptor.local_slot,
+                    });
+            }
+        }
+
         let mut fn_chunk = Chunk::default();
         let mut fn_context = CompileContext {
             loops: Vec::new(),
@@ -1857,6 +1929,9 @@ impl Compiler {
             with_depth: 0,
             function_depth: outer_context.function_depth + 1,
             local_slots,
+            available_upvalues,
+            upvalue_slots: RefCell::new(HashMap::new()),
+            upvalue_layout: RefCell::new(UpvalueLayout::default()),
         };
         let mut lexical_scope =
             self.predeclare_lexical_bindings(&body.statements, &mut fn_chunk)?;
@@ -2099,9 +2174,35 @@ impl Compiler {
                 };
             }
             local_layout.bindings.clear();
+            for offset in 0..fn_chunk.instructions.len() {
+                let (slot, store) = match fn_chunk.instructions[offset] {
+                    Instruction::LoadUpvalue(slot) => (slot, false),
+                    Instruction::StoreUpvalue(slot) => (slot, true),
+                    _ => continue,
+                };
+                let name = fn_context
+                    .upvalue_layout
+                    .borrow()
+                    .bindings
+                    .get(usize::from(slot.0))
+                    .ok_or_else(|| CompileError::unsupported("invalid upvalue slot"))?
+                    .name
+                    .clone();
+                let name_index = self.add_name(&name, &mut fn_chunk)?;
+                fn_chunk.instructions[offset] = if store {
+                    Instruction::StoreName(name_index)
+                } else {
+                    Instruction::LoadName(name_index)
+                };
+            }
+            fn_context.upvalue_layout.borrow_mut().bindings.clear();
+            for template in &mut fn_chunk.functions {
+                deoptimize_template_upvalues(template)?;
+            }
         }
         fn_chunk.validate().map_err(CompileError::from_chunk)?;
         let uses_arguments = function_needs_arguments_object(&fn_chunk);
+        let upvalue_layout = fn_context.upvalue_layout.into_inner();
         Ok(CompiledFunction {
             length,
             params: param_names,
@@ -2110,6 +2211,7 @@ impl Compiler {
             is_strict: body.is_strict,
             uses_arguments,
             local_layout: Arc::new(local_layout),
+            upvalue_layout: Arc::new(upvalue_layout),
             dynamic_scope,
         })
     }
@@ -2500,6 +2602,10 @@ impl Compiler {
             chunk.emit(Instruction::LoadLocal(slot));
             return Ok(());
         }
+        if let Some(slot) = context.upvalue_slot(name) {
+            chunk.emit(Instruction::LoadUpvalue(slot));
+            return Ok(());
+        }
         let name_index = self.add_name(name, chunk)?;
         if context.needs_dynamic_name_lookup(name) {
             chunk.emit(Instruction::LoadName(name_index));
@@ -2533,6 +2639,11 @@ impl Compiler {
                 if let Expression::Identifier(name) = argument {
                     if let Some(slot) = context.local_slot(name) {
                         chunk.emit(Instruction::LoadLocal(slot));
+                        chunk.emit(Instruction::TypeOf);
+                        return Ok(());
+                    }
+                    if let Some(slot) = context.upvalue_slot(name) {
+                        chunk.emit(Instruction::LoadUpvalue(slot));
                         chunk.emit(Instruction::TypeOf);
                         return Ok(());
                     }
@@ -4144,6 +4255,7 @@ impl Compiler {
             prototype_writable: false,
             uses_arguments: compiled.uses_arguments,
             local_layout: compiled.local_layout,
+            upvalue_layout: compiled.upvalue_layout,
             dynamic_scope: compiled.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -4601,6 +4713,7 @@ impl Compiler {
             prototype_writable: false,
             uses_arguments: ctor_fn.uses_arguments,
             local_layout: ctor_fn.local_layout,
+            upvalue_layout: ctor_fn.upvalue_layout,
             dynamic_scope: ctor_fn.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -4673,6 +4786,7 @@ impl Compiler {
                     prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     local_layout: fn_compiled.local_layout,
+                    upvalue_layout: fn_compiled.upvalue_layout,
                     dynamic_scope: fn_compiled.dynamic_scope,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -4778,6 +4892,7 @@ impl Compiler {
                     prototype_writable: false,
                     uses_arguments: fn_compiled.uses_arguments,
                     local_layout: fn_compiled.local_layout,
+                    upvalue_layout: fn_compiled.upvalue_layout,
                     dynamic_scope: fn_compiled.dynamic_scope,
                     environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                 };
@@ -4874,6 +4989,7 @@ impl Compiler {
                             prototype_writable: false,
                             uses_arguments: init_fn.uses_arguments,
                             local_layout: init_fn.local_layout,
+                            upvalue_layout: init_fn.upvalue_layout,
                             dynamic_scope: init_fn.dynamic_scope,
                             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                         };
@@ -4935,6 +5051,7 @@ impl Compiler {
                         prototype_writable: true,
                         uses_arguments: block_fn.uses_arguments,
                         local_layout: block_fn.local_layout,
+                        upvalue_layout: block_fn.upvalue_layout,
                         dynamic_scope: block_fn.dynamic_scope,
                         environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
                     };
@@ -5334,6 +5451,7 @@ impl Compiler {
             prototype_writable: true,
             uses_arguments: fn_chunk.uses_arguments,
             local_layout: fn_chunk.local_layout,
+            upvalue_layout: fn_chunk.upvalue_layout,
             dynamic_scope: fn_chunk.dynamic_scope,
             environment_policy: EnvironmentCapturePolicy::CaptureCurrent,
         };
@@ -5612,7 +5730,39 @@ struct CompiledFunction {
     is_strict: bool,
     uses_arguments: bool,
     local_layout: Arc<LocalLayout>,
+    upvalue_layout: Arc<UpvalueLayout>,
     dynamic_scope: DynamicScopePolicy,
+}
+
+fn deoptimize_template_upvalues(template: &mut FunctionTemplate) -> Result<(), CompileError> {
+    let layout = template.upvalue_layout.clone();
+    let chunk = Arc::make_mut(&mut template.chunk);
+    for offset in 0..chunk.instructions.len() {
+        let (slot, store) = match chunk.instructions[offset] {
+            Instruction::LoadUpvalue(slot) => (slot, false),
+            Instruction::StoreUpvalue(slot) => (slot, true),
+            _ => continue,
+        };
+        let name = layout
+            .bindings
+            .get(usize::from(slot.0))
+            .ok_or_else(|| CompileError::unsupported("invalid nested upvalue slot"))?
+            .name
+            .clone();
+        let name_index = chunk
+            .add_constant(Constant::String(name))
+            .map_err(CompileError::from_chunk)?;
+        chunk.instructions[offset] = if store {
+            Instruction::StoreName(name_index)
+        } else {
+            Instruction::LoadName(name_index)
+        };
+    }
+    for child in &mut chunk.functions {
+        deoptimize_template_upvalues(child)?;
+    }
+    template.upvalue_layout = Arc::new(UpvalueLayout::default());
+    Ok(())
 }
 
 fn function_needs_arguments_object(chunk: &Chunk) -> bool {

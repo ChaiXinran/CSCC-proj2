@@ -2140,6 +2140,31 @@ impl Vm {
                         discard_saved_finally = true;
                     }
                 }
+                Instruction::LoadUpvalue(slot) => {
+                    let function = context.current_function().ok_or_else(|| {
+                        VmError::runtime("LoadUpvalue executed without a current function")
+                    })?;
+                    match context.get_upvalue(function, slot) {
+                        Ok(value) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
+                Instruction::StoreUpvalue(slot) => {
+                    let value = self.pop_value()?;
+                    let function = context.current_function().ok_or_else(|| {
+                        VmError::runtime("StoreUpvalue executed without a current function")
+                    })?;
+                    match context.set_upvalue(function, slot, value.clone()) {
+                        Ok(()) => self.stack.push(value),
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                        }
+                    }
+                }
                 Instruction::DeclareEvalVar(index) => {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?

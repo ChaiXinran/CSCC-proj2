@@ -333,6 +333,7 @@ mod tests {
             prototype_writable: true,
             uses_arguments: false,
             local_layout: std::sync::Arc::new(LocalLayout::default()),
+            upvalue_layout: std::sync::Arc::new(crate::bytecode::UpvalueLayout::default()),
             dynamic_scope: DynamicScopePolicy::Static,
             lexical_this: None,
             lexical_new_target: None,

@@ -15,7 +15,8 @@ mod opcode;
 pub use chunk::{
     Chunk, ChunkCacheMetadata, ChunkError, Constant, DynamicScopePolicy, EnvironmentCapturePolicy,
     ExceptionHandler, FunctionTemplate, HandlerKind, LocalBindingLayout, LocalLayout, LocalSlot,
-    SharedChunk, StackAnalysis,
+    SharedChunk, StackAnalysis, UpvalueBindingLayout, UpvalueDescriptor, UpvalueLayout,
+    UpvalueSlot,
 };
 pub use compiler::{CompileError, Compiler};
 pub use opcode::{Instruction, StackEffect};

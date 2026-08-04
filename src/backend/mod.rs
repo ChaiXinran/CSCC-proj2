@@ -195,12 +195,15 @@ impl NativeRuntime {
         if self.config.diagnostics {
             let metrics = self.context.name_resolution_metrics();
             eprintln!(
-                "name_resolution:load_local_count={} store_local_count={} load_name_count={} store_name_count={} environment_hops={}",
+                "name_resolution:load_local_count={} store_local_count={} load_name_count={} store_name_count={} environment_hops={} load_upvalue_count={} store_upvalue_count={} upvalue_environment_hops={}",
                 metrics.load_local_count,
                 metrics.store_local_count,
                 metrics.load_name_count,
                 metrics.store_name_count,
-                metrics.environment_hops
+                metrics.environment_hops,
+                metrics.load_upvalue_count,
+                metrics.store_upvalue_count,
+                metrics.upvalue_environment_hops
             );
         }
         result

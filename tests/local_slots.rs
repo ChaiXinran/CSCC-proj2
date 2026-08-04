@@ -88,7 +88,7 @@ fn parameter_preamble_uses_local_slots() {
 }
 
 #[test]
-fn closures_keep_parent_access_on_the_name_fallback() {
+fn closures_keep_parent_access_out_of_the_current_local_layout() {
     let chunk = compile("function outer(value) { return function () { return value; }; }");
     let inner = &chunk.functions[0].chunk.functions[0];
     assert!(inner.local_layout.bindings.is_empty());
@@ -97,7 +97,7 @@ fn closures_keep_parent_access_on_the_name_fallback() {
             .chunk
             .instructions
             .iter()
-            .any(|instruction| matches!(instruction, Instruction::LoadName(_)))
+            .any(|instruction| matches!(instruction, Instruction::LoadUpvalue(_)))
     );
 }
 
