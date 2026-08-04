@@ -243,7 +243,7 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
     );
     function_prototype_object.define_property(
         "name",
-        PropertyDescriptor::data_with(JsValue::String(String::new()), false, false, true),
+        PropertyDescriptor::data_with(JsValue::String(String::new().into()), false, false, true),
     );
     let function_prototype = context
         .heap_mut()
@@ -342,7 +342,7 @@ fn install_globals(context: &mut NativeContext) -> Result<(), VmError> {
 
     let mut str_proto_obj = JsObject::ordinary();
     str_proto_obj.prototype = Some(object_prototype);
-    str_proto_obj.kind = ObjectKind::PrimitiveWrapper(PrimitiveValue::String(String::new()));
+    str_proto_obj.kind = ObjectKind::PrimitiveWrapper(PrimitiveValue::String(String::new().into()));
     let string_prototype = context
         .heap_mut()
         .allocate_object(str_proto_obj)
@@ -488,8 +488,8 @@ fn test262_error_call(
     Err(VmError::test262(
         arguments
             .first()
-            .and_then(JsValue::to_js_string)
-            .unwrap_or_else(|| "Test262Error".into()),
+            .and_then(JsValue::to_js_string_owned)
+            .unwrap_or_default(),
     ))
 }
 
@@ -501,7 +501,7 @@ fn test262_error_construct(
 ) -> Result<JsValue, VmError> {
     let message = arguments
         .first()
-        .and_then(JsValue::to_js_string)
+        .and_then(JsValue::to_js_string_owned)
         .unwrap_or_else(|| "Test262Error".into());
     Ok(JsValue::Error(NativeErrorValue::new(
         NativeErrorKind::Test262,

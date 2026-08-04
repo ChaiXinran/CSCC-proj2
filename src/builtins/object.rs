@@ -411,7 +411,7 @@ fn object_keys(
         if proxy::internal_get_own_property(vm, context, target.clone(), &key)?
             .is_some_and(|descriptor| descriptor.enumerable)
         {
-            keys.push(JsValue::String(name.clone()));
+            keys.push(JsValue::String(name.clone().into()));
         }
     }
     context.create_array(keys)
@@ -558,7 +558,7 @@ pub(crate) fn object_to_string(
             context,
         )?;
         if let JsValue::String(tag) = tag {
-            return Ok(JsValue::String(format!("[object {tag}]")));
+            return Ok(JsValue::String(format!("[object {tag}]").into()));
         }
     }
 
@@ -578,7 +578,7 @@ pub(crate) fn object_to_string(
             JsValue::Error(_) => "Error",
         }
     };
-    Ok(JsValue::String(format!("[object {tag}]")))
+    Ok(JsValue::String(format!("[object {tag}]").into()))
 }
 
 fn object_to_locale_string(
@@ -795,7 +795,7 @@ fn object_get_own_property_names(
     let keys: Vec<JsValue> = proxy::internal_own_property_keys(vm, context, target)?
         .into_iter()
         .filter_map(|key| match key {
-            PropertyKey::String(key) => Some(JsValue::String(key)),
+            PropertyKey::String(key) => Some(JsValue::String(key.into())),
             PropertyKey::Symbol(_) => None,
         })
         .collect();
@@ -873,7 +873,7 @@ fn object_entries(
             continue;
         };
         let value = vm.get_property_value(target.clone(), &name, context)?;
-        let pair = context.create_array(vec![JsValue::String(name), value])?;
+        let pair = context.create_array(vec![JsValue::String(name.into()), value])?;
         pairs.push(pair);
     }
     context.create_array(pairs)

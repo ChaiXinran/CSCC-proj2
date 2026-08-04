@@ -4,8 +4,8 @@ use crate::builtins::string;
 
 use super::iterator::IteratorKind;
 use super::{
-    ArrayBufferId, BigIntValue, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsValue,
-    PromiseId, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
+    ArrayBufferId, BigIntValue, DataViewId, EnvironmentId, FunctionId, IteratorRecord, JsString,
+    JsValue, PromiseId, PropertyDescriptor, PropertyMap, SymbolId, Trace, Tracer, TypedArrayViewId,
 };
 
 /// Stable handle into the runtime heap.
@@ -22,7 +22,7 @@ impl PropertyKey {
     #[must_use]
     pub fn to_value(&self) -> JsValue {
         match self {
-            Self::String(value) => JsValue::String(value.clone()),
+            Self::String(value) => JsValue::String(value.as_str().into()),
             Self::Symbol(symbol) => JsValue::Symbol(*symbol),
         }
     }
@@ -35,7 +35,7 @@ pub enum PrimitiveValue {
     Boolean(bool),
     Number(f64),
     BigInt(BigIntValue),
-    String(String),
+    String(JsString),
     Symbol(SymbolId),
 }
 

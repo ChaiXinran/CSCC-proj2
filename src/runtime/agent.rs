@@ -170,10 +170,10 @@ impl AgentManager {
         self.monotonic_ms
     }
 
-    pub(crate) fn roots(&self) -> impl Iterator<Item = JsValue> + '_ {
+    pub(crate) fn roots(&self) -> impl Iterator<Item = &JsValue> + '_ {
         self.workers
             .iter()
-            .filter_map(|worker| worker.receiver.clone())
+            .filter_map(|worker| worker.receiver.as_ref())
     }
 }
 

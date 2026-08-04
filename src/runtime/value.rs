@@ -2,7 +2,9 @@
 
 use std::fmt;
 
-use super::{BigIntValue, BuiltinId, FunctionId, ObjectId, SymbolId, Trace, Tracer, bigint};
+use super::{
+    BigIntValue, BuiltinId, FunctionId, JsString, ObjectId, SymbolId, Trace, Tracer, bigint,
+};
 
 /// Minimal native error categories used by V2 `throw`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,7 +58,7 @@ pub enum JsValue {
     Boolean(bool),
     Number(f64),
     BigInt(BigIntValue),
-    String(String),
+    String(JsString),
     /// An ECMAScript Symbol primitive. Symbols cannot be implicitly coerced to
     /// strings or numbers; doing so raises a TypeError.
     Symbol(SymbolId),
@@ -107,22 +109,35 @@ impl JsValue {
     /// Returns the JS string representation, or `None` for types that cannot be
     /// implicitly coerced (Symbol — the caller must raise a `TypeError`).
     #[must_use]
-    pub fn to_js_string(&self) -> Option<String> {
+    pub fn to_js_string(&self) -> Option<JsString> {
         match self {
             Self::Undefined => Some("undefined".into()),
             Self::Null => Some("null".into()),
-            Self::Boolean(value) => Some(value.to_string()),
-            Self::Number(value) => Some(number_to_string(*value)),
-            Self::BigInt(value) => Some(value.to_string()),
+            Self::Boolean(value) => Some(value.to_string().into()),
+            Self::Number(value) => Some(number_to_string(*value).into()),
+            Self::BigInt(value) => Some(value.to_string().into()),
             Self::String(value) => Some(value.clone()),
             // Symbol cannot be implicitly converted to a string (TypeError).
             Self::Symbol(_) => None,
-            Self::Object(id) => Some(format!("[object #{}]", id.0)),
+            Self::Object(id) => Some(format!("[object #{}]", id.0).into()),
             Self::Function(_) | Self::BuiltinFunction(_) => {
                 Some("function () { [native code] }".into())
             }
-            Self::Error(error) => Some(error.message.clone()),
+            Self::Error(error) => Some(error.message.clone().into()),
         }
+    }
+
+    #[must_use]
+    pub fn as_js_string(&self) -> Option<&JsString> {
+        match self {
+            Self::String(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn to_js_string_owned(&self) -> Option<String> {
+        self.to_js_string().map(JsString::into_owned)
     }
 
     #[must_use]
@@ -213,7 +228,7 @@ impl fmt::Display for JsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Symbol(id) => write!(f, "Symbol({})", id.0),
-            _ => f.write_str(&self.to_js_string().unwrap_or_else(|| "<value>".into())),
+            _ => fmt::Display::fmt(&self.to_js_string().unwrap_or_else(|| "<value>".into()), f),
         }
     }
 }
@@ -374,7 +389,7 @@ mod tests {
         assert!(!JsValue::Number(0.0).to_boolean());
         assert!(!JsValue::Number(-0.0).to_boolean());
         assert!(!JsValue::Number(f64::NAN).to_boolean());
-        assert!(!JsValue::String(String::new()).to_boolean());
+        assert!(!JsValue::String(String::new().into()).to_boolean());
     }
 
     #[test]
@@ -390,7 +405,7 @@ mod tests {
     fn implements_basic_to_number() {
         assert_eq!(JsValue::Null.to_number(), Some(0.0));
         assert_eq!(JsValue::Boolean(true).to_number(), Some(1.0));
-        assert_eq!(JsValue::String(String::new()).to_number(), Some(0.0));
+        assert_eq!(JsValue::String(String::new().into()).to_number(), Some(0.0));
         assert_eq!(JsValue::String("  -3.5  ".into()).to_number(), Some(-3.5));
         assert!(JsValue::Undefined.to_number().unwrap().is_nan());
         assert!(

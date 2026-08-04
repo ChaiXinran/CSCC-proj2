@@ -262,7 +262,7 @@ fn regexp_legacy_empty_get(
     require_legacy_regexp_constructor(context, &this_value)?;
     // ponytail: legacy match state remains empty until it moves into per-realm
     // NativeContext storage; the accessor shape and receiver semantics are exact.
-    Ok(JsValue::String(String::new()))
+    Ok(JsValue::String(String::new().into()))
 }
 
 fn regexp_legacy_input_set(
@@ -322,9 +322,9 @@ fn make_regexp(
         let flags = vm.to_string_coerce(flags, context)?;
         (source, flags)
     } else if matches!(pattern_arg, JsValue::Undefined) {
-        (String::new(), String::new())
+        ("".into(), "".into())
     } else {
-        (vm.to_string_coerce(pattern_arg, context)?, String::new())
+        (vm.to_string_coerce(pattern_arg, context)?, "".into())
     };
     let flags = if matches!(flags_arg, JsValue::Undefined) {
         default_flags
@@ -338,7 +338,7 @@ fn make_regexp(
         return Ok(arguments.first().cloned().unwrap_or(JsValue::Undefined));
     }
 
-    let value = context.create_regexp(pattern, flags)?;
+    let value = context.create_regexp(pattern.to_string(), flags.to_string())?;
     if let Some(new_target) = new_target
         && let Some(object) = context.value_object(&value)
         && let Some(prototype) = context.constructor_prototype(&new_target)?
@@ -522,7 +522,7 @@ fn regexp_flags_get(
 ) -> Result<JsValue, VmError> {
     let object = context.require_object(&this_value, "RegExp.prototype.flags")?;
     if context.regexp_prototype() == Some(object) {
-        return Ok(JsValue::String(String::new()));
+        return Ok(JsValue::String(String::new().into()));
     }
     let mut flags = String::new();
     for (name, flag) in [
@@ -539,7 +539,7 @@ fn regexp_flags_get(
             flags.push(flag);
         }
     }
-    Ok(JsValue::String(flags))
+    Ok(JsValue::String(flags.into()))
 }
 
 fn regexp_source_get(
@@ -554,7 +554,7 @@ fn regexp_source_get(
         return Ok(JsValue::String("(?:)".into()));
     }
     let (_, pattern, _) = require_regexp(context, &this_value)?;
-    Ok(JsValue::String(escape_regexp_source(&pattern)))
+    Ok(JsValue::String(escape_regexp_source(&pattern).into()))
 }
 
 fn escape_regexp_source(pattern: &str) -> String {
@@ -582,11 +582,14 @@ fn regexp_to_string(
     _arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
     let (_, pattern, flags) = require_regexp(context, &this_value)?;
-    Ok(JsValue::String(format!(
-        "/{}/{}",
-        escape_regexp_source(&pattern),
-        sort_regexp_flags(&flags)
-    )))
+    Ok(JsValue::String(
+        format!(
+            "/{}/{}",
+            escape_regexp_source(&pattern),
+            sort_regexp_flags(&flags)
+        )
+        .into(),
+    ))
 }
 
 fn regexp_exec(
@@ -599,7 +602,7 @@ fn regexp_exec(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    regexp_exec_value(vm, context, this_value, string)
+    regexp_exec_value(vm, context, this_value, string.to_string())
 }
 
 fn regexp_test(
@@ -690,7 +693,7 @@ fn regexp_exec_value(
     context.define_own_property(
         array,
         "input".into(),
-        PropertyDescriptor::data_with(JsValue::String(string), true, true, true),
+        PropertyDescriptor::data_with(JsValue::String(string.into()), true, true, true),
     )?;
     context.define_own_property(
         array,
@@ -943,7 +946,9 @@ fn regexp_escape(
     let Some(JsValue::String(string)) = arguments.first() else {
         return Err(VmError::type_error("RegExp.escape requires a string"));
     };
-    Ok(JsValue::String(escape_regexp_pattern_literal(string)))
+    Ok(JsValue::String(
+        escape_regexp_pattern_literal(string).into(),
+    ))
 }
 
 fn escape_regexp_pattern_literal(value: &str) -> String {
@@ -1014,13 +1019,13 @@ fn regexp_symbol_match(
     let flags = regexp_replace_flags(vm, context, this_value.clone())?;
     let global = flags.contains('g');
     if !global {
-        return regexp_exec_abstract(vm, context, this_value, string);
+        return regexp_exec_abstract(vm, context, this_value, string.to_string());
     }
     let full_unicode = flags.contains('u');
     set_last_index_number(vm, context, this_value.clone(), 0.0)?;
     let mut values = Vec::new();
     loop {
-        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
+        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.to_string())?;
         let JsValue::Object(object) = result else {
             break;
         };
@@ -1055,7 +1060,7 @@ fn regexp_exec_abstract(
         let result = vm.call_value_from_builtin(
             exec,
             regexp.clone(),
-            vec![JsValue::String(string)],
+            vec![JsValue::String(string.into())],
             context,
         )?;
         if matches!(result, JsValue::Null) || context.value_object(&result).is_some() {
@@ -1120,7 +1125,7 @@ fn regexp_symbol_match_all(
     set_last_index(vm, context, matcher.clone(), last_index)?;
     let mut matches = Vec::new();
     loop {
-        let result = regexp_exec_abstract(vm, context, matcher.clone(), string.clone())?;
+        let result = regexp_exec_abstract(vm, context, matcher.clone(), string.to_string())?;
         if matches!(result, JsValue::Null) {
             break;
         }
@@ -1165,7 +1170,7 @@ fn regexp_symbol_search(
     if !previous_last_index.same_value(&JsValue::Number(0.0)) {
         set_last_index_number(vm, context, this_value.clone(), 0.0)?;
     }
-    let result = regexp_exec_abstract(vm, context, this_value.clone(), string)?;
+    let result = regexp_exec_abstract(vm, context, this_value.clone(), string.to_string())?;
     let current_last_index = get_property(vm, context, this_value.clone(), "lastIndex")?;
     if !current_last_index.same_value(&previous_last_index) {
         set_last_index_value(vm, context, this_value.clone(), previous_last_index.clone())?;
@@ -1217,7 +1222,7 @@ fn regexp_symbol_replace(
     };
     let mut results = Vec::new();
     loop {
-        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
+        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.to_string())?;
         let JsValue::Object(object) = result else {
             break;
         };
@@ -1239,7 +1244,7 @@ fn regexp_symbol_replace(
         }
         let groups = get_property(vm, context, result_value.clone(), "groups")?;
         results.push(ReplaceMatch {
-            matched: matched.clone(),
+            matched: matched.to_string(),
             position,
             captures,
             groups,
@@ -1285,7 +1290,7 @@ fn regexp_symbol_replace(
         };
         let replacement_text = if functional_replace {
             let mut args = Vec::with_capacity(item.captures.len() + 4);
-            args.push(JsValue::String(item.matched.clone()));
+            args.push(JsValue::String(item.matched.clone().into()));
             args.extend(item.captures.clone());
             args.push(JsValue::Number(item.position as f64));
             args.push(JsValue::String(string.clone()));
@@ -1298,7 +1303,7 @@ fn regexp_symbol_replace(
                 args,
                 context,
             )?;
-            vm.to_string_coerce(value, context)?
+            vm.to_string_coerce(value, context)?.into_owned()
         } else {
             get_substitution(
                 replacement.as_deref().unwrap_or_default(),
@@ -1315,7 +1320,7 @@ fn regexp_symbol_replace(
         next_source_position = byte_match_end;
     }
     push_str_replacement(&mut accumulated, &string[next_source_position..])?;
-    Ok(JsValue::String(accumulated))
+    Ok(JsValue::String(accumulated.into()))
 }
 
 fn regexp_replace_flags(
@@ -1325,7 +1330,9 @@ fn regexp_replace_flags(
 ) -> Result<String, VmError> {
     if regexp_data(context, &this_value).is_some() {
         let flags_value = get_property(vm, context, this_value, "flags")?;
-        return vm.to_string_coerce(flags_value, context);
+        return vm
+            .to_string_coerce(flags_value, context)
+            .map(crate::runtime::JsString::into_owned);
     }
     if let Some(object) = context.value_object(&this_value)
         && context
@@ -1336,6 +1343,7 @@ fn regexp_replace_flags(
     }
     let flags_value = get_property(vm, context, this_value, "flags")?;
     vm.to_string_coerce(flags_value, context)
+        .map(crate::runtime::JsString::into_owned)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1470,7 +1478,7 @@ fn regexp_symbol_split(
     let new_flags = if flags.contains('y') {
         flags.clone()
     } else {
-        format!("{flags}y")
+        format!("{flags}y").into()
     };
     let constructor = regexp_species_constructor(vm, context, this_value.clone())?;
     let splitter = vm.construct_value_from_builtin(
@@ -1490,7 +1498,7 @@ fn regexp_symbol_split(
     }
     let size = string.encode_utf16().count();
     if size == 0 {
-        let z = regexp_exec_abstract(vm, context, splitter, string.clone())?;
+        let z = regexp_exec_abstract(vm, context, splitter, string.to_string())?;
         if !matches!(z, JsValue::Null) {
             return context.create_array(output);
         }
@@ -1503,7 +1511,7 @@ fn regexp_symbol_split(
     let mut q = 0usize;
     while q < size {
         set_last_index(vm, context, splitter.clone(), q)?;
-        let z = regexp_exec_abstract(vm, context, splitter.clone(), string.clone())?;
+        let z = regexp_exec_abstract(vm, context, splitter.clone(), string.to_string())?;
         if matches!(z, JsValue::Null) {
             q = advance_string_index(&string, q, unicode_matching);
             continue;
@@ -1520,7 +1528,7 @@ fn regexp_symbol_split(
             q = advance_string_index(&string, q, unicode_matching);
             continue;
         }
-        output.push(JsValue::String(utf16_substring(&string, p, q)));
+        output.push(JsValue::String(utf16_substring(&string, p, q).into()));
         if output.len() == limit {
             return context.create_array(output);
         }
@@ -1538,7 +1546,7 @@ fn regexp_symbol_split(
         }
         q = p;
     }
-    output.push(JsValue::String(utf16_substring(&string, p, size)));
+    output.push(JsValue::String(utf16_substring(&string, p, size).into()));
     context.create_array(output)
 }
 
@@ -1704,7 +1712,7 @@ fn global_escape(
             output.push_str(&format!("{unit:04X}"));
         }
     }
-    Ok(JsValue::String(output))
+    Ok(JsValue::String(output.into()))
 }
 
 fn is_escape_unescaped(ch: char) -> bool {
@@ -1747,7 +1755,7 @@ fn global_unescape(
         units.extend_from_slice(ch.encode_utf16(&mut buf));
         i += ch.len_utf8();
     }
-    Ok(JsValue::String(String::from_utf16_lossy(&units)))
+    Ok(JsValue::String(String::from_utf16_lossy(&units).into()))
 }
 
 fn object_define_getter(
@@ -1889,6 +1897,7 @@ fn string_this(
         ));
     }
     vm.to_string_coerce(this_value, context)
+        .map(crate::runtime::JsString::into_owned)
 }
 
 fn create_html(
@@ -1919,7 +1928,7 @@ fn create_html(
     result.push_str("</");
     result.push_str(tag);
     result.push('>');
-    Ok(JsValue::String(result))
+    Ok(JsValue::String(result.into()))
 }
 
 macro_rules! html_method {

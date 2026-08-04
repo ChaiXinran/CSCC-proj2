@@ -1,3 +1,4 @@
+//! Shared runtime string storage.
 //! Shared runtime string handle used by phase-two hot paths.
 
 use std::{borrow::Borrow, fmt, ops::Deref, sync::Arc};
@@ -13,7 +14,7 @@ impl JsString {
 
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.as_ref()
     }
 
     #[must_use]
@@ -59,6 +60,7 @@ impl Borrow<str> for JsString {
 
 impl From<&str> for JsString {
     fn from(value: &str) -> Self {
+        Self(Arc::from(value))
         Self::new(value)
     }
 }
@@ -82,17 +84,50 @@ impl fmt::Display for JsString {
 }
 
 impl fmt::Debug for JsString {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.as_str().fmt(formatter)
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl PartialEq<str> for JsString {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl PartialEq<&str> for JsString {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::hash_map::DefaultHasher, hash::Hash, hash::Hasher, sync::Arc};
+
     use super::JsString;
 
     #[test]
     fn clone_shares_the_backing_buffer() {
+        let value = JsString::from("shared runtime string");
+        let clone = value.clone();
+
+        assert!(JsString::ptr_eq(&value, &clone));
+        assert_eq!(value, clone);
+    }
+
+    #[test]
+    fn conversions_preserve_unicode_content_and_hash() {
+        let source: Arc<str> = Arc::from("\u{5b57}\u{7b26}\u{4e32}\u{1f600}");
+        let shared = JsString::from(source.clone());
+        let equal = JsString::new(source.as_ref());
+        let mut left = DefaultHasher::new();
+        let mut right = DefaultHasher::new();
+        shared.hash(&mut left);
+        equal.hash(&mut right);
+
+        assert_eq!(left.finish(), right.finish());
+        assert_eq!(shared.into_owned(), source.as_ref());
         let original = JsString::from("shared property name");
         let clone = original.clone();
         assert!(JsString::ptr_eq(&original, &clone));

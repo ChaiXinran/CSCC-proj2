@@ -12,10 +12,10 @@ use crate::{
     parser::Parser,
     runtime::{
         EnvironmentId, FunctionId, GeneratorRecord, GeneratorState, IteratorKind, IteratorRecord,
-        Job, JsFunction, JsObject, JsValue, NativeContext, NativeErrorKind, ObjectId, ObjectKind,
-        PreferredType, PrimitiveValue, PrivateBrandId, PromiseCallbackJob, PromiseReaction,
-        PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind, SymbolId, Trace,
-        Tracer, TypedArrayViewId, array_index, bigint, to_property_key,
+        Job, JsFunction, JsObject, JsString, JsValue, NativeContext, NativeErrorKind, ObjectId,
+        ObjectKind, PreferredType, PrimitiveValue, PrivateBrandId, PromiseCallbackJob,
+        PromiseReaction, PropertyDescriptor, PropertyDescriptorUpdate, PropertyKey, PropertyKind,
+        SymbolId, Trace, Tracer, TypedArrayViewId, array_index, bigint, to_property_key,
     },
     vm::{
         CallFrame, CallRequest, Completion, ConstructRequest, FunctionEnvironmentMode,
@@ -813,7 +813,7 @@ fn load_dynamic_module_namespace(
         .get_global("__agentjs_dynamic_import_referrer")
         .and_then(|value| value.to_js_string())
         .ok_or_else(|| VmError::reference("dynamic import has no referrer path"))?;
-    let path = crate::runtime::resolve_module_specifier(Path::new(&referrer), specifier)
+    let path = crate::runtime::resolve_module_specifier(Path::new(referrer.as_str()), specifier)
         .map_err(VmError::type_error)?;
     evaluate_local_module_with_type(vm, context, &path, module_type)
 }
@@ -855,7 +855,7 @@ fn dynamic_import_module_type(
             ));
         };
         if name == "type" {
-            module_type = Some(value);
+            module_type = Some(value.into_owned());
         }
     }
     Ok(module_type)
@@ -2461,7 +2461,7 @@ impl Vm {
                         JsValue::String(s) => s,
                         _ => return Err(VmError::type_error("regexp pattern must be a string")),
                     };
-                    let regexp = context.create_regexp(pattern, flags)?;
+                    let regexp = context.create_regexp(pattern.to_string(), flags.to_string())?;
                     self.stack.push(regexp);
                 }
 
@@ -2816,7 +2816,10 @@ impl Vm {
                             None => Vec::new(),
                         },
                     };
-                    let elements = keys.into_iter().map(JsValue::String).collect();
+                    let elements = keys
+                        .into_iter()
+                        .map(|value: String| JsValue::String(value.into()))
+                        .collect();
                     let array = context.create_array(elements)?;
                     self.stack.push(array);
                 }
@@ -3258,7 +3261,7 @@ impl Vm {
                                 );
                                 context.define_own_property(
                                     object,
-                                    name,
+                                    name.to_string(),
                                     PropertyDescriptor::data_with(value, true, false, true),
                                 )?;
                             }
@@ -3311,7 +3314,7 @@ impl Vm {
                                 let setter = existing_accessor_setter(context, object, &name);
                                 context.define_own_property(
                                     object,
-                                    name,
+                                    name.to_string(),
                                     PropertyDescriptor::accessor(Some(getter), setter, false, true),
                                 )?;
                             }
@@ -3361,7 +3364,7 @@ impl Vm {
                                 let getter = existing_accessor_getter(context, object, &name);
                                 context.define_own_property(
                                     object,
-                                    name,
+                                    name.to_string(),
                                     PropertyDescriptor::accessor(getter, Some(setter), false, true),
                                 )?;
                             }
@@ -3400,7 +3403,7 @@ impl Vm {
                             context.set_function_home_object(&value, object)?;
                             context.define_own_property(
                                 object,
-                                name,
+                                name.to_string(),
                                 PropertyDescriptor::data(value),
                             )?;
                         }
@@ -3470,7 +3473,7 @@ impl Vm {
                     for raw_key in raw_excluded {
                         match self.to_property_key_from_builtin(raw_key, context) {
                             Ok(JsValue::String(key)) => {
-                                excluded.push(PropertyKey::String(key));
+                                excluded.push(PropertyKey::String(key.to_string()));
                             }
                             Ok(JsValue::Symbol(symbol)) => {
                                 excluded.push(PropertyKey::Symbol(symbol));
@@ -5113,7 +5116,7 @@ impl Vm {
                     iterator.done = true;
                     return Ok(None);
                 }
-                let value = JsValue::String(chars[*index].clone());
+                let value = JsValue::String(chars[*index].clone().into());
                 *index += 1;
                 Ok(Some(value))
             }
@@ -6031,7 +6034,7 @@ impl Vm {
             return Ok(primitive);
         }
         match to_property_key(&primitive)? {
-            PropertyKey::String(key) => Ok(JsValue::String(key)),
+            PropertyKey::String(key) => Ok(JsValue::String(key.into())),
             PropertyKey::Symbol(symbol) => Ok(JsValue::Symbol(symbol)),
         }
     }
@@ -6061,7 +6064,7 @@ impl Vm {
             obj.define_property(
                 "name",
                 PropertyDescriptor::data_with(
-                    JsValue::String(inferred_name.to_string()),
+                    JsValue::String(inferred_name.to_string().into()),
                     false,
                     false,
                     true,
@@ -6080,7 +6083,7 @@ impl Vm {
         let inferred_name = match key {
             JsValue::String(name) => match prefix {
                 Some(prefix) => format!("{prefix} {name}"),
-                None => name.clone(),
+                None => name.to_string(),
             },
             JsValue::Symbol(symbol) => {
                 let desc = context.symbol_description(*symbol).unwrap_or("");
@@ -6113,7 +6116,12 @@ impl Vm {
         if should_set && let Some(obj) = context.heap_mut().object_mut(obj_id) {
             obj.define_property(
                 "name",
-                PropertyDescriptor::data_with(JsValue::String(inferred_name), false, false, true),
+                PropertyDescriptor::data_with(
+                    JsValue::String(inferred_name.into()),
+                    false,
+                    false,
+                    true,
+                ),
             );
         }
     }
@@ -6167,7 +6175,7 @@ impl Vm {
                 let set = setter.or_else(|| existing_accessor_setter(context, object, &name));
                 context.define_own_property(
                     object,
-                    name,
+                    name.to_string(),
                     PropertyDescriptor::accessor(get, set, enumerable, configurable),
                 )?;
             }
@@ -6469,13 +6477,13 @@ impl Vm {
         &mut self,
         value: JsValue,
         context: &mut NativeContext,
-    ) -> Result<String, VmError> {
+    ) -> Result<JsString, VmError> {
         match value {
             JsValue::Undefined => Ok("undefined".into()),
             JsValue::Null => Ok("null".into()),
-            JsValue::Boolean(b) => Ok(b.to_string()),
-            JsValue::Number(n) => Ok(coerce_number_to_string(n)),
-            JsValue::BigInt(n) => Ok(n.to_string()),
+            JsValue::Boolean(b) => Ok(b.to_string().into()),
+            JsValue::Number(n) => Ok(coerce_number_to_string(n).into()),
+            JsValue::BigInt(n) => Ok(n.to_string().into()),
             JsValue::String(s) => Ok(s),
             // Symbols cannot be implicitly converted to strings — TypeError.
             JsValue::Symbol(_) => Err(VmError::type_error(
@@ -6485,7 +6493,7 @@ impl Vm {
                 let prim = self.to_primitive(value, PreferredType::String, context)?;
                 self.to_string_coerce(prim, context)
             }
-            JsValue::Error(e) => Ok(e.message),
+            JsValue::Error(e) => Ok(e.message.into()),
         }
     }
 
@@ -6732,7 +6740,7 @@ impl Vm {
         };
         Some(Ok(string::utf16_code_unit_at(value, idx)
             .map_or(JsValue::Undefined, |unit| {
-                JsValue::String(string::decode_utf16(&[unit]))
+                JsValue::String(string::decode_utf16(&[unit]).into())
             })))
     }
 
@@ -6869,7 +6877,7 @@ impl Vm {
         }
         if let JsValue::Error(error) = &receiver {
             let value = match key {
-                "message" => JsValue::String(error.message.clone()),
+                "message" => JsValue::String(error.message.clone().into()),
                 "name" => JsValue::String(native_error_constructor_name(&error.kind).into()),
                 "constructor" => context.error_constructor_value(error),
                 "stack" | "cause" => JsValue::Undefined,
@@ -6949,7 +6957,7 @@ impl Vm {
             if let Some(index) = array_index(key) {
                 return Ok(OperationResult::Value(
                     string::utf16_code_unit_at(value, index).map_or(JsValue::Undefined, |unit| {
-                        JsValue::String(string::decode_utf16(&[unit]))
+                        JsValue::String(string::decode_utf16(&[unit]).into())
                     }),
                 ));
             }
@@ -7693,7 +7701,12 @@ impl Vm {
         new_target: JsValue,
         context: &mut NativeContext,
     ) -> Result<OperationResult, VmError> {
-        match constructor {
+        let root_base = context.push_temporary_roots(
+            std::iter::once(constructor.clone())
+                .chain(std::iter::once(new_target.clone()))
+                .chain(arguments.iter().cloned()),
+        );
+        let result = (|| match constructor {
             JsValue::Object(object) if context.proxy_record(object).is_some() => {
                 match proxy::internal_construct(
                     self,
@@ -7878,7 +7891,9 @@ impl Vm {
             other => Ok(OperationResult::Throw(vm_error_to_value(
                 VmError::type_error(format!("{other} is not a constructor")),
             ))),
-        }
+        })();
+        context.truncate_temporary_roots(root_base);
+        result
     }
 
     fn validate_jump_target(
@@ -8133,7 +8148,7 @@ fn constant_to_value(constant: &Constant) -> JsValue {
         Constant::Boolean(value) => JsValue::Boolean(*value),
         Constant::Number(value) => JsValue::Number(*value),
         Constant::BigInt(value) => JsValue::BigInt(value.clone()),
-        Constant::String(value) => JsValue::String(value.clone()),
+        Constant::String(value) => JsValue::String(value.clone().into()),
     }
 }
 
@@ -8151,7 +8166,7 @@ fn add_values(
         let mut result = String::with_capacity(left.len().saturating_add(right.len()));
         result.push_str(&left);
         result.push_str(&right);
-        return Ok(JsValue::String(result));
+        return Ok(JsValue::String(result.into()));
     }
     if let (JsValue::BigInt(left), JsValue::BigInt(right)) = (&left, &right) {
         return Ok(JsValue::BigInt(bigint::add(left, right)));

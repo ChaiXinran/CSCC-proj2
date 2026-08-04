@@ -158,7 +158,7 @@ fn read_file(
     )?;
     context
         .read_host_text(&path)
-        .map(|source| JsValue::String(source.as_ref().to_owned()))
+        .map(|source| JsValue::String(source.into()))
 }
 
 #[cfg(test)]

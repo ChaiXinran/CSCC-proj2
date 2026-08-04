@@ -302,7 +302,7 @@ fn string_index_value(value: &str, index: usize) -> Option<JsValue> {
     value
         .encode_utf16()
         .nth(index)
-        .map(|unit| JsValue::String(String::from_utf16_lossy(&[unit])))
+        .map(|unit| JsValue::String(String::from_utf16_lossy(&[unit]).into()))
 }
 
 fn string_index_value_for_array_like(
@@ -638,16 +638,20 @@ fn array_from_async(
         .get_global("Promise")
         .and_then(|constructor| context.constructor_prototype(&constructor).ok().flatten());
     let promise_object = context.create_promise_object(promise, prototype)?;
-    match array_from_async_operation(vm, context, this, arguments) {
-        Ok(value) => crate::builtins::promise::resolve_promise_id(vm, context, promise, value)?,
-        Err(error) => {
-            let reason = vm
-                .take_pending_exception_from_builtin()
-                .unwrap_or_else(|| array_from_async_error(error));
-            context.reject_promise(promise, reason)?;
+    context.with_temporary_roots([promise_object.clone()], |context| {
+        match array_from_async_operation(vm, context, this, arguments) {
+            Ok(value) => {
+                crate::builtins::promise::resolve_promise_id(vm, context, promise, value)?;
+            }
+            Err(error) => {
+                let reason = vm
+                    .take_pending_exception_from_builtin()
+                    .unwrap_or_else(|| array_from_async_error(error));
+                context.reject_promise(promise, reason)?;
+            }
         }
-    }
-    Ok(promise_object)
+        Ok(promise_object)
+    })
 }
 
 fn array_from_async_operation(
@@ -731,29 +735,31 @@ fn array_from_async_operation(
         };
     let final_length = values.len();
     let result = array_from_create_result(vm, context, constructor, constructor_length)?;
-    let result_object = context.require_object(&result, "Array.fromAsync result")?;
-    for (index, value) in values.into_iter().enumerate() {
-        let value = if await_inputs || map_fn.is_some() {
-            await_array_from_async_value(vm, context, value)?
-        } else {
-            value
-        };
-        let value = if let Some(mapper) = &map_fn {
-            let mapped = call_callback(
-                vm,
-                context,
-                mapper.clone(),
-                map_this.clone(),
-                vec![value, JsValue::Number(index as f64)],
-            )?;
-            await_array_from_async_value(vm, context, mapped)?
-        } else {
-            value
-        };
-        create_data_property_or_throw(context, result_object, index, value)?;
-    }
-    set_array_from_length(vm, context, result.clone(), final_length)?;
-    Ok(result)
+    context.with_temporary_roots([result.clone()], |context| {
+        let result_object = context.require_object(&result, "Array.fromAsync result")?;
+        for (index, value) in values.into_iter().enumerate() {
+            let value = if await_inputs || map_fn.is_some() {
+                await_array_from_async_value(vm, context, value)?
+            } else {
+                value
+            };
+            let value = if let Some(mapper) = &map_fn {
+                let mapped = call_callback(
+                    vm,
+                    context,
+                    mapper.clone(),
+                    map_this.clone(),
+                    vec![value, JsValue::Number(index as f64)],
+                )?;
+                await_array_from_async_value(vm, context, mapped)?
+            } else {
+                value
+            };
+            create_data_property_or_throw(context, result_object, index, value)?;
+        }
+        set_array_from_length(vm, context, result.clone(), final_length)?;
+        Ok(result)
+    })
 }
 
 fn await_array_from_async_value(
@@ -783,24 +789,26 @@ fn array_from_array_like(
     map_this: JsValue,
 ) -> Result<JsValue, VmError> {
     let result = array_from_create_result(vm, context, constructor, Some(length))?;
-    let result_object = context.require_object(&result, "Array.from result")?;
-    for i in 0..length.min(MAX_DENSE_ALLOC) {
-        let val = get_elem(vm, context, source.clone(), i)?;
-        let mapped = if let Some(ref func) = map_fn {
-            call_callback(
-                vm,
-                context,
-                func.clone(),
-                map_this.clone(),
-                vec![val, JsValue::Number(i as f64)],
-            )?
-        } else {
-            val
-        };
-        create_data_property_or_throw(context, result_object, i, mapped)?;
-    }
-    set_array_from_length(vm, context, result.clone(), length)?;
-    Ok(result)
+    context.with_temporary_roots([result.clone()], |context| {
+        let result_object = context.require_object(&result, "Array.from result")?;
+        for i in 0..length.min(MAX_DENSE_ALLOC) {
+            let val = get_elem(vm, context, source.clone(), i)?;
+            let mapped = if let Some(ref func) = map_fn {
+                call_callback(
+                    vm,
+                    context,
+                    func.clone(),
+                    map_this.clone(),
+                    vec![val, JsValue::Number(i as f64)],
+                )?
+            } else {
+                val
+            };
+            create_data_property_or_throw(context, result_object, i, mapped)?;
+        }
+        set_array_from_length(vm, context, result.clone(), length)?;
+        Ok(result)
+    })
 }
 
 fn array_from_iterator(
@@ -817,67 +825,71 @@ fn array_from_iterator(
         return array_from_native_iterator(vm, context, constructor, iterator, map_fn, map_this);
     }
     let result = array_from_create_result(vm, context, constructor, None)?;
-    let result_object = context.require_object(&result, "Array.from result")?;
-    let mut length = 0usize;
-    while length < MAX_DENSE_ALLOC {
-        let next = vm.get_property_value_with_receiver_from_builtin(
-            iterator.clone(),
-            iterator.clone(),
-            "next",
-            context,
-        )?;
-        if !is_callable(&next) {
-            return Err(VmError::type_error(
-                "Array.from: iterator next is not callable",
-            ));
-        }
-        let step = call_callback(vm, context, next, iterator.clone(), Vec::new())?;
-        let step_object = context.require_object(&step, "Array.from iterator result")?;
-        let step_value = context.object_value(step_object);
-        let done = vm
-            .get_property_value_with_receiver_from_builtin(
-                step_value.clone(),
-                step_value.clone(),
-                "done",
+    context.with_temporary_roots([result.clone()], |context| {
+        let result_object = context.require_object(&result, "Array.from result")?;
+        let mut length = 0usize;
+        while length < MAX_DENSE_ALLOC {
+            let next = vm.get_property_value_with_receiver_from_builtin(
+                iterator.clone(),
+                iterator.clone(),
+                "next",
                 context,
-            )?
-            .to_boolean();
-        if done {
-            set_array_from_length(vm, context, result.clone(), length)?;
-            return Ok(result);
-        }
-        let value = vm.get_property_value_with_receiver_from_builtin(
-            step_value.clone(),
-            step_value,
-            "value",
-            context,
-        )?;
-        let mapped = if let Some(ref func) = map_fn {
-            match call_callback(
-                vm,
-                context,
-                func.clone(),
-                map_this.clone(),
-                vec![value, JsValue::Number(length as f64)],
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    let _ = array_from_close_iterator(vm, context, iterator.clone());
-                    return Err(error);
-                }
+            )?;
+            if !is_callable(&next) {
+                return Err(VmError::type_error(
+                    "Array.from: iterator next is not callable",
+                ));
             }
-        } else {
-            value
-        };
-        if let Err(error) = create_data_property_or_throw(context, result_object, length, mapped) {
-            let _ = array_from_close_iterator(vm, context, iterator.clone());
-            return Err(error);
+            let step = call_callback(vm, context, next, iterator.clone(), Vec::new())?;
+            let step_object = context.require_object(&step, "Array.from iterator result")?;
+            let step_value = context.object_value(step_object);
+            let done = vm
+                .get_property_value_with_receiver_from_builtin(
+                    step_value.clone(),
+                    step_value.clone(),
+                    "done",
+                    context,
+                )?
+                .to_boolean();
+            if done {
+                set_array_from_length(vm, context, result.clone(), length)?;
+                return Ok(result);
+            }
+            let value = vm.get_property_value_with_receiver_from_builtin(
+                step_value.clone(),
+                step_value,
+                "value",
+                context,
+            )?;
+            let mapped = if let Some(ref func) = map_fn {
+                match call_callback(
+                    vm,
+                    context,
+                    func.clone(),
+                    map_this.clone(),
+                    vec![value, JsValue::Number(length as f64)],
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let _ = array_from_close_iterator(vm, context, iterator.clone());
+                        return Err(error);
+                    }
+                }
+            } else {
+                value
+            };
+            if let Err(error) =
+                create_data_property_or_throw(context, result_object, length, mapped)
+            {
+                let _ = array_from_close_iterator(vm, context, iterator.clone());
+                return Err(error);
+            }
+            length += 1;
         }
-        length += 1;
-    }
-    Err(VmError::runtime_limit(
-        "Array.from iterator step limit exceeded",
-    ))
+        Err(VmError::runtime_limit(
+            "Array.from iterator step limit exceeded",
+        ))
+    })
 }
 
 fn array_from_close_iterator(
@@ -929,40 +941,44 @@ fn array_from_native_iterator(
     map_this: JsValue,
 ) -> Result<JsValue, VmError> {
     let result = array_from_create_result(vm, context, constructor, None)?;
-    let result_object = context.require_object(&result, "Array.from result")?;
-    let mut length = 0usize;
-    while length < MAX_DENSE_ALLOC {
-        let (value, done) = context.step_iterator_object(iterator.clone())?;
-        if done {
-            set_array_from_length(vm, context, result.clone(), length)?;
-            return Ok(result);
-        }
-        let mapped = if let Some(ref func) = map_fn {
-            match call_callback(
-                vm,
-                context,
-                func.clone(),
-                map_this.clone(),
-                vec![value, JsValue::Number(length as f64)],
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    let _ = context.close_iterator_object(iterator);
-                    return Err(error);
-                }
+    context.with_temporary_roots([result.clone()], |context| {
+        let result_object = context.require_object(&result, "Array.from result")?;
+        let mut length = 0usize;
+        while length < MAX_DENSE_ALLOC {
+            let (value, done) = context.step_iterator_object(iterator.clone())?;
+            if done {
+                set_array_from_length(vm, context, result.clone(), length)?;
+                return Ok(result);
             }
-        } else {
-            value
-        };
-        if let Err(error) = create_data_property_or_throw(context, result_object, length, mapped) {
-            let _ = context.close_iterator_object(iterator);
-            return Err(error);
+            let mapped = if let Some(ref func) = map_fn {
+                match call_callback(
+                    vm,
+                    context,
+                    func.clone(),
+                    map_this.clone(),
+                    vec![value, JsValue::Number(length as f64)],
+                ) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let _ = context.close_iterator_object(iterator);
+                        return Err(error);
+                    }
+                }
+            } else {
+                value
+            };
+            if let Err(error) =
+                create_data_property_or_throw(context, result_object, length, mapped)
+            {
+                let _ = context.close_iterator_object(iterator);
+                return Err(error);
+            }
+            length += 1;
         }
-        length += 1;
-    }
-    Err(VmError::runtime_limit(
-        "Array.from iterator step limit exceeded",
-    ))
+        Err(VmError::runtime_limit(
+            "Array.from iterator step limit exceeded",
+        ))
+    })
 }
 
 fn array_from_create_result(
@@ -1098,17 +1114,17 @@ fn array_join(
     let (_object, target, length) = array_object_target(vm, context, this_value)?;
     let sep = match arguments.first() {
         None | Some(JsValue::Undefined) => ",".to_string(),
-        Some(value) => vm.to_string_coerce(value.clone(), context)?,
+        Some(value) => vm.to_string_coerce(value.clone(), context)?.to_string(),
     };
     let mut parts: Vec<String> = Vec::with_capacity(length.min(MAX_DENSE_ALLOC));
     for i in 0..length.min(MAX_DENSE_ALLOC) {
         let val = get_elem(vm, context, target.clone(), i)?;
         parts.push(match val {
             JsValue::Undefined | JsValue::Null => String::new(),
-            value => vm.to_string_coerce(value, context)?,
+            value => vm.to_string_coerce(value, context)?.to_string(),
         });
     }
-    Ok(JsValue::String(parts.join(&sep)))
+    Ok(JsValue::String(parts.join(&sep).into()))
 }
 
 fn array_reverse(
@@ -2192,10 +2208,11 @@ fn array_to_locale_string(
             } else {
                 vm.to_string_coerce(elem, context)?
             }
+            .to_string()
         };
         parts.push(part);
     }
-    Ok(JsValue::String(parts.join(",")))
+    Ok(JsValue::String(parts.join(",").into()))
 }
 
 fn array_to_reversed(

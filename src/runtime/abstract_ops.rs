@@ -170,7 +170,7 @@ pub fn to_property_key_value(
     value: JsValue,
 ) -> Result<PropertyKey, VmError> {
     match vm.to_property_key_from_builtin(value, context)? {
-        JsValue::String(name) => Ok(PropertyKey::String(name)),
+        JsValue::String(name) => Ok(PropertyKey::String(name.to_string())),
         JsValue::Symbol(symbol) => Ok(PropertyKey::Symbol(symbol)),
         _ => Err(VmError::type_error(
             "ToPropertyKey returned a non-key value",
@@ -232,7 +232,7 @@ pub fn to_string(
         _ => Ok(JsValue::String(
             value
                 .to_js_string()
-                .unwrap_or_else(|| "undefined".to_string()),
+                .unwrap_or_else(|| "undefined".to_string().into()),
         )),
     }
 }

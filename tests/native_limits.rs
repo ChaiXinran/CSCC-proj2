@@ -28,7 +28,7 @@ fn wall_clock_deadline_reports_runtime_limit() {
 fn heap_byte_limit_guards_large_heap_values() {
     let mut context = NativeContext::with_heap_limits(128, 4 * 1024);
     let error = context
-        .create_array(vec![JsValue::String("x".repeat(32 * 1024))])
+        .create_array(vec![JsValue::String("x".repeat(32 * 1024).into())])
         .unwrap_err();
 
     assert_eq!(error.kind, VmErrorKind::RuntimeLimit);

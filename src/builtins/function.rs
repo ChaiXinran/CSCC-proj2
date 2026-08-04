@@ -577,7 +577,7 @@ fn dynamic_function_source_parts(
         arguments.last().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    Ok((params.join(","), body))
+    Ok((params.join(","), body.to_string()))
 }
 
 fn dynamic_function_syntax_error(error: impl std::fmt::Display) -> VmError {
@@ -712,9 +712,9 @@ fn function_prototype_to_string(
             .unwrap_or(""),
         _ => "",
     };
-    Ok(JsValue::String(format!(
-        "function {name}() {{ [native code] }}"
-    )))
+    Ok(JsValue::String(
+        format!("function {name}() {{ [native code] }}").into(),
+    ))
 }
 
 fn function_prototype_bind(
@@ -757,7 +757,7 @@ fn function_prototype_bind(
 
     let target_name = match get_property_preserving_throw(vm, context, this.clone(), "name")? {
         JsValue::String(name) => name,
-        _ => String::new(),
+        _ => String::new().into(),
     };
     let display_name = format!("bound {target_name}");
 

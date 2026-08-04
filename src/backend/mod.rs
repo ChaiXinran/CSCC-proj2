@@ -340,7 +340,7 @@ impl NativeRuntime {
     fn set_dynamic_import_referrer(&mut self, path: &Path) {
         self.context.declare_global(
             "__agentjs_dynamic_import_referrer",
-            JsValue::String(path.to_string_lossy().into_owned()),
+            JsValue::String(path.to_string_lossy().into_owned().into()),
         );
     }
 
@@ -521,7 +521,9 @@ impl RuntimeBackend for NativeRuntime {
                         .set_status(module_id, ModuleStatus::Failed);
                     self.module_registry.set_evaluation_state(
                         module_id,
-                        ModuleEvaluationState::Rejected(JsValue::String(error.message.clone())),
+                        ModuleEvaluationState::Rejected(JsValue::String(
+                            error.message.clone().into(),
+                        )),
                     );
                     return Err(error);
                 }
@@ -546,7 +548,7 @@ impl RuntimeBackend for NativeRuntime {
                     .set_status(module_id, ModuleStatus::Failed);
                 self.module_registry.set_evaluation_state(
                     module_id,
-                    ModuleEvaluationState::Rejected(JsValue::String(error.message.clone())),
+                    ModuleEvaluationState::Rejected(JsValue::String(error.message.clone().into())),
                 );
                 Err(error)
             }
