@@ -121,7 +121,10 @@ impl Compiler {
     ///
     /// This is the compiler team's stable direct API. It reads but never
     /// mutates the AST and returns either a complete [`Chunk`] or an error.
-    pub fn compile_program(&mut self, program: &Program) -> Result<Chunk, CompileError> {
+    pub fn compile_program(
+        &mut self,
+        program: &Program,
+    ) -> Result<crate::bytecode::SharedChunk, CompileError> {
         let mut chunk = Chunk::default();
         let mut context = CompileContext::default();
         let completion_expression = completion_expression_index(&program.body);
@@ -231,7 +234,7 @@ impl Compiler {
             Instruction::ReturnUndefined
         });
         chunk.validate().map_err(CompileError::from_chunk)?;
-        Ok(chunk)
+        Ok(chunk.into_shared())
     }
 
     fn compile_statement(
@@ -1690,7 +1693,7 @@ impl Compiler {
             params: fn_chunk.params,
             rest_param: fn_chunk.rest_param,
             length_override: Some(fn_chunk.length),
-            chunk: fn_chunk.chunk,
+            chunk: fn_chunk.chunk.into_shared(),
             is_strict: fn_chunk.is_strict,
             is_async,
             is_generator,
@@ -3986,7 +3989,7 @@ impl Compiler {
             params: compiled.params,
             rest_param: compiled.rest_param,
             length_override: Some(compiled.length),
-            chunk: compiled.chunk,
+            chunk: compiled.chunk.into_shared(),
             is_strict: compiled.is_strict,
             is_async: false,
             is_generator: false,
@@ -4441,7 +4444,7 @@ impl Compiler {
             params: ctor_fn.params,
             rest_param: ctor_fn.rest_param,
             length_override: Some(ctor_fn.length),
-            chunk: ctor_fn.chunk,
+            chunk: ctor_fn.chunk.into_shared(),
             is_strict: true, // class bodies are always strict
             is_async: false,
             is_generator: false,
@@ -4511,7 +4514,7 @@ impl Compiler {
                     params: fn_compiled.params,
                     rest_param: fn_compiled.rest_param,
                     length_override: Some(fn_compiled.length),
-                    chunk: fn_compiled.chunk,
+                    chunk: fn_compiled.chunk.into_shared(),
                     is_strict: true, // class methods are always strict
                     is_async: function.is_async,
                     is_generator: function.is_generator,
@@ -4614,7 +4617,7 @@ impl Compiler {
                     params: fn_compiled.params,
                     rest_param: fn_compiled.rest_param,
                     length_override: Some(fn_compiled.length),
-                    chunk: fn_compiled.chunk,
+                    chunk: fn_compiled.chunk.into_shared(),
                     is_strict: true, // class methods are always strict
                     is_async: function.is_async,
                     is_generator: function.is_generator,
@@ -4708,7 +4711,7 @@ impl Compiler {
                             params: init_fn.params,
                             rest_param: init_fn.rest_param,
                             length_override: Some(0),
-                            chunk: init_fn.chunk,
+                            chunk: init_fn.chunk.into_shared(),
                             is_strict: true,
                             is_async: false,
                             is_generator: false,
@@ -4767,7 +4770,7 @@ impl Compiler {
                         params: block_fn.params,
                         rest_param: block_fn.rest_param,
                         length_override: Some(block_fn.length),
-                        chunk: block_fn.chunk,
+                        chunk: block_fn.chunk.into_shared(),
                         is_strict: true,
                         is_generator: false,
                         is_async: false,
@@ -5163,7 +5166,7 @@ impl Compiler {
             params: fn_chunk.params,
             rest_param: fn_chunk.rest_param,
             length_override: Some(fn_chunk.length),
-            chunk: fn_chunk.chunk,
+            chunk: fn_chunk.chunk.into_shared(),
             is_strict: fn_chunk.is_strict,
             is_async: literal.is_async,
             is_generator: literal.is_generator,
@@ -6398,7 +6401,7 @@ impl CompileError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        bytecode::{Chunk, Constant, EnvironmentCapturePolicy, Instruction},
+        bytecode::{Constant, EnvironmentCapturePolicy, Instruction},
         lexer::Lexer,
         parser::Parser,
     };
@@ -6409,7 +6412,7 @@ mod tests {
     // Test helpers
     // -----------------------------------------------------------------------
 
-    fn compile(source: &str) -> Chunk {
+    fn compile(source: &str) -> crate::bytecode::SharedChunk {
         let tokens = Lexer::new(source).tokenize().expect("lexing succeeds");
         let program = Parser::new(tokens)
             .parse_program()

@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::bytecode::{Chunk, Constant};
+use crate::bytecode::SharedChunk;
 use crate::vm::{Vm, VmError};
 
 use super::{EnvironmentId, JsValue, NativeContext, ObjectId, Trace, Tracer};
@@ -21,7 +21,7 @@ pub struct JsFunction {
     /// Function.length override: params before first default/rest/pattern param.
     /// None means fall back to params.len().
     pub length_override: Option<u32>,
-    pub chunk: Chunk,
+    pub chunk: SharedChunk,
     pub environment: Option<EnvironmentId>,
     pub is_async: bool,
     pub is_generator: bool,
@@ -114,7 +114,6 @@ impl JsFunction {
         std::mem::size_of::<Self>()
             .saturating_add(self.name.as_ref().map_or(0, String::len))
             .saturating_add(self.params.iter().map(String::len).sum::<usize>())
-            .saturating_add(estimate_chunk_bytes(&self.chunk))
     }
 }
 
@@ -135,23 +134,4 @@ impl Trace for BuiltinFunction {
             bound.trace(tracer);
         }
     }
-}
-
-fn estimate_chunk_bytes(chunk: &Chunk) -> usize {
-    chunk
-        .instructions
-        .len()
-        .saturating_mul(std::mem::size_of::<crate::bytecode::Instruction>())
-        .saturating_add(
-            chunk
-                .constants
-                .iter()
-                .map(|constant| match constant {
-                    Constant::String(value) => value.len(),
-                    Constant::BigInt(value) => value.estimated_bytes(),
-                    _ => std::mem::size_of::<Constant>(),
-                })
-                .sum::<usize>(),
-        )
-        .saturating_add(chunk.functions.len().saturating_mul(64))
 }

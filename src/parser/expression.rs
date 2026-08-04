@@ -1689,10 +1689,11 @@ impl Parser {
             );
         }
         raw_quasis.push(self.peek().template_raw.clone().unwrap_or_default());
-        let head_text = match self.advance().kind {
-            TokenKind::TemplateHead(text) => text,
+        let head_text = match &self.peek().kind {
+            TokenKind::TemplateHead(text) => text.clone(),
             _ => unreachable!("parse_template_literal called on non-TemplateHead"),
         };
+        self.advance();
         quasis.push(head_text);
 
         loop {

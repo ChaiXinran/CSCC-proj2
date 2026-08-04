@@ -51,6 +51,7 @@ fn chunk_does_not_follow_fallthrough_after_jump_or_throw() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(jump_over_underflow.validate(), Ok(()));
 
@@ -65,6 +66,7 @@ fn chunk_does_not_follow_fallthrough_after_jump_or_throw() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
     assert_eq!(throw_ends_flow.validate(), Ok(()));
 }
@@ -77,6 +79,7 @@ fn chunk_validates_typeof_global_name_constants() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
 
     assert_eq!(

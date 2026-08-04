@@ -7,7 +7,7 @@ use agentjs::{
     vm::{Vm, VmErrorKind},
 };
 
-fn compile(source: &str) -> Chunk {
+fn compile(source: &str) -> agentjs::bytecode::SharedChunk {
     let program = NativeFrontend
         .parse_source(source)
         .unwrap_or_else(|error| panic!("front end should accept {source:?}: {error}"));
@@ -36,6 +36,7 @@ fn vm_rejects_invalid_chunks_before_interpretation() {
         functions: Vec::new(),
         handlers: Vec::new(),
         function_body_start: 0,
+        constant_index: None,
     };
 
     let error = Vm::default()

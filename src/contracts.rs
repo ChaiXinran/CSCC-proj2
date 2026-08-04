@@ -16,8 +16,9 @@ pub use crate::{
         SwitchCase, TemplateLiteral, UnaryOperator, VariableDeclarator, VariableKind,
     },
     bytecode::{
-        Chunk, ChunkError, CompileError, Compiler, Constant, EnvironmentCapturePolicy,
-        ExceptionHandler, FunctionTemplate, HandlerKind, Instruction, StackAnalysis, StackEffect,
+        Chunk, ChunkCacheMetadata, ChunkError, CompileError, Compiler, Constant,
+        EnvironmentCapturePolicy, ExceptionHandler, FunctionTemplate, HandlerKind, Instruction,
+        SharedChunk, StackAnalysis, StackEffect,
     },
     lexer::{Keyword, LexError, Span, Token, TokenKind},
     parser::{ParseError, Parser},
@@ -96,7 +97,7 @@ pub trait SourceParser {
 
 /// Compiler contract owned by the bytecode team.
 pub trait ProgramCompiler {
-    fn compile_program(&mut self, program: &Program) -> Result<Chunk, NativeError>;
+    fn compile_program(&mut self, program: &Program) -> Result<SharedChunk, NativeError>;
 }
 
 /// Execution contract owned by the VM/runtime team.
@@ -120,7 +121,7 @@ impl SourceParser for NativeFrontend {
 }
 
 impl ProgramCompiler for Compiler {
-    fn compile_program(&mut self, program: &Program) -> Result<Chunk, NativeError> {
+    fn compile_program(&mut self, program: &Program) -> Result<SharedChunk, NativeError> {
         Ok(Compiler::compile_program(self, program)?)
     }
 }
@@ -175,7 +176,7 @@ where
         self.frontend.parse_source(source)
     }
 
-    pub fn compile(&mut self, program: &Program) -> Result<Chunk, NativeError> {
+    pub fn compile(&mut self, program: &Program) -> Result<SharedChunk, NativeError> {
         self.compiler.compile_program(program)
     }
 
@@ -202,7 +203,7 @@ where
 mod tests {
     use super::{
         Chunk, ChunkExecutor, Instruction, JsValue, NativeContext, NativeError, NativePipeline,
-        Program, ProgramCompiler, SourceParser,
+        Program, ProgramCompiler, SharedChunk, SourceParser,
     };
 
     #[test]
@@ -228,14 +229,12 @@ mod tests {
         }
 
         impl ProgramCompiler for FakeCompiler {
-            fn compile_program(&mut self, _program: &Program) -> Result<Chunk, NativeError> {
+            fn compile_program(&mut self, _program: &Program) -> Result<SharedChunk, NativeError> {
                 Ok(Chunk {
                     instructions: vec![Instruction::ReturnUndefined],
-                    constants: Vec::new(),
-                    functions: Vec::new(),
-                    handlers: Vec::new(),
-                    function_body_start: 0,
-                })
+                    ..Chunk::default()
+                }
+                .into_shared())
             }
         }
 

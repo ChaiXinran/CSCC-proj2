@@ -5,7 +5,7 @@ use agentjs::{
     contracts::{NativeFrontend, ProgramCompiler, SourceParser},
 };
 
-fn compile(source: &str) -> agentjs::bytecode::Chunk {
+fn compile(source: &str) -> agentjs::bytecode::SharedChunk {
     let program = NativeFrontend
         .parse_source(source)
         .unwrap_or_else(|error| panic!("front end should accept {source:?}: {error}"));
