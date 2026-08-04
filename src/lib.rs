@@ -7,6 +7,7 @@ pub mod builtins;
 pub mod bytecode;
 pub mod contracts;
 pub mod engine;
+pub mod host;
 pub mod intl;
 pub mod lexer;
 pub mod parser;
@@ -21,3 +22,4 @@ pub use engine::{
     Engine, EvalFailure, ExecutionOptions, ExecutionReport, FailureKind, Runtime, RuntimeConfig,
     SourceKind,
 };
+pub use host::{HostFileLoader, HostLoadError, HostServices, RootedFileLoader};

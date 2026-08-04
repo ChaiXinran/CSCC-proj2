@@ -24,7 +24,9 @@ foreach ($test in $Tests) {
 
         $processInfo = [System.Diagnostics.ProcessStartInfo]::new()
         $processInfo.FileName = $binary
-        $processInfo.Arguments = 'jetstream "' + (Resolve-Path $runner).Path + '"'
+        $processInfo.Arguments = 'jetstream "' + (Resolve-Path $runner).Path +
+            '" --resource-root "' + (Resolve-Path $JetStreamRoot).Path +
+            '" --diagnostics'
         $processInfo.WorkingDirectory = (Get-Location).Path
         $processInfo.UseShellExecute = $false
         $processInfo.RedirectStandardOutput = $true

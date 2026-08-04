@@ -4,7 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::backend::{BackendKind, RuntimeBackend, create_runtime};
+use crate::{
+    backend::{BackendKind, RuntimeBackend, create_runtime, create_runtime_with_host},
+    host::HostServices,
+};
 
 /// Limits applied to one JavaScript isolate.
 #[derive(Debug, Clone, Copy)]
@@ -15,6 +18,8 @@ pub struct RuntimeConfig {
     pub backtrace_limit: usize,
     pub script_cache_capacity: usize,
     pub install_test262_host: bool,
+    pub install_jetstream_host: bool,
+    pub diagnostics: bool,
     /// Maximum number of heap objects (JsObject + JsFunction + Environment) per isolate.
     /// Exceeding this limit throws a RuntimeLimit error rather than OOM-ing the process.
     pub heap_object_limit: usize,
@@ -35,6 +40,8 @@ impl Default for RuntimeConfig {
             backtrace_limit: 20,
             script_cache_capacity: 32,
             install_test262_host: false,
+            install_jetstream_host: false,
+            diagnostics: false,
             heap_object_limit: 500_000,
             heap_byte_limit: 256 * 1024 * 1024,
             wall_clock_limit: None,
@@ -139,6 +146,12 @@ impl Runtime {
     pub fn new(config: RuntimeConfig) -> Result<Self, EvalFailure> {
         Ok(Self {
             backend: create_runtime(BackendKind::Native, config)?,
+        })
+    }
+
+    pub fn with_host(config: RuntimeConfig, host: HostServices) -> Result<Self, EvalFailure> {
+        Ok(Self {
+            backend: create_runtime_with_host(BackendKind::Native, config, host)?,
         })
     }
 

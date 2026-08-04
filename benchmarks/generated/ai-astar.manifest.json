@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "ai-astar",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 516797,
   "entryFiles": [
     "./SeaMonster/ai-astar.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./SeaMonster/ai-astar.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "406cee54f84760512f96f6ed5143c1fa11e87cb34a5e3e606e9475d9c05f7b08",
+  "resourceHashes": {
+    "./SeaMonster/ai-astar.js": "sha256:746e18ca6916026c211a1537064d3efdca3a41de295eb2291e6c5e73f5f7faa1"
+  },
+  "runnerSha256": "8c2c02f51ce973f4d69d7bc2890193dc624b830dda44e249073d5be4738be822",
   "phaseMarkers": false
 }

@@ -1,8 +1,12 @@
 {
+  "schemaVersion": 2,
   "benchmark": "mobx",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 30,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 7688,
   "entryFiles": [
     "./utils/StartupBenchmark.js",
     "./mobx/benchmark.js"
@@ -11,12 +15,11 @@
     "./mobx/dist/bundle.es6.min.js"
   ],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./mobx/benchmark.js",
-    "./mobx/dist/bundle.es6.min.js",
-    "./utils/StartupBenchmark.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "52e03f8bce00fd0a813bf7fd6fff4ad82a6cd177fa905eba7a2b25d678f81094",
+  "resourceHashes": {
+    "./mobx/benchmark.js": "sha256:cb417dcc63aff7db4f31bc661e5d3f70b2543bf71d63eea04ed682736bc2aae0",
+    "./mobx/dist/bundle.es6.min.js": "sha256:c22567d1ee23a2efd72e576a762b74db6378f9c2bbc595ed4fb89b037c81d6f4",
+    "./utils/StartupBenchmark.js": "sha256:0f622fb59d12753526a8fc149483544ed43732bbc1c74cf1e78b6da38cde4351"
+  },
+  "runnerSha256": "f4ea516e983c5c361f43d02042fb622657b179112a7f212413ddcefd452ce09c",
   "phaseMarkers": false
 }

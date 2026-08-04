@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "crypto",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 49671,
   "entryFiles": [
     "./Octane/crypto.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./Octane/crypto.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "7d01f34c4b61b8d7847b291e192d15fd931939c155bb30bb91f834edbf963a25",
+  "resourceHashes": {
+    "./Octane/crypto.js": "sha256:efab270d7bee0c97545be209ff1c28e687513e822c19b348bb7fb9e02e2ac6b7"
+  },
+  "runnerSha256": "b221e25e1d5df6029b41deff49fe9f315a998ff255acf6def0dba71f10151cfe",
   "phaseMarkers": false
 }

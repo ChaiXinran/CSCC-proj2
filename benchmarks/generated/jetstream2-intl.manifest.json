@@ -1,8 +1,12 @@
 {
+  "schemaVersion": 2,
   "benchmark": "intl",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 19902,
   "entryFiles": [
     "./intl/src/helper.js",
     "./intl/src/RelativeTimeFormat.js",
@@ -14,16 +18,15 @@
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./intl/benchmark.js",
-    "./intl/src/DateTimeFormat.js",
-    "./intl/src/ListFormat.js",
-    "./intl/src/NumberFormat.js",
-    "./intl/src/PluralRules.js",
-    "./intl/src/RelativeTimeFormat.js",
-    "./intl/src/helper.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "29bf3a71814b81b34e5f73e5369cbb27a18904b5c3e4fcc5f8688e201a74052e",
+  "resourceHashes": {
+    "./intl/benchmark.js": "sha256:c451ce2e42b3cd43720aef4e64cdef5913ea2d359b9e41a7c6a2f8d44ed01cdd",
+    "./intl/src/DateTimeFormat.js": "sha256:8581461ffd1075243187b46ac652167572f899dab53a46d62b8b3044121a5227",
+    "./intl/src/ListFormat.js": "sha256:1975f858ad0cede4c0c5c0e7fbbd5391c337b8233e210805760e6d3714793036",
+    "./intl/src/NumberFormat.js": "sha256:dab3a1c517b26afdc605db9e9e74b9f4db1f8dba33f2cbd2a9f943ebafd49168",
+    "./intl/src/PluralRules.js": "sha256:112715e62d0021ec7ade4b63f965e8936dc7309c6908792d6ce352c15453d243",
+    "./intl/src/RelativeTimeFormat.js": "sha256:fd6114313247ac71c765573b5feda123d5204f1bcb116eb9187d2ac0621ff228",
+    "./intl/src/helper.js": "sha256:f0f5baefd2ceef21cecf5eca4ef73c2729932a1e2775c558a6322b1f50fea4a3"
+  },
+  "runnerSha256": "7ccbb64aac33c79a40478edf5b015b22b455762ccee7dddbd27dc7bcc878cea5",
   "phaseMarkers": false
 }

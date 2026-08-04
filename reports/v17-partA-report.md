@@ -514,3 +514,85 @@ additional correctness loss.
 During the full run, an external commit `a82a100 (fix runner)` captured the A
 work, including this fast path. `src/runtime/context.rs` and
 `src/vm/interpreter.rs` are therefore conflict-sensitive for later B/C merges.
+
+## Three-track A repair: external JetStream resources
+
+The repository-wide audit confirmed that generated runners still embedded every
+resource in `__jetstreamResources`, retained a Shell `scripts.join("\\n")`, and
+compiled the resulting payload again through `new Function`. The checked-in WSL
+runner was 807,363 bytes and jsdom-d3-startup was 7,175,613 bytes.
+
+Track A added an opt-in rooted host loader and `Runtime::with_host`; ordinary
+Runtime, REPL, run, eval, and Test262 isolates do not receive filesystem access.
+The loader rejects absolute paths, parent traversal, canonicalized root escapes,
+missing files, and non-UTF-8 input. JetStream CLI now requires
+`--resource-root`, accepts `--gc-threshold` and `--diagnostics`, and executes the
+driver prelude, ordered entry files, and launch code in the same Runtime/global
+environment. Runtime-discovered data still passes through the same rooted
+`readFile` builtin.
+
+Manifest schema v2 stores normalized paths and SHA-256 values rather than source
+text. All 19 canonical runners were regenerated. WSL fell to 121,432 bytes,
+jsdom-d3-startup to 115,170 bytes, and threejs to 115,134 bytes; none of the 19
+canonical runners contains `__jetstreamResources` or `scripts.join`. The Node reference
+shell was updated to consume the same staged-runner boundary.
+
+Focused verification completed so far:
+
+- host loader tests: 2 passed, covering default denial, valid opt-in reads, and
+  parent traversal rejection;
+- release Richards, one iteration: PASS and `JETSTREAM_RUN_COMPLETE`;
+- diagnostics exposed runner read size, parse/compile/execute stages, and the
+  actual `resource_read` path;
+- generator produced all 19 canonical runner/manifest pairs successfully.
+
+Final project gates passed: `cargo fmt --all -- --check`,
+`cargo check --all-targets`, `cargo test --all-targets`,
+`cargo test --no-default-features --test native_test262`, and
+`cargo clippy --all-targets -- -D warnings`. The three modified Node scripts
+passed `node --check`; the staged Node reference runner completed Richards with
+`JETSTREAM_RUN_COMPLETE`.
+
+Interface details not frozen by the shared document are isolated in
+`docs/JetStream/a-three-track-interface-deviations.md`.
+
+## External-resource generated-runner matrix
+
+Track A ran the 19 existing `benchmarks/generated` manifest-v2 runners without
+regeneration, using one iteration, a 150-second timeout, a 1.5 GiB working-set
+limit, and the rooted JetStream host. The result was 10/19 PASS, four
+MEMORY_LIMIT cases, three CALL_ERROR cases, one ASSERTION_FAILURE, and one
+ENGINE_FAILURE. No case timed out and no AgentJS process remained alive.
+
+The complete report is
+`docs/JetStream/jetstream-generated-external-resources-2026-08-04.md`; raw JSON
+and per-case logs are in `reports/jetstream2-generated-2026-08-04/`. The new
+`scripts/run-generated-jetstream2-diagnostics.ps1` preserves each runner hash,
+records peak working set and diagnostics, writes the summary incrementally, and
+terminates memory/timeout cases before continuing.
+
+This matrix exposed three A-side follow-ups: startup preload/cache-bust text is
+broken under both the AgentJS and Node staged hosts, while ai-astar and splay
+regressed from PASS to the memory ceiling. Intl newly passed. These results are
+reported as diagnostics, not as a formal multi-repeat performance benchmark.
+
+### External-resource regression correction
+
+The Host loader now normalizes CRLF and legacy CR to LF, restoring the generator's
+previous text contract. Node startup references and AgentJS MobX returned to
+PASS. Entry execution now uses `isolated-host` for at most 640 KiB and `staged`
+for larger workloads. This restored ai-astar, splay, regexp, MobX, and web-ssr
+without embedding source in runners.
+
+Functional coverage is 15/19. Under the separate 1.5 GiB protection matrix it
+is 13/19 because ai-astar and splay complete successfully without the external
+kill threshold but cross that budget during monitored runs. WSL and threejs
+remain staged; their runner sizes are about 122 KiB and 116 KiB respectively.
+The generator/verifier reject embedded resources, `scripts.join`, runners above
+512 KiB, and inline harness source above 1 MiB. Full results are in
+`docs/JetStream/jetstream-generated-external-resources-fixed-2026-08-04.md`.
+
+Post-fix project gates all passed: formatting, all-target check, all-target
+tests, the fixed native Test262 integration gate, and clippy with warnings
+denied. Static audit passed for all 19 canonical runners, and deterministic
+regeneration produced identical SHA-256 pairs for every runner.

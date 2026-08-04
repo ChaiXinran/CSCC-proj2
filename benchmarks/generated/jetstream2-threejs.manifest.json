@@ -1,19 +1,22 @@
 {
+  "schemaVersion": 2,
   "benchmark": "threejs",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "staged",
+  "entrySourceBytes": 1284409,
   "entryFiles": [
     "./threejs/three.js",
     "./threejs/benchmark.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./threejs/benchmark.js",
-    "./threejs/three.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "68b2e1fbbc38a98d0ba55c83738b58bfeb195d78d3dc38e9521e665a61ecc315",
+  "resourceHashes": {
+    "./threejs/benchmark.js": "sha256:d970caada644f035fa000820dba27d8d68cee7192364945f465de95fe750f6ac",
+    "./threejs/three.js": "sha256:bdae33e8de1ad252d53c48100ea6bb565aee233e9d6e44dd153244f494d9f2ea"
+  },
+  "runnerSha256": "196190b4bddcb80768e3c84188800107969b841b9a8560e5833ac03ea5004b88",
   "phaseMarkers": false
 }

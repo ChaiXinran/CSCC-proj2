@@ -17,6 +17,7 @@ use crate::{
     builtins,
     contracts::{Chunk, NativeContext, NativeError, NativePipeline, Program, VmErrorKind},
     engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig, SourceKind},
+    host::HostServices,
     lexer::Lexer,
     parser::Parser,
     runtime::{
@@ -84,6 +85,16 @@ pub(crate) fn create_runtime(
     }
 }
 
+pub(crate) fn create_runtime_with_host(
+    kind: BackendKind,
+    config: RuntimeConfig,
+    host: HostServices,
+) -> Result<Box<dyn RuntimeBackend>, EvalFailure> {
+    match kind {
+        BackendKind::Native => Ok(Box::new(NativeRuntime::with_host(config, host))),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // NativeRuntime – script cache, parse, compile, execute
 // ---------------------------------------------------------------------------
@@ -133,12 +144,21 @@ pub struct NativeRuntime {
 impl NativeRuntime {
     #[must_use]
     pub fn new(config: RuntimeConfig) -> Self {
+        Self::with_host(config, HostServices::default())
+    }
+
+    pub fn with_host(config: RuntimeConfig, host: HostServices) -> Self {
         let mut context =
             NativeContext::with_heap_limits(config.heap_object_limit, config.heap_byte_limit);
+        context.install_host_services(host);
         context.configure_heap_limits(config.heap_byte_limit, config.gc_allocation_threshold);
         builtins::install_foundation(&mut context);
         if config.install_test262_host {
             builtins::install_test262_harness(&mut context);
+        }
+        if config.install_jetstream_host {
+            crate::host::install_jetstream_host(&mut context)
+                .expect("install JetStream host services");
         }
         Self {
             config,
@@ -162,6 +182,9 @@ impl NativeRuntime {
     fn evaluate(&mut self, source: &str) -> Result<crate::runtime::JsValue, EvalFailure> {
         self.reset_limits();
         let chunk = self.prepare_chunk(source).map_err(classify_native_error)?;
+        if self.config.diagnostics {
+            eprintln!("execute_start");
+        }
         self.pipeline
             .execute(&chunk, &mut self.context)
             .map_err(classify_native_error)
@@ -169,8 +192,19 @@ impl NativeRuntime {
 
     fn prepare_chunk(&mut self, source: &str) -> Result<Chunk, NativeError> {
         if self.config.script_cache_capacity == 0 {
+            if self.config.diagnostics {
+                eprintln!("parse_start");
+            }
             let program = self.parse_current_source(source)?;
-            return self.pipeline.compile(&program);
+            if self.config.diagnostics {
+                eprintln!("parse_end");
+                eprintln!("compile_start");
+            }
+            let chunk = self.pipeline.compile(&program);
+            if self.config.diagnostics {
+                eprintln!("compile_end");
+            }
+            return chunk;
         }
 
         let key = NativeScriptCacheKey {
@@ -190,8 +224,18 @@ impl NativeRuntime {
         }
 
         self.cache_stats.misses = self.cache_stats.misses.saturating_add(1);
+        if self.config.diagnostics {
+            eprintln!("parse_start");
+        }
         let program = self.parse_current_source(source)?;
+        if self.config.diagnostics {
+            eprintln!("parse_end");
+            eprintln!("compile_start");
+        }
         let chunk = self.pipeline.compile(&program)?;
+        if self.config.diagnostics {
+            eprintln!("compile_end");
+        }
         let max_stack_depth = chunk
             .analyze_stack()
             .map_err(|error| {

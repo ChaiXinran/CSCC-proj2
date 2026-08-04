@@ -1,8 +1,12 @@
 {
+  "schemaVersion": 2,
   "benchmark": "jsdom-d3-startup",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 15,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 9173,
   "entryFiles": [
     "./utils/StartupBenchmark.js",
     "./jsdom-d3-startup/benchmark.js"
@@ -13,14 +17,13 @@
     "./jsdom-d3-startup/data/airports.csv"
   ],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./jsdom-d3-startup/benchmark.js",
-    "./jsdom-d3-startup/data/airports.csv",
-    "./jsdom-d3-startup/data/counties-albers-10m.json",
-    "./jsdom-d3-startup/dist/bundle.min.js",
-    "./utils/StartupBenchmark.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "bb494b58caf92b78c6d36b4c70c03631aa6dd134ade6943e1109dcacb4ba1dfc",
+  "resourceHashes": {
+    "./jsdom-d3-startup/benchmark.js": "sha256:1f7feb02a51337933c47efc92006b71b9e310b131fa6ba934d58484a234cdb35",
+    "./jsdom-d3-startup/data/airports.csv": "sha256:c0ffbe29ae8c280e96574d725b12f3860f8212ceb3b84e0cb40c74c98f2fc06c",
+    "./jsdom-d3-startup/data/counties-albers-10m.json": "sha256:cc5eaf8442ef1489bf3d0dfe84aa99110b04070916e08dcbc86019e279e2e5b8",
+    "./jsdom-d3-startup/dist/bundle.min.js": "sha256:6358b21e94e869171f2ba1e6ee15672e7cea327fea6e9f33907135883185fc43",
+    "./utils/StartupBenchmark.js": "sha256:0f622fb59d12753526a8fc149483544ed43732bbc1c74cf1e78b6da38cde4351"
+  },
+  "runnerSha256": "e4f2b12958bfa45fa3a8d9124a14bdc741c4118beb38f8e4bd63db61ee4fcfb2",
   "phaseMarkers": false
 }

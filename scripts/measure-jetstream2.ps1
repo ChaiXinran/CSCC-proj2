@@ -38,7 +38,8 @@ foreach ($test in $Tests) {
     foreach ($repeat in 1..$Repeats) {
         $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
         $startInfo.FileName = $binary
-        $startInfo.Arguments = 'jetstream "' + (Resolve-Path $runner).Path + '"'
+        $startInfo.Arguments = 'jetstream "' + (Resolve-Path $runner).Path +
+            '" --resource-root "' + (Resolve-Path $JetStreamRoot).Path + '"'
         $startInfo.WorkingDirectory = (Get-Location).Path
         $startInfo.UseShellExecute = $false
         $startInfo.RedirectStandardOutput = $true

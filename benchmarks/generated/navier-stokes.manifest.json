@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "navier-stokes",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 13292,
   "entryFiles": [
     "./Octane/navier-stokes.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./Octane/navier-stokes.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "f7909a6a1294e194770382c8060767046c6558a539ebec18cb1dc475d4f15713",
+  "resourceHashes": {
+    "./Octane/navier-stokes.js": "sha256:6df9501038437d93b53a03a86cb1590a54d0ac004c3e135181980c12531f16a6"
+  },
+  "runnerSha256": "ac0cac57d91bd63456f1d004fd2eaa1f2f0f8da133621dc5a00b3ca51b70add8",
   "phaseMarkers": false
 }

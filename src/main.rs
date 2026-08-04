@@ -3,11 +3,13 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     process::ExitCode,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
 use agentjs::{
-    BackendKind, Engine, ExecutionOptions, Runtime, RuntimeConfig,
+    BackendKind, Engine, ExecutionOptions, HostFileLoader, HostServices, RootedFileLoader, Runtime,
+    RuntimeConfig,
     test262::{RunnerOptions, Status},
 };
 
@@ -77,6 +79,9 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
     let mut path = None;
     let mut loop_limit = u64::MAX;
     let mut wall_clock_limit = None;
+    let mut resource_root = None;
+    let mut gc_threshold = 1_000_000;
+    let mut diagnostics = false;
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -93,13 +98,26 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
                     .map_err(|_| "--wall-clock-seconds must be an unsigned integer".to_string())?;
                 wall_clock_limit = Some(Duration::from_secs(seconds));
             }
+            "--resource-root" => {
+                index += 1;
+                resource_root = Some(PathBuf::from(required_value(
+                    args,
+                    index,
+                    "--resource-root",
+                )?));
+            }
+            "--gc-threshold" => {
+                index += 1;
+                gc_threshold = parse_usize(required_value(args, index, "--gc-threshold")?)?;
+            }
+            "--diagnostics" => diagnostics = true,
             argument if argument.starts_with('-') => {
                 return Err(format!("unknown jetstream option {argument}"));
             }
             argument if path.is_none() => path = Some(argument.to_string()),
             _ => {
                 return Err(
-                    "usage: agentjs jetstream <generated-runner.js> [--loop-limit N] [--wall-clock-seconds N]"
+                    "usage: agentjs jetstream <generated-runner.js> --resource-root <JetStream2-root> [--loop-limit N] [--wall-clock-seconds N] [--gc-threshold N] [--diagnostics]"
                         .into(),
                 );
             }
@@ -107,15 +125,32 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
         index += 1;
     }
     let path = path.ok_or_else(|| {
-        "usage: agentjs jetstream <generated-runner.js> [--loop-limit N] [--wall-clock-seconds N]"
+        "usage: agentjs jetstream <generated-runner.js> --resource-root <JetStream2-root> [--loop-limit N] [--wall-clock-seconds N] [--gc-threshold N] [--diagnostics]"
             .to_string()
     })?;
+    let resource_root = resource_root
+        .ok_or_else(|| "--resource-root is required for JetStream runners".to_string())?;
+    if diagnostics {
+        eprintln!("runner_read_start:{}", path);
+    }
     let source = fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
+    if diagnostics {
+        eprintln!("runner_read_end:bytes={}", source.len());
+    }
     // Spawn on a dedicated thread with a large stack so deep-recursion benchmarks
     // (e.g. crypto) don't hit the OS thread stack limit.
     std::thread::Builder::new()
         .stack_size(256 * 1024 * 1024)
-        .spawn(move || jetstream_run(&source, loop_limit, wall_clock_limit))
+        .spawn(move || {
+            jetstream_run(
+                &source,
+                resource_root,
+                loop_limit,
+                wall_clock_limit,
+                gc_threshold,
+                diagnostics,
+            )
+        })
         .map_err(|error| error.to_string())?
         .join()
         .map_err(|_| "JetStream thread panicked".to_string())?
@@ -123,27 +158,59 @@ fn command_jetstream(args: &[String]) -> Result<(), String> {
 
 fn jetstream_run(
     source: &str,
+    resource_root: PathBuf,
     loop_limit: u64,
     wall_clock_limit: Option<Duration>,
+    gc_threshold: usize,
+    diagnostics: bool,
 ) -> Result<(), String> {
-    let mut runtime = Runtime::new(RuntimeConfig {
-        loop_limit,
-        recursion_limit: 8_192,
-        stack_limit: 8 * 1024 * 1024,
-        backtrace_limit: 20,
-        script_cache_capacity: 0,
-        install_test262_host: true,
-        heap_object_limit: usize::MAX,
-        heap_byte_limit: usize::MAX,
-        wall_clock_limit,
-        // Large benchmark-owned arrays are long-lived. Collecting in the
-        // middle of a JetStream iteration distorts timing and can sweep
-        // harness values that are still reachable through benchmark state.
-        gc_allocation_threshold: 1_000_000,
-    })
+    let loader = Arc::new(RootedFileLoader::new(resource_root).map_err(|error| error.to_string())?);
+    let host = HostServices {
+        file_loader: Some(loader.clone()),
+    };
+    let mut runtime = Runtime::with_host(
+        RuntimeConfig {
+            loop_limit,
+            recursion_limit: 8_192,
+            stack_limit: 8 * 1024 * 1024,
+            backtrace_limit: 20,
+            script_cache_capacity: 0,
+            install_test262_host: true,
+            install_jetstream_host: true,
+            diagnostics,
+            heap_object_limit: usize::MAX,
+            heap_byte_limit: usize::MAX,
+            wall_clock_limit,
+            // Large benchmark-owned arrays are long-lived. Collecting in the
+            // middle of a JetStream iteration distorts timing and can sweep
+            // harness values that are still reachable through benchmark state.
+            gc_allocation_threshold: gc_threshold,
+        },
+        host,
+    )
     .map_err(|error| error.to_string())?;
+    let (prelude, launch) = source
+        .split_once("/*__AGENTJS_LOAD_RESOURCES__*/")
+        .ok_or_else(|| "JetStream runner is missing the resource-load boundary".to_string())?;
+    runtime
+        .eval(prelude, ExecutionOptions::default())
+        .map_err(|error| error.to_string())?;
+    for line in prelude.lines() {
+        let Some(path) = line.strip_prefix("// AGENTJS_RESOURCE:") else {
+            continue;
+        };
+        if diagnostics {
+            eprintln!("resource_read:{path}");
+        }
+        let resource = loader
+            .read_text(std::path::Path::new(path))
+            .map_err(|error| error.to_string())?;
+        runtime
+            .eval(resource.as_ref(), ExecutionOptions::default())
+            .map_err(|error| format!("{path}: {error}"))?;
+    }
     let report = runtime
-        .eval(source, ExecutionOptions::default())
+        .eval(launch, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
     let benchmark_failure = report
         .output
@@ -483,7 +550,9 @@ USAGE:
   agentjs eval [--backend native] <source>
   agentjs run [--backend native] <file.js>
   agentjs jetstream <generated-runner.js>
+                  --resource-root <JetStream2-root>
                   [--loop-limit N] [--wall-clock-seconds N]
+                  [--gc-threshold N] [--diagnostics]
   agentjs repl [--backend native]
   agentjs test262 [--root test262] [--suite test] [--filter text]
                   [--backend native] [--limit N] [--jobs N]

@@ -1,17 +1,20 @@
 {
+  "schemaVersion": 2,
   "benchmark": "richards",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 120,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 16329,
   "entryFiles": [
     "./Octane/richards.js"
   ],
   "preloadFiles": [],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./Octane/richards.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "2eb0598359e3f7509fa6850675f20ac2d7647168bd12709b21021f2bd4566264",
+  "resourceHashes": {
+    "./Octane/richards.js": "sha256:18f3e84777925f18d4a4b4f0d612d2158a008064f4272facfc1c1b2bbf880c91"
+  },
+  "runnerSha256": "b1e8b3cefebc886d28335d9da8d9cc25b2f95203a4e6cf315d3091aec244f491",
   "phaseMarkers": false
 }

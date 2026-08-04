@@ -1,8 +1,12 @@
 {
+  "schemaVersion": 2,
   "benchmark": "web-ssr",
   "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
   "officialIterations": 30,
   "requestedIterations": 1,
+  "resourceRootMode": "cli",
+  "entryExecutionMode": "isolated-host",
+  "entrySourceBytes": 8782,
   "entryFiles": [
     "./utils/StartupBenchmark.js",
     "./web-ssr/benchmark.js"
@@ -11,12 +15,11 @@
     "./web-ssr/dist/bundle.min.js"
   ],
   "runtimeDiscoveredFiles": [],
-  "embeddedFiles": [
-    "./utils/StartupBenchmark.js",
-    "./web-ssr/benchmark.js",
-    "./web-ssr/dist/bundle.min.js"
-  ],
-  "missingFiles": [],
-  "runnerSha256": "e27cbfafb6ded3643e06a714c045055c9e47befdacb8df85dffcbd30a8b77a12",
+  "resourceHashes": {
+    "./utils/StartupBenchmark.js": "sha256:0f622fb59d12753526a8fc149483544ed43732bbc1c74cf1e78b6da38cde4351",
+    "./web-ssr/benchmark.js": "sha256:dd1c96177dcd7837a85fac8ab080dee60f76c8f16095cfda2967a595dc56168a",
+    "./web-ssr/dist/bundle.min.js": "sha256:f4a7de4431bd0d9c690415431cc4f1e2fe223acbca4737239f2f6117809391ea"
+  },
+  "runnerSha256": "0b22063050ca26b8fbbb8b19adceb2b4e62cf48acdf0e16c9ab9dcf0cbd90ac2",
   "phaseMarkers": false
 }

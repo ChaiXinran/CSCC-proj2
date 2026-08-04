@@ -70,26 +70,21 @@ function readSourceCommit() {
 const driverSource = fs.readFileSync(path.join(root, "JetStreamDriver.js"), "utf8");
 let adaptedDriverSource = driverSource
     .replace('return `load("${url}");`', "return readFile(url);")
+    .replace("return readFile(url);", "return __agentjsLoadEntry(url);")
     .replace(
         "if (JetStreamParams.testWorstCaseCount)",
         "if (JetStreamParams.testWorstCaseCount !== undefined)",
     )
     .replace("this.currentResolve = null;", "var currentResolve = null;")
     .replace("this.currentReject = null;", "var currentReject = null;")
-    .replace("this.JetStream = new Driver();", "var JetStream = new Driver();")
+    .replace("this.JetStream = new Driver(", "globalThis.JetStream = new Driver(")
     .replace(
         /this\._resourcesPromise = null;\r?\n\s*this\.fetchResources\(\);/,
-        "this._resourcesPromise = Promise.resolve();\n        this.scripts = this.plan.files.map((file) => readFile(file));",
+        "this._resourcesPromise = Promise.resolve();\n        this.scripts = this.plan.files.map((file) => ({ __agentjsFile: file }));",
     )
     .replace(
         "addScript(`const isInBrowser = ${isInBrowser}; let performance = {now: Date.now.bind(Date)};`);",
         "addScript(`var performance = globalThis.performance = {now: Date.now.bind(Date)};`);",
-    )
-    .replace(
-        /let scripts = string;\r?\n\s*let globalObject = runString\(""\);[\s\S]*?for \(let script of scripts\)\r?\n\s*globalObject\.loadString\(script\);\r?\n\s*return globalObject;/,
-        `let top = { currentResolve, currentReject };
-            new Function("top", string.join("\\n"))(top);
-            return globalThis;`,
     )
     .replace(
         "addScript(this.runnerCode);",
@@ -114,12 +109,18 @@ let adaptedDriverSource = driverSource
     )
     .replace(
         /for \(const script of this\.scripts\)\r?\n\s*globalObject\.loadString\(script\);/,
-        'globalObject.loadString(this.scripts.join("\\n"));',
+        'globalObject.loadString(this.scripts.reduce((joined, script) => script && script.__agentjsFile ? joined : joined + "\\n" + script, ""));',
     );
 if (adaptedDriverSource.includes('return `load("${url}");`'))
     throw new Error("failed to adapt ShellFileLoader.load");
-if (!adaptedDriverSource.includes('globalObject.loadString(this.scripts.join("\\n"));'))
+if (!adaptedDriverSource.includes("return __agentjsLoadEntry(url);"))
+    throw new Error("failed to route ShellFileLoader through the Host entry policy");
+if (!adaptedDriverSource.includes("script && script.__agentjsFile ? joined"))
     throw new Error("failed to adapt ShellScripts.run");
+adaptedDriverSource = adaptedDriverSource.replace(
+    'const string = this.scripts.join("\\n");',
+    'const string = this.scripts.reduce((joined, script) => joined + "\\n" + script, "");',
+);
 
 if (phaseMarkers) {
     adaptedDriverSource = adaptedDriverSource
@@ -202,6 +203,16 @@ const benchmarkFiles = [
     ...(benchmark.files ?? []),
 ].map(normalizeResourcePath);
 const entryFiles = [...new Set(benchmarkFiles)];
+const entrySourceBytes = entryFiles.reduce(
+    (total, file) => total + fs.statSync(resolveResourcePath(file)).size,
+    0,
+);
+// Small workloads retain the original isolated function semantics, but their
+// text comes from the Host at runtime and is never embedded in the runner.
+// Large workloads are parsed one file at a time to bound source duplication.
+const entryExecutionMode = entrySourceBytes > 640 * 1024
+    ? "staged"
+    : "isolated-host";
 const preloadEntries = Object.entries(
     plan.preload ?? Object.fromEntries(benchmark.preloadEntries ?? []),
 ).map(([name, resource]) => [name, normalizeResourcePath(resource)]);
@@ -210,7 +221,6 @@ if (plan.wasmPath || plan.benchmarkClass?.name === "WasmBenchmark") {
     throw new Error(`${testName} requires WebAssembly and cannot run in AgentJS yet`);
 }
 
-const resources = {};
 const missingFiles = new Set(discoveryMissingFiles);
 const allResourceFiles = [
     ...entryFiles,
@@ -223,7 +233,6 @@ for (const relative of [...new Set(allResourceFiles)].sort()) {
         missingFiles.add(relative);
         continue;
     }
-    resources[relative] = readTextResource(absolute);
 }
 
 if (missingFiles.size) {
@@ -253,8 +262,14 @@ var console = {
     },
 };
 var runString = () => {
-    globalThis.loadString = (source) =>
-        new Function("top", source)(globalThis.top);
+    globalThis.loadString = (source) => {
+        // Entry files are executed by the Rust host before launch. Only the
+        // small driver-generated facade and iteration harness may reach this
+        // compiler boundary; reject accidental workload re-concatenation.
+        if (source.length > 1024 * 1024)
+            throw new Error("JetStream inline harness unexpectedly exceeds 1 MiB");
+        return new Function("top", source)(globalThis.top);
+    };
     return globalThis;
 };
 var load = (name) => globalThis.loadString(readFile(name));
@@ -279,13 +294,9 @@ var JetStreamParams = {
     testWorstCaseCountMap: {},
     testList: ${JSON.stringify(testName)},
 };
-var __jetstreamResources = ${JSON.stringify(resources)};
-var readFile = function (name) {
-    const normalized = String(name).replaceAll("\\\\", "/");
-    if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
-        throw new Error("JetStream resource not embedded: " + normalized);
-    return __jetstreamResources[normalized];
-};
+var __agentjsLoadEntry = ${entryExecutionMode === "staged"
+    ? '(url) => ({ __agentjsFile: url })'
+    : '(url) => readFile(url)'};
 var read = function (name, mode) {
     const text = readFile(name);
     if (mode !== "binary")
@@ -306,22 +317,40 @@ undefined;
 `;
 
 fs.mkdirSync(path.dirname(output), { recursive: true });
-const runnerSource = `${compatibility}\n${adaptedDriverSource}\n${launch}`.replace(
+const resourceDirectives = entryFiles
+    .filter(() => entryExecutionMode === "staged")
+    .map((file) => `// AGENTJS_RESOURCE:${file}`)
+    .join("\n");
+const runnerSource = `${resourceDirectives}\n${compatibility}\n(function () {\n${adaptedDriverSource}\n})();\n/*__AGENTJS_LOAD_RESOURCES__*/\n${launch}`.replace(
     /[ \t]+$/gm,
     "",
 );
+if (runnerSource.includes("__jetstreamResources"))
+    throw new Error("generated runner must not embed JetStream resources");
+if (runnerSource.includes('scripts.join("\\n")'))
+    throw new Error("generated runner must not concatenate workload scripts");
+if (Buffer.byteLength(runnerSource, "utf8") > 512 * 1024)
+    throw new Error("generated runner unexpectedly exceeds 512 KiB");
 const runnerSha256 = createHash("sha256").update(runnerSource).digest("hex");
 
 const manifest = {
+    schemaVersion: 2,
     benchmark: testName,
     sourceCommit: readSourceCommit(),
     officialIterations: plan.iterations ?? 120,
     requestedIterations: iterationCount || plan.iterations || 120,
+    resourceRootMode: "cli",
+    entryExecutionMode,
+    entrySourceBytes,
     entryFiles,
     preloadFiles,
     runtimeDiscoveredFiles: [...discoveredResourceFiles].sort(),
-    embeddedFiles: Object.keys(resources).sort(),
-    missingFiles: [],
+    resourceHashes: Object.fromEntries(
+        [...new Set(allResourceFiles)].sort().map((relative) => [
+            relative,
+            `sha256:${createHash("sha256").update(readTextResource(resolveResourcePath(relative))).digest("hex")}`,
+        ]),
+    ),
     runnerSha256,
     phaseMarkers,
 };
@@ -346,6 +375,8 @@ console.log(
             requestedIterations: iterationCount || plan.iterations || 120,
             files: entryFiles,
             preloadFiles,
+            entryExecutionMode,
+            entrySourceBytes,
             manifest: manifestOutput,
             output,
         },
