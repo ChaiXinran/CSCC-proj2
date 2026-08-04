@@ -25,12 +25,12 @@ pub use crate::{
     runtime::{
         Binding, BuiltinFunction, BuiltinId, CallFrameRoots, CollectionStats, Collector,
         Environment, EnvironmentId, ExecutionBudget, FunctionId, Heap, HeapStats, Intrinsics,
-        JsFunction, JsObject, JsValue, ModuleEvaluationState, ModuleExportBinding, ModuleId,
-        ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus, NativeCall,
+        JsFunction, JsObject, JsString, JsValue, ModuleEvaluationState, ModuleExportBinding,
+        ModuleId, ModuleImportBinding, ModuleRecord, ModuleRegistry, ModuleStatus, NativeCall,
         NativeConstruct, NativeContext, NativeErrorKind, NativeErrorValue, ObjectId, ObjectKind,
         PropertyDescriptor, PropertyDescriptorUpdate, PropertyEntry, PropertyKind, PropertyMap,
-        RootSet, Symbol, SymbolId, SymbolRegistry, Trace, Tracer, WellKnownSymbols,
-        resolve_module_specifier,
+        PropertyName as RuntimePropertyName, PropertySlotId, RootSet, Symbol, SymbolId,
+        SymbolRegistry, Trace, Tracer, WellKnownSymbols, resolve_module_specifier,
     },
     vm::{CallFrame, Completion, Vm, VmError, VmErrorKind},
 };
