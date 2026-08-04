@@ -186,7 +186,7 @@ fn eval_impl(
         .compile_program(&program)
         .map_err(dynamic_function_syntax_error)?;
     let strict_eval = caller_is_strict || eval_source_is_strict;
-    rewrite_eval_global_accesses(&mut chunk, strict_eval);
+    rewrite_eval_global_accesses(std::sync::Arc::make_mut(&mut chunk), strict_eval);
 
     let saved_environment = context.environment_state();
     if !direct {

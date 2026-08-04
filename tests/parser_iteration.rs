@@ -18,7 +18,7 @@ fn parse(source: &str) -> Program {
         .expect("parsing succeeds")
 }
 
-fn compile(source: &str) -> agentjs::bytecode::Chunk {
+fn compile(source: &str) -> agentjs::bytecode::SharedChunk {
     let prog = parse(source);
     agentjs::bytecode::Compiler::new()
         .compile_program(&prog)

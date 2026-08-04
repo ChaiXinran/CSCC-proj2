@@ -15,7 +15,10 @@ use std::{
 use crate::{
     ast::ModuleDeclaration,
     builtins,
-    contracts::{Chunk, NativeContext, NativeError, NativePipeline, Program, VmErrorKind},
+    contracts::{
+        ChunkCacheMetadata, NativeContext, NativeError, NativePipeline, Program, SharedChunk,
+        VmErrorKind,
+    },
     engine::{EvalFailure, ExecutionOptions, FailureKind, RuntimeConfig, SourceKind},
     host::HostServices,
     lexer::Lexer,
@@ -109,15 +112,14 @@ struct NativeScriptCacheKey {
 #[derive(Debug, Clone)]
 struct NativeScriptCacheEntry {
     key: NativeScriptCacheKey,
-    program: Program,
-    chunk: Chunk,
-    max_stack_depth: usize,
+    chunk: SharedChunk,
+    metadata: ChunkCacheMetadata,
 }
 
 impl NativeScriptCacheEntry {
-    fn cached_chunk(&self) -> Chunk {
-        let _metadata = (self.program.body.len(), self.max_stack_depth);
-        self.chunk.clone()
+    fn cached_chunk(&self) -> SharedChunk {
+        let _metadata = self.metadata;
+        std::sync::Arc::clone(&self.chunk)
     }
 }
 
@@ -190,7 +192,7 @@ impl NativeRuntime {
             .map_err(classify_native_error)
     }
 
-    fn prepare_chunk(&mut self, source: &str) -> Result<Chunk, NativeError> {
+    fn prepare_chunk(&mut self, source: &str) -> Result<SharedChunk, NativeError> {
         if self.config.script_cache_capacity == 0 {
             if self.config.diagnostics {
                 eprintln!("parse_start");
@@ -246,9 +248,8 @@ impl NativeRuntime {
             .max_depth;
         let entry = NativeScriptCacheEntry {
             key,
-            program: program.clone(),
-            chunk: chunk.clone(),
-            max_stack_depth,
+            chunk: std::sync::Arc::clone(&chunk),
+            metadata,
         };
         if self.script_cache.len() == self.config.script_cache_capacity {
             self.script_cache.pop_front();
