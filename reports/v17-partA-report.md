@@ -488,3 +488,29 @@ pair. The regenerated set also completed 19/19 under the Node reference shell.
 Together with zero missing resources and complete manifests, this closes the
 original A1-A4 runner/infrastructure acceptance scope. Remaining threejs/WSL
 root-cause work requires engine-internal facilities owned outside Track A.
+
+## JetStream A7: ordinary LoadName fast path
+
+Profiling by controlled before/after sampling confirmed that ordinary name
+loads paid for two environment-chain walks: the VM first built a temporary
+`name_resolution_chain`, then `resolve_binding_value` walked the chain again.
+The new internal fast path resolves declarative bindings in one pass. When it
+encounters an object environment, it falls back to the original observable
+`with`/Proxy path. No opcode, chunk format, `contracts.rs`, or public boundary
+changed.
+
+Navier-stokes at one iteration measured 3109 ms median over three samples
+before the change. Five post-change samples measured 2116 ms median and
+2191 ms p90, an approximately 32% median reduction. Focused
+`language/statements/with` Test262 was 127/181 with zero skips, and the added
+runtime regression covers both object interception and outer-binding fallback.
+
+The full Test262 result was 48,422/53,379 passed, 4,955 failed, and 2 skipped.
+This is one fewer pass than the locked current-worktree result of 48,423. The
+user explicitly accepted this one-test tradeoff for the measured performance
+gain; it is recorded as an exception and must not be treated as permission for
+additional correctness loss.
+
+During the full run, an external commit `a82a100 (fix runner)` captured the A
+work, including this fast path. `src/runtime/context.rs` and
+`src/vm/interpreter.rs` are therefore conflict-sensitive for later B/C merges.
