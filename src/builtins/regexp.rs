@@ -642,6 +642,12 @@ fn translate_js_pattern_for_rust(pattern: &str, flags: &str) -> String {
                     output.push_str(js_word);
                 } else if in_class && next == 'W' {
                     output.push_str(r"\W");
+                } else if in_class && next == '-' {
+                    // In a legacy JavaScript character class, `\-` denotes a
+                    // literal hyphen.  Dropping the identity escape here can
+                    // turn it into a range operator (for example `[_- ]`) or
+                    // make the translated pattern invalid for fancy-regex.
+                    output.push_str(r"\-");
                 } else if next == 'w' {
                     output.push_str("(?-i:[");
                     output.push_str(js_word);

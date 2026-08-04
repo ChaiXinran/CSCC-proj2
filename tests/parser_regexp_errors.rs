@@ -36,6 +36,18 @@ fn regexp_literal_preserves_pattern_and_flags() {
 }
 
 #[test]
+fn legacy_character_class_preserves_escaped_hyphen() {
+    let program = parse_ok(r"/[@_\- ]/g;");
+    let Statement::Expression(Expression::Literal(Literal::RegExp { pattern, flags })) =
+        &program.body[0]
+    else {
+        panic!("expected RegExp literal expression");
+    };
+    assert_eq!(pattern, r"[@_\- ]");
+    assert_eq!(flags, "g");
+}
+
+#[test]
 fn rejects_quantifiers_without_atoms() {
     for source in [r"/?/;", r"/{2}/;", r"/{2,}/;", r"/{2,3}/;"] {
         parse_fails(source);
