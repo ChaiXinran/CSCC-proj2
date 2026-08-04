@@ -1,10 +1,33 @@
 
 const isInBrowser = false;
+const isD8 = false;
+const isSpiderMonkey = false;
 const jetStreamHostPrint = typeof globalThis.print === "function"
     ? globalThis.print
     : (...args) => globalThis.console.log(...args);
 globalThis.print = jetStreamHostPrint;
-var console = { log: (...args) => jetStreamHostPrint(...args) };
+var __jetstreamPhase = (phase) =>
+    jetStreamHostPrint("JETSTREAM_PHASE:" + Date.now() + ":" + phase);
+var console = {
+    log: (...args) => jetStreamHostPrint(...args),
+    warn: (...args) => jetStreamHostPrint(...args),
+    error: (...args) => jetStreamHostPrint(...args),
+    assert(condition, ...args) {
+        if (!condition)
+            throw new Error(args.join(" ") || "Assertion failed");
+    },
+};
+var runString = () => {
+    globalThis.loadString = (source) =>
+        new Function("top", source)(globalThis.top);
+    return globalThis;
+};
+var load = (name) => globalThis.loadString(readFile(name));
+var performance = globalThis.performance = {
+    now: Date.now.bind(Date),
+    mark(name) { return { name }; },
+    measure() {},
+};
 var document = globalThis.document = {
     getElementById() { return { innerHTML: "" }; }
 };
@@ -15,22 +38,33 @@ var JetStreamParams = {
     prefetchResources: false,
     forceGC: false,
     dumpJSONResults: false,
+    testIterationCount: 1,
+    testWorstCaseCount: 0,
     testIterationCountMap: {},
     testWorstCaseCountMap: {},
     testList: "raytrace",
 };
-var __jetstreamResources = {"./Octane/raytrace.js":"// The ray tracer code in this file is written by Adam Burmister. It\r\n// is available in its original form from:\r\n//\r\n//   http://labs.flog.nz.co/raytracer/\r\n//\r\n// It has been modified slightly by Google to work as a standalone\r\n// benchmark, but the all the computational code remains\r\n// untouched. This file also contains a copy of parts of the Prototype\r\n// JavaScript framework which is used by the ray tracer.\r\n\r\n\r\n// Variable used to hold a number that can be used to verify that\r\n// the scene was ray traced correctly.\r\nvar checkNumber;\r\n\r\n\r\n// ------------------------------------------------------------------------\r\n// ------------------------------------------------------------------------\r\n\r\n// The following is a copy of parts of the Prototype JavaScript library:\r\n\r\n// Prototype JavaScript framework, version 1.5.0\r\n// (c) 2005-2007 Sam Stephenson\r\n//\r\n// Prototype is freely distributable under the terms of an MIT-style license.\r\n// For details, see the Prototype web site: http://prototype.conio.net/\r\n\r\n\r\nvar Class = {\r\n  create: function() {\r\n    return function() {\r\n      this.initialize.apply(this, arguments);\r\n    }\r\n  }\r\n};\r\n\r\n\r\nObject.extend = function(destination, source) {\r\n  for (var property in source) {\r\n    destination[property] = source[property];\r\n  }\r\n  return destination;\r\n};\r\n\r\n\r\n// ------------------------------------------------------------------------\r\n// ------------------------------------------------------------------------\r\n\r\n// The rest of this file is the actual ray tracer written by Adam\r\n// Burmister. It's a concatenation of the following files:\r\n//\r\n//   flog/color.js\r\n//   flog/light.js\r\n//   flog/vector.js\r\n//   flog/ray.js\r\n//   flog/scene.js\r\n//   flog/material/basematerial.js\r\n//   flog/material/solid.js\r\n//   flog/material/chessboard.js\r\n//   flog/shape/baseshape.js\r\n//   flog/shape/sphere.js\r\n//   flog/shape/plane.js\r\n//   flog/intersectioninfo.js\r\n//   flog/camera.js\r\n//   flog/background.js\r\n//   flog/engine.js\r\n\r\n\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Color = Class.create();\r\n\r\nFlog.RayTracer.Color.prototype = {\r\n    red : 0.0,\r\n    green : 0.0,\r\n    blue : 0.0,\r\n\r\n    initialize : function(r, g, b) {\r\n        if(!r) r = 0.0;\r\n        if(!g) g = 0.0;\r\n        if(!b) b = 0.0;\r\n\r\n        this.red = r;\r\n        this.green = g;\r\n        this.blue = b;\r\n    },\r\n\r\n    add : function(c1, c2){\r\n        var result = new Flog.RayTracer.Color(0,0,0);\r\n\r\n        result.red = c1.red + c2.red;\r\n        result.green = c1.green + c2.green;\r\n        result.blue = c1.blue + c2.blue;\r\n\r\n        return result;\r\n    },\r\n\r\n    addScalar: function(c1, s){\r\n        var result = new Flog.RayTracer.Color(0,0,0);\r\n\r\n        result.red = c1.red + s;\r\n        result.green = c1.green + s;\r\n        result.blue = c1.blue + s;\r\n\r\n        result.limit();\r\n\r\n        return result;\r\n    },\r\n\r\n    subtract: function(c1, c2){\r\n        var result = new Flog.RayTracer.Color(0,0,0);\r\n\r\n        result.red = c1.red - c2.red;\r\n        result.green = c1.green - c2.green;\r\n        result.blue = c1.blue - c2.blue;\r\n\r\n        return result;\r\n    },\r\n\r\n    multiply : function(c1, c2) {\r\n        var result = new Flog.RayTracer.Color(0,0,0);\r\n\r\n        result.red = c1.red * c2.red;\r\n        result.green = c1.green * c2.green;\r\n        result.blue = c1.blue * c2.blue;\r\n\r\n        return result;\r\n    },\r\n\r\n    multiplyScalar : function(c1, f) {\r\n        var result = new Flog.RayTracer.Color(0,0,0);\r\n\r\n        result.red = c1.red * f;\r\n        result.green = c1.green * f;\r\n        result.blue = c1.blue * f;\r\n\r\n        return result;\r\n    },\r\n\r\n    divideFactor : function(c1, f) {\r\n        var result = new Flog.RayTracer.Color(0,0,0);\r\n\r\n        result.red = c1.red / f;\r\n        result.green = c1.green / f;\r\n        result.blue = c1.blue / f;\r\n\r\n        return result;\r\n    },\r\n\r\n    limit: function(){\r\n        this.red = (this.red > 0.0) ? ( (this.red > 1.0) ? 1.0 : this.red ) : 0.0;\r\n        this.green = (this.green > 0.0) ? ( (this.green > 1.0) ? 1.0 : this.green ) : 0.0;\r\n        this.blue = (this.blue > 0.0) ? ( (this.blue > 1.0) ? 1.0 : this.blue ) : 0.0;\r\n    },\r\n\r\n    distance : function(color) {\r\n        var d = Math.abs(this.red - color.red) + Math.abs(this.green - color.green) + Math.abs(this.blue - color.blue);\r\n        return d;\r\n    },\r\n\r\n    blend: function(c1, c2, w){\r\n        var result = new Flog.RayTracer.Color(0,0,0);\r\n        result = Flog.RayTracer.Color.prototype.add(\r\n                    Flog.RayTracer.Color.prototype.multiplyScalar(c1, 1 - w),\r\n                    Flog.RayTracer.Color.prototype.multiplyScalar(c2, w)\r\n                  );\r\n        return result;\r\n    },\r\n\r\n    brightness : function() {\r\n        var r = Math.floor(this.red*255);\r\n        var g = Math.floor(this.green*255);\r\n        var b = Math.floor(this.blue*255);\r\n        return (r * 77 + g * 150 + b * 29) >> 8;\r\n    },\r\n\r\n    toString : function () {\r\n        var r = Math.floor(this.red*255);\r\n        var g = Math.floor(this.green*255);\r\n        var b = Math.floor(this.blue*255);\r\n\r\n        return \"rgb(\"+ r +\",\"+ g +\",\"+ b +\")\";\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Light = Class.create();\r\n\r\nFlog.RayTracer.Light.prototype = {\r\n    position: null,\r\n    color: null,\r\n    intensity: 10.0,\r\n\r\n    initialize : function(pos, color, intensity) {\r\n        this.position = pos;\r\n        this.color = color;\r\n        this.intensity = (intensity ? intensity : 10.0);\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Light [' + this.position.x + ',' + this.position.y + ',' + this.position.z + ']';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Vector = Class.create();\r\n\r\nFlog.RayTracer.Vector.prototype = {\r\n    x : 0.0,\r\n    y : 0.0,\r\n    z : 0.0,\r\n\r\n    initialize : function(x, y, z) {\r\n        this.x = (x ? x : 0);\r\n        this.y = (y ? y : 0);\r\n        this.z = (z ? z : 0);\r\n    },\r\n\r\n    copy: function(vector){\r\n        this.x = vector.x;\r\n        this.y = vector.y;\r\n        this.z = vector.z;\r\n    },\r\n\r\n    normalize : function() {\r\n        var m = this.magnitude();\r\n        return new Flog.RayTracer.Vector(this.x / m, this.y / m, this.z / m);\r\n    },\r\n\r\n    magnitude : function() {\r\n        return Math.sqrt((this.x * this.x) + (this.y * this.y) + (this.z * this.z));\r\n    },\r\n\r\n    cross : function(w) {\r\n        return new Flog.RayTracer.Vector(\r\n                                            -this.z * w.y + this.y * w.z,\r\n                                           this.z * w.x - this.x * w.z,\r\n                                          -this.y * w.x + this.x * w.y);\r\n    },\r\n\r\n    dot : function(w) {\r\n        return this.x * w.x + this.y * w.y + this.z * w.z;\r\n    },\r\n\r\n    add : function(v, w) {\r\n        return new Flog.RayTracer.Vector(w.x + v.x, w.y + v.y, w.z + v.z);\r\n    },\r\n\r\n    subtract : function(v, w) {\r\n        if(!w || !v) throw 'Vectors must be defined [' + v + ',' + w + ']';\r\n        return new Flog.RayTracer.Vector(v.x - w.x, v.y - w.y, v.z - w.z);\r\n    },\r\n\r\n    multiplyVector : function(v, w) {\r\n        return new Flog.RayTracer.Vector(v.x * w.x, v.y * w.y, v.z * w.z);\r\n    },\r\n\r\n    multiplyScalar : function(v, w) {\r\n        return new Flog.RayTracer.Vector(v.x * w, v.y * w, v.z * w);\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Vector [' + this.x + ',' + this.y + ',' + this.z + ']';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Ray = Class.create();\r\n\r\nFlog.RayTracer.Ray.prototype = {\r\n    position : null,\r\n    direction : null,\r\n    initialize : function(pos, dir) {\r\n        this.position = pos;\r\n        this.direction = dir;\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Ray [' + this.position + ',' + this.direction + ']';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Scene = Class.create();\r\n\r\nFlog.RayTracer.Scene.prototype = {\r\n    camera : null,\r\n    shapes : [],\r\n    lights : [],\r\n    background : null,\r\n\r\n    initialize : function() {\r\n        this.camera = new Flog.RayTracer.Camera(\r\n            new Flog.RayTracer.Vector(0,0,-5),\r\n            new Flog.RayTracer.Vector(0,0,1),\r\n            new Flog.RayTracer.Vector(0,1,0)\r\n        );\r\n        this.shapes = new Array();\r\n        this.lights = new Array();\r\n        this.background = new Flog.RayTracer.Background(new Flog.RayTracer.Color(0,0,0.5), 0.2);\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\nif(typeof(Flog.RayTracer.Material) == 'undefined') Flog.RayTracer.Material = {};\r\n\r\nFlog.RayTracer.Material.BaseMaterial = Class.create();\r\n\r\nFlog.RayTracer.Material.BaseMaterial.prototype = {\r\n\r\n    gloss: 2.0,             // [0...infinity] 0 = matt\r\n    transparency: 0.0,      // 0=opaque\r\n    reflection: 0.0,        // [0...infinity] 0 = no reflection\r\n    refraction: 0.50,\r\n    hasTexture: false,\r\n\r\n    initialize : function() {\r\n\r\n    },\r\n\r\n    getColor: function(u, v){\r\n\r\n    },\r\n\r\n    wrapUp: function(t){\r\n        t = t % 2.0;\r\n        if(t < -1) t += 2.0;\r\n        if(t >= 1) t -= 2.0;\r\n        return t;\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Material [gloss=' + this.gloss + ', transparency=' + this.transparency + ', hasTexture=' + this.hasTexture +']';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Material.Solid = Class.create();\r\n\r\nFlog.RayTracer.Material.Solid.prototype = Object.extend(\r\n    new Flog.RayTracer.Material.BaseMaterial(), {\r\n        initialize : function(color, reflection, refraction, transparency, gloss) {\r\n            this.color = color;\r\n            this.reflection = reflection;\r\n            this.transparency = transparency;\r\n            this.gloss = gloss;\r\n            this.hasTexture = false;\r\n        },\r\n\r\n        getColor: function(u, v){\r\n            return this.color;\r\n        },\r\n\r\n        toString : function () {\r\n            return 'SolidMaterial [gloss=' + this.gloss + ', transparency=' + this.transparency + ', hasTexture=' + this.hasTexture +']';\r\n        }\r\n    }\r\n);\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Material.Chessboard = Class.create();\r\n\r\nFlog.RayTracer.Material.Chessboard.prototype = Object.extend(\r\n    new Flog.RayTracer.Material.BaseMaterial(), {\r\n        colorEven: null,\r\n        colorOdd: null,\r\n        density: 0.5,\r\n\r\n        initialize : function(colorEven, colorOdd, reflection, transparency, gloss, density) {\r\n            this.colorEven = colorEven;\r\n            this.colorOdd = colorOdd;\r\n            this.reflection = reflection;\r\n            this.transparency = transparency;\r\n            this.gloss = gloss;\r\n            this.density = density;\r\n            this.hasTexture = true;\r\n        },\r\n\r\n        getColor: function(u, v){\r\n            var t = this.wrapUp(u * this.density) * this.wrapUp(v * this.density);\r\n\r\n            if(t < 0.0)\r\n                return this.colorEven;\r\n            else\r\n                return this.colorOdd;\r\n        },\r\n\r\n        toString : function () {\r\n            return 'ChessMaterial [gloss=' + this.gloss + ', transparency=' + this.transparency + ', hasTexture=' + this.hasTexture +']';\r\n        }\r\n    }\r\n);\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\nif(typeof(Flog.RayTracer.Shape) == 'undefined') Flog.RayTracer.Shape = {};\r\n\r\nFlog.RayTracer.Shape.Sphere = Class.create();\r\n\r\nFlog.RayTracer.Shape.Sphere.prototype = {\r\n    initialize : function(pos, radius, material) {\r\n        this.radius = radius;\r\n        this.position = pos;\r\n        this.material = material;\r\n    },\r\n\r\n    intersect: function(ray){\r\n        var info = new Flog.RayTracer.IntersectionInfo();\r\n        info.shape = this;\r\n\r\n        var dst = Flog.RayTracer.Vector.prototype.subtract(ray.position, this.position);\r\n\r\n        var B = dst.dot(ray.direction);\r\n        var C = dst.dot(dst) - (this.radius * this.radius);\r\n        var D = (B * B) - C;\r\n\r\n        if(D > 0){ // intersection!\r\n            info.isHit = true;\r\n            info.distance = (-B) - Math.sqrt(D);\r\n            info.position = Flog.RayTracer.Vector.prototype.add(\r\n                                                ray.position,\r\n                                                Flog.RayTracer.Vector.prototype.multiplyScalar(\r\n                                                    ray.direction,\r\n                                                    info.distance\r\n                                                )\r\n                                            );\r\n            info.normal = Flog.RayTracer.Vector.prototype.subtract(\r\n                                            info.position,\r\n                                            this.position\r\n                                        ).normalize();\r\n\r\n            info.color = this.material.getColor(0,0);\r\n        } else {\r\n            info.isHit = false;\r\n        }\r\n        return info;\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Sphere [position=' + this.position + ', radius=' + this.radius + ']';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\nif(typeof(Flog.RayTracer.Shape) == 'undefined') Flog.RayTracer.Shape = {};\r\n\r\nFlog.RayTracer.Shape.Plane = Class.create();\r\n\r\nFlog.RayTracer.Shape.Plane.prototype = {\r\n    d: 0.0,\r\n\r\n    initialize : function(pos, d, material) {\r\n        this.position = pos;\r\n        this.d = d;\r\n        this.material = material;\r\n    },\r\n\r\n    intersect: function(ray){\r\n        var info = new Flog.RayTracer.IntersectionInfo();\r\n\r\n        var Vd = this.position.dot(ray.direction);\r\n        if(Vd == 0) return info; // no intersection\r\n\r\n        var t = -(this.position.dot(ray.position) + this.d) / Vd;\r\n        if(t <= 0) return info;\r\n\r\n        info.shape = this;\r\n        info.isHit = true;\r\n        info.position = Flog.RayTracer.Vector.prototype.add(\r\n                                            ray.position,\r\n                                            Flog.RayTracer.Vector.prototype.multiplyScalar(\r\n                                                ray.direction,\r\n                                                t\r\n                                            )\r\n                                        );\r\n        info.normal = this.position;\r\n        info.distance = t;\r\n\r\n        if(this.material.hasTexture){\r\n            var vU = new Flog.RayTracer.Vector(this.position.y, this.position.z, -this.position.x);\r\n            var vV = vU.cross(this.position);\r\n            var u = info.position.dot(vU);\r\n            var v = info.position.dot(vV);\r\n            info.color = this.material.getColor(u,v);\r\n        } else {\r\n            info.color = this.material.getColor(0,0);\r\n        }\r\n\r\n        return info;\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Plane [' + this.position + ', d=' + this.d + ']';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.IntersectionInfo = Class.create();\r\n\r\nFlog.RayTracer.IntersectionInfo.prototype = {\r\n    isHit: false,\r\n    hitCount: 0,\r\n    shape: null,\r\n    position: null,\r\n    normal: null,\r\n    color: null,\r\n    distance: null,\r\n\r\n    initialize : function() {\r\n        this.color = new Flog.RayTracer.Color(0,0,0);\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Intersection [' + this.position + ']';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Camera = Class.create();\r\n\r\nFlog.RayTracer.Camera.prototype = {\r\n    position: null,\r\n    lookAt: null,\r\n    equator: null,\r\n    up: null,\r\n    screen: null,\r\n\r\n    initialize : function(pos, lookAt, up) {\r\n        this.position = pos;\r\n        this.lookAt = lookAt;\r\n        this.up = up;\r\n        this.equator = lookAt.normalize().cross(this.up);\r\n        this.screen = Flog.RayTracer.Vector.prototype.add(this.position, this.lookAt);\r\n    },\r\n\r\n    getRay: function(vx, vy){\r\n        var pos = Flog.RayTracer.Vector.prototype.subtract(\r\n            this.screen,\r\n            Flog.RayTracer.Vector.prototype.subtract(\r\n                Flog.RayTracer.Vector.prototype.multiplyScalar(this.equator, vx),\r\n                Flog.RayTracer.Vector.prototype.multiplyScalar(this.up, vy)\r\n            )\r\n        );\r\n        pos.y = pos.y * -1;\r\n        var dir = Flog.RayTracer.Vector.prototype.subtract(\r\n            pos,\r\n            this.position\r\n        );\r\n\r\n        var ray = new Flog.RayTracer.Ray(pos, dir.normalize());\r\n\r\n        return ray;\r\n    },\r\n\r\n    toString : function () {\r\n        return 'Ray []';\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Background = Class.create();\r\n\r\nFlog.RayTracer.Background.prototype = {\r\n    color : null,\r\n    ambience : 0.0,\r\n\r\n    initialize : function(color, ambience) {\r\n        this.color = color;\r\n        this.ambience = ambience;\r\n    }\r\n}\r\n/* Fake a Flog.* namespace */\r\nif(typeof(Flog) == 'undefined') var Flog = {};\r\nif(typeof(Flog.RayTracer) == 'undefined') Flog.RayTracer = {};\r\n\r\nFlog.RayTracer.Engine = Class.create();\r\n\r\nFlog.RayTracer.Engine.prototype = {\r\n    canvas: null, /* 2d context we can render to */\r\n\r\n    initialize: function(options){\r\n        this.options = Object.extend({\r\n                canvasHeight: 100,\r\n                canvasWidth: 100,\r\n                pixelWidth: 2,\r\n                pixelHeight: 2,\r\n                renderDiffuse: false,\r\n                renderShadows: false,\r\n                renderHighlights: false,\r\n                renderReflections: false,\r\n                rayDepth: 2\r\n            }, options || {});\r\n\r\n        this.options.canvasHeight /= this.options.pixelHeight;\r\n        this.options.canvasWidth /= this.options.pixelWidth;\r\n\r\n        /* TODO: dynamically include other scripts */\r\n    },\r\n\r\n    setPixel: function(x, y, color){\r\n        var pxW, pxH;\r\n        pxW = this.options.pixelWidth;\r\n        pxH = this.options.pixelHeight;\r\n\r\n        if (this.canvas) {\r\n          this.canvas.fillStyle = color.toString();\r\n          this.canvas.fillRect (x * pxW, y * pxH, pxW, pxH);\r\n        } else {\r\n          if (x ===  y) {\r\n            checkNumber += color.brightness();\r\n          }\r\n          // print(x * pxW, y * pxH, pxW, pxH);\r\n        }\r\n    },\r\n\r\n    renderScene: function(scene, canvas){\r\n        checkNumber = 0;\r\n        /* Get canvas */\r\n        if (canvas) {\r\n          this.canvas = canvas.getContext(\"2d\");\r\n        } else {\r\n          this.canvas = null;\r\n        }\r\n\r\n        var canvasHeight = this.options.canvasHeight;\r\n        var canvasWidth = this.options.canvasWidth;\r\n\r\n        for(var y=0; y < canvasHeight; y++){\r\n            for(var x=0; x < canvasWidth; x++){\r\n                var yp = y * 1.0 / canvasHeight * 2 - 1;\r\n          \t\tvar xp = x * 1.0 / canvasWidth * 2 - 1;\r\n\r\n          \t\tvar ray = scene.camera.getRay(xp, yp);\r\n\r\n          \t\tvar color = this.getPixelColor(ray, scene);\r\n\r\n            \tthis.setPixel(x, y, color);\r\n            }\r\n        }\r\n        if (checkNumber !== 2321) {\r\n          throw new Error(\"Scene rendered incorrectly\");\r\n        }\r\n    },\r\n\r\n    getPixelColor: function(ray, scene){\r\n        var info = this.testIntersection(ray, scene, null);\r\n        if(info.isHit){\r\n            var color = this.rayTrace(info, ray, scene, 0);\r\n            return color;\r\n        }\r\n        return scene.background.color;\r\n    },\r\n\r\n    testIntersection: function(ray, scene, exclude){\r\n        var hits = 0;\r\n        var best = new Flog.RayTracer.IntersectionInfo();\r\n        best.distance = 2000;\r\n\r\n        for(var i=0; i<scene.shapes.length; i++){\r\n            var shape = scene.shapes[i];\r\n\r\n            if(shape != exclude){\r\n                var info = shape.intersect(ray);\r\n                if(info.isHit && info.distance >= 0 && info.distance < best.distance){\r\n                    best = info;\r\n                    hits++;\r\n                }\r\n            }\r\n        }\r\n        best.hitCount = hits;\r\n        return best;\r\n    },\r\n\r\n    getReflectionRay: function(P,N,V){\r\n        var c1 = -N.dot(V);\r\n        var R1 = Flog.RayTracer.Vector.prototype.add(\r\n            Flog.RayTracer.Vector.prototype.multiplyScalar(N, 2*c1),\r\n            V\r\n        );\r\n        return new Flog.RayTracer.Ray(P, R1);\r\n    },\r\n\r\n    rayTrace: function(info, ray, scene, depth){\r\n        // Calc ambient\r\n        var color = Flog.RayTracer.Color.prototype.multiplyScalar(info.color, scene.background.ambience);\r\n        var oldColor = color;\r\n        var shininess = Math.pow(10, info.shape.material.gloss + 1);\r\n\r\n        for(var i=0; i<scene.lights.length; i++){\r\n            var light = scene.lights[i];\r\n\r\n            // Calc diffuse lighting\r\n            var v = Flog.RayTracer.Vector.prototype.subtract(\r\n                                light.position,\r\n                                info.position\r\n                            ).normalize();\r\n\r\n            if(this.options.renderDiffuse){\r\n                var L = v.dot(info.normal);\r\n                if(L > 0.0){\r\n                    color = Flog.RayTracer.Color.prototype.add(\r\n                                        color,\r\n                                        Flog.RayTracer.Color.prototype.multiply(\r\n                                            info.color,\r\n                                            Flog.RayTracer.Color.prototype.multiplyScalar(\r\n                                                light.color,\r\n                                                L\r\n                                            )\r\n                                        )\r\n                                    );\r\n                }\r\n            }\r\n\r\n            // The greater the depth the more accurate the colours, but\r\n            // this is exponentially (!) expensive\r\n            if(depth <= this.options.rayDepth){\r\n          // calculate reflection ray\r\n          if(this.options.renderReflections && info.shape.material.reflection > 0)\r\n          {\r\n              var reflectionRay = this.getReflectionRay(info.position, info.normal, ray.direction);\r\n              var refl = this.testIntersection(reflectionRay, scene, info.shape);\r\n\r\n              if (refl.isHit && refl.distance > 0){\r\n                  refl.color = this.rayTrace(refl, reflectionRay, scene, depth + 1);\r\n              } else {\r\n                  refl.color = scene.background.color;\r\n                        }\r\n\r\n                  color = Flog.RayTracer.Color.prototype.blend(\r\n                    color,\r\n                    refl.color,\r\n                    info.shape.material.reflection\r\n                  );\r\n          }\r\n\r\n                // Refraction\r\n                /* TODO */\r\n            }\r\n\r\n            /* Render shadows and highlights */\r\n\r\n            var shadowInfo = new Flog.RayTracer.IntersectionInfo();\r\n\r\n            if(this.options.renderShadows){\r\n                var shadowRay = new Flog.RayTracer.Ray(info.position, v);\r\n\r\n                shadowInfo = this.testIntersection(shadowRay, scene, info.shape);\r\n                if(shadowInfo.isHit && shadowInfo.shape != info.shape /*&& shadowInfo.shape.type != 'PLANE'*/){\r\n                    var vA = Flog.RayTracer.Color.prototype.multiplyScalar(color, 0.5);\r\n                    var dB = (0.5 * Math.pow(shadowInfo.shape.material.transparency, 0.5));\r\n                    color = Flog.RayTracer.Color.prototype.addScalar(vA,dB);\r\n                }\r\n            }\r\n\r\n      // Phong specular highlights\r\n      if(this.options.renderHighlights && !shadowInfo.isHit && info.shape.material.gloss > 0){\r\n        var Lv = Flog.RayTracer.Vector.prototype.subtract(\r\n                            info.shape.position,\r\n                            light.position\r\n                        ).normalize();\r\n\r\n        var E = Flog.RayTracer.Vector.prototype.subtract(\r\n                            scene.camera.position,\r\n                            info.shape.position\r\n                        ).normalize();\r\n\r\n        var H = Flog.RayTracer.Vector.prototype.subtract(\r\n                            E,\r\n                            Lv\r\n                        ).normalize();\r\n\r\n        var glossWeight = Math.pow(Math.max(info.normal.dot(H), 0), shininess);\r\n        color = Flog.RayTracer.Color.prototype.add(\r\n                            Flog.RayTracer.Color.prototype.multiplyScalar(light.color, glossWeight),\r\n                            color\r\n                        );\r\n      }\r\n        }\r\n        color.limit();\r\n        return color;\r\n    }\r\n};\r\n\r\n\r\nfunction renderScene(){\r\n    var scene = new Flog.RayTracer.Scene();\r\n\r\n    scene.camera = new Flog.RayTracer.Camera(\r\n                        new Flog.RayTracer.Vector(0, 0, -15),\r\n                        new Flog.RayTracer.Vector(-0.2, 0, 5),\r\n                        new Flog.RayTracer.Vector(0, 1, 0)\r\n                    );\r\n\r\n    scene.background = new Flog.RayTracer.Background(\r\n                                new Flog.RayTracer.Color(0.5, 0.5, 0.5),\r\n                                0.4\r\n                            );\r\n\r\n    var sphere = new Flog.RayTracer.Shape.Sphere(\r\n        new Flog.RayTracer.Vector(-1.5, 1.5, 2),\r\n        1.5,\r\n        new Flog.RayTracer.Material.Solid(\r\n            new Flog.RayTracer.Color(0,0.5,0.5),\r\n            0.3,\r\n            0.0,\r\n            0.0,\r\n            2.0\r\n        )\r\n    );\r\n\r\n    var sphere1 = new Flog.RayTracer.Shape.Sphere(\r\n        new Flog.RayTracer.Vector(1, 0.25, 1),\r\n        0.5,\r\n        new Flog.RayTracer.Material.Solid(\r\n            new Flog.RayTracer.Color(0.9,0.9,0.9),\r\n            0.1,\r\n            0.0,\r\n            0.0,\r\n            1.5\r\n        )\r\n    );\r\n\r\n    var plane = new Flog.RayTracer.Shape.Plane(\r\n                                new Flog.RayTracer.Vector(0.1, 0.9, -0.5).normalize(),\r\n                                1.2,\r\n                                new Flog.RayTracer.Material.Chessboard(\r\n                                    new Flog.RayTracer.Color(1,1,1),\r\n                                    new Flog.RayTracer.Color(0,0,0),\r\n                                    0.2,\r\n                                    0.0,\r\n                                    1.0,\r\n                                    0.7\r\n                                )\r\n                            );\r\n\r\n    scene.shapes.push(plane);\r\n    scene.shapes.push(sphere);\r\n    scene.shapes.push(sphere1);\r\n\r\n    var light = new Flog.RayTracer.Light(\r\n        new Flog.RayTracer.Vector(5, 10, -1),\r\n        new Flog.RayTracer.Color(0.8, 0.8, 0.8)\r\n    );\r\n\r\n    var light1 = new Flog.RayTracer.Light(\r\n        new Flog.RayTracer.Vector(-3, 5, -15),\r\n        new Flog.RayTracer.Color(0.8, 0.8, 0.8),\r\n        100\r\n    );\r\n\r\n    scene.lights.push(light);\r\n    scene.lights.push(light1);\r\n\r\n    var imageWidth = 100; // $F('imageWidth');\r\n    var imageHeight = 100; // $F('imageHeight');\r\n    var pixelSize = \"5,5\".split(','); //  $F('pixelSize').split(',');\r\n    var renderDiffuse = true; // $F('renderDiffuse');\r\n    var renderShadows = true; // $F('renderShadows');\r\n    var renderHighlights = true; // $F('renderHighlights');\r\n    var renderReflections = true; // $F('renderReflections');\r\n    var rayDepth = 2;//$F('rayDepth');\r\n\r\n    var raytracer = new Flog.RayTracer.Engine(\r\n        {\r\n            canvasWidth: imageWidth,\r\n            canvasHeight: imageHeight,\r\n            pixelWidth: pixelSize[0],\r\n            pixelHeight: pixelSize[1],\r\n            \"renderDiffuse\": renderDiffuse,\r\n            \"renderHighlights\": renderHighlights,\r\n            \"renderShadows\": renderShadows,\r\n            \"renderReflections\": renderReflections,\r\n            \"rayDepth\": rayDepth\r\n        }\r\n    );\r\n\r\n    raytracer.renderScene(scene, null, 0);\r\n}\r\n\r\n\r\nclass Benchmark {\r\n    runIteration() {\r\n        for (let i = 0; i < 5; ++i)\r\n            renderScene();\r\n    }\r\n}\r\n"};
+var __jetstreamResources = {"./Octane/raytrace.js":"// The ray tracer code in this file is written by Adam Burmister.\n// It is available in its original form from:\n//\n//   http://labs.flog.nz.co/raytracer/\n//\n// It has been modified slightly by Google to work as a standalone benchmark,\n// but all the computational code remains untouched.\n\n// For JetStream3, this code was rewritten using ES6 classes,\n// dropping namespaces and Prototype.js class system, as well as slightly refactored.\n// All the computational code still remains untouched.\n\nclass Color {\n    constructor(red, green, blue) {\n        this.red = red;\n        this.green = green;\n        this.blue = blue;\n    }\n\n    static add(c1, c2) {\n        return new Color(c1.red + c2.red, c1.green + c2.green, c1.blue + c2.blue);\n    }\n\n    static addScalar(c1, s) {\n        return new Color(c1.red + s, c1.green + s, c1.blue + s).limit();\n    }\n\n    static multiply(c1, c2) {\n        return new Color(c1.red * c2.red, c1.green * c2.green, c1.blue * c2.blue);\n    }\n\n    static multiplyScalar(c1, f) {\n        return new Color(c1.red * f, c1.green * f, c1.blue * f);\n    }\n\n    static blend(c1, c2, w) {\n        return Color.add(\n            Color.multiplyScalar(c1, 1 - w),\n            Color.multiplyScalar(c2, w),\n        );\n    }\n\n    limit() {\n        this.red = this.red > 0 ? (this.red > 1 ? 1 : this.red) : 0;\n        this.green = this.green > 0 ? (this.green > 1 ? 1 : this.green) : 0;\n        this.blue = this.blue > 0 ? (this.blue > 1 ? 1 : this.blue) : 0;\n\n        return this;\n    }\n\n    brightness() {\n        const r = Math.floor(this.red * 255);\n        const g = Math.floor(this.green * 255);\n        const b = Math.floor(this.blue * 255);\n\n        return (r * 77 + g * 150 + b * 29) >> 8;\n    }\n\n    toString() {\n        const r = Math.floor(this.red * 255);\n        const g = Math.floor(this.green * 255);\n        const b = Math.floor(this.blue * 255);\n\n        return `rgb(${r},${g},${b})`;\n    }\n}\n\nclass Light {\n    constructor(position, color) {\n        this.position = position;\n        this.color = color;\n    }\n\n    toString() {\n        return `Light [${this.position}]`;\n    }\n}\n\nclass Vector {\n    static add(v, w) {\n        return new Vector(w.x + v.x, w.y + v.y, w.z + v.z);\n    }\n\n    static subtract(v, w) {\n        return new Vector(v.x - w.x, v.y - w.y, v.z - w.z);\n    }\n\n    static multiplyScalar(v, w) {\n        return new Vector(v.x * w, v.y * w, v.z * w);\n    }\n\n    constructor(x, y, z) {\n        this.x = x;\n        this.y = y;\n        this.z = z;\n    }\n\n    normalize() {\n        const m = this.magnitude();\n\n        return new Vector(this.x / m, this.y / m, this.z / m);\n    }\n\n    negateY() {\n        this.y *= -1;\n    }\n\n    magnitude() {\n        return Math.sqrt((this.x * this.x) + (this.y * this.y) + (this.z * this.z));\n    }\n\n    cross(w) {\n        return new Vector(\n            -this.z * w.y + this.y * w.z,\n            this.z * w.x - this.x * w.z,\n            -this.y * w.x + this.x * w.y,\n        );\n    }\n\n    dot(w) {\n        return this.x * w.x + this.y * w.y + this.z * w.z;\n    }\n\n    toString() {\n        return `Vector [${this.x},${this.y},${this.z}]`;\n    }\n}\n\nclass Ray {\n    constructor(position, direction) {\n        this.position = position;\n        this.direction = direction;\n    }\n\n    toString() {\n        return `Ray [${this.position},${this.direction}]`;\n    }\n}\n\nclass Scene {\n    constructor(camera, background, shapes, lights) {\n        this.camera = camera;\n        this.background = background;\n        this.shapes = shapes;\n        this.lights = lights;\n    }\n}\n\nclass Material {\n    constructor(reflection, transparency, gloss, hasTexture) {\n        this.reflection = reflection;\n        this.transparency = transparency;\n        this.gloss = gloss;\n        this.hasTexture = hasTexture;\n    }\n\n    getColor() {\n        throw new Error(\"getColor() isn't implemented\");\n    }\n\n    toString() {\n        return `Material [gloss=${this.gloss}, transparency=${this.transparency}, hasTexture=${this.hasTexture}]`;\n    }\n}\n\nclass SolidMaterial extends Material {\n    static defaultColor = new Color(0, 0, 0);\n\n    color = SolidMaterial.defaultColor;\n\n    constructor(color, reflection, transparency, gloss) {\n        super(reflection, transparency, gloss, true);\n        this.color = color;\n    }\n\n    getColor() {\n        return this.color;\n    }\n\n    toString() {\n        return `SolidMaterial [gloss=${this.gloss}, transparency=${this.transparency}, hasTexture=${this.hasTexture}]`;\n    }\n}\n\nclass ChessboardMaterial extends Material {\n    constructor(colorEven, colorOdd, reflection, transparency, gloss, density) {\n        super(reflection, transparency, gloss, true);\n        this.colorEven = colorEven;\n        this.colorOdd = colorOdd;\n        this.density = density;\n    }\n\n    wrapUp(t) {\n        t %= 2;\n        if (t < -1) t += 2;\n        if (t >= 1) t -= 2;\n        return t;\n    }\n\n    getColor(u, v) {\n        const t = this.wrapUp(u * this.density) * this.wrapUp(v * this.density);\n        return t < 0 ? this.colorEven : this.colorOdd;\n    }\n\n    toString() {\n        return `ChessMaterial [gloss=${this.gloss}, transparency=${this.transparency}, hasTexture=${this.hasTexture}]`;\n    }\n}\n\nclass Shape {\n    constructor(position, material) {\n        this.position = position;\n        this.material = material;\n    }\n\n    intersect(ray) {\n        throw new Error(\"intersect() isn't implemented\");\n    }\n}\n\nclass Sphere extends Shape {\n    constructor(position, material, radius) {\n        super(position, material);\n        this.radius = radius;\n    }\n\n    intersect(ray) {\n        const info = new IntersectionInfo();\n        info.shape = this;\n\n        const dst = Vector.subtract(ray.position, this.position);\n\n        const B = dst.dot(ray.direction);\n        const C = dst.dot(dst) - (this.radius * this.radius);\n        const D = (B * B) - C;\n\n        if (D > 0) { // intersection!\n            info.isHit = true;\n            info.distance = (-B) - Math.sqrt(D);\n            info.position = Vector.add(ray.position, Vector.multiplyScalar(ray.direction, info.distance));\n            info.normal = Vector.subtract(info.position, this.position).normalize();\n            info.color = this.material.getColor(0, 0);\n        } else {\n            info.isHit = false;\n        }\n\n        return info;\n    }\n\n    toString() {\n        return `Sphere [position=${this.position}, radius=${this.radius}]`;\n    }\n}\n\nclass Plane extends Shape {\n    constructor(position, material, d) {\n        super(position, material);\n        this.d = d;\n    }\n\n    intersect(ray) {\n        const info = new IntersectionInfo();\n        info.shape = this;\n\n        const Vd = this.position.dot(ray.direction);\n        if (Vd === 0) return info; // no intersection\n\n        const t = -(this.position.dot(ray.position) + this.d) / Vd;\n        if (t <= 0) return info;\n\n        info.isHit = true;\n        info.position = Vector.add(ray.position, Vector.multiplyScalar(ray.direction, t));\n        info.normal = this.position;\n        info.distance = t;\n\n        if (this.material.hasTexture) {\n            const vU = new Vector(this.position.y, this.position.z, -this.position.x);\n            const vV = vU.cross(this.position);\n            const u = info.position.dot(vU);\n            const v = info.position.dot(vV);\n            info.color = this.material.getColor(u, v);\n        } else {\n            info.color = this.material.getColor(0, 0);\n        }\n\n        return info;\n    }\n\n    toString() {\n        return `Plane [${this.position}, d=${this.d}]`;\n    }\n}\n\nclass IntersectionInfo {\n    constructor() {\n        this.isHit = false;\n        this.hitCount = 0;\n        this.shape = null;\n        this.position = null;\n        this.normal = null;\n        this.color = IntersectionInfo.defaultColor;\n        this.distance = null;\n    }\n\n    toString() {\n        return `Intersection [${this.position}]`;\n    }\n}\n\nIntersectionInfo.defaultColor = new Color(0, 0, 0);\n\nclass Camera {\n    constructor(position, lookAt, up) {\n        this.position = position;\n        this.lookAt = lookAt;\n        this.up = up;\n        this.equator = this.lookAt.normalize().cross(this.up);\n        this.screen = Vector.add(this.position, this.lookAt);\n    }\n\n    getRay(vx, vy) {\n        const pos = Vector.subtract(\n            this.screen,\n            Vector.subtract(\n                Vector.multiplyScalar(this.equator, vx),\n                Vector.multiplyScalar(this.up, vy),\n            ),\n        );\n\n        pos.negateY();\n\n        const dir = Vector.subtract(pos, this.position);\n        return new Ray(pos, dir.normalize());\n    }\n\n    toString() {\n        return `Camera [${this.position}]`;\n    }\n}\n\nclass Background {\n    constructor(color, ambience) {\n        this.color = color;\n        this.ambience = ambience;\n    }\n\n    toString() {\n        return `Background [${this.color}]`;\n    }\n}\n\nclass Engine {\n    constructor(options) {\n        // Variable used to hold a number that can be used to verify that\n        // the scene was ray traced correctly.\n        this.checkNumber = 0;\n\n        this.options = {\n            canvasHeight: 100,\n            canvasWidth: 100,\n            pixelWidth: 2,\n            pixelHeight: 2,\n            renderDiffuse: false,\n            renderShadows: false,\n            renderHighlights: false,\n            renderReflections: false,\n            rayDepth: 2,\n            ...options,\n        };\n\n        this.options.canvasHeight /= this.options.pixelHeight;\n        this.options.canvasWidth /= this.options.pixelWidth;\n    }\n\n    renderScene(scene) {\n        for (let x = 0; x < this.options.canvasWidth; x++) {\n            for (let y = 0; y < this.options.canvasHeight; y++) {\n                const xp = x * 1 / this.options.canvasWidth * 2 - 1;\n                const yp = y * 1 / this.options.canvasHeight * 2 - 1;\n\n                const ray = scene.camera.getRay(xp, yp);\n                const color = this.getPixelColor(ray, scene);\n\n                this.setPixel(x, y, color);\n            }\n        }\n\n        if (this.checkNumber !== 2321)\n            throw new Error(\"Scene rendered incorrectly\");\n    }\n\n    getPixelColor(ray, scene) {\n        const info = this.testIntersection(ray, scene, null);\n        if (info.isHit)\n            return this.rayTrace(info, ray, scene, 0);\n        return scene.background.color;\n    }\n\n    setPixel(x, y, color) {\n        if (x === y)\n            this.checkNumber += color.brightness();\n    }\n\n    testIntersection(ray, scene, exclude) {\n        let hitCount = 0;\n        let best = new IntersectionInfo();\n        best.distance = 2000;\n\n        for (let i = 0; i < scene.shapes.length; i++) {\n            const shape = scene.shapes[i];\n            if (shape !== exclude) {\n                const info = shape.intersect(ray);\n                if (info.isHit && info.distance >= 0 && info.distance < best.distance) {\n                    best = info;\n                    hitCount++;\n                }\n            }\n        }\n\n        best.hitCount = hitCount;\n        return best;\n    }\n\n    getReflectionRay(P, N, V) {\n        const c1 = -N.dot(V);\n        const R1 = Vector.add(Vector.multiplyScalar(N, 2 * c1), V);\n        return new Ray(P, R1);\n    }\n\n    rayTrace(info, ray, scene, depth) {\n        // Calc ambient\n        let color = Color.multiplyScalar(info.color, scene.background.ambience);\n        const shininess = 10 ** (info.shape.material.gloss + 1);\n\n        for (let i = 0; i < scene.lights.length; i++) {\n            const light = scene.lights[i];\n\n            // Calc diffuse lighting\n            const v = Vector.subtract(light.position, info.position).normalize();\n\n            if (this.options.renderDiffuse) {\n                const L = v.dot(info.normal);\n                if (L > 0) {\n                    color = Color.add(\n                        color,\n                        Color.multiply(\n                            info.color,\n                            Color.multiplyScalar(light.color, L),\n                        ),\n                    );\n                }\n            }\n\n            // The greater the depth the more accurate the colours, but\n            // this is exponentially (!) expensive\n            if (depth <= this.options.rayDepth) {\n                // calculate reflection ray\n                if (this.options.renderReflections && info.shape.material.reflection > 0) {\n                    const reflectionRay = this.getReflectionRay(info.position, info.normal, ray.direction);\n                    const refl = this.testIntersection(reflectionRay, scene, info.shape);\n\n                    if (refl.isHit && refl.distance > 0) {\n                        refl.color = this.rayTrace(refl, reflectionRay, scene, depth + 1);\n                    } else {\n                        refl.color = scene.background.color;\n                    }\n\n                    color = Color.blend(\n                        color,\n                        refl.color,\n                        info.shape.material.reflection,\n                    );\n                }\n            }\n\n            // Render shadows and highlights\n            let shadowInfo = new IntersectionInfo();\n\n            if (this.options.renderShadows) {\n                const shadowRay = new Ray(info.position, v);\n\n                shadowInfo = this.testIntersection(shadowRay, scene, info.shape);\n                if (shadowInfo.isHit && shadowInfo.shape !== info.shape) {\n                    const vA = Color.multiplyScalar(color, 0.5);\n                    const dB = 0.5 * (shadowInfo.shape.material.transparency ** 0.5);\n                    color = Color.addScalar(vA, dB);\n                }\n            }\n\n            // Phong specular highlights\n            if (this.options.renderHighlights && !shadowInfo.isHit && info.shape.material.gloss > 0) {\n                const Lv = Vector.subtract(info.shape.position, light.position).normalize();\n                const E = Vector.subtract(scene.camera.position, info.shape.position).normalize();\n                const H = Vector.subtract(E, Lv).normalize();\n\n                const glossWeight = Math.max(info.normal.dot(H), 0) ** shininess;\n                color = Color.add(Color.multiplyScalar(light.color, glossWeight), color);\n            }\n        }\n\n        return color.limit();\n    }\n}\n\nfunction renderScene() {\n    const camera = new Camera(\n        new Vector(0, 0, -15),\n        new Vector(-0.2, 0, 5),\n        new Vector(0, 1, 0),\n    );\n    const background = new Background(new Color(0.5, 0.5, 0.5), 0.4);\n\n    const shapes = [\n        new Sphere(\n            new Vector(-1.5, 1.5, 2),\n            new SolidMaterial(new Color(0, 0.5, 0.5), 0.3, 0, 2),\n            1.5,\n        ),\n        new Sphere(\n            new Vector(1, 0.25, 1),\n            new SolidMaterial(new Color(0.9, 0.9, 0.9), 0.1, 0, 1.5),\n            0.5,\n        ),\n        new Plane(\n            new Vector(0.1, 0.9, -0.5).normalize(),\n            new ChessboardMaterial(\n                new Color(1, 1, 1),\n                new Color(0, 0, 0),\n                0.2, 0, 1, 0.7,\n            ),\n            1.2,\n        ),\n    ];\n\n    const lights = [\n        new Light(\n            new Vector(5, 10, -1),\n            new Color(0.8, 0.8, 0.8),\n        ),\n        new Light(\n            new Vector(-3, 5, -15),\n            new Color(0.8, 0.8, 0.8),\n        ),\n    ];\n\n    const scene = new Scene(camera, background, shapes, lights);\n\n    const raytracer = new Engine({\n        canvasWidth: 100,\n        canvasHeight: 100,\n        pixelWidth: 5,\n        pixelHeight: 5,\n        renderDiffuse: true,\n        renderHighlights: true,\n        renderShadows: true,\n        renderReflections: true,\n        rayDepth: 2,\n    });\n\n    raytracer.renderScene(scene);\n}\n\nclass Benchmark {\n    runIteration() {\n        for (let i = 0; i < 15; ++i)\n            renderScene();\n    }\n}\n"};
 var readFile = function (name) {
     const normalized = String(name).replaceAll("\\", "/");
     if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
         throw new Error("JetStream resource not embedded: " + normalized);
     return __jetstreamResources[normalized];
 };
+var read = function (name, mode) {
+    const text = readFile(name);
+    if (mode !== "binary")
+        return text;
+    const bytes = [];
+    for (let i = 0; i < text.length; i++)
+        bytes.push(text.charCodeAt(i) & 0xff);
+    return bytes;
+};
 
 "use strict";
 
 /*
- * Copyright (C) 2018 Apple Inc. All rights reserved.
+ * Copyright (C) 2018-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -54,61 +88,72 @@ var readFile = function (name) {
  * THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-const preloadResources = !isInBrowser;
 const measureTotalTimeAsSubtest = false; // Once we move to preloading all resources, it would be good to turn this on.
 
-if (typeof RAMification === "undefined")
-    var RAMification = false;
+const defaultIterationCount = 120;
+const defaultWorstCaseCount = 4;
 
-if (typeof testIterationCount === "undefined")
-    var testIterationCount = undefined;
+if (!JetStreamParams.prefetchResources && isInBrowser) {
+    console.warn("Disabling resource prefetching! All compressed files must have been decompressed using `npm run decompress`");
+}
+
+if (JetStreamParams.forceGC && typeof globalThis.gc === "undefined") {
+    console.warn("Force-gc is set, but globalThis.gc() is not available.");
+}
+
+if (!isInBrowser && JetStreamParams.prefetchResources) {
+    // Use the wasm compiled zlib as a polyfill when decompression stream is
+    // not available in JS shells.
+    load("./wasm/zlib/shell.js");
+
+    // Load a polyfill for TextEncoder/TextDecoder in shells. Used when
+    // decompressing a prefetched resource and converting it to text.
+    load("./utils/polyfills/fast-text-encoding/1.0.3/text.js");
+}
 
 // Used for the promise representing the current benchmark run.
 var currentResolve = null;
 var currentReject = null;
 
-const defaultIterationCount = 120;
-const defaultWorstCaseCount = 4;
-
-function assert(b, m = "") {
-    if (!b)
-        throw new Error("Bad assertion: " + m);
+function displayCategoryScores() {
+    document.body.classList.add("details");
 }
 
-function firstID(benchmark) {
-    return `results-cell-${benchmark.name}-first`;
+
+if (isInBrowser) {
+    document.onkeydown = (keyboardEvent) => {
+        const key = keyboardEvent.key;
+        if (key === "d" || key === "D")
+            displayCategoryScores();
+    };
 }
 
-function worst4ID(benchmark) {
-    return `results-cell-${benchmark.name}-worst4`;
-}
-
-function avgID(benchmark) {
-    return `results-cell-${benchmark.name}-avg`;
-}
-
-function scoreID(benchmark) {
-    return `results-cell-${benchmark.name}-score`;
-}
-
-function mean(values) {
-    assert(values instanceof Array);
+function sum(values) {
+    console.assert(values instanceof Array);
     let sum = 0;
     for (let x of values)
         sum += x;
-    return sum / values.length;
+    return sum;
 }
 
-function geomean(values) {
-    assert(values instanceof Array);
+function mean(values) {
+    const totalSum = sum(values)
+    return totalSum / values.length;
+}
+
+function geomeanScore(values) {
+    console.assert(values instanceof Array);
     let product = 1;
     for (let x of values)
         product *= x;
-    return product ** (1 / values.length);
+    const score = product ** (1 / values.length);
+    // Allow 0 for uninitialized subScores().
+    console.assert(score >= 0, `Got invalid score: ${score}`)
+    return score;
 }
 
 function toScore(timeValue) {
-    return 5000 / timeValue;
+    return 5000 / Math.max(timeValue, 1);
 }
 
 function toTimeValue(score) {
@@ -127,202 +172,448 @@ function updateUI() {
 function uiFriendlyNumber(num) {
     if (Number.isInteger(num))
         return num;
-    return num.toFixed(3);
+    return num.toFixed(2);
 }
 
-function uiFriendlyDuration(time)
-{
-    let minutes = time.getMinutes();
-    let seconds = time.getSeconds();
-    let milliSeconds = time.getMilliseconds();
-    let result = "" + minutes + ":";
-
-    result = result + (seconds < 10 ? "0" : "") + seconds + ".";
-    result = result + (milliSeconds < 10 ? "00" : (milliSeconds < 100 ? "0" : "")) + milliSeconds;
-
-    return result;
+function uiFriendlyScore(num) {
+    return uiFriendlyNumber(num);
 }
 
-const fileLoader = (function() {
-    class Loader {
-        constructor() {
-            this.requests = new Map;
+function uiFriendlyDuration(time) {
+    return `${time.toFixed(2)} ms`;
+}
+
+const LABEL_PADDING = 45;
+function shellFriendlyLabel(label) {
+    return `${label}`.padEnd(LABEL_PADDING);
+}
+
+const VALUE_PADDING = 11;
+function shellFriendlyDuration(time) {
+    return `${uiFriendlyDuration(time)} `.padStart(VALUE_PADDING);
+}
+
+function shellFriendlyScore(time) {
+    return `${uiFriendlyScore(time)} pts`.padStart(VALUE_PADDING);
+}
+
+
+// Files can be zlib compressed to reduce the size of the JetStream source code.
+// We don't use http compression because we support running from the shell and
+// don't want to require a complicated server setup.
+//
+// zlib was chosen because we already have it in tree for the wasm-zlib test.
+function isCompressed(name) {
+    return name.endsWith(".z");
+}
+
+function uncompressedName(name) {
+    console.assert(isCompressed(name));
+    return name.slice(0, -2);
+}
+
+// TODO: Cleanup / remove / merge. This is only used for caching loads in the
+// non-browser setting. In the browser we use exclusively `loadCache`,
+// `loadBlob`, `doLoadBlob`, `prefetchResourcesForBrowser` etc., see below.
+class ShellFileLoader {
+    constructor() {
+        this.requests = new Map;
+    }
+
+    // Cache / memoize previously read files, because some workloads
+    // share common code.
+    load(url) {
+        console.assert(!isInBrowser);
+
+        let compressed = isCompressed(url);
+        if (compressed && !JetStreamParams.prefetchResources) {
+            url = uncompressedName(url);
         }
 
-        async _loadInternal(url) {
-            if (!isInBrowser)
-                return Promise.resolve(readFile(url));
+        // If we aren't supposed to prefetch this then return code snippet that will load the url on-demand.
+        if (!JetStreamParams.prefetchResources)
+            return readFile(url);
 
-            let fetchResponse = await fetch(new Request(url));
-            if (url.indexOf(".js") !== -1)
-                return await fetchResponse.text();
-            else if (url.indexOf(".wasm") !== -1)
-                return await fetchResponse.arrayBuffer();
-
-            throw new Error("should not be reached!");
+        if (this.requests.has(url)) {
+            return this.requests.get(url);
         }
 
-        async load(url) {
-            if (this.requests.has(url))
-                return (await this.requests.get(url));
+        let contents;
+        if (compressed) {
+            const compressedBytes = new Int8Array(read(url, "binary"));
+            const decompressedBytes = zlib.decompress(compressedBytes);
+            contents = new TextDecoder().decode(decompressedBytes);
+        } else {
+            contents = readFile(url);
+        }
+        this.requests.set(url, contents);
+        return contents;
+    }
+};
 
-            let promise = this._loadInternal(url);
-            this.requests.set(url, promise);
-            return (await promise);
+
+class BrowserFileLoader {
+
+    constructor() {
+        // TODO: Cleanup / remove / merge `blobDataCache` and `loadCache` vs.
+        // the global `fileLoader` cache.
+        this.blobDataCache = { __proto__ : null };
+        this.loadCache = { __proto__ : null };
+    }
+
+    async doLoadBlob(resource) {
+        const blobData = this.blobDataCache[resource];
+
+        const compressed = isCompressed(resource);
+        if (compressed && !JetStreamParams.prefetchResources) {
+            resource = uncompressedName(resource);
+        }
+
+        // If we aren't supposed to prefetch this then set the blobURL to just
+        // be the resource URL.
+        if (!JetStreamParams.prefetchResources) {
+            blobData.blobURL = resource;
+            return blobData;
+        }
+
+        let response;
+        let tries = 3;
+        while (tries--) {
+            let hasError = false;
+            try {
+                response = await fetch(resource, { cache: "no-store" });
+            } catch (e) {
+                hasError = true;
+            }
+            if (!hasError && response.ok)
+                break;
+            if (tries)
+                continue;
+            throw new Error("Fetch failed");
+        }
+
+        // If we need to decompress this, then run it through a decompression
+        // stream.
+        if (compressed) {
+            const stream = response.body.pipeThrough(new DecompressionStream("deflate"))
+            response = new Response(stream);
+        }
+
+        let blob = await response.blob();
+        blobData.blob = blob;
+        blobData.blobURL = URL.createObjectURL(blob);
+        return blobData;
+    }
+
+    async loadBlob(type, prop, resource, incrementRefCount = true) {
+        let blobData = this.blobDataCache[resource];
+        if (!blobData) {
+            blobData = {
+                type: type,
+                prop: prop,
+                resource: resource,
+                blob: null,
+                blobURL: null,
+                refCount: 0
+            };
+            this.blobDataCache[resource] = blobData;
+        }
+
+        if (incrementRefCount)
+            blobData.refCount++;
+
+        let promise = this.loadCache[resource];
+        if (promise)
+            return promise;
+
+        promise = this.doLoadBlob(resource);
+        this.loadCache[resource] = promise;
+        return promise;
+    }
+
+    async retryPrefetchResource(type, prop, file) {
+        console.assert(isInBrowser);
+
+        const counter = JetStream.counter;
+        const blobData = this.blobDataCache[file];
+        if (blobData.blob) {
+            // The same preload blob may be used by multiple subtests. Though the blob is already loaded,
+            // we still need to check if this subtest failed to load it before. If so, handle accordingly.
+            if (type == "preload") {
+                if (this.failedPreloads && this.failedPreloads[blobData.prop]) {
+                    this.failedPreloads[blobData.prop] = false;
+                    this._preloadBlobData.push({ name: blobData.prop, resource: blobData.resource, blobURLOrPath: blobData.blobURL });
+                    counter.failedPreloadResources--;
+                }
+            }
+            return !counter.failedPreloadResources && counter.loadedResources == counter.totalResources;
+        }
+
+        // Retry fetching the resource.
+        this.loadCache[file] = null;
+        await this.loadBlob(type, prop, file, false).then((blobData) => {
+            if (!globalThis.allIsGood)
+                return;
+            if (blobData.type == "preload")
+                this._preloadBlobData.push({ name: blobData.prop, resource: blobData.resource, blobURLOrPath: blobData.blobURL });
+            this.updateCounter();
+        });
+
+        if (!blobData.blob) {
+            globalThis.allIsGood = false;
+            throw new Error("Fetch failed");
+        }
+
+        return !counter.failedPreloadResources && counter.loadedResources == counter.totalResources;
+    }
+
+    free(files) {
+        for (const file of files) {
+            const blobData = this.blobDataCache[file];
+            // If we didn't prefetch this resource, then no need to free it
+            if (!blobData.blob) {
+                continue
+            }
+            blobData.refCount--;
+            if (!blobData.refCount)
+                this.blobDataCache[file] = undefined;
         }
     }
-    return new Loader;
-})();
+}
+
+const browserFileLoader = new BrowserFileLoader();
+const shellFileLoader = new ShellFileLoader();
 
 class Driver {
-    constructor() {
-        this.benchmarks = [];
-    }
-
-    addPlan(plan, BenchmarkClass = DefaultBenchmark) {
-        this.benchmarks.push(new BenchmarkClass(plan));
+    constructor(benchmarks) {
+        this.isReady = false;
+        this.isDone = false;
+        this.errors = [];
+        // Make benchmark list unique and sort it.
+        this.benchmarks = Array.from(new Set(benchmarks));
+        this.benchmarks.sort((a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? 1 : -1);
+        console.assert(this.benchmarks.length, "No benchmarks selected");
+        this.counter = { };
+        this.counter.loadedResources = 0;
+        this.counter.totalResources = 0;
+        this.counter.failedPreloadResources = 0;
     }
 
     async start() {
         let statusElement = false;
-        let summaryElement = false;
         if (isInBrowser) {
             statusElement = document.getElementById("status");
-            summaryElement = document.getElementById("result-summary");
             statusElement.innerHTML = `<label>Running...</label>`;
-        } else {
-            console.log("Starting JetStream2");
-        }
+        } else if (!JetStreamParams.dumpJSONResults)
+            console.log("Starting JetStream3");
 
-        await updateUI();
-
-        let __jetstreamSuiteStart = Date.now();
-        for (let benchmark of this.benchmarks) {
+        performance.mark("update-ui-start");
+        const start = performance.now();
+        for (const benchmark of this.benchmarks) {
+            performance.mark("update-ui-start");
             benchmark.updateUIBeforeRun();
-
             await updateUI();
+            performance.measure("runner update-ui", "update-ui-start");
 
             try {
-
                 await benchmark.run();
             } catch(e) {
-                JetStream.reportError(benchmark);
+                this.reportError(benchmark, e);
                 throw e;
             }
 
+            performance.mark("update-ui-start");
             benchmark.updateUIAfterRun();
-        }
-
-        let totalTime = Date.now() - __jetstreamSuiteStart;
-        if (measureTotalTimeAsSubtest) {
-            if (isInBrowser)
-                document.getElementById("benchmark-total-time-score").innerHTML = uiFriendlyNumber(totalTime);
-            else
-                console.log("Total time:", uiFriendlyNumber(totalTime));
-            allScores.push(totalTime);
-        }
-
-        let allScores = [];
-        for (let benchmark of this.benchmarks)
-            allScores.push(benchmark.score);
-
-        if (isInBrowser) {
-            summaryElement.classList.add('done');
-            summaryElement.innerHTML = "<div class=\"score\">" + uiFriendlyNumber(geomean(allScores)) + "</div><label>Score</label>";
-            statusElement.innerHTML = '';
-        } else
-            console.log("\nTotal Score: ", uiFriendlyNumber(geomean(allScores)), "\n");
-
-        this.reportScoreToRunBenchmarkRunner();
-    }
-
-    runCode(string)
-    {
-        if (!isInBrowser) {
-            let top = { currentResolve, currentReject };
-            new Function("top", string.join("\n"))(top);
-            return globalThis;
-        }
-
-        var magic = document.getElementById("magic");
-        magic.contentDocument.body.textContent = "";
-        magic.contentDocument.body.innerHTML = "<iframe id=\"magicframe\" frameborder=\"0\">";
-
-        var magicFrame = magic.contentDocument.getElementById("magicframe");
-        magicFrame.contentDocument.open();
-        magicFrame.contentDocument.write("<!DOCTYPE html><head><title>benchmark payload</title></head><body>\n" + string + "</body></html>");
-
-        return magicFrame;
-    }
-
-    prepareToRun()
-    {
-        this.benchmarks.sort((a, b) => a.plan.name.toLowerCase() < b.plan.name.toLowerCase() ? 1 : -1);
-
-        let text = "";
-        let newBenchmarks = [];
-        for (let benchmark of this.benchmarks) {
-            let id = JSON.stringify(benchmark.constructor.scoreDescription());
-            let description = JSON.parse(id);
-
-            newBenchmarks.push(benchmark);
-            let scoreIds = benchmark.scoreIdentifiers()
-            let overallScoreId = scoreIds.pop();
+            performance.measure("runner update-ui", "update-ui-start");
 
             if (isInBrowser) {
-                text +=
-                    `<div class="benchmark" id="benchmark-${benchmark.name}">
-                    <h3 class="benchmark-name"><a href="in-depth.html#${benchmark.name}">${benchmark.name}</a></h3>
-                    <h4 class="score" id="${overallScoreId}">___</h4><p>`;
-                for (let i = 0; i < scoreIds.length; i++) {
-                    let id = scoreIds[i];
-                    let label = description[i];
-                    text += `<span class="result"><span id="${id}">___</span><label>${label}</label></span>`
-                }
-                text += `</p></div>`;
+                browserFileLoader.free(benchmark.files);
             }
         }
 
-        if (!isInBrowser)
-            return;
+        const totalTime = performance.now() - start;
+        if (measureTotalTimeAsSubtest) {
+            if (isInBrowser)
+                document.getElementById("benchmark-total-time-score").innerHTML = uiFriendlyNumber(totalTime);
+            else if (!JetStreamParams.dumpJSONResults)
+                console.log("Total-Time:", uiFriendlyNumber(totalTime));
+            allScores.push(totalTime);
+        }
 
-        for (let f = 0; f < 5; f++)
-            text += `<div class="benchmark fill"></div>`;
+        const allScores = [];
+        for (const benchmark of this.benchmarks) {
+            const score = benchmark.score;
+            console.assert(score > 0, `Invalid ${benchmark.name} score: ${score}`);
+            allScores.push(score);
+        }
 
-        let timestamp = Date.now();
-        document.getElementById('jetstreams').style.backgroundImage = `url('jetstreams.svg?${timestamp}')`;
-        let resultsTable = document.getElementById("results");
+        const categoryScores = new Map();
+        const categoryTimes = new Map();
+        for (const benchmark of this.benchmarks) {
+            for (let category of Object.keys(benchmark.subScores()))
+                categoryScores.set(category, []);
+            for (let category of Object.keys(benchmark.subTimes()))
+                categoryTimes.set(category, []);
+        }
+
+        for (const benchmark of this.benchmarks) {
+            for (let [category, value] of Object.entries(benchmark.subScores())) {
+                const arr = categoryScores.get(category);
+                console.assert(value > 0, `Invalid ${benchmark.name} ${category} score: ${value}`);
+                arr.push(value);
+            }
+            for (let [category, value] of Object.entries(benchmark.subTimes())) {
+                const arr = categoryTimes.get(category);
+                console.assert(value > 0, `Invalid ${benchmark.name} ${category} time: ${value}`);
+                arr.push(value);
+            }
+        }
+
+        const overallScore = geomeanScore(allScores);
+        console.assert(overallScore > 0, `Invalid total score: ${overallScore}`);
+
+        if (isInBrowser) {
+            let summaryHtml = `<div class="score">${uiFriendlyScore(overallScore)}</div>
+                    <label>Score</label>`;
+            summaryHtml += `<div class="benchmark benchmark-done">`;
+            for (let [category, scores] of categoryScores) {
+                summaryHtml += `<span class="result detail">
+                                    <span>${uiFriendlyScore(geomeanScore(scores))}</span>
+                                    <label>${category}</label>
+                                </span>`;
+            }
+            summaryHtml += "<br/>";
+            for (let [category, times] of categoryTimes) {
+                summaryHtml += `<span class="result detail">
+                                    <span>${uiFriendlyDuration(geomeanScore(times))}</span>
+                                    <label>${category}</label>
+                                </span>`;
+            }
+            summaryHtml += "</div>";
+            const summaryElement = document.getElementById("result-summary");
+            summaryElement.classList.add("done");
+            summaryElement.innerHTML = summaryHtml;
+            summaryElement.onclick = displayCategoryScores;
+            statusElement.innerHTML = "";
+        } else if (!JetStreamParams.dumpJSONResults) {
+            console.log("Overall:");
+            for (let [category, scores] of categoryScores) {
+                console.log(
+                    shellFriendlyLabel(`Overall ${category}-Score`),
+                    shellFriendlyScore(geomeanScore(scores)));
+            }
+            for (let [category, times] of categoryTimes) {
+                console.log(
+                    shellFriendlyLabel(`Overall ${category}-Time`),
+                    shellFriendlyDuration(geomeanScore(times)));
+            }
+            console.log("");
+            console.log(shellFriendlyLabel("Overall Score"), shellFriendlyScore(overallScore));
+            console.log(shellFriendlyLabel("Overall Wall-Time"), shellFriendlyDuration(totalTime));
+            console.log("");
+        }
+
+        this.reportScoreToRunBenchmarkRunner();
+        this.dumpJSONResultsIfNeeded();
+        this.isDone = true;
+
+        if (isInBrowser) {
+            globalThis.dispatchEvent(new CustomEvent("JetStreamDone", {
+                detail: this.resultsObject()
+            }));
+        }
+    }
+
+    prepareBrowserUI() {
+        let text = "";
+        for (const benchmark of this.benchmarks)
+            text += benchmark.renderHTML();
+
+        const resultsTable = document.getElementById("results");
         resultsTable.innerHTML = text;
 
         document.getElementById("magic").textContent = "";
-        document.addEventListener('keypress', function (e) {
-            if (e.which === 13)
+        document.addEventListener('keypress', (e) => {
+            if (e.key === "Enter")
                 JetStream.start();
         });
     }
 
-    reportError(benchmark)
-    {
-        for (let id of benchmark.scoreIdentifiers())
-            document.getElementById(id).innerHTML = "error";
-    }
-
-    async initialize() {
-        await this.fetchResources();
-        this.prepareToRun();
-        if (isInBrowser && window.location.search == '?report=true') {
-            setTimeout(() => this.start(), 4000);
-        }
-    }
-
-    async fetchResources() {
-        for (let benchmark of this.benchmarks)
-            await benchmark.fetchResources();
+    reportError(benchmark, error) {
+        this.pushError(benchmark.name, error);
 
         if (!isInBrowser)
             return;
 
-        let statusElement = document.getElementById("status");
+        for (const id of benchmark.allScoreIdentifiers())
+            document.getElementById(id).innerHTML = "error";
+        for (const id of benchmark.allTimeIdentifiers())
+            document.getElementById(id).innerHTML = "error";
+        const benchmarkResultsUI = document.getElementById(`benchmark-${benchmark.name}`);
+        benchmarkResultsUI.classList.remove("benchmark-running");
+        benchmarkResultsUI.classList.add("benchmark-error");
+    }
+
+    pushError(name, error) {
+        this.errors.push({
+            benchmark: name,
+            error: error.toString(),
+            stack: error.stack
+        });
+    }
+
+    async initialize() {
+        if (isInBrowser)
+            window.addEventListener("error", (e) => this.pushError("driver startup", e.error));
+        await this.prefetchResources();
+        this.benchmarks.sort((a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? 1 : -1);
+        if (isInBrowser)
+            this.prepareBrowserUI();
+        this.isReady = true;
+        if (isInBrowser) {
+            globalThis.dispatchEvent(new Event("JetStreamReady"));
+            if (typeof(JetStreamParams.startDelay) !== "undefined") {
+                setTimeout(() => this.start(), JetStreamParams.startDelay);
+            }
+        }
+    }
+
+    async prefetchResources() {
+        if (!isInBrowser) {
+            if (JetStreamParams.prefetchResources) {
+                await zlib.initialize();
+            }
+            for (const benchmark of this.benchmarks)
+                benchmark.prefetchResourcesForShell();
+            return;
+        }
+
+        // TODO: Cleanup the browser path of the preloading below and in
+        // `prefetchResourcesForBrowser` / `retryPrefetchResourcesForBrowser`.
+        const counter = JetStream.counter;
+        const promises = [];
+        for (const benchmark of this.benchmarks)
+            promises.push(benchmark.prefetchResourcesForBrowser(counter));
+        await Promise.all(promises);
+
+        if (counter.failedPreloadResources || counter.loadedResources != counter.totalResources) {
+            for (const benchmark of this.benchmarks) {
+                const allFilesLoaded = await benchmark.retryPrefetchResourcesForBrowser(counter);
+                if (allFilesLoaded)
+                    break;
+            }
+
+            if (counter.failedPreloadResources || counter.loadedResources != counter.totalResources) {
+                // If we've failed to prefetch resources even after a sequential 1 by 1 retry,
+                // then fail out early rather than letting subtests fail with a hang.
+                globalThis.allIsGood = false;
+                throw new Error("Fetch failed");
+            }
+        }
+
+        JetStream.loadCache = { }; // Done preloading all the files.
+
+        const statusElement = document.getElementById("status");
         statusElement.classList.remove('loading');
         statusElement.innerHTML = `<a href="javascript:JetStream.start()" class="button">Start Test</a>`;
         statusElement.onclick = () => {
@@ -332,20 +623,35 @@ class Driver {
         }
     }
 
-    async reportScoreToRunBenchmarkRunner()
+    updateCounterUI() {
+        const counter = JetStream.counter;
+        const statusElement = document.getElementById("status-text");
+        statusElement.innerText = `Loading ${counter.loadedResources} of ${counter.totalResources} ...`;
+
+        const percent = (counter.loadedResources / counter.totalResources) * 100;
+        const progressBar = document.getElementById("status-progress-bar");
+        progressBar.style.width = `${percent}%`;
+    }
+
+    resultsObject(format = "run-benchmark") {
+        switch(format) {
+            case "run-benchmark":
+                return this.runBenchmarkResultsObject();
+            case "simple":
+                return this.simpleResultsObject();
+            default:
+                throw Error(`Unknown result format '${format}'`);
+        }
+    }
+
+    runBenchmarkResultsObject()
     {
-        if (!isInBrowser)
-            return;
-
-        if (window.location.search !== '?report=true')
-            return;
-
         let results = {};
-        for (let benchmark of this.benchmarks) {
+        for (const benchmark of this.benchmarks) {
             const subResults = {}
-            const subTimes = benchmark.subTimes();
-            for (const name in subTimes) {
-                subResults[name] = {"metrics": {"Time": {"current": [toTimeValue(subTimes[name])]}}};
+            const subScores = benchmark.subScores();
+            for (const name in subScores) {
+                subResults[name] = {"metrics": {"Time": {"current": [toTimeValue(subScores[name])]}}};
             }
             results[benchmark.name] = {
                 "metrics" : {
@@ -353,15 +659,64 @@ class Driver {
                     "Time": ["Geometric"],
                 },
                 "tests": subResults,
-            };;
+            };
         }
 
-        results = {"JetStream2.0": {"metrics" : {"Score" : ["Geometric"]}, "tests" : results}};
+        results = {"JetStream3.0": {"metrics" : {"Score" : ["Geometric"]}, "tests" : results}};
+        return results;
+    }
 
-        const content = JSON.stringify(results);
+    simpleResultsObject() {
+        const results = {__proto__: null};
+        for (const benchmark of this.benchmarks) {
+            if (!benchmark.isDone)
+                continue;
+            if (!benchmark.isSuccess) {
+                results[benchmark.name] = "FAILED";
+            } else {
+                results[benchmark.name] = {
+                    Score: benchmark.score,
+                    ...benchmark.subScores(),
+
+                };
+            }
+        }
+        return results;
+    }
+
+    resultsJSON(format = "run-benchmark")
+    {
+        return JSON.stringify(this.resultsObject(format));
+    }
+
+    dumpJSONResultsIfNeeded()
+    {
+        if (JetStreamParams.dumpJSONResults) {
+            console.log("\n");
+            console.log(this.resultsJSON());
+            console.log("\n");
+        }
+    }
+
+    dumpTestList()
+    {
+        for (const benchmark of this.benchmarks) {
+            console.log(benchmark.name);
+        }
+    }
+
+    async reportScoreToRunBenchmarkRunner()
+    {
+        if (!isInBrowser)
+            return;
+
+        if (!JetStreamParams.report)
+            return;
+
+        const content = this.resultsJSON();
         await fetch("/report", {
             method: "POST",
-            heeaders: {
+            headers: {
                 "Content-Type": "application/json",
                 "Content-Length": content.length,
                 "Connection": "close",
@@ -371,423 +726,1081 @@ class Driver {
     }
 };
 
-class Benchmark {
-    constructor(plan)
-    {
-        this.plan = plan;
-        this.iterations = testIterationCount || plan.iterations || defaultIterationCount;
-        this.isAsync = !!plan.isAsync;
+const BenchmarkState = Object.freeze({
+    READY: "READY",
+    SETUP: "SETUP",
+    RUNNING: "RUNNING",
+    FINALIZE: "FINALIZE",
+    ERROR: "ERROR",
+    DONE: "DONE"
+})
 
-        this.scripts = null;
 
-        this._resourcesPromise = Promise.resolve();
-        this.scripts = this.plan.files.map((file) => readFile(file));
+class Scripts {
+    constructor(preloads) {
+        this.scripts = [];
+
+        let preloadsCode = "";
+        let resourcesCode = "";
+        for (let { name, resource, blobURLOrPath } of preloads) {
+            console.assert(name?.length > 0, "Invalid preload name.");
+            console.assert(resource?.length > 0, "Invalid preload resource.");
+            console.assert(blobURLOrPath?.length > 0, "Invalid preload data.");
+            preloadsCode += `${JSON.stringify(name)}: "${blobURLOrPath}",\n`;
+            resourcesCode += `${JSON.stringify(resource)}: "${blobURLOrPath}",\n`;
+        }
+        // Expose a globalThis.JetStream object to the workload. We use
+        // a proxy to prevent prototype access and throw on unknown properties.
+        this.add(`
+            const throwOnAccess = (name) => new Proxy({},  {
+                get(target, property, receiver) {
+                    throw new Error(name + "." + property + " is not defined.");
+                }
+            });
+            globalThis.JetStream = {
+                __proto__: throwOnAccess("JetStream"),
+                preload: {
+                    __proto__: throwOnAccess("JetStream.preload"),
+                    ${preloadsCode}
+                },
+                resources: {
+                    __proto__: throwOnAccess("JetStream.preload"),
+                    ${resourcesCode}
+                },
+            };
+            `);
+        this.add(`
+            performance.mark ??= function(name) { return { name }};
+            performance.measure ??= function() {};
+            performance.timeOrigin ??= performance.now();
+        `);
     }
 
-    get name() { return this.plan.name; }
+
+    run() {
+        throw new Error("Subclasses need to implement this");
+    }
+
+    add(text) {
+        throw new Error("Subclasses need to implement this");
+    }
+
+    addWithURL(url) {
+        throw new Error("addWithURL not supported");
+    }
+
+    addBrowserTest() {
+        this.add(`
+            globalThis.JetStream.isInBrowser = ${isInBrowser};
+            globalThis.JetStream.isD8 = ${isD8};
+        `);
+    }
+
+    addDeterministicRandom() {
+        this.add(`(() => {
+            const initialSeed = 49734321;
+            let seed = initialSeed;
+
+            Math.random = () => {
+                // Robert Jenkins' 32 bit integer hash function.
+                seed = ((seed + 0x7ed55d16) + (seed << 12))  & 0xffff_ffff;
+                seed = ((seed ^ 0xc761c23c) ^ (seed >>> 19)) & 0xffff_ffff;
+                seed = ((seed + 0x165667b1) + (seed << 5))   & 0xffff_ffff;
+                seed = ((seed + 0xd3a2646c) ^ (seed << 9))   & 0xffff_ffff;
+                seed = ((seed + 0xfd7046c5) + (seed << 3))   & 0xffff_ffff;
+                seed = ((seed ^ 0xb55a4f09) ^ (seed >>> 16)) & 0xffff_ffff;
+                // Note that Math.random should return a value that is
+                // greater than or equal to 0 and less than 1. Here, we
+                // cast to uint32 first then divided by 2^32 for double.
+                return (seed >>> 0) / 0x1_0000_0000;
+            };
+
+            Math.random.__resetSeed = () => {
+                seed = initialSeed;
+            };
+        })();`);
+    }
+}
+
+class ShellScripts extends Scripts {
+    constructor(preloads) {
+        super(preloads);
+        this.prefetchedResources = Object.create(null);;
+    }
+
+    run() {
+        let globalObject;
+        let realm;
+        if (isD8) {
+            realm = Realm.createAllowCrossRealmAccess();
+            globalObject = Realm.global(realm);
+            globalObject.loadString = function(s) {
+                return Realm.eval(realm, s);
+            };
+            globalObject.readFile = read;
+        } else if (isSpiderMonkey) {
+            globalObject = newGlobal();
+            globalObject.loadString = globalObject.evaluate;
+            globalObject.readFile = globalObject.readRelativeToScript;
+        } else
+            globalObject = runString("");
+
+        // Expose console copy in the realm so we don't accidentally modify
+        // the original object.
+        globalObject.console = Object.assign({}, console);
+        globalObject.self = globalObject;
+        globalObject.top = {
+            currentResolve,
+            currentReject
+        };
+
+        // Pass the prefetched resources to the benchmark global.
+        if (JetStreamParams.prefetchResources) {
+            // Pass the 'TextDecoder' polyfill into the benchmark global. Don't
+            // use 'TextDecoder' as that will get picked up in the kotlin test
+            // without full support.
+            globalObject.ShellTextDecoder = TextDecoder;
+            // Store shellPrefetchedResources on ShellPrefetchedResources so that
+            // getBinary and getString can find them.
+            globalObject.ShellPrefetchedResources = this.prefetchedResources;
+        } else {
+            console.assert(Object.values(this.prefetchedResources).length === 0, "Unexpected prefetched resources");
+        }
+
+        globalObject.performance ??= performance;
+        globalObject.loadString(this.scripts.join("\n"));
+
+        return isD8 ? realm : globalObject;
+    }
+
+    addPrefetchedResources(prefetchedResources) {
+        for (let [file, bytes] of Object.entries(prefetchedResources)) {
+            this.prefetchedResources[file] = bytes;
+        }
+    }
+
+    add(text) {
+        this.scripts.push(text);
+    }
+
+    addWithURL(url) {
+        console.assert(false, "Should not reach here in CLI");
+    }
+}
+
+class BrowserScripts extends Scripts {
+    constructor(preloads) {
+        super(preloads);
+        this.add("window.onerror = top.currentReject;");
+    }
+
+    run() {
+        const string = this.scripts.join("\n");
+        const magic = document.getElementById("magic");
+        magic.contentDocument.body.textContent = "";
+        magic.contentDocument.body.innerHTML = `<iframe id="magicframe" frameborder="0">`;
+
+        const magicFrame = magic.contentDocument.getElementById("magicframe");
+        magicFrame.contentDocument.open();
+        magicFrame.contentDocument.write(`<!DOCTYPE html>
+            <head>
+               <title>benchmark payload</title>
+            </head>
+            <body>${string}</body>
+        </html>`);
+        return magicFrame;
+    }
+
+    add(text) {
+        this.scripts.push(`<script>${text}</script>`);
+    }
+
+    addWithURL(url) {
+        this.scripts.push(`<script src="${url}"></script>`);
+    }
+}
+
+
+class Benchmark {
+    constructor({
+            name,
+            files,
+            preload = {},
+            tags,
+            iterations,
+            deterministicRandom = false,
+            exposeBrowserTest = false,
+            allowUtf16 = false,
+            args = {} }) {
+        this._state = BenchmarkState.READY;
+        this.results = [];
+
+        this.name = name
+        this.tags = this._processTags(tags)
+        this._arguments = args;
+
+        this.iterations = this._processIterationCount(iterations);
+        this._deterministicRandom = deterministicRandom;
+        this._exposeBrowserTest = exposeBrowserTest;
+        this.allowUtf16 = !!allowUtf16;
+
+        // Resource handling:
+        this._scripts = null;
+        this._files = files;
+        this._preloadEntries = Object.entries(preload);
+        this._preloadBlobData = [];
+        this._shellPrefetchedResources = null;
+    }
+
+    // Use getter so it can be overridden in subclasses (GroupedBenchmark).
+    get files() {
+        return this._files;
+    }
+    get preloadEntries() {
+        return this._preloadEntries;
+    }
+
+    _processTags(rawTags) {
+        const tags = new Set(rawTags.map(each => each.toLowerCase()));
+        if (tags.size != rawTags.length)
+            throw new Error(`${this.name} got duplicate tags: ${rawTags.join()}`);
+        tags.add("all");
+        if (!tags.has("default"))
+            tags.add("disabled");
+        return tags;
+    }
+
+    _processIterationCount(iterations) {
+        if (this.name in JetStreamParams.testIterationCountMap)
+            return JetStreamParams.testIterationCountMap[this.name];
+        if (JetStreamParams.testIterationCount)
+            return JetStreamParams.testIterationCount;
+        if (iterations)
+            return iterations;
+        return defaultIterationCount;
+    }
+
+    _processWorstCaseCount(worstCaseCount) {
+        if (this.name in JetStreamParams.testWorstCaseCountMap)
+            return JetStreamParams.testWorstCaseCountMap[this.name];
+        if (JetStreamParams.testWorstCaseCount !== undefined)
+            return JetStreamParams.testWorstCaseCount;
+        if (worstCaseCount !== undefined)
+            return worstCaseCount;
+        return defaultWorstCaseCount;
+    }
+
+    get isDone() {
+        return this._state == BenchmarkState.DONE || this._state == BenchmarkState.ERROR;
+    }
+    get isSuccess() { return this._state = BenchmarkState.DONE; }
+
+    hasAnyTag(...tags) {
+        return tags.some((tag) => this.tags.has(tag.toLowerCase()));
+    }
+
+    get benchmarkArguments() {
+        return {
+            ...this._arguments,
+            iterationCount: this.iterations,
+        };
+    }
 
     get runnerCode() {
-        return `
-            let __benchmark = new Benchmark(${this.iterations});
-            let results = [];
+        return `{
+            const benchmark = new Benchmark(${JSON.stringify(this.benchmarkArguments)});
+            const results = [];
+            const benchmarkName = "${this.name}";
+
             for (let i = 0; i < ${this.iterations}; i++) {
-                if (__benchmark.prepareForNextIteration)
-                    __benchmark.prepareForNextIteration();
+                ${this.preIterationCode}
 
-                let __jetstreamIterationStart = Date.now();
-                __benchmark.runIteration();
-                let __jetstreamIterationEnd = Date.now();
+                const iterationMarkLabel = benchmarkName + "-iteration-" + i;
+                const iterationStartMark = performance.mark(iterationMarkLabel);
 
-                results.push(Math.max(1, __jetstreamIterationEnd - __jetstreamIterationStart));
+                const start = performance.now();
+                benchmark.runIteration(i);
+                const end = performance.now();
+
+                performance.measure(iterationMarkLabel, iterationMarkLabel);
+
+                ${this.postIterationCode}
+
+                results.push(Math.max(1, end - start));
             }
-            if (__benchmark.validate)
-                __benchmark.validate();
-            top.currentResolve(results);`;
+            benchmark.validate?.(${this.iterations});
+            top.currentResolve(results);
+        };`;
     }
 
-    processResults() {
-        throw new Error("Subclasses need to implement this");
+    processResults(results) {
+        this.results = Array.from(results);
+        return this.results;
     }
 
     get score() {
+        const subScores = Object.values(this.subScores());
+        return geomeanScore(subScores);
+    }
+
+    get totalTime() {
+        const subTimes = Object.values(this.subTimes());
+        return sum(subTimes);
+    }
+
+    get wallTime() {
+        return this.endTime - this.startTime;
+    }
+
+    subScores() {
         throw new Error("Subclasses need to implement this");
+    }
+
+    subTimes() {
+        throw new Error("Subclasses need to implement this");
+    }
+
+    allScores() {
+        const allScores = this.subScores();
+        allScores["Score"] = this.score;
+        return allScores;
+    }
+
+    allTimes() {
+        const allTimes = this.subTimes();
+        allTimes["Total"] = this.totalTime;
+        allTimes["Wall"] = this.wallTime;
+        return allTimes;
     }
 
     get prerunCode() { return null; }
 
+
+    get preIterationCode() {
+        let code = this.prepareForNextIterationCode ;
+        if (this._deterministicRandom)
+            code += `Math.random.__resetSeed();`;
+
+        if (JetStreamParams.customPreIterationCode)
+            code += JetStreamParams.customPreIterationCode;
+
+        return code;
+    }
+
+    get prepareForNextIterationCode() {
+        return "benchmark.prepareForNextIteration?.();"
+    }
+
+    get postIterationCode() {
+        let code = "";
+
+        if (JetStreamParams.customPostIterationCode)
+            code += JetStreamParams.customPostIterationCode;
+
+        return code;
+    }
+
+    renderHTML() {
+        const scoreDescription = Object.keys(this.allScores());
+        const timeDescription = Object.keys(this.allTimes());
+
+        const scoreIds = this.allScoreIdentifiers();
+        const overallScoreId = scoreIds.pop();
+        const timeIds = this.allTimeIdentifiers();
+        let text = `<div class="benchmark" id="benchmark-${this.name}">
+            <h3 class="benchmark-name">${this.name} <a class="info" href="in-depth.html#${this.name}">i</a></h3>
+            <h4 class="score" id="${overallScoreId}">&nbsp;</h4>
+            <h4 class="plot" id="plot-${this.name}">&nbsp;</h4>
+            <p>`;
+        for (let i = 0; i < scoreIds.length; i++) {
+            const scoreId = scoreIds[i];
+            const label = scoreDescription[i];
+            text += `<span class="result"><span id="${scoreId}">&nbsp;</span><label>${label}</label></span>`;
+        }
+        text += "<br/>";
+        for (let i = 0; i < timeIds.length; i++) {
+            const timeId = timeIds[i];
+            const label = timeDescription[i];
+            text += `<span class="result detail"><span id="${timeId}">&nbsp;</span><label>${label}</label></span>`;
+        }
+        text += `</p></div>`;
+        return text;
+    }
+
     async run() {
-        let code;
-        if (isInBrowser)
-            code = "";
-        else
-            code = [];
+        if (this.isDone)
+            throw new Error(`Cannot run Benchmark ${this.name} twice`);
+        this._state = BenchmarkState.PREPARE;
 
-        let addScript = (text) => {
-            if (isInBrowser)
-                code += `<script>${text}</script>`;
-            else
-                code.push(text);
-        };
-
-        let addScriptWithURL = (url) => {
-            if (isInBrowser)
-                code += `<script src="${url}"></script>`;
-            else
-                assert(false, "Should not reach here in CLI");
-        };
-
-        addScript(`var performance = globalThis.performance = {now: Date.now.bind(Date)};`);
-
-        if (!!this.plan.deterministicRandom) {
-            addScript(`
-                Math.random = (function() {
-                    var seed = 49734321;
-                    return function() {
-                        // Robert Jenkins' 32 bit integer hash function.
-                        seed = ((seed + 0x7ed55d16) + (seed << 12))  & 0xffffffff;
-                        seed = ((seed ^ 0xc761c23c) ^ (seed >>> 19)) & 0xffffffff;
-                        seed = ((seed + 0x165667b1) + (seed << 5))   & 0xffffffff;
-                        seed = ((seed + 0xd3a2646c) ^ (seed << 9))   & 0xffffffff;
-                        seed = ((seed + 0xfd7046c5) + (seed << 3))   & 0xffffffff;
-                        seed = ((seed ^ 0xb55a4f09) ^ (seed >>> 16)) & 0xffffffff;
-                        return (seed & 0xfffffff) / 0x10000000;
-                    };
-                })();
-            `);
-
+        if (JetStreamParams.forceGC) {
+            // This will trigger for individual benchmarks in
+            // GroupedBenchmarks since they delegate .run() to their inner
+            // non-grouped benchmarks.
+            globalThis?.gc();
         }
 
-        if (this.plan.preload) {
-            let str = "";
-            for (let [variableName, blobUrl] of this.preloads)
-                str += `const ${variableName} = "${blobUrl}";\n`;
-            addScript(str);
+        const scripts = isInBrowser ?
+                new BrowserScripts(this._preloadBlobData) :
+                new ShellScripts(this._preloadBlobData);
+
+        if (this._deterministicRandom)
+            scripts.addDeterministicRandom()
+        if (this._exposeBrowserTest)
+            scripts.addBrowserTest();
+
+        if (this._shellPrefetchedResources) {
+            scripts.addPrefetchedResources(this._shellPrefetchedResources);
         }
 
-        let prerunCode = this.prerunCode;
+        const prerunCode = this.prerunCode;
         if (prerunCode)
-            addScript(prerunCode);
+            scripts.add(prerunCode);
 
-        if (preloadResources) {
-            assert(this.scripts && this.scripts.length === this.plan.files.length);
-
-            for (let text of this.scripts)
-                addScript(text);
+        if (!isInBrowser) {
+            console.assert(this._scripts && this._scripts.length === this.files.length);
+            for (const text of this._scripts)
+                scripts.add(text);
         } else {
-            for (let file of this.plan.files)
-                addScriptWithURL(file);
+            const cache = browserFileLoader.blobDataCache;
+            for (const file of this.files) {
+                scripts.addWithURL(cache[file].blobURL);
+            }
         }
 
-        let promise = new Promise((resolve, reject) => {
+        const promise = new Promise((resolve, reject) => {
             currentResolve = resolve;
             currentReject = reject;
         });
 
-        if (isInBrowser) {
-            code = `
-                <script> window.onerror = top.currentReject; </script>
-                ${code}
-            `;
-        }
-        addScript("(() => {\n" + this.runnerCode + "\n})();");
+        scripts.add(this.runnerCode);
 
-        this.startTime = new Date();
+        performance.mark(this.name);
+        this.startTime = performance.now();
 
-        if (RAMification)
+        if (JetStreamParams.RAMification)
             resetMemoryPeak();
 
         let magicFrame;
         try {
-            magicFrame = JetStream.runCode(code);
+            this._state = BenchmarkState.RUNNING;
+            magicFrame = scripts.run();
         } catch(e) {
+            this._state = BenchmarkState.ERROR;
             console.log("Error in runCode: ", e);
+            console.log(e.stack);
             throw e;
+        } finally {
+            this._state = BenchmarkState.FINALIZE;
         }
-        let results = await promise;
+        const results = await promise;
 
-        this.endTime = new Date();
+        this.endTime = performance.now();
+        performance.measure(this.name, this.name);
 
-        if (RAMification) {
-            let memoryFootprint = MemoryFootprint();
+        if (JetStreamParams.RAMification) {
+            const memoryFootprint = MemoryFootprint();
             this.currentFootprint = memoryFootprint.current;
             this.peakFootprint = memoryFootprint.peak;
         }
 
         this.processResults(results);
+        this._state = BenchmarkState.DONE;
+
         if (isInBrowser)
             magicFrame.contentDocument.close();
+        else if (isD8)
+            Realm.dispose(magicFrame);
     }
 
-    fetchResources() {
-        if (this._resourcesPromise)
-            return this._resourcesPromise;
 
-        let filePromises = preloadResources ? this.plan.files.map((file) => fileLoader.load(file)) : [];
-        let preloads = [];
-        let preloadVariableNames = [];
+    updateCounter() {
+        const counter = JetStream.counter;
+        ++counter.loadedResources;
+        JetStream.updateCounterUI();
+    }
 
-        if (isInBrowser && this.plan.preload) {
-            for (let prop of Object.getOwnPropertyNames(this.plan.preload)) {
-                preloadVariableNames.push(prop);
-                preloads.push(this.plan.preload[prop]);
-            }
+    prefetchResourcesForBrowser(counter) {
+        console.assert(isInBrowser);
+
+        const promises = this.files.map((file) => browserFileLoader.loadBlob("file", null, file).then((blobData) => {
+                if (!globalThis.allIsGood)
+                    return;
+                this.updateCounter();
+            }).catch((error) => {
+                // We'll try again later in retryPrefetchResourceForBrowser(). Don't throw an error.
+            }));
+
+        for (const [name, resource] of this.preloadEntries) {
+            promises.push(browserFileLoader.loadBlob("preload", name, resource).then((blobData) => {
+                if (!globalThis.allIsGood)
+                    return;
+                this._preloadBlobData.push({ name: blobData.prop, resource: blobData.resource, blobURLOrPath: blobData.blobURL });
+                this.updateCounter();
+            }).catch((error) => {
+                // We'll try again later in retryPrefetchResourceForBrowser(). Don't throw an error.
+                if (!this.failedPreloads)
+                    this.failedPreloads = { };
+                this.failedPreloads[name] = true;
+                counter.failedPreloadResources++;
+            }));
         }
 
-        preloads = preloads.map((file) => fileLoader.load(file));
-
-        let p1 = Promise.all(filePromises).then((texts) => {
-            if (!preloadResources)
-                return;
-            this.scripts = [];
-            assert(texts.length === this.plan.files.length);
-            for (let text of texts)
-                this.scripts.push(text);
-        });
-
-        let p2 = Promise.all(preloads).then((data) => {
-            this.preloads = [];
-            this.blobs = [];
-            for (let i = 0; i < data.length; ++i) {
-                let item = data[i];
-
-                let blob;
-                if (typeof item === "string") {
-                    blob = new Blob([item], {type : 'application/javascript'});
-                } else if (item instanceof ArrayBuffer) {
-                    blob = new Blob([item], {type : 'application/octet-stream'});
-                } else
-                    throw new Error("Unexpected item!");
-
-                this.blobs.push(blob);
-                this.preloads.push([preloadVariableNames[i], URL.createObjectURL(blob)]);
-            }
-        });
-
-        this._resourcesPromise = Promise.all([p1, p2]);
-        return this._resourcesPromise;
+        JetStream.counter.totalResources += promises.length;
+        return Promise.all(promises);
     }
 
-    static scoreDescription() { throw new Error("Must be implemented by subclasses."); }
-    scoreIdentifiers() { throw new Error("Must be implemented by subclasses"); }
+    async retryPrefetchResourcesForBrowser(counter) {
+        // FIXME: Move to BrowserFileLoader.
+        console.assert(isInBrowser);
+
+        for (const resource of this.files) {
+            const allDone = await browserFileLoader.retryPrefetchResource("file", null, resource);
+
+            if (allDone)
+                return true; // All resources loaded, nothing more to do.
+        }
+
+        for (const [name, resource] of this.preloadEntries) {
+            const allDone = await browserFileLoader.retryPrefetchResource("preload", name, resource);
+            if (allDone)
+                return true; // All resources loaded, nothing more to do.
+        }
+        return !counter.failedPreloadResources && counter.loadedResources == counter.totalResources;
+    }
+
+    prefetchResourcesForShell() {
+        // FIXME: move to ShellFileLoader.
+        console.assert(!isInBrowser);
+
+        console.assert(this._scripts === null, "This initialization should be called only once.");
+        this._scripts = this.files.map(file => shellFileLoader.load(file));
+
+        console.assert(this._preloadBlobData.length === 0, "This initialization should be called only once.");
+        this._shellPrefetchedResources = Object.create(null);
+        for (let [name, resource] of this.preloadEntries) {
+            const compressed = isCompressed(resource);
+            if (compressed && !JetStreamParams.prefetchResources) {
+                resource = uncompressedName(resource);
+            }
+
+            if (JetStreamParams.prefetchResources) {
+                let bytes = new Int8Array(read(resource, "binary"));
+                if (compressed) {
+                    bytes = zlib.decompress(bytes);
+                }
+                this._shellPrefetchedResources[resource] = bytes;
+            }
+
+            this._preloadBlobData.push({ name, resource, blobURLOrPath: resource });
+        }
+    }
+
+    allScoreIdentifiers() {
+        const ids = Object.keys(this.allScores()).map(name => this.scoreIdentifier(name));
+        return ids;
+    }
+
+    scoreIdentifier(scoreName) {
+        return `results-cell-${this.name}-${scoreName}`;
+    }
+
+    allTimeIdentifiers() {
+        const ids = Object.keys(this.allTimes()).map(name => this.timeIdentifier(name));
+        return ids;
+    }
+
+    timeIdentifier(scoreName) {
+        return `results-cell-${this.name}-${scoreName}-time`;
+    }
 
     updateUIBeforeRun() {
-        if (!isInBrowser) {
-            console.log(`Running ${this.name}:`);
-            return;
-        }
+        if (!JetStreamParams.dumpJSONResults)
+            this.updateConsoleBeforeRun();
+        if (isInBrowser)
+            this.updateUIBeforeRunInBrowser();
+    }
 
-        let containerUI = document.getElementById("results");
-        let resultsBenchmarkUI = document.getElementById(`benchmark-${this.name}`);
-        containerUI.insertBefore(resultsBenchmarkUI, containerUI.firstChild);
+    updateConsoleBeforeRun() {
+        console.log(`Running ${this.name}:`);
+    }
+
+    updateUIBeforeRunInBrowser() {
+        const resultsBenchmarkUI = document.getElementById(`benchmark-${this.name}`);
         resultsBenchmarkUI.classList.add("benchmark-running");
+        resultsBenchmarkUI.scrollIntoView({ block: "nearest" });
 
-        for (let id of this.scoreIdentifiers())
+        for (const id of this.allScoreIdentifiers())
+            document.getElementById(id).innerHTML = "...";
+        for (const id of this.allTimeIdentifiers())
             document.getElementById(id).innerHTML = "...";
     }
 
     updateUIAfterRun() {
-        if (!isInBrowser)
+        if (isInBrowser)
+            this.updateUIAfterRunInBrowser();
+        if (JetStreamParams.dumpJSONResults)
             return;
+        this.updateConsoleAfterRun();
+    }
 
-        let benchmarkResultsUI = document.getElementById(`benchmark-${this.name}`);
+    updateUIAfterRunInBrowser() {
+        const benchmarkResultsUI = document.getElementById(`benchmark-${this.name}`);
         benchmarkResultsUI.classList.remove("benchmark-running");
         benchmarkResultsUI.classList.add("benchmark-done");
 
+        for (const [name, value] of Object.entries(this.allScores()))
+            document.getElementById(this.scoreIdentifier(name)).innerHTML = uiFriendlyScore(value);
+        for (const [name, value] of Object.entries(this.allTimes()))
+            document.getElementById(this.timeIdentifier(name)).innerHTML = uiFriendlyDuration(value);
+
+        this.renderScatterPlot();
+    }
+
+    updateConsoleAfterRun() {
+        for (let [name, value] of Object.entries(this.allScores())) {
+            if (!name.endsWith("Score"))
+                name = `${name}-Score`;
+
+            this.logMetric(name, shellFriendlyScore(value));
+        }
+        for (let [name, value] of Object.entries(this.allTimes())) {
+            this.logMetric(`${name}-Time`, shellFriendlyDuration(value));
+        }
+        if (JetStreamParams.RAMification) {
+            this.logMetric("Current Footprint", uiFriendlyNumber(this.currentFootprint));
+            this.logMetric("Peak Footprint", uiFriendlyNumber(this.peakFootprint));
+        }
+        console.log("");
+    }
+
+    logMetric(name, value) {
+        console.log(
+            shellFriendlyLabel(`${this.name} ${name}`),
+            value);
+    }
+
+    renderScatterPlot() {
+        const plotContainer = document.getElementById(`plot-${this.name}`);
+        if (!plotContainer || !this.results || this.results.length === 0)
+            return;
+
+        const scores = this.results.map(time => toScore(time));
+        const scoreElement = document.getElementById(this.scoreIdentifier("Score"));
+        const width = scoreElement.offsetWidth;
+        const height = scoreElement.offsetHeight;
+
+        const padding = 5;
+        const maxResult = Math.max(...scores);
+        const minResult = Math.min(...scores);
+
+        const xRatio = (width - 2 * padding) / (scores.length - 1 || 1);
+        const yRatio = (height - 2 * padding) / (maxResult - minResult || 1);
+        const radius = Math.max(1.5, Math.min(2.5, 10 - (this.iterations / 10)));
+
+        let circlesSVG = "";
+        for (let i = 0; i < scores.length; i++) {
+            const result = scores[i];
+            const cx = padding + i * xRatio;
+            const cy = height - padding - (result - minResult) * yRatio;
+            const title = `Iteration ${i + 1}: ${uiFriendlyScore(result)} (${uiFriendlyDuration(this.results[i])})`;
+            circlesSVG += `<circle cx="${cx}" cy="${cy}" r="${radius}"><title>${title}</title></circle>`;
+        }
+        plotContainer.innerHTML = `<svg width="${width}px" height="${height}px">${circlesSVG}</svg>`;
+    }
+};
+
+class GroupedBenchmark extends Benchmark {
+    constructor(plan, benchmarks) {
+        super(plan);
+        console.assert(benchmarks.length);
+        for (const benchmark of benchmarks) {
+            // FIXME: Tags don't work for grouped tests anyway but if they did then this would be weird and probably wrong.
+            console.assert(!benchmark.hasAnyTag("Default"), `Grouped benchmark sub-benchmarks shouldn't have the "Default" tag`, benchmark.tags);
+        }
+        benchmarks.sort((a, b) => a.name.toLowerCase() < b.name.toLowerCase() ? 1 : -1);
+        this.benchmarks = benchmarks;
+    }
+
+    async prefetchResourcesForBrowser(counter) {
+        for (const benchmark of this.benchmarks)
+            await benchmark.prefetchResourcesForBrowser(counter);
+    }
+
+    async retryPrefetchResourcesForBrowser(counter) {
+        for (const benchmark of this.benchmarks)
+            await benchmark.retryPrefetchResourcesForBrowser(counter);
+    }
+
+    prefetchResourcesForShell() {
+        for (const benchmark of this.benchmarks)
+            benchmark.prefetchResourcesForShell();
+    }
+
+    renderHTML() {
+        let text = super.renderHTML();
+        if (JetStreamParams.groupDetails) {
+            for (const benchmark of this.benchmarks)
+                text += benchmark.renderHTML();
+        }
+        return text;
+    }
+
+    updateConsoleBeforeRun() {
+        if (!JetStreamParams.groupDetails)
+            super.updateConsoleBeforeRun();
+    }
+
+    updateConsoleAfterRun(scoreEntries) {
+        if (JetStreamParams.groupDetails)
+            super.updateConsoleBeforeRun();
+        super.updateConsoleAfterRun(scoreEntries);
+    }
+
+    get files() {
+        return this.benchmarks.flatMap(benchmark => benchmark.files)
+    }
+
+    get preloadEntries() {
+        return this.benchmarks.flatMap(benchmark => benchmark.preloadEntries)
+    }
+
+    async run() {
+        this._state = BenchmarkState.PREPARE;
+        performance.mark(this.name);
+        this.startTime = performance.now();
+
+        let benchmark;
+        try {
+            this._state = BenchmarkState.RUNNING;
+            for (benchmark of this.benchmarks) {
+                if (JetStreamParams.groupDetails)
+                    benchmark.updateUIBeforeRun();
+                await benchmark.run();
+                if (JetStreamParams.groupDetails)
+                    benchmark.updateUIAfterRun();
+            }
+        } catch (e) {
+            this._state = BenchmarkState.ERROR;
+            console.log(`Error in runCode of grouped benchmark ${benchmark.name}: `, e);
+            console.log(e.stack);
+            throw e;
+        } finally {
+            this._state = BenchmarkState.FINALIZE;
+        }
+
+        this.endTime = performance.now();
+        performance.measure(this.name, this.name);
+
+        this.processResults();
+        this._state = BenchmarkState.DONE;
+    }
+
+    processResults() {
+        this.results = [];
+        for (const benchmark of this.benchmarks)
+            this.results = this.results.concat(benchmark.results);
+    }
+
+    subScores() {
+        const results = {};
+
+        for (const benchmark of this.benchmarks) {
+            let scores = benchmark.subScores();
+            for (let subScore in scores) {
+                results[subScore] ??= [];
+                results[subScore].push(scores[subScore]);
+            }
+        }
+
+        for (let subScore in results)
+            results[subScore] = geomeanScore(results[subScore]);
+        return results;
+    }
+
+    subTimes() {
+        const results = {};
+
+        for (const benchmark of this.benchmarks) {
+            let times = benchmark.subTimes();
+            for (let subTime in times) {
+                results[subTime] ??= [];
+                results[subTime].push(times[subTime]);
+            }
+        }
+
+        for (let subTimes in results)
+            results[subTimes] = sum(results[subTimes]);
+        return results;
     }
 };
 
 class DefaultBenchmark extends Benchmark {
-    constructor(...args) {
-        super(...args);
+    constructor({worstCaseCount, ...args}) {
+        super(args);
 
-        this.worstCaseCount = this.plan.worstCaseCount || defaultWorstCaseCount;
-        this.firstIteration = null;
-        this.worst4 = null;
-        this.average = null;
+        this.worstCaseCount = this._processWorstCaseCount(worstCaseCount);
+        this.firstIterationTime = null;
+        this.firstIterationScore = null;
+        this.worstTime = null;
+        this.worstScore = null;
+        this.averageTime = null;
+        this.averageScore = null;
+        if (this.worstCaseCount)
+            console.assert(this.iterations > this.worstCaseCount);
+        console.assert(this.worstCaseCount >= 0);
     }
 
     processResults(results) {
-        function copyArray(a) {
-            let result = [];
-            for (let x of a)
-                result.push(x);
-            return result;
-        }
-        results = copyArray(results);
+        results = super.processResults(results)
 
-        this.firstIteration = toScore(results[0]);
+        this.firstIterationTime = results[0];
+        this.firstIterationScore = toScore(results[0]);
 
         results = results.slice(1);
         results.sort((a, b) => a < b ? 1 : -1);
         for (let i = 0; i + 1 < results.length; ++i)
-            assert(results[i] >= results[i + 1]);
+            console.assert(results[i] >= results[i + 1]);
 
-        let worstCase = [];
-        for (let i = 0; i < this.worstCaseCount; ++i)
-            worstCase.push(results[i]);
-        this.worst4 = toScore(mean(worstCase));
-        this.average = toScore(mean(results));
+        if (this.worstCaseCount) {
+            const worstCase = [];
+            for (let i = 0; i < this.worstCaseCount; ++i)
+                worstCase.push(results[i]);
+            this.worstTime = mean(worstCase);
+            this.worstScore = toScore(this.worstTime);
+        }
+        this.averageTime = mean(results);
+        this.averageScore = toScore(this.averageTime);
     }
 
-    get score() {
-        return geomean([this.firstIteration, this.worst4, this.average]);
+    subScores() {
+        const scores = { "First": this.firstIterationScore }
+        if (this.worstCaseCount)
+            scores["Worst"] = this.worstScore;
+        if (this.iterations > 1)
+            scores["Average"] = this.averageScore;
+        return scores;
     }
 
     subTimes() {
-        return {
-            "First": this.firstIteration,
-            "Worst": this.worst4,
-            "Average": this.average,
+        const times = {
+            "First": this.firstIterationTime,
         };
-    }
-
-    static scoreDescription() {
-        return ["First", "Worst", "Average", "Score"];
-    }
-
-    scoreIdentifiers() {
-        return [firstID(this), worst4ID(this), avgID(this), scoreID(this)];
-    }
-
-    updateUIAfterRun() {
-        super.updateUIAfterRun();
-
-        if (isInBrowser) {
-            document.getElementById(firstID(this)).innerHTML = uiFriendlyNumber(this.firstIteration);
-            document.getElementById(worst4ID(this)).innerHTML = uiFriendlyNumber(this.worst4);
-            document.getElementById(avgID(this)).innerHTML = uiFriendlyNumber(this.average);
-            document.getElementById(scoreID(this)).innerHTML = uiFriendlyNumber(this.score);
-            return;
-        }
-
-        print("    Startup:", uiFriendlyNumber(this.firstIteration));
-        print("    Worst Case:", uiFriendlyNumber(this.worst4));
-        print("    Average:", uiFriendlyNumber(this.average));
-        print("    Score:", uiFriendlyNumber(this.score));
-        if (RAMification) {
-            print("    Current Footprint:", uiFriendlyNumber(this.currentFootprint));
-            print("    Peak Footprint:", uiFriendlyNumber(this.peakFootprint));
-        }
-        print("    Wall time:", uiFriendlyDuration(new Date(this.endTime - this.startTime)));
+        if (this.worstCaseCount)
+            times["Worst"] = this.worstTime;
+        if (this.iterations > 1)
+            times["Average"] = this.averageTime;
+        return times;
     }
 }
 
 class AsyncBenchmark extends DefaultBenchmark {
+    get prerunCode() {
+        let str = "";
+        // FIXME: It would be nice if these were available to any benchmark not just async ones but since these functions
+        // are async they would only work in a context where the benchmark is async anyway. Long term, we should do away
+        // with this class and make all benchmarks async.
+        if (isInBrowser) {
+            str += `
+                JetStream.getBinary = async function(blobURL) {
+                    const response = await fetch(blobURL);
+                    return new Int8Array(await response.arrayBuffer());
+                };
+
+                JetStream.getString = async function(blobURL) {
+                    const response = await fetch(blobURL);
+                    return response.text();
+                };
+
+                JetStream.dynamicImport = async function(blobURL) {
+                    return await import(blobURL);
+                };
+            `;
+        } else {
+            str += `
+                JetStream.getBinary = async function(path) {
+                    if ("ShellPrefetchedResources" in globalThis) {
+                        return ShellPrefetchedResources[path];
+                    }
+                    return new Int8Array(read(path, "binary"));
+                };
+
+                JetStream.getString = async function(path) {
+                    if ("ShellPrefetchedResources" in globalThis) {
+                        return new ShellTextDecoder().decode(ShellPrefetchedResources[path]);
+                    }
+                    return read(path);
+                };
+
+                JetStream.dynamicImport = async function(path) {
+                    try {
+                        // TODO: this skips the prefetched resources, but I'm
+                        // not sure of a way around that.
+                        return await import(path);
+                    } catch (e) {
+                        // In shells, relative imports require different paths, so try with and
+                        // without the "./" prefix (e.g., JSC requires it).
+                        return await import(path.slice("./".length))
+                    }
+                };
+            `;
+        }
+        return str;
+    }
+
+    get prepareForNextIterationCode() {
+        return "await benchmark.prepareForNextIteration?.();"
+    }
+
     get runnerCode() {
         return `
         async function doRun() {
-            let __benchmark = new Benchmark();
-            let results = [];
+            const benchmark = new Benchmark(${JSON.stringify(this.benchmarkArguments)});
+            await benchmark.init?.();
+            const results = [];
+            const benchmarkName = "${this.name}";
+
             for (let i = 0; i < ${this.iterations}; i++) {
-                let start = Date.now();
-                await __benchmark.runIteration();
-                let end = Date.now();
+                ${this.preIterationCode}
+
+                const iterationMarkLabel = benchmarkName + "-iteration-" + i;
+                const iterationStartMark = performance.mark(iterationMarkLabel);
+
+                const start = performance.now();
+                await benchmark.runIteration(i);
+                const end = performance.now();
+
+                performance.measure(iterationMarkLabel, iterationMarkLabel);
+
+                ${this.postIterationCode}
+
                 results.push(Math.max(1, end - start));
             }
-            if (__benchmark.validate)
-                __benchmark.validate();
+            benchmark.validate?.(${this.iterations});
             top.currentResolve(results);
-        }
-        doRun();`
+        };
+        doRun().catch((error) => { top.currentReject(error); });`
+    }
+};
+
+// Meant for wasm benchmarks that are directly compiled with an emcc build script. It might not work for benchmarks built as
+// part of a larger project's build system or a wasm benchmark compiled from a language that doesn't compile with emcc.
+class WasmEMCCBenchmark extends AsyncBenchmark {
+    get prerunCode() {
+        let str = `
+            let verbose = false;
+
+            let globalObject = this;
+
+            abort = quit = function() {
+                if (verbose)
+                    console.log('Intercepted quit/abort');
+            };
+
+            const oldPrint = globalObject.print;
+            globalObject.print = globalObject.printErr = (...args) => {
+                if (verbose)
+                    console.log('Intercepted print: ', ...args);
+            };
+
+            let Module = {
+                preRun: [],
+                postRun: [],
+                noInitialRun: true,
+                print: print,
+                printErr: printErr
+            };
+
+            globalObject.Module = Module;
+            ${super.prerunCode};
+        `;
+
+        return str;
     }
 };
 
 class WSLBenchmark extends Benchmark {
-    constructor(...args) {
-        super(...args);
+    constructor(plan) {
+        super(plan);
 
-        this.stdlib = null;
-        this.mainRun = null;
+        this.stdlibTime = null;
+        this.stdlibScore = null;
+        this.mainRunTime = null;
+        this.mainRunScore = null;
     }
 
     processResults(results) {
-        this.stdlib = toScore(results[0]);
-        this.mainRun = toScore(results[1]);
-    }
-
-    get score() {
-        return geomean([this.stdlib, this.mainRun]);
+        results = super.processResults(results);
+        this.stdlibTime = results[0];
+        this.stdlibScore = toScore(results[0]);
+        this.mainRunTime = results[1];
+        this.mainRunScore = toScore(results[1]);
     }
 
     get runnerCode() {
-        return `
-            let benchmark = new Benchmark();
-            let results = [];
+        return `{
+            const benchmark = new Benchmark(${JSON.stringify(this.benchmarkArguments)});
+            const benchmarkName = "${this.name}";
+
+            const results = [];
             {
-                let start = Date.now();
+                const markLabel = benchmarkName + "-stdlib";
+                const startMark = performance.mark(markLabel);
+
+                const start = performance.now();
                 benchmark.buildStdlib();
-                results.push(Date.now() - start);
+                results.push(performance.now() - start);
+
+                performance.measure(markLabel, markLabel);
             }
 
             {
-                let start = Date.now();
-                benchmark.run();
-                results.push(Date.now() - start);
-            }
+                const markLabel = benchmarkName + "-mainRun";
+                const startMark = performance.mark(markLabel);
 
+                const start = performance.now();
+                benchmark.run();
+                results.push(performance.now() - start);
+
+                performance.measure(markLabel, markLabel);
+            }
             top.currentResolve(results);
-            `;
+        }`;
     }
 
     subTimes() {
         return {
-            "Stdlib": this.stdlib,
-            "MainRun": this.mainRun,
+            "Stdlib": this.stdlibTime,
+            "MainRun": this.mainRunTime,
         };
     }
 
-    static scoreDescription() {
-        return ["Stdlib", "MainRun", "Score"];
-    }
-
-    scoreIdentifiers() {
-        return ["wsl-stdlib-score", "wsl-tests-score", "wsl-score-score"];
-    }
-
-    updateUIAfterRun() {
-        super.updateUIAfterRun();
-
-        if (isInBrowser) {
-            document.getElementById("wsl-stdlib-score").innerHTML = uiFriendlyNumber(this.stdlib);
-            document.getElementById("wsl-tests-score").innerHTML = uiFriendlyNumber(this.mainRun);
-            document.getElementById("wsl-score-score").innerHTML = uiFriendlyNumber(this.score);
-            return;
-        }
-
-        print("    Stdlib:", uiFriendlyNumber(this.stdlib));
-        print("    Tests:", uiFriendlyNumber(this.mainRun));
-        print("    Score:", uiFriendlyNumber(this.score));
-        if (RAMification) {
-            print("    Current Footprint:", uiFriendlyNumber(this.currentFootprint));
-            print("    Peak Footprint:", uiFriendlyNumber(this.peakFootprint));
-        }
-        print("    Wall time:", uiFriendlyDuration(new Date(this.endTime - this.startTime)));
+    subScores() {
+        return {
+            "Stdlib": this.stdlibScore,
+            "MainRun": this.mainRunScore,
+        };
     }
 };
 
-class WasmBenchmark extends Benchmark {
-    constructor(...args) {
-        super(...args);
-
+class AsyncWasmLegacyBenchmark extends Benchmark {
+    constructor(plan) {
+        super(plan);
         this.startupTime = null;
+        this.startupScore = null;
         this.runTime = null;
+        this.runScore = null;
     }
 
     processResults(results) {
-        this.startupTime = toScore(results[0]);
-        this.runTime = toScore(results[1]);
-    }
-
-    get score() {
-        return geomean([this.startupTime, this.runTime]);
-    }
-
-    get wasmPath() {
-        return this.plan.wasmPath;
+        results = super.processResults(results);
+        this.startupTime = results[0];
+        this.startupScore= toScore(results[0]);
+        this.runTime = results[1];
+        this.runScore = toScore(results[1]);
     }
 
     get prerunCode() {
-        let str = `
+        const str = `
             let verbose = false;
 
             let compileTime = null;
@@ -795,7 +1808,7 @@ class WasmBenchmark extends Benchmark {
 
             let globalObject = this;
 
-            globalObject.benchmarkTime = Date.now.bind(Date);
+            globalObject.benchmarkTime = performance.now.bind(performance);
 
             globalObject.reportCompileTime = (t) => {
                 if (compileTime !== null)
@@ -815,65 +1828,87 @@ class WasmBenchmark extends Benchmark {
                     console.log('Intercepted quit/abort');
             };
 
-            oldPrint = globalObject.print;
+            const oldConsoleLog = globalObject.console.log;
             globalObject.print = globalObject.printErr = (...args) => {
                 if (verbose)
-                    console.log('Intercepted print: ', ...args);
+                    oldConsoleLog('Intercepted print: ', ...args);
             };
 
             let Module = {
                 preRun: [],
                 postRun: [],
-                print: function() { },
-                printErr: function() { },
-                setStatus: function(text) {
-                },
-                totalDependencies: 0,
-                monitorRunDependencies: function(left) {
-                    this.totalDependencies = Math.max(this.totalDependencies, left);
-                    Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
-                }
+                print: globalObject.print,
+                printErr: globalObject.print
             };
             globalObject.Module = Module;
-            `;
+        `;
         return str;
     }
 
     get runnerCode() {
-        let str = "";
+        let str = `JetStream.loadBlob = function(key, path, andThen) {`;
+
         if (isInBrowser) {
             str += `
-                var xhr = new XMLHttpRequest();
-                xhr.open('GET', wasmBlobURL, true);
+                const xhr = new XMLHttpRequest();
+                xhr.open('GET', path, true);
                 xhr.responseType = 'arraybuffer';
                 xhr.onload = function() {
-                    Module.wasmBinary = xhr.response;
-                    doRun();
+                    Module[key] = new Int8Array(xhr.response);
+                    andThen();
                 };
                 xhr.send(null);
             `;
         } else {
             str += `
-            Module.wasmBinary = read("${this.wasmPath}", "binary");
-            globalObject.read = (...args) => {
-                console.log("should not be inside read: ", ...args);
-                throw new Error;
+            if (ShellPrefetchedResources) {
+                Module[key] = ShellPrefetchedResources[path];
+            } else {
+                Module[key] = new Int8Array(read(path, "binary"));
+            }
+            if (andThen == doRun) {
+                globalObject.read = (...args) => {
+                    console.log("should not be inside read: ", ...args);
+                    throw new Error;
+                };
             };
-
-            Module.setStatus = null;
-            Module.monitorRunDependencies = null;
 
             Promise.resolve(42).then(() => {
                 try {
-                    doRun();
+                    andThen();
                 } catch(e) {
                     console.log("error running wasm:", e);
+                    console.log(e.stack);
                     throw e;
                 }
-            })
+            });
             `;
         }
+
+        str += "};\n";
+        let preloadCount = 0;
+        for (const [name, resource] of this.preloadEntries) {
+            preloadCount++;
+            str += `JetStream.loadBlob(${JSON.stringify(name)}, "${resource}", () => {\n`;
+        }
+        str += `doRun().catch((e) => {
+            console.log("error running wasm:", e);
+            console.log(e.stack)
+            throw e;
+        });`;
+        for (let i = 0; i < preloadCount; ++i) {
+            str += `})`;
+        }
+        str += `;`;
+
         return str;
+    }
+
+    subScores() {
+        return {
+            "Startup": this.startupScore,
+            "Runtime": this.runScore,
+        };
     }
 
     subTimes() {
@@ -882,746 +1917,1420 @@ class WasmBenchmark extends Benchmark {
             "Runtime": this.runTime,
         };
     }
-
-    static scoreDescription() {
-        return ["Startup", "Runtime", "Score"];
-    }
-
-    get startupID() {
-        return `wasm-startup-id${this.name}`;
-    }
-    get runID() {
-        return `wasm-run-id${this.name}`;
-    }
-    get scoreID() {
-        return `wasm-score-id${this.name}`;
-    }
-
-    scoreIdentifiers() {
-        return [this.startupID, this.runID, this.scoreID];
-    }
-
-    updateUIAfterRun() {
-        super.updateUIAfterRun();
-
-        if (isInBrowser) {
-            document.getElementById(this.startupID).innerHTML = uiFriendlyNumber(this.startupTime);
-            document.getElementById(this.runID).innerHTML = uiFriendlyNumber(this.runTime);
-            document.getElementById(this.scoreID).innerHTML = uiFriendlyNumber(this.score);
-            return;
-        }
-        print("    Startup:", uiFriendlyNumber(this.startupTime));
-        print("    Run time:", uiFriendlyNumber(this.runTime));
-        if (RAMification) {
-            print("    Current Footprint:", uiFriendlyNumber(this.currentFootprint));
-            print("    Peak Footprint:", uiFriendlyNumber(this.peakFootprint));
-        }
-        print("    Score:", uiFriendlyNumber(this.score));
-    }
 };
 
-const ARESGroup = Symbol.for("ARES");
-const CDJSGroup = Symbol.for("CDJS");
-const CodeLoadGroup = Symbol.for("CodeLoad");
-const LuaJSFightGroup = Symbol.for("LuaJSFight");
-const OctaneGroup = Symbol.for("Octane");
-const RexBenchGroup = Symbol.for("RexBench");
-const SeaMonsterGroup = Symbol.for("SeaMonster");
-const SimpleGroup = Symbol.for("Simple");
-const SunSpiderGroup = Symbol.for("SunSpider");
-const WasmGroup = Symbol.for("Wasm");
-const WorkerTestsGroup = Symbol.for("WorkerTests");
-const WSLGroup = Symbol.for("WSL");
-const WTBGroup = Symbol.for("WTB");
+function dotnetPreloads(type)
+{
+    return {
+        dotnetUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/dotnet.js`,
+        dotnetNativeUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/dotnet.native.js`,
+        dotnetRuntimeUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/dotnet.runtime.js`,
+        wasmBinaryUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/dotnet.native.wasm`,
+        icuCustomUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/icudt_CJK.dat`,
+        dllCollectionsConcurrentUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Collections.Concurrent.wasm`,
+        dllCollectionsUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Collections.wasm`,
+        dllComponentModelPrimitivesUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.ComponentModel.Primitives.wasm`,
+        dllComponentModelTypeConverterUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.ComponentModel.TypeConverter.wasm`,
+        dllDrawingPrimitivesUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Drawing.Primitives.wasm`,
+        dllDrawingUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Drawing.wasm`,
+        dllIOPipelinesUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.IO.Pipelines.wasm`,
+        dllLinqUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Linq.wasm`,
+        dllMemoryUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Memory.wasm`,
+        dllObjectModelUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.ObjectModel.wasm`,
+        dllPrivateCorelibUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Private.CoreLib.wasm`,
+        dllRuntimeInteropServicesJavaScriptUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Runtime.InteropServices.JavaScript.wasm`,
+        dllTextEncodingsWebUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Text.Encodings.Web.wasm`,
+        dllTextJsonUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/System.Text.Json.wasm`,
+        dllAppUrl: `./wasm/dotnet/build-${type}/wwwroot/_framework/dotnet.wasm`,
+    }
+}
 
-
-let testPlans = [
+let BENCHMARKS = [
     // ARES
-    {
+    new DefaultBenchmark({
         name: "Air",
         files: [
-            "./ARES-6/Air/symbols.js"
-            , "./ARES-6/Air/tmp_base.js"
-            , "./ARES-6/Air/arg.js"
-            , "./ARES-6/Air/basic_block.js"
-            , "./ARES-6/Air/code.js"
-            , "./ARES-6/Air/frequented_block.js"
-            , "./ARES-6/Air/inst.js"
-            , "./ARES-6/Air/opcode.js"
-            , "./ARES-6/Air/reg.js"
-            , "./ARES-6/Air/stack_slot.js"
-            , "./ARES-6/Air/tmp.js"
-            , "./ARES-6/Air/util.js"
-            , "./ARES-6/Air/custom.js"
-            , "./ARES-6/Air/liveness.js"
-            , "./ARES-6/Air/insertion_set.js"
-            , "./ARES-6/Air/allocate_stack.js"
-            , "./ARES-6/Air/payload-gbemu-executeIteration.js"
-            , "./ARES-6/Air/payload-imaging-gaussian-blur-gaussianBlur.js"
-            , "./ARES-6/Air/payload-airjs-ACLj8C.js"
-            , "./ARES-6/Air/payload-typescript-scanIdentifier.js"
-            , "./ARES-6/Air/benchmark.js"
+            "./ARES-6/Air/symbols.js",
+            "./ARES-6/Air/tmp_base.js",
+            "./ARES-6/Air/arg.js",
+            "./ARES-6/Air/basic_block.js",
+            "./ARES-6/Air/code.js",
+            "./ARES-6/Air/frequented_block.js",
+            "./ARES-6/Air/inst.js",
+            "./ARES-6/Air/opcode.js",
+            "./ARES-6/Air/reg.js",
+            "./ARES-6/Air/stack_slot.js",
+            "./ARES-6/Air/tmp.js",
+            "./ARES-6/Air/util.js",
+            "./ARES-6/Air/custom.js",
+            "./ARES-6/Air/liveness.js",
+            "./ARES-6/Air/insertion_set.js",
+            "./ARES-6/Air/allocate_stack.js",
+            "./ARES-6/Air/payload-gbemu-executeIteration.js",
+            "./ARES-6/Air/payload-imaging-gaussian-blur-gaussianBlur.js",
+            "./ARES-6/Air/payload-airjs-ACLj8C.js",
+            "./ARES-6/Air/payload-typescript-scanIdentifier.js",
+            "./ARES-6/Air/benchmark.js",
         ],
-        testGroup: ARESGroup
-    },
-    {
+        tags: ["default", "js", "ARES"],
+    }),
+    new DefaultBenchmark({
         name: "Basic",
         files: [
-            "./ARES-6/Basic/ast.js"
-            , "./ARES-6/Basic/basic.js"
-            , "./ARES-6/Basic/caseless_map.js"
-            , "./ARES-6/Basic/lexer.js"
-            , "./ARES-6/Basic/number.js"
-            , "./ARES-6/Basic/parser.js"
-            , "./ARES-6/Basic/random.js"
-            , "./ARES-6/Basic/state.js"
-            , "./ARES-6/Basic/util.js"
-            , "./ARES-6/Basic/benchmark.js"
+            "./ARES-6/Basic/ast.js",
+            "./ARES-6/Basic/basic.js",
+            "./ARES-6/Basic/caseless_map.js",
+            "./ARES-6/Basic/lexer.js",
+            "./ARES-6/Basic/number.js",
+            "./ARES-6/Basic/parser.js",
+            "./ARES-6/Basic/random.js",
+            "./ARES-6/Basic/state.js",
+            "./ARES-6/Basic/benchmark.js",
         ],
-        testGroup: ARESGroup
-    },
-    {
+        tags: ["default", "js",  "ARES"],
+    }),
+    new DefaultBenchmark({
         name: "ML",
         files: [
-            "./ARES-6/ml/index.js"
-            , "./ARES-6/ml/benchmark.js"
+            "./ARES-6/ml/index.js",
+            "./ARES-6/ml/benchmark.js",
         ],
         iterations: 60,
-        testGroup: ARESGroup
-    },
-    {
+        tags: ["default", "js",  "ARES"],
+    }),
+    new AsyncBenchmark({
         name: "Babylon",
         files: [
-            "./ARES-6/Babylon/index.js"
-            , "./ARES-6/Babylon/benchmark.js"
+            "./ARES-6/Babylon/index.js",
+            "./ARES-6/Babylon/benchmark.js",
         ],
         preload: {
             airBlob: "./ARES-6/Babylon/air-blob.js",
             basicBlob: "./ARES-6/Babylon/basic-blob.js",
             inspectorBlob: "./ARES-6/Babylon/inspector-blob.js",
-            babylonBlob: "./ARES-6/Babylon/babylon-blob.js"
+            babylonBlob: "./ARES-6/Babylon/babylon-blob.js",
         },
-        testGroup: ARESGroup
-    },
+        tags: ["default", "js",  "ARES"],
+        allowUtf16: true,
+    }),
     // CDJS
-    {
+    new DefaultBenchmark({
         name: "cdjs",
         files: [
-            "./cdjs/constants.js"
-            , "./cdjs/util.js"
-            , "./cdjs/red_black_tree.js"
-            , "./cdjs/call_sign.js"
-            , "./cdjs/vector_2d.js"
-            , "./cdjs/vector_3d.js"
-            , "./cdjs/motion.js"
-            , "./cdjs/reduce_collision_set.js"
-            , "./cdjs/simulator.js"
-            , "./cdjs/collision.js"
-            , "./cdjs/collision_detector.js"
-            , "./cdjs/benchmark.js"
+            "./cdjs/constants.js",
+            "./cdjs/util.js",
+            "./cdjs/red_black_tree.js",
+            "./cdjs/call_sign.js",
+            "./cdjs/vector_2d.js",
+            "./cdjs/vector_3d.js",
+            "./cdjs/motion.js",
+            "./cdjs/reduce_collision_set.js",
+            "./cdjs/simulator.js",
+            "./cdjs/collision.js",
+            "./cdjs/collision_detector.js",
+            "./cdjs/benchmark.js",
         ],
         iterations: 60,
         worstCaseCount: 3,
-        testGroup: CDJSGroup
-    },
+        tags: ["default", "js",  ],
+    }),
     // CodeLoad
-    {
+    new AsyncBenchmark({
         name: "first-inspector-code-load",
         files: [
-            "./code-load/code-first-load.js"
+            "./code-load/code-first-load.js",
         ],
         preload: {
-            inspectorPayloadBlob: "./code-load/inspector-payload-minified.js"
+            inspectorPayloadBlob: "./code-load/inspector-payload-minified.js",
         },
-        testGroup: CodeLoadGroup
-    },
-    {
+        tags: ["default", "js", "inspector", "codeload"],
+    }),
+    new AsyncBenchmark({
         name: "multi-inspector-code-load",
         files: [
-            "./code-load/code-multi-load.js"
+            "./code-load/code-multi-load.js",
         ],
         preload: {
-            inspectorPayloadBlob: "./code-load/inspector-payload-minified.js"
+            inspectorPayloadBlob: "./code-load/inspector-payload-minified.js",
         },
-        testGroup: CodeLoadGroup
-    },
+        tags: ["default", "js", "inspector", "codeload"],
+    }),
     // Octane
-    {
+    new DefaultBenchmark({
         name: "Box2D",
         files: [
-            "./Octane/box2d.js"
+            "./Octane/box2d.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "octane-code-load",
         files: [
-            "./Octane/code-first-load.js"
+            "./Octane/code-first-load.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js", "codeload", "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "crypto",
         files: [
-            "./Octane/crypto.js"
+            "./Octane/crypto.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "delta-blue",
         files: [
             "./Octane/deltablue.js"
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "earley-boyer",
         files: [
             "./Octane/earley-boyer.js"
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "gbemu",
         files: [
-            "./Octane/gbemu-part1.js"
-            , "./Octane/gbemu-part2.js"
+            "./Octane/gbemu-part1.js",
+            "./Octane/gbemu-part2.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "mandreel",
         files: [
             "./Octane/mandreel.js"
         ],
         iterations: 80,
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "navier-stokes",
         files: [
-            "./Octane/navier-stokes.js"
+            "./Octane/navier-stokes.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default",  "js", "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "pdfjs",
         files: [
-            "./Octane/pdfjs.js"
+            "./Octane/pdfjs.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "raytrace",
         files: [
-            "./Octane/raytrace.js"
+            "./Octane/raytrace.js",
         ],
-        deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
-        name: "regexp",
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
+        name: "regexp-octane",
         files: [
-            "./Octane/regexp.js"
+            "./Octane/regexp.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js", "regexp", "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "richards",
         files: [
-            "./Octane/richards.js"
+            "./Octane/richards.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
         name: "splay",
         files: [
-            "./Octane/splay.js"
+            "./Octane/splay.js",
         ],
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
-        name: "typescript",
+        tags: ["default", "js",  "Octane"],
+    }),
+    new DefaultBenchmark({
+        name: "typescript-octane",
         files: [
-            "./Octane/typescript-compiler.js"
-            , "./Octane/typescript-input.js"
-            , "./Octane/typescript.js"
+            "./Octane/typescript-compiler.js",
+            "./Octane/typescript-input.js",
+            "./Octane/typescript.js",
         ],
         iterations: 15,
         worstCaseCount: 2,
         deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
-    {
-        name: "octane-zlib",
-        files: [
-            "./Octane/zlib-data.js"
-            , "./Octane/zlib.js"
-        ],
-        iterations: 15,
-        worstCaseCount: 2,
-        deterministicRandom: true,
-        testGroup: OctaneGroup
-    },
+        tags: ["Octane", "js",  "typescript"],
+    }),
     // RexBench
-    {
+    new DefaultBenchmark({
         name: "FlightPlanner",
         files: [
-            "./RexBench/FlightPlanner/airways.js"
-            , "./RexBench/FlightPlanner/waypoints.js"
-            , "./RexBench/FlightPlanner/flight_planner.js"
-            , "./RexBench/FlightPlanner/expectations.js"
-            , "./RexBench/FlightPlanner/benchmark.js"
+            "./RexBench/FlightPlanner/airways.js",
+            "./RexBench/FlightPlanner/waypoints.js.z",
+            "./RexBench/FlightPlanner/flight_planner.js",
+            "./RexBench/FlightPlanner/expectations.js",
+            "./RexBench/FlightPlanner/benchmark.js",
         ],
-        testGroup: RexBenchGroup
-    },
-    {
+        tags: ["default", "js",  "RexBench"],
+    }),
+    new DefaultBenchmark({
         name: "OfflineAssembler",
         files: [
-            "./RexBench/OfflineAssembler/registers.js"
-            , "./RexBench/OfflineAssembler/instructions.js"
-            , "./RexBench/OfflineAssembler/ast.js"
-            , "./RexBench/OfflineAssembler/parser.js"
-            , "./RexBench/OfflineAssembler/file.js"
-            , "./RexBench/OfflineAssembler/LowLevelInterpreter.js"
-            , "./RexBench/OfflineAssembler/LowLevelInterpreter32_64.js"
-            , "./RexBench/OfflineAssembler/LowLevelInterpreter64.js"
-            , "./RexBench/OfflineAssembler/InitBytecodes.js"
-            , "./RexBench/OfflineAssembler/expected.js"
-            , "./RexBench/OfflineAssembler/benchmark.js"
+            "./RexBench/OfflineAssembler/registers.js",
+            "./RexBench/OfflineAssembler/instructions.js",
+            "./RexBench/OfflineAssembler/ast.js",
+            "./RexBench/OfflineAssembler/parser.js",
+            "./RexBench/OfflineAssembler/file.js",
+            "./RexBench/OfflineAssembler/LowLevelInterpreter.js",
+            "./RexBench/OfflineAssembler/LowLevelInterpreter32_64.js",
+            "./RexBench/OfflineAssembler/LowLevelInterpreter64.js",
+            "./RexBench/OfflineAssembler/InitBytecodes.js",
+            "./RexBench/OfflineAssembler/expected.js",
+            "./RexBench/OfflineAssembler/benchmark.js",
         ],
         iterations: 80,
-        testGroup: RexBenchGroup
-    },
-    {
+        tags: ["default", "js",  "RexBench"],
+    }),
+    new DefaultBenchmark({
         name: "UniPoker",
         files: [
-            "./RexBench/UniPoker/poker.js"
-            , "./RexBench/UniPoker/expected.js"
-            , "./RexBench/UniPoker/benchmark.js"
+            "./RexBench/UniPoker/poker.js",
+            "./RexBench/UniPoker/expected.js",
+            "./RexBench/UniPoker/benchmark.js",
         ],
         deterministicRandom: true,
-        testGroup: RexBenchGroup
-    },
+        // FIXME: UniPoker should not access isInBrowser.
+        exposeBrowserTest: true,
+        tags: ["default", "js",  "RexBench"],
+    }),
+    new DefaultBenchmark({
+        name: "validatorjs",
+        files: [
+            // Use the unminified version for easier local profiling.
+            // "./validatorjs/dist/bundle.es6.js",
+            "./validatorjs/dist/bundle.es6.min.js",
+            "./validatorjs/benchmark.js",
+        ],
+        tags: ["default", "js",  "regexp"],
+    }),
     // Simple
-    {
-        name: "async-fs",
-        files: [
-            "./simple/file-system.js"
-        ],
-        iterations: 40,
-        worstCaseCount: 3,
-        benchmarkClass: AsyncBenchmark,
-        testGroup: SimpleGroup
-    },
-    {
-        name: "float-mm.c",
-        files: [
-            "./simple/float-mm.c.js"
-        ],
-        iterations: 15,
-        worstCaseCount: 2,
-        testGroup: SimpleGroup
-    },
-    {
+    new DefaultBenchmark({
         name: "hash-map",
         files: [
-            "./simple/hash-map.js"
+            "./simple/hash-map.js",
         ],
-        testGroup: SimpleGroup
-    },
+        tags: ["default", "js",  "Simple"],
+    }),
+    new AsyncBenchmark({
+        name: "doxbee-promise",
+        files: [
+            "./simple/doxbee-promise.js",
+        ],
+        tags: ["default",  "js", "promise", "Simple"],
+    }),
+    new AsyncBenchmark({
+        name: "doxbee-async",
+        files: [
+            "./simple/doxbee-async.js",
+        ],
+        tags: ["default", "js", "Simple"],
+    }),
     // SeaMonster
-    {
+    new DefaultBenchmark({
         name: "ai-astar",
         files: [
             "./SeaMonster/ai-astar.js"
         ],
-        testGroup: SeaMonsterGroup
-    },
-    {
+        tags: ["default", "js", "SeaMonster"],
+    }),
+    new DefaultBenchmark({
         name: "gaussian-blur",
         files: [
-            "./SeaMonster/gaussian-blur.js"
+            "./SeaMonster/gaussian-blur.js",
         ],
-        testGroup: SeaMonsterGroup
-    },
-    {
+        tags: ["default", "js", "SeaMonster"],
+    }),
+    new DefaultBenchmark({
         name: "stanford-crypto-aes",
         files: [
-            "./SeaMonster/sjlc.js"
-            , "./SeaMonster/stanford-crypto-aes.js"
+            "./SeaMonster/sjlc.js",
+            "./SeaMonster/stanford-crypto-aes.js",
         ],
-        testGroup: SeaMonsterGroup
-    },
-    {
+        tags: ["default", "js", "SeaMonster"],
+    }),
+    new DefaultBenchmark({
         name: "stanford-crypto-pbkdf2",
         files: [
-            "./SeaMonster/sjlc.js"
-            , "./SeaMonster/stanford-crypto-pbkdf2.js"
+            "./SeaMonster/sjlc.js",
+            "./SeaMonster/stanford-crypto-pbkdf2.js"
         ],
-        testGroup: SeaMonsterGroup
-    },
-    {
+        tags: ["default", "js", "SeaMonster"],
+    }),
+    new DefaultBenchmark({
         name: "stanford-crypto-sha256",
         files: [
-            "./SeaMonster/sjlc.js"
-            , "./SeaMonster/stanford-crypto-sha256.js"
+            "./SeaMonster/sjlc.js",
+            "./SeaMonster/stanford-crypto-sha256.js",
         ],
-        testGroup: SeaMonsterGroup
-    },
-    {
+        tags: ["default", "js", "SeaMonster"],
+    }),
+    new DefaultBenchmark({
         name: "json-stringify-inspector",
         files: [
-            "./SeaMonster/inspector-json-payload.js"
-            , "./SeaMonster/json-stringify-inspector.js"
+            "./SeaMonster/inspector-json-payload.js.z",
+            "./SeaMonster/json-stringify-inspector.js",
         ],
         iterations: 20,
         worstCaseCount: 2,
-        testGroup: SeaMonsterGroup
-    },
-    {
+        tags: ["default", "js", "json", "inspector", "SeaMonster"],
+    }),
+    new DefaultBenchmark({
         name: "json-parse-inspector",
         files: [
-            "./SeaMonster/inspector-json-payload.js"
-            , "./SeaMonster/json-parse-inspector.js"
+            "./SeaMonster/inspector-json-payload.js.z",
+            "./SeaMonster/json-parse-inspector.js",
         ],
         iterations: 20,
         worstCaseCount: 2,
-        testGroup: SeaMonsterGroup
-    },
-    // Wasm
-    {
-        name: "HashSet-wasm",
-        wasmPath: "./wasm/HashSet.wasm",
+        tags: ["default", "js", "json", "inspector", "SeaMonster"],
+    }),
+    // BigInt
+    new AsyncBenchmark({
+        name: "bigint-noble-bls12-381",
         files: [
-            "./wasm/HashSet.js"
+            "./bigint/web-crypto-sham.js",
+            "./bigint/noble-bls12-381-bundle.js",
+            "./bigint/noble-benchmark.js",
+        ],
+        iterations: 4,
+        worstCaseCount: 1,
+        deterministicRandom: true,
+        tags: ["js", "bigint", "BigIntNoble"],
+    }),
+    new AsyncBenchmark({
+        name: "bigint-noble-secp256k1",
+        files: [
+            "./bigint/web-crypto-sham.js",
+            "./bigint/noble-secp256k1-bundle.js",
+            "./bigint/noble-benchmark.js",
+        ],
+        deterministicRandom: true,
+        tags: ["js", "bigint", "BigIntNoble"],
+    }),
+    new AsyncBenchmark({
+        name: "bigint-noble-ed25519",
+        files: [
+            "./bigint/web-crypto-sham.js",
+            "./bigint/noble-ed25519-bundle.js",
+            "./bigint/noble-benchmark.js",
+        ],
+        iterations: 30,
+        deterministicRandom: true,
+        tags: ["default", "js", "bigint", "BigIntNoble"],
+    }),
+    new DefaultBenchmark({
+        name: "bigint-paillier",
+        files: [
+            "./bigint/web-crypto-sham.js",
+            "./bigint/paillier-bundle.js",
+            "./bigint/paillier-benchmark.js",
+        ],
+        iterations: 10,
+        worstCaseCount: 2,
+        deterministicRandom: true,
+        tags: ["js", "bigint", "BigIntMisc"],
+    }),
+    new DefaultBenchmark({
+        name: "bigint-bigdenary",
+        files: [
+            "./bigint/bigdenary-bundle.js",
+            "./bigint/bigdenary-benchmark.js",
+        ],
+        iterations: 160,
+        worstCaseCount: 16,
+        tags: ["js", "bigint", "BigIntMisc"],
+    }),
+    // Proxy
+    new AsyncBenchmark({
+        name: "proxy-mobx",
+        files: [
+            "./proxy/common.js",
+            "./proxy/mobx-bundle.js",
+            "./proxy/mobx-benchmark.js",
+        ],
+        iterations: defaultIterationCount * 3,
+        worstCaseCount: defaultWorstCaseCount * 3,
+        tags: ["default", "js", "Proxy"],
+    }),
+    new AsyncBenchmark({
+        name: "proxy-vue",
+        files: [
+            "./proxy/common.js",
+            "./proxy/vue-bundle.js",
+            "./proxy/vue-benchmark.js",
+        ],
+        tags: ["default", "js", "Proxy"],
+    }),
+    new AsyncBenchmark({
+        name: "mobx-startup",
+        files: [
+            "./utils/StartupBenchmark.js",
+            "./mobx/benchmark.js",
         ],
         preload: {
-            wasmBlobURL: "./wasm/HashSet.wasm"
+            // Debug Sources for nicer profiling.
+            // BUNDLE: "./mobx/dist/bundle.es6.js",
+            BUNDLE: "./mobx/dist/bundle.es6.min.js",
         },
-        benchmarkClass: WasmBenchmark,
-        testGroup: WasmGroup
-    },
-    {
-        name: "tsf-wasm",
-        wasmPath: "./wasm/tsf.wasm",
+        tags: ["default", "js", "mobx", "startup", "es6"],
+        iterations: 30,
+        worstCaseCount: 3,
+    }),
+    new AsyncBenchmark({
+        name: "jsdom-d3-startup",
         files: [
-            "./wasm/tsf.js"
+            "./utils/StartupBenchmark.js",
+            "./jsdom-d3-startup/benchmark.js",
         ],
         preload: {
-            wasmBlobURL: "./wasm/tsf.wasm"
+            // Unminified sources for profiling.
+            // BUNDLE: "./jsdom-d3-startup/dist/bundle.js",
+            BUNDLE: "./jsdom-d3-startup/dist/bundle.min.js",
+            US_DATA: "./jsdom-d3-startup/data/counties-albers-10m.json",
+            AIRPORTS: "./jsdom-d3-startup/data/airports.csv",
         },
-        benchmarkClass: WasmBenchmark,
-        testGroup: WasmGroup
-    },
-    {
-        name: "quicksort-wasm",
-        wasmPath: "./wasm/quicksort.wasm",
+        tags: ["default", "js", "d3", "startup", "jsdom"],
+        iterations: 15,
+        worstCaseCount: 2,
+    }),
+    new AsyncBenchmark({
+        name: "web-ssr",
         files: [
-            "./wasm/quicksort.js"
+            "./utils/StartupBenchmark.js",
+            "./web-ssr/benchmark.js",
         ],
         preload: {
-            wasmBlobURL: "./wasm/quicksort.wasm"
+            // Debug Sources for nicer profiling.
+            // BUNDLE: "./web-ssr/dist/bundle.js",
+            BUNDLE: "./web-ssr/dist/bundle.min.js",
         },
-        benchmarkClass: WasmBenchmark,
-        testGroup: WasmGroup
-    },
-    {
-        name: "gcc-loops-wasm",
-        wasmPath: "./wasm/gcc-loops.wasm",
+        tags: ["default", "js", "web", "ssr"],
+        iterations: 30,
+    }),
+    // Class fields
+    new DefaultBenchmark({
+        name: "raytrace-public-class-fields",
         files: [
-            "./wasm/gcc-loops.js"
+            "./class-fields/raytrace-public-class-fields.js",
+        ],
+        tags: ["default", "js", "ClassFields"],
+    }),
+    new DefaultBenchmark({
+        name: "raytrace-private-class-fields",
+        files: [
+            "./class-fields/raytrace-private-class-fields.js",
+        ],
+        tags: ["default", "js", "ClassFields"],
+    }),
+    new AsyncBenchmark({
+        name: "typescript-lib",
+        files: [
+            "./TypeScript/src/mock/sys.js",
+            "./TypeScript/dist/bundle.js",
+            "./TypeScript/benchmark.js",
         ],
         preload: {
-            wasmBlobURL: "./wasm/gcc-loops.wasm"
+            // Large test project:
+            // "tsconfig": "./TypeScript/src/gen/zod-medium/tsconfig.json",
+            // "files": "./TypeScript/src/gen/zod-medium/files.json",
+            "tsconfig": "./TypeScript/src/gen/immer-tiny/tsconfig.json",
+            "files": "./TypeScript/src/gen/immer-tiny/files.json",
         },
-        benchmarkClass: WasmBenchmark,
-        testGroup: WasmGroup
-    },
-    {
-        name: "richards-wasm",
-        wasmPath: "./wasm/richards.wasm",
+        iterations: 1,
+        worstCaseCount: 0,
+        tags: ["default", "js", "typescript"],
+    }),
+    // Generators
+    new AsyncBenchmark({
+        name: "async-fs",
         files: [
-            "./wasm/richards.js"
-        ],
-        preload: {
-            wasmBlobURL: "./wasm/richards.wasm"
-        },
-        benchmarkClass: WasmBenchmark,
-        testGroup: WasmGroup
-    },
-    // WorkerTests
-    {
-        name: "bomb-workers",
-        files: [
-            "./worker/bomb.js"
+            "./generators/async-file-system.js",
         ],
         iterations: 80,
-        preload: {
-            rayTrace3D: "./worker/bomb-subtests/3d-raytrace.js"
-            , accessNbody: "./worker/bomb-subtests/access-nbody.js"
-            , morph3D: "./worker/bomb-subtests/3d-morph.js"
-            , cube3D: "./worker/bomb-subtests/3d-cube.js"
-            , accessFunnkuch: "./worker/bomb-subtests/access-fannkuch.js"
-            , accessBinaryTrees: "./worker/bomb-subtests/access-binary-trees.js"
-            , accessNsieve: "./worker/bomb-subtests/access-nsieve.js"
-            , bitopsBitwiseAnd: "./worker/bomb-subtests/bitops-bitwise-and.js"
-            , bitopsNsieveBits: "./worker/bomb-subtests/bitops-nsieve-bits.js"
-            , controlflowRecursive: "./worker/bomb-subtests/controlflow-recursive.js"
-            , bitops3BitBitsInByte: "./worker/bomb-subtests/bitops-3bit-bits-in-byte.js"
-            , botopsBitsInByte: "./worker/bomb-subtests/bitops-bits-in-byte.js"
-            , cryptoAES: "./worker/bomb-subtests/crypto-aes.js"
-            , cryptoMD5: "./worker/bomb-subtests/crypto-md5.js"
-            , cryptoSHA1: "./worker/bomb-subtests/crypto-sha1.js"
-            , dateFormatTofte: "./worker/bomb-subtests/date-format-tofte.js"
-            , dateFormatXparb: "./worker/bomb-subtests/date-format-xparb.js"
-            , mathCordic: "./worker/bomb-subtests/math-cordic.js"
-            , mathPartialSums: "./worker/bomb-subtests/math-partial-sums.js"
-            , mathSpectralNorm: "./worker/bomb-subtests/math-spectral-norm.js"
-            , stringBase64: "./worker/bomb-subtests/string-base64.js"
-            , stringFasta: "./worker/bomb-subtests/string-fasta.js"
-            , stringValidateInput: "./worker/bomb-subtests/string-validate-input.js"
-            , stringTagcloud: "./worker/bomb-subtests/string-tagcloud.js"
-            , stringUnpackCode: "./worker/bomb-subtests/string-unpack-code.js"
-            , regexpDNA: "./worker/bomb-subtests/regexp-dna.js"
-        },
-        benchmarkClass: AsyncBenchmark,
-        testGroup: WorkerTestsGroup
-    },
-    {
-        name: "segmentation",
+        worstCaseCount: 6,
+        deterministicRandom: true,
+        tags: ["default", "js", "Generators"],
+    }),
+    new DefaultBenchmark({
+        name: "sync-fs",
         files: [
-            "./worker/segmentation.js"
+            "./generators/sync-file-system.js",
+        ],
+        iterations: 80,
+        worstCaseCount: 6,
+        deterministicRandom: true,
+        tags: ["default", "js", "Generators"],
+    }),
+    new DefaultBenchmark({
+        name: "lazy-collections",
+        files: [
+            "./generators/lazy-collections.js",
+        ],
+        tags: ["default", "js", "Generators"],
+    }),
+    new DefaultBenchmark({
+        name: "js-tokens",
+        files: [
+            "./generators/js-tokens.js",
+        ],
+        tags: ["default", "js", "Generators"],
+    }),
+    new DefaultBenchmark({
+        name: "threejs",
+        files: [
+            "./threejs/three.js",
+            "./threejs/benchmark.js",
+        ],
+        deterministicRandom: true,
+        tags: ["default", "js"],
+    }),
+    // Wasm
+    new WasmEMCCBenchmark({
+        name: "HashSet-wasm",
+        files: [
+            "./wasm/HashSet/build/HashSet.js",
+            "./wasm/HashSet/benchmark.js",
         ],
         preload: {
-            asyncTaskBlob: "./worker/async-task.js"
+            wasmBinary: "./wasm/HashSet/build/HashSet.wasm",
+        },
+        iterations: 50,
+        // No longer run by-default: We have more realistic Wasm workloads by
+        // now, and it was over-incentivizing inlining.
+        tags: ["Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "quicksort-wasm",
+        files: [
+            "./wasm/quicksort/build/quicksort.js",
+            "./wasm/quicksort/benchmark.js",
+        ],
+        preload: {
+            wasmBinary: "./wasm/quicksort/build/quicksort.wasm",
+        },
+        iterations: 50,
+        // No longer run by-default: We have more realistic Wasm workloads by
+        // now, and it was a small microbenchmark.
+        tags: ["Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "gcc-loops-wasm",
+        files: [
+            "./wasm/gcc-loops/build/gcc-loops.js",
+            "./wasm/gcc-loops/benchmark.js",
+        ],
+        preload: {
+            wasmBinary: "./wasm/gcc-loops/build/gcc-loops.wasm",
+        },
+        iterations: 50,
+        // No longer run by-default: We have more realistic Wasm workloads by
+        // now, and it was a small microbenchmark.
+        tags: ["Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "tsf-wasm",
+        files: [
+            "./wasm/TSF/build/tsf.js",
+            "./wasm/TSF/benchmark.js",
+        ],
+        preload: {
+            wasmBinary: "./wasm/TSF/build/tsf.wasm",
+        },
+        iterations: 50,
+        tags: ["default", "Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "richards-wasm",
+        files: [
+            "./wasm/richards/build/richards.js",
+            "./wasm/richards/benchmark.js",
+        ],
+        preload: {
+            wasmBinary: "./wasm/richards/build/richards.wasm",
+        },
+        iterations: 50,
+        tags: ["default", "Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "sqlite3-wasm",
+        files: [
+            "./utils/polyfills/fast-text-encoding/1.0.3/text.js",
+            "./sqlite3/benchmark.js",
+            "./sqlite3/build/jswasm/speedtest1.js",
+        ],
+        preload: {
+            wasmBinary: "./sqlite3/build/jswasm/speedtest1.wasm",
+        },
+        iterations: 30,
+        worstCaseCount: 2,
+        tags: ["default", "Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "Dart-flute-complex-wasm",
+        files: [
+            "./Dart/benchmark.js",
+        ],
+        preload: {
+            jsModule: "./Dart/build/flute.complex.dart2wasm.mjs",
+            wasmBinary: "./Dart/build/flute.complex.dart2wasm.wasm",
+        },
+        iterations: 15,
+        worstCaseCount: 2,
+        // Not run by default because the `CupertinoTimePicker` widget is very allocation-heavy,
+        // leading to an unrealistic GC-dominated workload. See
+        // https://github.com/WebKit/JetStream/pull/97#issuecomment-3139924169
+        // The todomvc workload below is less allocation heavy and a replacement for now.
+        // TODO: Revisit, once Dart/Flutter worked on this widget or workload.
+        tags: ["Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "Dart-flute-todomvc-wasm",
+        files: [
+            "./Dart/benchmark.js",
+        ],
+        preload: {
+            jsModule: "./Dart/build/flute.todomvc.dart2wasm.mjs",
+            wasmBinary: "./Dart/build/flute.todomvc.dart2wasm.wasm",
+        },
+        iterations: 30,
+        worstCaseCount: 2,
+        tags: ["default", "Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "Kotlin-compose-wasm",
+        files: [
+            "./Kotlin-compose/benchmark.js",
+        ],
+        preload: {
+            skikoJsModule: "./Kotlin-compose/build/skiko.mjs",
+            skikoWasmBinary: "./Kotlin-compose/build/skiko.wasm",
+            composeJsModule: "./Kotlin-compose/build/compose-benchmarks-benchmarks.uninstantiated.mjs",
+            composeWasmBinary: "./Kotlin-compose/build/compose-benchmarks-benchmarks.wasm",
+            inputImageCompose: "./Kotlin-compose/build/compose-multiplatform.png",
+            inputImageCat: "./Kotlin-compose/build/example1_cat.jpg",
+            inputImageComposeCommunity: "./Kotlin-compose/build/example1_compose-community-primary.png",
+            inputFontItalic: "./Kotlin-compose/build/jetbrainsmono_italic.ttf",
+            inputFontRegular: "./Kotlin-compose/build/jetbrainsmono_regular.ttf"
+        },
+        iterations: 5,
+        worstCaseCount: 1,
+        tags: ["default", "Wasm"],
+    }),
+    new AsyncBenchmark({
+        name: "transformersjs-bert-wasm",
+        files: [
+            "./utils/polyfills/fast-text-encoding/1.0.3/text.js",
+            "./transformersjs/benchmark.js",
+            "./transformersjs/task-bert.js",
+        ],
+        preload: {
+            transformersJsModule: "./transformersjs/build/transformers.js",
+
+            onnxJsModule: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.mjs",
+            onnxWasmBinary: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.wasm",
+
+            modelWeights: "./transformersjs/build/models/Xenova/distilbert-base-uncased-finetuned-sst-2-english/onnx/model_uint8.onnx",
+            modelConfig: "./transformersjs/build/models/Xenova/distilbert-base-uncased-finetuned-sst-2-english/config.json",
+            modelTokenizer: "./transformersjs/build/models/Xenova/distilbert-base-uncased-finetuned-sst-2-english/tokenizer.json",
+            modelTokenizerConfig: "./transformersjs/build/models/Xenova/distilbert-base-uncased-finetuned-sst-2-english/tokenizer_config.json",
+        },
+        iterations: 30,
+        allowUtf16: true,
+        tags: ["default", "Wasm", "transformersjs"],
+    }),
+    new AsyncBenchmark({
+        name: "transformersjs-whisper-wasm",
+        files: [
+            "./utils/polyfills/fast-text-encoding/1.0.3/text.js",
+            "./transformersjs/benchmark.js",
+            "./transformersjs/task-whisper.js",
+        ],
+        preload: {
+            transformersJsModule: "./transformersjs/build/transformers.js",
+
+            onnxJsModule: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.mjs",
+            onnxWasmBinary: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.wasm",
+
+            modelEncoderWeights: "./transformersjs/build/models/Xenova/whisper-tiny.en/onnx/encoder_model_quantized.onnx",
+            modelDecoderWeights: "./transformersjs/build/models/Xenova/whisper-tiny.en/onnx/decoder_model_merged_quantized.onnx",
+            modelConfig: "./transformersjs/build/models/Xenova/whisper-tiny.en/config.json",
+            modelTokenizer: "./transformersjs/build/models/Xenova/whisper-tiny.en/tokenizer.json",
+            modelTokenizerConfig: "./transformersjs/build/models/Xenova/whisper-tiny.en/tokenizer_config.json",
+            modelPreprocessorConfig: "./transformersjs/build/models/Xenova/whisper-tiny.en/preprocessor_config.json",
+            modelGenerationConfig: "./transformersjs/build/models/Xenova/whisper-tiny.en/generation_config.json",
+
+            inputFile: "./transformersjs/build/inputs/jfk.raw",
+        },
+        iterations: 5,
+        worstCaseCount: 1,
+        allowUtf16: true,
+        tags: ["Wasm", "transformersjs"],
+    }),
+    new AsyncWasmLegacyBenchmark({
+        name: "tfjs-wasm",
+        files: [
+            "./wasm/tfjs-model-helpers.js",
+            "./wasm/tfjs-model-mobilenet-v3.js",
+            "./wasm/tfjs-model-mobilenet-v1.js",
+            "./wasm/tfjs-model-coco-ssd.js",
+            "./wasm/tfjs-model-use.js",
+            "./wasm/tfjs-model-use-vocab.js",
+            "./wasm/tfjs-bundle.js",
+            "./wasm/tfjs.js",
+            "./wasm/tfjs-benchmark.js",
+        ],
+        preload: {
+            tfjsBackendWasmBlob: "./wasm/tfjs-backend-wasm.wasm",
+        },
+        deterministicRandom: true,
+        exposeBrowserTest: true,
+        allowUtf16: true,
+        tags: ["Wasm"],
+    }),
+    new AsyncWasmLegacyBenchmark({
+        name: "tfjs-wasm-simd",
+        files: [
+            "./wasm/tfjs-model-helpers.js",
+            "./wasm/tfjs-model-mobilenet-v3.js",
+            "./wasm/tfjs-model-mobilenet-v1.js",
+            "./wasm/tfjs-model-coco-ssd.js",
+            "./wasm/tfjs-model-use.js",
+            "./wasm/tfjs-model-use-vocab.js",
+            "./wasm/tfjs-bundle.js",
+            "./wasm/tfjs.js",
+            "./wasm/tfjs-benchmark.js",
+        ],
+        preload: {
+            tfjsBackendWasmSimdBlob: "./wasm/tfjs-backend-wasm-simd.wasm",
+        },
+        deterministicRandom: true,
+        exposeBrowserTest: true,
+        allowUtf16: true,
+        tags: ["Wasm"],
+    }),
+    new WasmEMCCBenchmark({
+        name: "argon2-wasm",
+        files: [
+            "./wasm/argon2/build/argon2.js",
+            "./wasm/argon2/benchmark.js",
+        ],
+        preload: {
+            wasmBinary: "./wasm/argon2/build/argon2.wasm.z",
+        },
+        iterations: 30,
+        worstCaseCount: 3,
+        deterministicRandom: true,
+        allowUtf16: true,
+        tags: ["default", "Wasm"],
+    }),
+    new AsyncBenchmark({
+        name: "babylonjs-startup-es5",
+        files: [
+            "./utils/StartupBenchmark.js",
+            "./babylonjs/benchmark/startup.js",
+        ],
+        preload: {
+            BUNDLE: "./babylonjs/dist/bundle.es5.min.js",
+        },
+        args: {
+            expectedCacheCommentCount: 23988,
+        },
+        tags: ["startup",  "js", "class", "es5", "babylonjs"],
+        iterations: 10,
+    }),
+    new AsyncBenchmark({
+        name: "babylonjs-startup-es6",
+        files: [
+            "./utils/StartupBenchmark.js",
+            "./babylonjs/benchmark/startup.js",
+        ],
+        preload: {
+            BUNDLE: "./babylonjs/dist/bundle.es6.min.js",
+        },
+        args: {
+            expectedCacheCommentCount: 21222,
+        },
+        tags: ["Default",  "js", "startup", "class", "es6", "babylonjs"],
+        iterations: 10,
+    }),
+    new AsyncBenchmark({
+        name: "babylonjs-scene-es5",
+        files: [
+            // Use non-minified sources for easier profiling:
+            // "./babylonjs/dist/bundle.es5.js",
+            "./babylonjs/dist/bundle.es5.min.js",
+            "./babylonjs/benchmark/scene.js",
+        ],
+        preload: {
+            PARTICLES_BLOB: "./babylonjs/data/particles.json",
+            PIRATE_FORT_BLOB: "./babylonjs/data/pirateFort.glb",
+            CANNON_BLOB: "./babylonjs/data/cannon.glb",
+        },
+        tags: ["scene", "js",  "es5", "babylonjs"],
+        iterations: 5,
+    }),
+    new AsyncBenchmark({
+        name: "babylonjs-scene-es6",
+        files: [
+            // Use non-minified sources for easier profiling:
+            // "./babylonjs/dist/bundle.es6.js",
+            "./babylonjs/dist/bundle.es6.min.js",
+            "./babylonjs/benchmark/scene.js",
+        ],
+        preload: {
+            PARTICLES_BLOB: "./babylonjs/data/particles.json",
+            PIRATE_FORT_BLOB: "./babylonjs/data/pirateFort.glb",
+            CANNON_BLOB: "./babylonjs/data/cannon.glb",
+        },
+        tags: ["Default", "js", "scene", "es6", "babylonjs"],
+        iterations: 5,
+    }),
+    // WorkerTests
+    new AsyncBenchmark({
+        name: "bomb-workers",
+        files: [
+            "./worker/bomb.js",
+        ],
+        exposeBrowserTest: true,
+        iterations: 80,
+        preload: {
+            rayTrace3D: "./worker/bomb-subtests/3d-raytrace.js",
+            accessNbody: "./worker/bomb-subtests/access-nbody.js",
+            morph3D: "./worker/bomb-subtests/3d-morph.js",
+            cube3D: "./worker/bomb-subtests/3d-cube.js",
+            accessFunnkuch: "./worker/bomb-subtests/access-fannkuch.js",
+            accessBinaryTrees: "./worker/bomb-subtests/access-binary-trees.js",
+            accessNsieve: "./worker/bomb-subtests/access-nsieve.js",
+            bitopsBitwiseAnd: "./worker/bomb-subtests/bitops-bitwise-and.js",
+            bitopsNsieveBits: "./worker/bomb-subtests/bitops-nsieve-bits.js",
+            controlflowRecursive: "./worker/bomb-subtests/controlflow-recursive.js",
+            bitops3BitBitsInByte: "./worker/bomb-subtests/bitops-3bit-bits-in-byte.js",
+            botopsBitsInByte: "./worker/bomb-subtests/bitops-bits-in-byte.js",
+            cryptoAES: "./worker/bomb-subtests/crypto-aes.js",
+            cryptoMD5: "./worker/bomb-subtests/crypto-md5.js",
+            cryptoSHA1: "./worker/bomb-subtests/crypto-sha1.js",
+            dateFormatTofte: "./worker/bomb-subtests/date-format-tofte.js",
+            dateFormatXparb: "./worker/bomb-subtests/date-format-xparb.js",
+            mathCordic: "./worker/bomb-subtests/math-cordic.js",
+            mathPartialSums: "./worker/bomb-subtests/math-partial-sums.js",
+            mathSpectralNorm: "./worker/bomb-subtests/math-spectral-norm.js",
+            stringBase64: "./worker/bomb-subtests/string-base64.js",
+            stringFasta: "./worker/bomb-subtests/string-fasta.js",
+            stringValidateInput: "./worker/bomb-subtests/string-validate-input.js",
+            stringTagcloud: "./worker/bomb-subtests/string-tagcloud.js",
+            stringUnpackCode: "./worker/bomb-subtests/string-unpack-code.js",
+            regexpDNA: "./worker/bomb-subtests/regexp-dna.js",
+        },
+        tags: ["default", "js", "WorkerTests"],
+    }),
+    new AsyncBenchmark({
+        name: "segmentation",
+        files: [
+            "./worker/segmentation.js",
+        ],
+        preload: {
+            asyncTaskBlob: "./worker/async-task.js",
         },
         iterations: 36,
         worstCaseCount: 3,
-        benchmarkClass: AsyncBenchmark,
-        testGroup: WorkerTestsGroup
-    },
+        tags: ["default", "js",  "WorkerTests"],
+    }),
     // WSL
-    {
+    new WSLBenchmark({
         name: "WSL",
-        files: ["./WSL/Node.js" ,"./WSL/Type.js" ,"./WSL/ReferenceType.js" ,"./WSL/Value.js" ,"./WSL/Expression.js" ,"./WSL/Rewriter.js" ,"./WSL/Visitor.js" ,"./WSL/CreateLiteral.js" ,"./WSL/CreateLiteralType.js" ,"./WSL/PropertyAccessExpression.js" ,"./WSL/AddressSpace.js" ,"./WSL/AnonymousVariable.js" ,"./WSL/ArrayRefType.js" ,"./WSL/ArrayType.js" ,"./WSL/Assignment.js" ,"./WSL/AutoWrapper.js" ,"./WSL/Block.js" ,"./WSL/BoolLiteral.js" ,"./WSL/Break.js" ,"./WSL/CallExpression.js" ,"./WSL/CallFunction.js" ,"./WSL/Check.js" ,"./WSL/CheckLiteralTypes.js" ,"./WSL/CheckLoops.js" ,"./WSL/CheckRecursiveTypes.js" ,"./WSL/CheckRecursion.js" ,"./WSL/CheckReturns.js" ,"./WSL/CheckUnreachableCode.js" ,"./WSL/CheckWrapped.js" ,"./WSL/Checker.js" ,"./WSL/CloneProgram.js" ,"./WSL/CommaExpression.js" ,"./WSL/ConstexprFolder.js" ,"./WSL/ConstexprTypeParameter.js" ,"./WSL/Continue.js" ,"./WSL/ConvertPtrToArrayRefExpression.js" ,"./WSL/DereferenceExpression.js" ,"./WSL/DoWhileLoop.js" ,"./WSL/DotExpression.js" ,"./WSL/DoubleLiteral.js" ,"./WSL/DoubleLiteralType.js" ,"./WSL/EArrayRef.js" ,"./WSL/EBuffer.js" ,"./WSL/EBufferBuilder.js" ,"./WSL/EPtr.js" ,"./WSL/EnumLiteral.js" ,"./WSL/EnumMember.js" ,"./WSL/EnumType.js" ,"./WSL/EvaluationCommon.js" ,"./WSL/Evaluator.js" ,"./WSL/ExpressionFinder.js" ,"./WSL/ExternalOrigin.js" ,"./WSL/Field.js" ,"./WSL/FindHighZombies.js" ,"./WSL/FlattenProtocolExtends.js" ,"./WSL/FlattenedStructOffsetGatherer.js" ,"./WSL/FloatLiteral.js" ,"./WSL/FloatLiteralType.js" ,"./WSL/FoldConstexprs.js" ,"./WSL/ForLoop.js" ,"./WSL/Func.js" ,"./WSL/FuncDef.js" ,"./WSL/FuncInstantiator.js" ,"./WSL/FuncParameter.js" ,"./WSL/FunctionLikeBlock.js" ,"./WSL/HighZombieFinder.js" ,"./WSL/IdentityExpression.js" ,"./WSL/IfStatement.js" ,"./WSL/IndexExpression.js" ,"./WSL/InferTypesForCall.js" ,"./WSL/Inline.js" ,"./WSL/Inliner.js" ,"./WSL/InstantiateImmediates.js" ,"./WSL/IntLiteral.js" ,"./WSL/IntLiteralType.js" ,"./WSL/Intrinsics.js" ,"./WSL/LateChecker.js" ,"./WSL/Lexer.js" ,"./WSL/LexerToken.js" ,"./WSL/LiteralTypeChecker.js" ,"./WSL/LogicalExpression.js" ,"./WSL/LogicalNot.js" ,"./WSL/LoopChecker.js" ,"./WSL/MakeArrayRefExpression.js" ,"./WSL/MakePtrExpression.js" ,"./WSL/NameContext.js" ,"./WSL/NameFinder.js" ,"./WSL/NameResolver.js" ,"./WSL/NativeFunc.js" ,"./WSL/NativeFuncInstance.js" ,"./WSL/NativeType.js" ,"./WSL/NativeTypeInstance.js" ,"./WSL/NormalUsePropertyResolver.js" ,"./WSL/NullLiteral.js" ,"./WSL/NullType.js" ,"./WSL/OriginKind.js" ,"./WSL/OverloadResolutionFailure.js" ,"./WSL/Parse.js" ,"./WSL/Prepare.js" ,"./WSL/Program.js" ,"./WSL/ProgramWithUnnecessaryThingsRemoved.js" ,"./WSL/PropertyResolver.js" ,"./WSL/Protocol.js" ,"./WSL/ProtocolDecl.js" ,"./WSL/ProtocolFuncDecl.js" ,"./WSL/ProtocolRef.js" ,"./WSL/PtrType.js" ,"./WSL/ReadModifyWriteExpression.js" ,"./WSL/RecursionChecker.js" ,"./WSL/RecursiveTypeChecker.js" ,"./WSL/ResolveNames.js" ,"./WSL/ResolveOverloadImpl.js" ,"./WSL/ResolveProperties.js" ,"./WSL/ResolveTypeDefs.js" ,"./WSL/Return.js" ,"./WSL/ReturnChecker.js" ,"./WSL/ReturnException.js" ,"./WSL/StandardLibrary.js" ,"./WSL/StatementCloner.js" ,"./WSL/StructLayoutBuilder.js" ,"./WSL/StructType.js" ,"./WSL/Substitution.js" ,"./WSL/SwitchCase.js" ,"./WSL/SwitchStatement.js" ,"./WSL/SynthesizeEnumFunctions.js" ,"./WSL/SynthesizeStructAccessors.js" ,"./WSL/TrapStatement.js" ,"./WSL/TypeDef.js" ,"./WSL/TypeDefResolver.js" ,"./WSL/TypeOrVariableRef.js" ,"./WSL/TypeParameterRewriter.js" ,"./WSL/TypeRef.js" ,"./WSL/TypeVariable.js" ,"./WSL/TypeVariableTracker.js" ,"./WSL/TypedValue.js" ,"./WSL/UintLiteral.js" ,"./WSL/UintLiteralType.js" ,"./WSL/UnificationContext.js" ,"./WSL/UnreachableCodeChecker.js" ,"./WSL/VariableDecl.js" ,"./WSL/VariableRef.js" ,"./WSL/VisitingSet.js" ,"./WSL/WSyntaxError.js" ,"./WSL/WTrapError.js" ,"./WSL/WTypeError.js" ,"./WSL/WhileLoop.js" ,"./WSL/WrapChecker.js", "./WSL/Test.js"],
-        benchmarkClass: WSLBenchmark,
-        testGroup: WSLGroup
-    }
+        files: [
+            "./WSL/Node.js",
+            "./WSL/Type.js",
+            "./WSL/ReferenceType.js",
+            "./WSL/Value.js",
+            "./WSL/Expression.js",
+            "./WSL/Rewriter.js",
+            "./WSL/Visitor.js",
+            "./WSL/CreateLiteral.js",
+            "./WSL/CreateLiteralType.js",
+            "./WSL/PropertyAccessExpression.js",
+            "./WSL/AddressSpace.js",
+            "./WSL/AnonymousVariable.js",
+            "./WSL/ArrayRefType.js",
+            "./WSL/ArrayType.js",
+            "./WSL/Assignment.js",
+            "./WSL/AutoWrapper.js",
+            "./WSL/Block.js",
+            "./WSL/BoolLiteral.js",
+            "./WSL/Break.js",
+            "./WSL/CallExpression.js",
+            "./WSL/CallFunction.js",
+            "./WSL/Check.js",
+            "./WSL/CheckLiteralTypes.js",
+            "./WSL/CheckLoops.js",
+            "./WSL/CheckRecursiveTypes.js",
+            "./WSL/CheckRecursion.js",
+            "./WSL/CheckReturns.js",
+            "./WSL/CheckUnreachableCode.js",
+            "./WSL/CheckWrapped.js",
+            "./WSL/Checker.js",
+            "./WSL/CloneProgram.js",
+            "./WSL/CommaExpression.js",
+            "./WSL/ConstexprFolder.js",
+            "./WSL/ConstexprTypeParameter.js",
+            "./WSL/Continue.js",
+            "./WSL/ConvertPtrToArrayRefExpression.js",
+            "./WSL/DereferenceExpression.js",
+            "./WSL/DoWhileLoop.js",
+            "./WSL/DotExpression.js",
+            "./WSL/DoubleLiteral.js",
+            "./WSL/DoubleLiteralType.js",
+            "./WSL/EArrayRef.js",
+            "./WSL/EBuffer.js",
+            "./WSL/EBufferBuilder.js",
+            "./WSL/EPtr.js",
+            "./WSL/EnumLiteral.js",
+            "./WSL/EnumMember.js",
+            "./WSL/EnumType.js",
+            "./WSL/EvaluationCommon.js",
+            "./WSL/Evaluator.js",
+            "./WSL/ExpressionFinder.js",
+            "./WSL/ExternalOrigin.js",
+            "./WSL/Field.js",
+            "./WSL/FindHighZombies.js",
+            "./WSL/FlattenProtocolExtends.js",
+            "./WSL/FlattenedStructOffsetGatherer.js",
+            "./WSL/FloatLiteral.js",
+            "./WSL/FloatLiteralType.js",
+            "./WSL/FoldConstexprs.js",
+            "./WSL/ForLoop.js",
+            "./WSL/Func.js",
+            "./WSL/FuncDef.js",
+            "./WSL/FuncInstantiator.js",
+            "./WSL/FuncParameter.js",
+            "./WSL/FunctionLikeBlock.js",
+            "./WSL/HighZombieFinder.js",
+            "./WSL/IdentityExpression.js",
+            "./WSL/IfStatement.js",
+            "./WSL/IndexExpression.js",
+            "./WSL/InferTypesForCall.js",
+            "./WSL/Inline.js",
+            "./WSL/Inliner.js",
+            "./WSL/InstantiateImmediates.js",
+            "./WSL/IntLiteral.js",
+            "./WSL/IntLiteralType.js",
+            "./WSL/Intrinsics.js",
+            "./WSL/LateChecker.js",
+            "./WSL/Lexer.js",
+            "./WSL/LexerToken.js",
+            "./WSL/LiteralTypeChecker.js",
+            "./WSL/LogicalExpression.js",
+            "./WSL/LogicalNot.js",
+            "./WSL/LoopChecker.js",
+            "./WSL/MakeArrayRefExpression.js",
+            "./WSL/MakePtrExpression.js",
+            "./WSL/NameContext.js",
+            "./WSL/NameFinder.js",
+            "./WSL/NameResolver.js",
+            "./WSL/NativeFunc.js",
+            "./WSL/NativeFuncInstance.js",
+            "./WSL/NativeType.js",
+            "./WSL/NativeTypeInstance.js",
+            "./WSL/NormalUsePropertyResolver.js",
+            "./WSL/NullLiteral.js",
+            "./WSL/NullType.js",
+            "./WSL/OriginKind.js",
+            "./WSL/OverloadResolutionFailure.js",
+            "./WSL/Parse.js",
+            "./WSL/Prepare.js",
+            "./WSL/Program.js",
+            "./WSL/ProgramWithUnnecessaryThingsRemoved.js",
+            "./WSL/PropertyResolver.js",
+            "./WSL/Protocol.js",
+            "./WSL/ProtocolDecl.js",
+            "./WSL/ProtocolFuncDecl.js",
+            "./WSL/ProtocolRef.js",
+            "./WSL/PtrType.js",
+            "./WSL/ReadModifyWriteExpression.js",
+            "./WSL/RecursionChecker.js",
+            "./WSL/RecursiveTypeChecker.js",
+            "./WSL/ResolveNames.js",
+            "./WSL/ResolveOverloadImpl.js",
+            "./WSL/ResolveProperties.js",
+            "./WSL/ResolveTypeDefs.js",
+            "./WSL/Return.js",
+            "./WSL/ReturnChecker.js",
+            "./WSL/ReturnException.js",
+            "./WSL/StandardLibrary.js",
+            "./WSL/StatementCloner.js",
+            "./WSL/StructLayoutBuilder.js",
+            "./WSL/StructType.js",
+            "./WSL/Substitution.js",
+            "./WSL/SwitchCase.js",
+            "./WSL/SwitchStatement.js",
+            "./WSL/SynthesizeEnumFunctions.js",
+            "./WSL/SynthesizeStructAccessors.js",
+            "./WSL/TrapStatement.js",
+            "./WSL/TypeDef.js",
+            "./WSL/TypeDefResolver.js",
+            "./WSL/TypeOrVariableRef.js",
+            "./WSL/TypeParameterRewriter.js",
+            "./WSL/TypeRef.js",
+            "./WSL/TypeVariable.js",
+            "./WSL/TypeVariableTracker.js",
+            "./WSL/TypedValue.js",
+            "./WSL/UintLiteral.js",
+            "./WSL/UintLiteralType.js",
+            "./WSL/UnificationContext.js",
+            "./WSL/UnreachableCodeChecker.js",
+            "./WSL/VariableDecl.js",
+            "./WSL/VariableRef.js",
+            "./WSL/VisitingSet.js",
+            "./WSL/WSyntaxError.js",
+            "./WSL/WTrapError.js",
+            "./WSL/WTypeError.js",
+            "./WSL/WhileLoop.js",
+            "./WSL/WrapChecker.js",
+            "./WSL/Test.js",
+        ],
+        tags: ["default", "js", "WSL"],
+    }),
+    // 8bitbench
+    new WasmEMCCBenchmark({
+        name: "8bitbench-wasm",
+        files: [
+            "./utils/polyfills/fast-text-encoding/1.0.3/text.js",
+            "./8bitbench/build/rust/pkg/emu_bench.js",
+            "./8bitbench/benchmark.js",
+        ],
+        preload: {
+            wasmBinary: "./8bitbench/build/rust/pkg/emu_bench_bg.wasm",
+            romBinary: "./8bitbench/build/assets/program.bin",
+        },
+        iterations: 15,
+        worstCaseCount: 2,
+        tags: ["default", "Wasm"],
+    }),
+    // zlib-wasm
+    new WasmEMCCBenchmark({
+        name: "zlib-wasm",
+        files: [
+            "./wasm/zlib/build/zlib.js",
+            "./wasm/zlib/benchmark.js",
+        ],
+        preload: {
+            wasmBinary: "./wasm/zlib/build/zlib.wasm",
+        },
+        iterations: 40,
+        tags: ["default", "Wasm"],
+    }),
+    // .NET
+    new AsyncBenchmark({
+        name: "dotnet-interp-wasm",
+        files: [
+            "./wasm/dotnet/interp.js",
+            "./wasm/dotnet/benchmark.js",
+        ],
+        preload: dotnetPreloads("interp"),
+        iterations: 10,
+        worstCaseCount: 2,
+        tags: ["default", "Wasm", "dotnet"],
+    }),
+    new AsyncBenchmark({
+        name: "dotnet-aot-wasm",
+        files: [
+            "./wasm/dotnet/aot.js",
+            "./wasm/dotnet/benchmark.js",
+        ],
+        preload: dotnetPreloads("aot"),
+        iterations: 15,
+        worstCaseCount: 2,
+        tags: ["default", "Wasm", "dotnet"],
+    }),
+    // J2CL
+    new AsyncBenchmark({
+        name: "j2cl-box2d-wasm",
+        files: [
+            "./wasm/j2cl-box2d/benchmark.js",
+            "./wasm/j2cl-box2d/build/Box2dBenchmark_j2wasm_entry.js",
+        ],
+        preload: {
+            wasmBinary: "./wasm/j2cl-box2d/build/Box2dBenchmark_j2wasm_binary.wasm",
+        },
+        iterations: 40,
+        tags: ["default", "Wasm"],
+    }),
 ];
 
-// LuaJSFight tests
-let luaJSFightTests = [
-    "hello_world"
-    , "list_search"
-    , "lists"
-    , "string_lists"
+
+const PRISM_JS_FILES = [
+    "./utils/StartupBenchmark.js",
+    "./prismjs/benchmark.js",
 ];
-for (let test of luaJSFightTests) {
-    testPlans.push({
-        name: `${test}-LJF`,
+const PRISM_JS_PRELOADS = {
+    SAMPLE_CPP: "./prismjs/data/sample.cpp",
+    SAMPLE_CSS: "./prismjs/data/sample.css",
+    SAMPLE_HTML: "./prismjs/data/sample.html",
+    SAMPLE_JS: "./prismjs/data/sample.js",
+    SAMPLE_JSON: "./prismjs/data/sample.json",
+    SAMPLE_MD: "./prismjs/data/sample.md",
+    SAMPLE_PY: "./prismjs/data/sample.py",
+    SAMPLE_SQL: "./prismjs/data/sample.sql",
+    SAMPLE_TS: "./prismjs/data/sample.ts",
+};
+const PRISM_JS_TAGS = ["js", "parser", "regexp", "startup", "prismjs"];
+BENCHMARKS.push(
+    new AsyncBenchmark({
+        name: "prismjs-startup-es6",
+        files: PRISM_JS_FILES,
+        preload: {
+            // Use non-minified bundle for better local profiling.
+            // BUNDLE: "./prismjs/dist/bundle.es6.js",
+            BUNDLE: "./prismjs/dist/bundle.es6.min.js",
+            ...PRISM_JS_PRELOADS,
+        },
+        tags: ["default", ...PRISM_JS_TAGS, "es6"],
+    }),
+    new AsyncBenchmark({
+        name: "prismjs-startup-es5",
+        files: PRISM_JS_FILES,
+        preload: {
+            // Use non-minified bundle for better local profiling.
+            // BUNDLE: "./prismjs/dist/bundle.es5.js",
+            BUNDLE: "./prismjs/dist/bundle.es5.min.js",
+            ...PRISM_JS_PRELOADS,
+        },
+        tags: [...PRISM_JS_TAGS, "es5"],
+    }),
+);
+
+const INTL_TESTS = [
+    "DateTimeFormat",
+    "ListFormat",
+    "RelativeTimeFormat",
+    "NumberFormat",
+    "PluralRules",
+];
+const INTL_TAGS = ["js", "internationalization"]
+const INTL_BENCHMARKS = [];
+for (const test of INTL_TESTS) {
+    const benchmark = new AsyncBenchmark({
+        name: `${test}-intl`,
         files: [
-            `./LuaJSFight/${test}.js`
+            "./intl/src/helper.js",
+            `./intl/src/${test}.js`,
+            "./intl/benchmark.js",
         ],
-        testGroup: LuaJSFightGroup
+        iterations: 2,
+        worstCaseCount: 1,
+        deterministicRandom: true,
+        tags: INTL_TAGS,
     });
+    INTL_BENCHMARKS.push(benchmark);
 }
+BENCHMARKS.push(
+    new GroupedBenchmark({
+            name: "intl",
+            tags: INTL_TAGS,
+        }, INTL_BENCHMARKS));
+
+
 
 // SunSpider tests
-let sunSpiderTests = [
-    "3d-cube"
-    , "3d-raytrace"
-    , "base64"
-    , "crypto-aes"
-    , "crypto-md5"
-    , "crypto-sha1"
-    , "date-format-tofte"
-    , "date-format-xparb"
-    , "n-body"
-    , "regex-dna"
-    , "string-unpack-code"
-    , "tagcloud"
+const SUNSPIDER_TESTS = [
+    "3d-cube",
+    "3d-raytrace",
+    "base64",
+    "crypto-aes",
+    "crypto-md5",
+    "crypto-sha1",
+    "date-format-tofte",
+    "date-format-xparb",
+    "n-body",
+    "regex-dna",
+    "string-unpack-code",
+    "tagcloud",
 ];
-for (let test of sunSpiderTests) {
-    testPlans.push({
+let SUNSPIDER_BENCHMARKS = [];
+for (const test of SUNSPIDER_TESTS) {
+    SUNSPIDER_BENCHMARKS.push(new DefaultBenchmark({
         name: `${test}-SP`,
         files: [
             `./SunSpider/${test}.js`
         ],
-        testGroup: SunSpiderGroup
-    });
+        tags: [],
+    }));
 }
+BENCHMARKS.push(new GroupedBenchmark({
+    name: "Sunspider",
+    tags: ["default", "js", "SunSpider"],
+}, SUNSPIDER_BENCHMARKS))
 
 // WTB (Web Tooling Benchmark) tests
-let WTBTests = [
-    "acorn"
-    , "babylon"
-    , "chai"
-    , "coffeescript"
-    , "espree"
-    , "jshint"
-    , "lebab"
-    , "prepack"
-    , "uglify-js"
-];
-for (let name of WTBTests) {
-    testPlans.push({
+const WTB_TESTS = {
+    "acorn": true,
+    "babel": true,
+    "babel-minify": true,
+    "babylon": true,
+    "chai": true,
+    "espree": true,
+    "esprima-next": true,
+    // Disabled: Converting ES5 code to ES6+ is no longer a realistic scenario.
+    "lebab": false,
+    "postcss": true,
+    "prettier": true,
+    "source-map": true,
+};
+const WPT_FILES = [
+  "angular-material-20.1.6.css",
+  "backbone-1.6.1.js",
+  "bootstrap-5.3.7.css",
+  "foundation-6.9.0.css",
+  "jquery-3.7.1.js",
+  "lodash.core-4.17.21.js",
+  "lodash-4.17.4.min.js.map",
+  "mootools-core-1.6.0.js",
+  "preact-8.2.5.js",
+  "preact-10.27.1.min.module.js.map",
+  "redux-5.0.1.min.js",
+  "redux-5.0.1.esm.js",
+  "source-map.min-0.5.7.js.map",
+  "source-map/lib/mappings.wasm",
+  "speedometer-es2015-test-2.0.js",
+  "todomvc/react/app.jsx",
+  "todomvc/react/footer.jsx",
+  "todomvc/react/todoItem.jsx",
+  "todomvc/typescript-angular.ts",
+  "underscore-1.13.7.js",
+  "underscore-1.13.7.min.js.map",
+  "vue-3.5.18.runtime.esm-browser.js",
+].reduce((acc, file) => {
+        acc[file] = `./web-tooling-benchmark/third_party/${file}`;
+        return acc
+}, Object.create(null));
+
+
+for (const [name, enabled] of Object.entries(WTB_TESTS)) {
+    const tags =  ["js", "WTB"];
+    if (enabled)
+        tags.push("Default");
+    BENCHMARKS.push(new AsyncBenchmark({
         name: `${name}-wtb`,
         files: [
-            isInBrowser ? "./web-tooling-benchmark/browser.js" : "./web-tooling-benchmark/cli.js"
-            , `./web-tooling-benchmark/${name}.js`
+            `./web-tooling-benchmark/dist/${name}.bundle.js`,
+            "./web-tooling-benchmark/benchmark.js",
         ],
-        iterations: 5,
-        worstCaseCount: 1,
-        testGroup: WTBGroup
-    });
+        preload: {
+            BUNDLE: `./web-tooling-benchmark/dist/${name}.bundle.js`,
+            ...WPT_FILES,
+        },
+        iterations: 15,
+        worstCaseCount: 2,
+        allowUtf16: true,
+        tags: tags,
+    }));
 }
 
 
-let testsByName = new Map();
-let testsByGroup = new Map();
+const benchmarksByName = new Map();
+const benchmarksByTag = new Map();
 
-for (let plan of testPlans) {
-    let testName = plan.name;
+for (const benchmark of BENCHMARKS) {
+    const name = benchmark.name.toLowerCase();
 
-    if (testsByName.has(plan.name))
-        throw "Duplicate test plan with name \"" + testName + "\"";
+    if (benchmarksByName.has(name))
+        throw new Error(`Duplicate benchmark with name "${name}}"`);
     else
-        testsByName.set(testName, plan);
+        benchmarksByName.set(name, benchmark);
 
-    let group = plan.testGroup;
-
-    if (testsByGroup.has(group))
-        testsByGroup.get(group).push(testName);
-    else
-        testsByGroup.set(group, [testName]);
-}
-
-var JetStream = new Driver();
-
-function addTestByName(testName)
-{
-    let plan = testsByName.get(testName);
-
-    if (plan)
-        JetStream.addPlan(plan, plan.benchmarkClass);
-    else
-        throw "Couldn't find test named \"" +  testName + "\"";
-}
-
-function addTestsByGroup(group)
-{
-    let testList = testsByGroup.get(group);
-
-    if (!testList)
-        throw "Couldn't find test group named: \"" + Symbol.keyFor(group) + "\"";
-
-    for (let testName of testList)
-        addTestByName(testName);
-}
-
-function processTestList(testList)
-{
-    let tests = [];
-
-    if (testList instanceof Array)
-        tests = testList;
-    else
-        tests = testList.split(/[\s,]/);
-
-    for (let testName of tests) {
-        let groupTest = testsByGroup.get(Symbol.for(testName));
-
-        if (groupTest) {
-            for (let testName of groupTest)
-                addTestByName(testName);
-        } else
-            addTestByName(testName);
+    for (const tag of benchmark.tags) {
+        if (benchmarksByTag.has(tag))
+            benchmarksByTag.get(tag).push(benchmark);
+        else
+            benchmarksByTag.set(tag, [benchmark]);
     }
 }
 
-let runOctane = true;
-let runARES = true;
-let runWSL = true;
-let runRexBench = true;
-let runWTB = true;
-let runSunSpider = true;
-let runSimple = true;
-let runCDJS = true;
-let runWorkerTests = !!isInBrowser;
-let runSeaMonster = true;
-let runCodeLoad = true;
-let runWasm = true;
 
-if (false) {
-    runOctane = false;
-    runARES = false;
-    runWSL = false;
-    runRexBench = false;
-    runWTB = false;
-    runSunSpider = false;
-    runSimple = false;
-    runCDJS = false;
-    runWorkerTests = false;
-    runSeaMonster = false;
-    runCodeLoad = false;
-    runWasm = false;
+function processTestList(testList) {
+    let benchmarkNames = [];
+    let benchmarks = [];
+
+    if (testList instanceof Array)
+        benchmarkNames = testList;
+    else
+        benchmarkNames = testList.split(/[\s,]/);
+
+    for (let name of benchmarkNames) {
+        name = name.toLowerCase();
+        if (benchmarksByTag.has(name))
+            benchmarks = benchmarks.concat(findBenchmarksByTag(name));
+        else
+            benchmarks.push(findBenchmarkByName(name));
+    }
+    return benchmarks;
 }
 
-if (typeof testList !== "undefined") {
-    processTestList(testList);
+
+function findBenchmarkByName(name) {
+    const benchmark = benchmarksByName.get(name.toLowerCase());
+
+    if (!benchmark)
+        throw new Error(`Couldn't find benchmark named "${name}"`);
+
+    return benchmark;
+}
+
+
+function findBenchmarksByTag(tag, excludeTags) {
+    let benchmarks = benchmarksByTag.get(tag.toLowerCase());
+    if (!benchmarks) {
+        const validTags = Array.from(benchmarksByTag.keys()).join(", ");
+        throw new Error(`Couldn't find tag named: ${tag}.\n Choices are ${validTags}`);
+    }
+    if (excludeTags) {
+        benchmarks = benchmarks.filter(benchmark => {
+            return !benchmark.hasAnyTag(...excludeTags);
+        });
+    }
+    return benchmarks;
+}
+
+
+let benchmarks = [];
+const defaultDisabledTags = [];
+// FIXME: add better support to run Worker tests in shells.
+if (!isInBrowser)
+    defaultDisabledTags.push("WorkerTests");
+
+if (JetStreamParams.testList.length) {
+    benchmarks = processTestList(JetStreamParams.testList);
 } else {
-    if (runARES)
-        addTestsByGroup(ARESGroup);
-
-    if (runCDJS)
-        addTestsByGroup(CDJSGroup);
-
-    if (runCodeLoad)
-        addTestsByGroup(CodeLoadGroup);
-
-    if (runOctane)
-        addTestsByGroup(OctaneGroup);
-
-    if (runRexBench)
-        addTestsByGroup(RexBenchGroup);
-
-    if (runSeaMonster)
-        addTestsByGroup(SeaMonsterGroup);
-
-    if (runSimple)
-        addTestsByGroup(SimpleGroup);
-
-    if (runSunSpider)
-        addTestsByGroup(SunSpiderGroup);
-
-    if (runWasm)
-        addTestsByGroup(WasmGroup);
-
-    if (runWorkerTests)
-        addTestsByGroup(WorkerTestsGroup);
-
-    if (runWSL)
-        addTestsByGroup(WSLGroup);
-
-    if (runWTB)
-        addTestsByGroup(WTBGroup);
+    benchmarks = findBenchmarksByTag("Default", defaultDisabledTags)
 }
+
+this.JetStream = new Driver(benchmarks);
 
 
 JetStream.initialize()
     .then(() => JetStream.start())
+    .then(() => print("JETSTREAM_RUN_COMPLETE"))
     .catch((error) => print("JetStream2 failed:", error && error.stack ? error.stack : error));
 undefined;

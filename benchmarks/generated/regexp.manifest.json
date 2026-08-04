@@ -1,0 +1,17 @@
+{
+  "benchmark": "regexp-octane",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./Octane/regexp.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./Octane/regexp.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "6a5586f74040ecad1d6b049280842f40172f36ea934b4664b077131f41056c68",
+  "phaseMarkers": false
+}

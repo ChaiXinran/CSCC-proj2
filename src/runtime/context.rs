@@ -2126,6 +2126,45 @@ impl NativeContext {
         Ok(None)
     }
 
+    /// Resolves a name in one pass when no preceding object environment can
+    /// intercept it. The boolean is true when the VM must use the observable
+    /// `with`/Proxy resolution path instead.
+    pub(crate) fn resolve_binding_value_fast(
+        &self,
+        name: &str,
+    ) -> Result<(bool, Option<(EnvironmentId, JsValue)>), VmError> {
+        let mut current = Some(self.current_environment);
+        while let Some(id) = current {
+            let environment = self
+                .heap
+                .environment(id)
+                .ok_or_else(|| VmError::runtime("missing lexical environment"))?;
+            if environment.with_object.is_some() {
+                return Ok((true, None));
+            }
+            if let Some(binding) = environment.binding(name) {
+                if let Some((target_environment, target_name)) =
+                    self.module_import_links.get(&(id, name.to_string()))
+                {
+                    let value =
+                        self.binding_value_in_environment(*target_environment, target_name)?;
+                    return Ok((false, Some((id, value))));
+                }
+                if !binding.initialized {
+                    return Err(VmError::reference(format!(
+                        "cannot access {name} before initialization"
+                    )));
+                }
+                return Ok((false, Some((id, binding.value.clone()))));
+            }
+            current = environment.outer;
+        }
+        let value = self
+            .with_environment_property_value(self.global_object, name)?
+            .map(|value| (self.global_environment, value));
+        Ok((false, value))
+    }
+
     fn with_environment_property_value(
         &self,
         object: ObjectId,

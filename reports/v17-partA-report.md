@@ -344,3 +344,147 @@ Final project gates: formatting, `cargo check --all-targets`,
 reports two pre-existing post-merge Track B warnings in
 `src/builtins/annex_b.rs` and `src/runtime/context.rs`; the Track A warnings
 found during this batch were corrected.
+
+## JetStream generated-runner resource and diagnostics follow-up
+
+The pinned `benchmarks/JetStream2` submodule was restored from the stale local
+checkout `60cdba1` to the revision already recorded by the parent repository,
+`b7babdf`. No submodule source file or parent gitlink was changed.
+
+Track A updated the generated-runner pipeline without changing Rust engine
+semantics:
+
+- `scripts/prepare-jetstream2.mjs` now merges entry files, preload files, and
+  discovery-time `readFile()` requests, rejects root-escaping paths, and fails
+  generation when any resource is missing.
+- Every generated runner receives a deterministic manifest containing the
+  source commit, resource classes, missing-resource list, and runner SHA-256.
+- Runner and manifest writes use temporary files and rename only after the
+  complete payload is available.
+- `scripts/verify-generated-runner.mjs` verifies syntax, manifest coverage,
+  SHA-256, runtime resource errors, timeouts, and engine failures separately.
+- `scripts/run-jetstream2-diagnostics.ps1` generates 1/2/5/10-iteration
+  runners with optional init/iteration/validate phase markers and records wall
+  time, CPU time, peak working set, completed iterations, and last phase.
+
+Resource result:
+
+| Runner | Before | After | Subsequent result |
+|---|---|---|---|
+| `jetstream2-jsdom-d3-startup` | `RESOURCE_MISSING` | resources PASS | one iteration exceeds 60 seconds |
+| `jetstream2-mobx` | `RESOURCE_MISSING` | resources PASS | PASS, about 8.3 seconds for one iteration |
+| `jetstream2-web-ssr` | `RESOURCE_MISSING` | resources PASS | engine `undefined is not callable` |
+
+The jsdom manifest includes its bundle, airports CSV, and US-data JSON. A
+repeat generation of the MobX runner and manifest produced identical SHA-256
+values.
+
+The generator also supplies the current shell `read()` contract and normalizes
+embedded text resources to LF. The latter is required on Windows because the
+startup workloads count LF-delimited cache-busting comments. The Node 22 shell
+adapter supplies `RegExp.escape` and requires an explicit
+`JETSTREAM_RUN_COMPLETE` marker; all three regenerated startup workloads reach
+that marker under Node, confirming that remaining AgentJS outcomes are no
+longer generator/resource failures.
+
+Diagnostic control: `navier-stokes` with one requested iteration completed one
+iteration and reached `validate:end` in about 3.2 seconds. `threejs` and WSL did
+not reach the first payload phase marker within the 30-second diagnostic
+window. WSL additionally grew to roughly 2.3 GiB working set in the initial
+attempt, placing the observed problem before workload iteration rather than at
+a particular iteration count. The diagnostic launcher now forcibly terminates
+timed-out processes with a bounded post-kill wait.
+
+Verification:
+
+- `node --check` passed for both generator/verification scripts and generated
+  runners.
+- `cargo fmt --all -- --check`: passed.
+- `cargo check --all-targets`: passed.
+- `cargo test --all-targets`: passed.
+- Full Test262: 48,423/53,379 passed, 4,954 failed, 2 skipped (90.7154%).
+  Against the user-provided baseline 48,419/53,379, this is +4 passes, -4
+  failures, and unchanged skips; no aggregate regression.
+- `cargo clippy --all-targets -- -D warnings` remains blocked by the unrelated
+  pre-existing `collapsible_if` warning in `src/builtins/date_intl.rs:13729`.
+
+### Complete current-runner matrix
+
+Track A added `scripts/generate-jetstream2-current.ps1`, which owns the explicit
+mapping between the 19 checked-in canonical runner names and their JetStream
+selection names. In particular, `regexp.js` maps to `regexp-octane`; using the
+broader `regexp` tag selects four benchmarks and is rejected as ambiguous.
+
+All 19 runners now have deterministic manifests. All 19 complete under the
+Node reference shell at one iteration. The AgentJS one-iteration diagnostic
+matrix with a deliberately short 15-second classification limit produced:
+
+- PASS: `crypto`, `hash-map`, `mobx`, `navier-stokes`, `richards`, `splay`,
+  `stanford-crypto-sha256`.
+- Explicit engine failure: `intl`, `validatorjs`, `web-ssr`, `regexp-octane`.
+- Performance timeout at 15 seconds: `ai-astar`, `gaussian-blur`, `cdjs`,
+  `jsdom-d3-startup`, `threejs`, WSL, `raytrace`.
+
+This short matrix is a routing/diagnostic run, not a benchmark result. The
+updated `scripts/run-jetstream2.ps1` continues after individual failures,
+applies a per-runner timeout, and writes per-case plus aggregate JSON. A
+phase-marked `web-ssr` run reached `init:end` and
+`iteration:0:start` before `undefined is not callable`, placing that remaining
+failure inside the workload iteration rather than resource loading.
+
+## JetStream A follow-up: status comparison and repeatable sampling
+
+Track A added two post-integration tools without changing engine semantics or
+B/C-owned files:
+
+- `scripts/compare-jetstream2-status.mjs` compares aggregate runner JSON by
+  benchmark, classifies improvements/regressions/other changes, and reports
+  whether runner SHA-256 stayed fixed. PASS-to-non-PASS produces a non-zero
+  exit status.
+- `scripts/measure-jetstream2.ps1` records independent wall-time, CPU-time,
+  and peak-working-set samples. It reports median, min/max, p90, MAD, standard
+  deviation, runner SHA-256, JetStream revision, AgentJS revision, dirty state,
+  and timeout configuration.
+
+Verifier JSON now includes runner SHA-256, JetStream source revision, and the
+requested iteration count. A status self-comparison reported zero changes, and
+a one-repeat navier-stokes smoke completed in about 3.25 seconds. That smoke
+validates the sampler only; formal performance baselines require at least five
+repeats. Cross-team dependencies are recorded in
+`docs/JetStream/a-merge-coordination.md`.
+
+## JetStream A4 completion: bounded threejs/WSL matrix
+
+The timeout diagnostic runner now has a configurable working-set ceiling,
+writes its summary after every case, and records explicit workload/init/
+iteration/validation booleans. Diagnostic-mode `print` calls carry UTC
+timestamps, allowing the report to preserve the last output time; a workload
+that produces no JavaScript output records `null` rather than an inferred
+timestamp.
+
+The complete 1/2/5/10 matrix used a 15-second timeout and 1 GiB working-set
+limit:
+
+| Benchmark | Iterations | Result | Wall time | CPU time | Peak working set | First phase |
+|---|---:|---|---:|---:|---:|---|
+| threejs | 1 | TIMEOUT | 15.102 s | 14.844 s | 250.1 MiB | none |
+| threejs | 2 | TIMEOUT | 15.117 s | 14.625 s | 253.7 MiB | none |
+| threejs | 5 | TIMEOUT | 15.098 s | 14.688 s | 250.4 MiB | none |
+| threejs | 10 | TIMEOUT | 15.059 s | 14.531 s | 250.6 MiB | none |
+| WSL | 1 | MEMORY_LIMIT | 0.944 s | 0.875 s | 1043.3 MiB | none |
+| WSL | 2 | MEMORY_LIMIT | 0.990 s | 0.953 s | 1132.4 MiB | none |
+| WSL | 5 | MEMORY_LIMIT | 0.967 s | 0.922 s | 1081.4 MiB | none |
+| WSL | 10 | MEMORY_LIMIT | 0.962 s | 0.922 s | 1075.0 MiB | none |
+
+Neither workload produced JavaScript output or reached `init:start`. The
+invariant behavior across iteration counts places both failures before
+`runIteration`: threejs is a payload parse/compile performance timeout, while
+WSL is payload parse/compile memory growth. No live AgentJS process remained
+after the matrix.
+
+`generate-jetstream2-current.ps1 -VerifyDeterminism` repeated generation for
+all 19 canonical files and confirmed identical runner SHA-256 values for every
+pair. The regenerated set also completed 19/19 under the Node reference shell.
+Together with zero missing resources and complete manifests, this closes the
+original A1-A4 runner/infrastructure acceptance scope. Remaining threejs/WSL
+root-cause work requires engine-internal facilities owned outside Track A.

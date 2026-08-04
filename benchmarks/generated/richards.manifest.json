@@ -1,0 +1,17 @@
+{
+  "benchmark": "richards",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./Octane/richards.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./Octane/richards.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "2eb0598359e3f7509fa6850675f20ac2d7647168bd12709b21021f2bd4566264",
+  "phaseMarkers": false
+}

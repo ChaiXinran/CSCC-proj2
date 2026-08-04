@@ -1,0 +1,19 @@
+{
+  "benchmark": "threejs",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./threejs/three.js",
+    "./threejs/benchmark.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./threejs/benchmark.js",
+    "./threejs/three.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "68b2e1fbbc38a98d0ba55c83738b58bfeb195d78d3dc38e9521e665a61ecc315",
+  "phaseMarkers": false
+}

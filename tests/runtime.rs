@@ -48,6 +48,22 @@ fn strict_eval_declarations_do_not_leak() {
 }
 
 #[test]
+fn with_object_environment_intercepts_and_falls_back_for_name_loads() {
+    let report = Engine::default()
+        .execute(
+            "var x = 'outer';
+             var intercepted;
+             var fallback;
+             with ({ x: 'object' }) { intercepted = x; }
+             with ({}) { fallback = x; }
+             intercepted + ':' + fallback;",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(report.value, "object:outer");
+}
+
+#[test]
 fn calls_accept_multiple_and_non_trailing_spreads() {
     let report = Engine::default()
         .execute(

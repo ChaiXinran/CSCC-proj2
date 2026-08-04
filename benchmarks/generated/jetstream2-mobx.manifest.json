@@ -1,0 +1,22 @@
+{
+  "benchmark": "mobx",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 30,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./utils/StartupBenchmark.js",
+    "./mobx/benchmark.js"
+  ],
+  "preloadFiles": [
+    "./mobx/dist/bundle.es6.min.js"
+  ],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./mobx/benchmark.js",
+    "./mobx/dist/bundle.es6.min.js",
+    "./utils/StartupBenchmark.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "52e03f8bce00fd0a813bf7fd6fff4ad82a6cd177fa905eba7a2b25d678f81094",
+  "phaseMarkers": false
+}

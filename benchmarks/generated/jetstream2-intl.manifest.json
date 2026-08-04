@@ -1,0 +1,29 @@
+{
+  "benchmark": "intl",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./intl/src/helper.js",
+    "./intl/src/RelativeTimeFormat.js",
+    "./intl/benchmark.js",
+    "./intl/src/PluralRules.js",
+    "./intl/src/NumberFormat.js",
+    "./intl/src/ListFormat.js",
+    "./intl/src/DateTimeFormat.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./intl/benchmark.js",
+    "./intl/src/DateTimeFormat.js",
+    "./intl/src/ListFormat.js",
+    "./intl/src/NumberFormat.js",
+    "./intl/src/PluralRules.js",
+    "./intl/src/RelativeTimeFormat.js",
+    "./intl/src/helper.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "29bf3a71814b81b34e5f73e5369cbb27a18904b5c3e4fcc5f8688e201a74052e",
+  "phaseMarkers": false
+}

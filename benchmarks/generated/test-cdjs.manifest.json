@@ -1,0 +1,39 @@
+{
+  "benchmark": "cdjs",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 60,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./cdjs/constants.js",
+    "./cdjs/util.js",
+    "./cdjs/red_black_tree.js",
+    "./cdjs/call_sign.js",
+    "./cdjs/vector_2d.js",
+    "./cdjs/vector_3d.js",
+    "./cdjs/motion.js",
+    "./cdjs/reduce_collision_set.js",
+    "./cdjs/simulator.js",
+    "./cdjs/collision.js",
+    "./cdjs/collision_detector.js",
+    "./cdjs/benchmark.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./cdjs/benchmark.js",
+    "./cdjs/call_sign.js",
+    "./cdjs/collision.js",
+    "./cdjs/collision_detector.js",
+    "./cdjs/constants.js",
+    "./cdjs/motion.js",
+    "./cdjs/red_black_tree.js",
+    "./cdjs/reduce_collision_set.js",
+    "./cdjs/simulator.js",
+    "./cdjs/util.js",
+    "./cdjs/vector_2d.js",
+    "./cdjs/vector_3d.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "6d30e825a71153a638e28b1f350a87fa3040cb853bfb2327448987556306c894",
+  "phaseMarkers": false
+}

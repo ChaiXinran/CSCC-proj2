@@ -1,0 +1,26 @@
+{
+  "benchmark": "jsdom-d3-startup",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 15,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./utils/StartupBenchmark.js",
+    "./jsdom-d3-startup/benchmark.js"
+  ],
+  "preloadFiles": [
+    "./jsdom-d3-startup/dist/bundle.min.js",
+    "./jsdom-d3-startup/data/counties-albers-10m.json",
+    "./jsdom-d3-startup/data/airports.csv"
+  ],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./jsdom-d3-startup/benchmark.js",
+    "./jsdom-d3-startup/data/airports.csv",
+    "./jsdom-d3-startup/data/counties-albers-10m.json",
+    "./jsdom-d3-startup/dist/bundle.min.js",
+    "./utils/StartupBenchmark.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "bb494b58caf92b78c6d36b4c70c03631aa6dd134ade6943e1109dcacb4ba1dfc",
+  "phaseMarkers": false
+}

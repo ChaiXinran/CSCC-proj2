@@ -1,0 +1,22 @@
+{
+  "benchmark": "web-ssr",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 30,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./utils/StartupBenchmark.js",
+    "./web-ssr/benchmark.js"
+  ],
+  "preloadFiles": [
+    "./web-ssr/dist/bundle.min.js"
+  ],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./utils/StartupBenchmark.js",
+    "./web-ssr/benchmark.js",
+    "./web-ssr/dist/bundle.min.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "e27cbfafb6ded3643e06a714c045055c9e47befdacb8df85dffcbd30a8b77a12",
+  "phaseMarkers": false
+}

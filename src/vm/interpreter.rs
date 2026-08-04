@@ -2061,40 +2061,62 @@ impl Vm {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
-                    let key = PropertyKey::String(name.clone());
-                    let mut object_resolution = None;
-                    for (with_object, has_binding) in context.name_resolution_chain(&name)? {
-                        if let Some(object) = with_object {
-                            let receiver = context.object_value(object);
-                            match proxy::internal_has_property(
-                                self,
-                                context,
-                                receiver.clone(),
-                                &key,
-                            ) {
-                                Ok(true) => {
-                                    object_resolution = Some(receiver);
-                                    break;
-                                }
-                                Ok(false) => {}
-                                Err(error) => {
-                                    match self.error_to_operation_result(error)? {
-                                        OperationResult::Throw(value) => {
-                                            abrupt = Some(Completion::Throw(value));
-                                            discard_saved_finally = true;
-                                        }
-                                        OperationResult::Value(_) => unreachable!(),
+                    let needs_object_resolution = match context.resolve_binding_value_fast(&name) {
+                        Ok((false, Some((_, value)))) => {
+                            self.stack.push(value);
+                            false
+                        }
+                        Ok((false, None)) => {
+                            let error = VmError::reference(format!(
+                                "{name} is not defined at instruction {current_instruction}"
+                            ));
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                            false
+                        }
+                        Ok((true, _)) => true,
+                        Err(error) => {
+                            abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                            discard_saved_finally = true;
+                            false
+                        }
+                    };
+                    if needs_object_resolution && abrupt.is_none() {
+                        let key = PropertyKey::String(name.clone());
+                        let mut object_resolution = None;
+                        for (with_object, has_binding) in context.name_resolution_chain(&name)? {
+                            if let Some(object) = with_object {
+                                let receiver = context.object_value(object);
+                                match proxy::internal_has_property(
+                                    self,
+                                    context,
+                                    receiver.clone(),
+                                    &key,
+                                ) {
+                                    Ok(true) => {
+                                        object_resolution = Some(receiver);
+                                        break;
                                     }
-                                    break;
+                                    Ok(false) => {}
+                                    Err(error) => {
+                                        match self.error_to_operation_result(error)? {
+                                            OperationResult::Throw(value) => {
+                                                abrupt = Some(Completion::Throw(value));
+                                                discard_saved_finally = true;
+                                            }
+                                            OperationResult::Value(_) => unreachable!(),
+                                        }
+                                        break;
+                                    }
                                 }
                             }
+                            if has_binding {
+                                break;
+                            }
                         }
-                        if has_binding {
-                            break;
-                        }
-                    }
-                    if abrupt.is_none() {
-                        if let Some(receiver) = object_resolution {
+                        if abrupt.is_none()
+                            && let Some(receiver) = object_resolution
+                        {
                             match proxy::internal_get(
                                 self,
                                 context,
@@ -2114,7 +2136,7 @@ impl Vm {
                                     OperationResult::Value(_) => unreachable!(),
                                 },
                             }
-                        } else {
+                        } else if abrupt.is_none() {
                             match context.resolve_binding_value(&name) {
                                 Ok(Some((_, value))) => self.stack.push(value),
                                 Ok(None) => {

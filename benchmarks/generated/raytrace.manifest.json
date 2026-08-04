@@ -1,0 +1,17 @@
+{
+  "benchmark": "raytrace",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./Octane/raytrace.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./Octane/raytrace.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "f8c9b10c2faa473f8119e0246e3445b2d913b8a8674f92321d625b1f2fec8a94",
+  "phaseMarkers": false
+}

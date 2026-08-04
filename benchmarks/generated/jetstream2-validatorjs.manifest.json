@@ -1,0 +1,19 @@
+{
+  "benchmark": "validatorjs",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./validatorjs/dist/bundle.es6.min.js",
+    "./validatorjs/benchmark.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./validatorjs/benchmark.js",
+    "./validatorjs/dist/bundle.es6.min.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "15c7290f6c0052bf16dae0a3ce0e86a626acee1d442f09326422c3c60220c2cc",
+  "phaseMarkers": false
+}

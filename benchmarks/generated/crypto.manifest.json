@@ -1,0 +1,17 @@
+{
+  "benchmark": "crypto",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./Octane/crypto.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./Octane/crypto.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "7d01f34c4b61b8d7847b291e192d15fd931939c155bb30bb91f834edbf963a25",
+  "phaseMarkers": false
+}

@@ -2,19 +2,27 @@
 const isInBrowser = false;
 const isD8 = false;
 const isSpiderMonkey = false;
+const jetStreamHostPrint = typeof globalThis.print === "function"
+    ? globalThis.print
+    : (...args) => globalThis.console.log(...args);
+globalThis.print = jetStreamHostPrint;
+var __jetstreamPhase = (phase) =>
+    jetStreamHostPrint("JETSTREAM_PHASE:" + Date.now() + ":" + phase);
+var console = {
+    log: (...args) => jetStreamHostPrint(...args),
+    warn: (...args) => jetStreamHostPrint(...args),
+    error: (...args) => jetStreamHostPrint(...args),
+    assert(condition, ...args) {
+        if (!condition)
+            throw new Error(args.join(" ") || "Assertion failed");
+    },
+};
 var runString = () => {
     globalThis.loadString = (source) =>
         new Function("top", source)(globalThis.top);
     return globalThis;
 };
 var load = (name) => globalThis.loadString(readFile(name));
-var console = {
-    log: (...args) => print(...args),
-    assert(condition, ...args) {
-        if (!condition)
-            throw new Error(args.join(" ") || "Assertion failed");
-    },
-};
 var performance = globalThis.performance = {
     now: Date.now.bind(Date),
     mark(name) { return { name }; },
@@ -30,16 +38,27 @@ var JetStreamParams = {
     prefetchResources: false,
     forceGC: false,
     dumpJSONResults: false,
+    testIterationCount: 1,
+    testWorstCaseCount: 0,
     testIterationCountMap: {},
     testWorstCaseCountMap: {},
     testList: "intl",
 };
-var __jetstreamResources = {"./intl/src/helper.js":"/*\r\n * Copyright (C) 2025 Apple Inc. All rights reserved.\r\n * Copyright 2025 Google LLC\r\n * \r\n * Redistribution and use in source and binary forms, with or without\r\n * modification, are permitted provided that the following conditions\r\n * are met:\r\n * 1. Redistributions of source code must retain the above copyright\r\n *    notice, this list of conditions and the following disclaimer.\r\n * 2. Redistributions in binary form must reproduce the above copyright\r\n *    notice, this list of conditions and the following disclaimer in the\r\n *    documentation and/or other materials provided with the distribution.\r\n *\r\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\r\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\r\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\r\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\r\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\r\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\r\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\r\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\r\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\r\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\r\n * THE POSSIBILITY OF SUCH DAMAGE.\r\n */\r\n\r\nfunction shuffleOptions(optionsGenerator) {\r\n  const options = Array.from(optionsGenerator());\r\n  for (let i = options.length - 1; i > 0; i--) {\r\n    const j = Math.floor(Math.random() * (i + 1));\r\n    [options[i], options[j]] = [options[j], options[i]];\r\n  }\r\n  return options;\r\n}\r\n\r\nconst LOCALES = [\r\n  \"ar-SA\",\r\n  \"zh-CN\",\r\n  \"zh-TW\",\r\n  \"da-DK\",\r\n  \"en-US\",\r\n  \"en-GB\",\r\n  \"en-CA\",\r\n  \"en-AU\",\r\n  \"fr-FR\",\r\n  \"fr-CA\",\r\n  \"de-DE\",\r\n  \"hi-IN\",\r\n  \"it-IT\",\r\n  \"ja-JP\",\r\n  \"ko-KR\",\r\n  \"pt-BR\",\r\n  \"pt-PT\",\r\n  \"ru-RU\",\r\n  \"es-ES\",\r\n  \"es-MX\",\r\n  \"sw-KE\",\r\n  \"sv-SE\",\r\n  \"th-TH\",\r\n  \"tr-TR\",\r\n  \"vi-VN\",\r\n];\r\n\r\nglobalThis.console ??= {};\r\nconsole.log ??= (...args) => print(...args);\r\n","./intl/src/RelativeTimeFormat.js":"/*\r\n * Copyright (C) 2025 Apple Inc. All rights reserved.\r\n * Copyright 2025 Google LLC\r\n * \r\n * Redistribution and use in source and binary forms, with or without\r\n * modification, are permitted provided that the following conditions\r\n * are met:\r\n * 1. Redistributions of source code must retain the above copyright\r\n *    notice, this list of conditions and the following disclaimer.\r\n * 2. Redistributions in binary form must reproduce the above copyright\r\n *    notice, this list of conditions and the following disclaimer in the\r\n *    documentation and/or other materials provided with the distribution.\r\n *\r\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\r\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\r\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\r\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\r\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\r\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\r\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\r\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\r\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\r\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\r\n * THE POSSIBILITY OF SUCH DAMAGE.\r\n */\r\n\r\nconst UNITS = [\r\n  \"year\",\r\n  \"quarter\",\r\n  \"month\",\r\n  \"week\",\r\n  \"day\",\r\n  \"hour\",\r\n  \"minute\",\r\n  \"second\",\r\n];\r\n\r\nfunction* relativeTimeFormatOptions() {\r\n  const styleOptions = [\"long\", \"short\", \"narrow\"];\r\n  const numericOptions = [\"always\", \"auto\"];\r\n  for (const locale of LOCALES) {\r\n    for (const style of styleOptions) {\r\n      for (const numeric of numericOptions) {\r\n        yield { locale, style, numeric };\r\n      }\r\n    }\r\n  }\r\n}\r\n\r\nfunction runTest(verbose = false) {\r\n  let lastResult;\r\n  let totalLength = 0;\r\n  const RELATIVE_TIME_FORMAT_COUNT = 100;\r\n  let unitIndex = 0;\r\n  for (const { locale, style, numeric } of shuffleOptions(\r\n    relativeTimeFormatOptions\r\n  )) {\r\n    const options = { style, numeric };\r\n    if (verbose) {\r\n      console.log(locale, JSON.stringify(options));\r\n    }\r\n    const formatter = new Intl.RelativeTimeFormat(locale, options);\r\n    for (let i = 0; i < RELATIVE_TIME_FORMAT_COUNT; i++) {\r\n      const unit = UNITS[unitIndex % UNITS.length];\r\n      unitIndex++;\r\n      const value = Math.random() * 100 - 50;\r\n      lastResult = formatter.format(value, unit);\r\n      if (verbose) {\r\n        console.log(value, unit, lastResult);\r\n      }\r\n      totalLength += lastResult.length;\r\n      const formatPartsResult = formatter.formatToParts(value, unit);\r\n      for (const part of formatPartsResult) {\r\n        totalLength += part.value.length;\r\n      }\r\n    }\r\n  }\r\n  return { lastResult, totalLength, expectedMinLength: 432_000 };\r\n}\r\n","./intl/benchmark.js":"/*\r\n * Copyright (C) 2025 Apple Inc. All rights reserved.\r\n *\r\n * Redistribution and use in source and binary forms, with or without\r\n * modification, are permitted provided that the following conditions\r\n * are met:\r\n * 1. Redistributions of source code must retain the above copyright\r\n *    notice, this list of conditions and the following disclaimer.\r\n * 2. Redistributions in binary form must reproduce the above copyright\r\n *    notice, this list of conditions and the following disclaimer in the\r\n *    documentation and/or other materials provided with the distribution.\r\n *\r\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY\r\n * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\r\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\r\n * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR\r\n * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,\r\n * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,\r\n * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR\r\n * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY\r\n * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\r\n * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\r\n * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\r\n */\r\n\r\nclass Benchmark {\r\n  iterationCount;\r\n  verbose;\r\n  lastResult;\r\n  totalLength = 0;\r\n  expectedMinLength = 0;\r\n\r\n  constructor({ iterationCount, verbose = false } = {}) {\r\n    this.iterationCount = iterationCount;\r\n    this.verbose = verbose;\r\n  }\r\n\r\n  runIteration() {\r\n    // See implementations in src/.\r\n    const { lastResult, totalLength, expectedMinLength } = runTest(\r\n      this.verbose\r\n    );\r\n    this.lastResult = lastResult;\r\n    this.totalLength += totalLength;\r\n    this.expectedMinLength = expectedMinLength;\r\n  }\r\n\r\n  validate() {\r\n    const expectedMinTotalLength = this.expectedMinLength * this.iterationCount;\r\n    console.assert(\r\n      this.totalLength >= expectedMinTotalLength,\r\n      `Invalid totalLength = ${this.totalLength}, expected >= ${expectedMinTotalLength}`\r\n    );\r\n  }\r\n}\r\n","./intl/src/PluralRules.js":"/*\r\n * Copyright (C) 2025 Apple Inc. All rights reserved.\r\n * Copyright 2025 Google LLC\r\n * \r\n * Redistribution and use in source and binary forms, with or without\r\n * modification, are permitted provided that the following conditions\r\n * are met:\r\n * 1. Redistributions of source code must retain the above copyright\r\n *    notice, this list of conditions and the following disclaimer.\r\n * 2. Redistributions in binary form must reproduce the above copyright\r\n *    notice, this list of conditions and the following disclaimer in the\r\n *    documentation and/or other materials provided with the distribution.\r\n *\r\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\r\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\r\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\r\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\r\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\r\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\r\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\r\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\r\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\r\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\r\n * THE POSSIBILITY OF SUCH DAMAGE.\r\n */\r\n\r\nfunction* pluralRulesOptions() {\r\n  const typeOptions = [\"cardinal\", \"ordinal\"];\r\n  for (const locale of LOCALES) {\r\n    for (const type of typeOptions) {\r\n      yield { locale, type };\r\n    }\r\n  }\r\n}\r\n\r\nfunction runTest(verbose = false) {\r\n  let lastResult;\r\n  let totalLength = 0;\r\n  const PLURAL_RULES_COUNT = 1000;\r\n  for (const { locale, type } of shuffleOptions(pluralRulesOptions)) {\r\n    if (verbose) {\r\n      console.log(locale, type);\r\n    }\r\n    const formatter = new Intl.PluralRules(locale, { type });\r\n    let i = 0;\r\n    for (let value = 0; value < 4; value++) {\r\n      lastResult = formatter.select(value);\r\n      totalLength += lastResult.length;\r\n      if (verbose) {\r\n        console.log(value, lastResult);\r\n      }\r\n      i++;\r\n    }\r\n    for (; i < PLURAL_RULES_COUNT; i++) {\r\n      const value = Math.floor(Math.random() * 1000);\r\n      lastResult = formatter.select(value);\r\n      totalLength += lastResult.length;\r\n      if (verbose) {\r\n        console.log(value, lastResult);\r\n      }\r\n    }\r\n  }\r\n  return { lastResult, totalLength, expectedMinLength: 244_000 };\r\n}\r\n","./intl/src/NumberFormat.js":"/*\r\n * Copyright (C) 2025 Apple Inc. All rights reserved.\r\n * Copyright 2025 Google LLC\r\n * \r\n * Redistribution and use in source and binary forms, with or without\r\n * modification, are permitted provided that the following conditions\r\n * are met:\r\n * 1. Redistributions of source code must retain the above copyright\r\n *    notice, this list of conditions and the following disclaimer.\r\n * 2. Redistributions in binary form must reproduce the above copyright\r\n *    notice, this list of conditions and the following disclaimer in the\r\n *    documentation and/or other materials provided with the distribution.\r\n *\r\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\r\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\r\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\r\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\r\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\r\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\r\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\r\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\r\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\r\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\r\n * THE POSSIBILITY OF SUCH DAMAGE.\r\n */\r\n\r\nconst CURRENCIES = [\"USD\", \"EUR\", \"JPY\", \"INR\", \"NGN\"];\r\n\r\nconst NUMBER_UNITS = [\r\n  \"acre\",\r\n  \"bit\",\r\n  \"byte\",\r\n  \"celsius\",\r\n  \"centimeter\",\r\n  \"day\",\r\n  \"degree\",\r\n  \"fahrenheit\",\r\n  \"fluid-ounce\",\r\n  \"foot\",\r\n  \"gallon\",\r\n  \"gigabit\",\r\n  \"gigabyte\",\r\n  \"gram\",\r\n  \"hectare\",\r\n  \"hour\",\r\n  \"inch\",\r\n  \"kilobit\",\r\n  \"kilobyte\",\r\n  \"kilogram\",\r\n  \"kilometer\",\r\n  \"liter\",\r\n  \"megabit\",\r\n  \"megabyte\",\r\n  \"meter\",\r\n  \"microsecond\",\r\n  \"mile\",\r\n  \"mile-scandinavian\",\r\n  \"milliliter\",\r\n  \"millimeter\",\r\n  \"millisecond\",\r\n  \"minute\",\r\n  \"month\",\r\n  \"nanosecond\",\r\n  \"ounce\",\r\n  \"percent\",\r\n  \"petabyte\",\r\n  \"pound\",\r\n  \"second\",\r\n  \"stone\",\r\n  \"terabit\",\r\n  \"terabyte\",\r\n  \"week\",\r\n  \"yard\",\r\n  \"year\",\r\n];\r\n\r\nfunction* numberFormatOptions() {\r\n  const currencyDisplayOptions = [\"symbol\", \"narrowSymbol\", \"code\", \"name\"];\r\n  const unitDisplayOptions = [\"short\", \"long\", \"narrow\"];\r\n\r\n  for (const locale of LOCALES) {\r\n    for (const currency of CURRENCIES) {\r\n      for (const currencyDisplay of currencyDisplayOptions) {\r\n        yield { locale, style: \"currency\", currency, currencyDisplay };\r\n      }\r\n    }\r\n    for (const unit of NUMBER_UNITS.slice(0, 20)) {\r\n      for (const unitDisplay of unitDisplayOptions) {\r\n        yield { locale, style: \"unit\", unit, unitDisplay };\r\n      }\r\n    }\r\n    yield { locale, style: \"decimal\" };\r\n    yield { locale, style: \"percent\" };\r\n  }\r\n}\r\n\r\nfunction runTest(verbose = false) {\r\n  let lastResult;\r\n  let totalLength = 0;\r\n  const NUMBER_FORMAT_COUNT = 10;\r\n  let counter = 1;\r\n  for (const options of shuffleOptions(numberFormatOptions).slice(0, 200)) {\r\n    const formatter = new Intl.NumberFormat(options.locale, options);\r\n    if (verbose) {\r\n      console.log(options.locale, JSON.stringify(options));\r\n    }\r\n    for (let i = 0; i < NUMBER_FORMAT_COUNT; i++) {\r\n      counter += 599;\r\n      const value = counter % 10_000;\r\n      lastResult = formatter.format(value);\r\n      if (verbose) {\r\n        console.log(value, lastResult);\r\n      }\r\n      totalLength += lastResult.length;\r\n      const formatPartsResult = formatter.formatToParts(value);\r\n      for (const part of formatPartsResult) {\r\n        totalLength += part.value.length;\r\n      }\r\n    }\r\n  }\r\n  return { lastResult, totalLength, expectedMinLength: 40_000 };\r\n}\r\n","./intl/src/ListFormat.js":"/*\r\n * Copyright (C) 2025 Apple Inc. All rights reserved.\r\n * Copyright 2025 Google LLC\r\n * \r\n * Redistribution and use in source and binary forms, with or without\r\n * modification, are permitted provided that the following conditions\r\n * are met:\r\n * 1. Redistributions of source code must retain the above copyright\r\n *    notice, this list of conditions and the following disclaimer.\r\n * 2. Redistributions in binary form must reproduce the above copyright\r\n *    notice, this list of conditions and the following disclaimer in the\r\n *    documentation and/or other materials provided with the distribution.\r\n *\r\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\r\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\r\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\r\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\r\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\r\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\r\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\r\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\r\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\r\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\r\n * THE POSSIBILITY OF SUCH DAMAGE.\r\n */\r\n\r\nconst LISTS = [\r\n  [\"One\"],\r\n  [\"1\", \"2\"],\r\n  [\"Motorcycle\", \"Bus\", \"Car\"],\r\n  LOCALES,\r\n  new Array(100).fill(9).map((_, index) => index.toString()),\r\n];\r\n\r\nfunction* listOptions() {\r\n  const styleOptions = [\"long\", \"short\", \"narrow\"];\r\n  const typeOptions = [\"conjunction\", \"disjunction\", \"unit\"];\r\n  for (const locale of LOCALES) {\r\n    for (const style of styleOptions) {\r\n      for (const type of typeOptions) {\r\n        yield { locale, style, type };\r\n      }\r\n    }\r\n  }\r\n}\r\n\r\nfunction runTest(verbose = false) {\r\n  let lastResult;\r\n  let totalLength = 0;\r\n  const LIST_FORMAT_COUNT = 10;\r\n  let listIndex = 0;\r\n  for (const { locale, style, type } of shuffleOptions(listOptions)) {\r\n    const options = { style, type };\r\n    if (verbose) {\r\n      console.log(locale, JSON.stringify(options));\r\n    }\r\n    const formatter = new Intl.ListFormat(locale, options);\r\n    for (let i = 0; i < LIST_FORMAT_COUNT; i++) {\r\n      const list = LISTS[listIndex % LISTS.length];\r\n      listIndex++;\r\n      lastResult = formatter.format(list);\r\n      totalLength += lastResult.length;\r\n      const formatPartsResult = formatter.formatToParts(list);\r\n      if (verbose) {\r\n        console.log(value, lastResult);\r\n      }\r\n      for (const part of formatPartsResult) {\r\n        totalLength += part.value.length;\r\n      }\r\n    }\r\n  }\r\n  return { lastResult, totalLength, expectedMinLength: 506_000 };\r\n}\r\n","./intl/src/DateTimeFormat.js":"/*\r\n * Copyright (C) 2025 Apple Inc. All rights reserved.\r\n * Copyright 2025 Google LLC\r\n * \r\n * Redistribution and use in source and binary forms, with or without\r\n * modification, are permitted provided that the following conditions\r\n * are met:\r\n * 1. Redistributions of source code must retain the above copyright\r\n *    notice, this list of conditions and the following disclaimer.\r\n * 2. Redistributions in binary form must reproduce the above copyright\r\n *    notice, this list of conditions and the following disclaimer in the\r\n *    documentation and/or other materials provided with the distribution.\r\n *\r\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\r\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\r\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\r\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\r\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\r\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\r\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\r\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\r\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\r\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\r\n * THE POSSIBILITY OF SUCH DAMAGE.\r\n */\r\n\r\nfunction generateRandomDates(count) {\r\n  const firstDate = new Date(1800, 11, 5, 13, 6);\r\n  let currentTimeStamp = firstDate.getTime();\r\n  const dates = [];\r\n\r\n  for (let i = 0; i < count; i++) {\r\n    dates.push(new Date(currentTimeStamp));\r\n    currentTimeStamp += 1234569;\r\n  }\r\n  return dates;\r\n}\r\n\r\nconst DATE_STYLE_OPTIONS = [\"full\", \"long\", \"medium\", \"short\"];\r\nconst TIME_STYLE_OPTIONS = [\"full\", \"long\", \"medium\", \"short\"];\r\n\r\nfunction* dateTimeFormatOptions() {\r\n  for (const locale of LOCALES) {\r\n    for (const dateStyle of DATE_STYLE_OPTIONS) {\r\n      for (const timeStyle of TIME_STYLE_OPTIONS) {\r\n        yield { locale, dateStyle, timeStyle };\r\n      }\r\n    }\r\n  }\r\n}\r\n\r\nfunction runTest(verbose = false) {\r\n  let totalLength = 0;\r\n  let lastFormatResult;\r\n  let lastFormatPartResult;\r\n  let lastFormatRangeResult;\r\n  const dates = generateRandomDates(100);\r\n  let dateIndex = 0;\r\n\r\n  const FORMAT_COUNT = 17;\r\n  const FORMAT_RANGE_COUNT = 7;\r\n  for (const { locale, dateStyle, timeStyle } of shuffleOptions(\r\n    dateTimeFormatOptions\r\n  )) {\r\n    const options = { dateStyle, timeStyle };\r\n    if (verbose) {\r\n      console.log(locale, JSON.stringify(options));\r\n    }\r\n    const formatter = new Intl.DateTimeFormat(locale, options);\r\n    for (let i = 0; i < FORMAT_COUNT; i++) {\r\n      let date = dates[dateIndex % dates.length];\r\n      lastFormatResult = formatter.format(date);\r\n      totalLength += lastFormatResult.length;\r\n      if (verbose) {\r\n        console.log(date, lastFormatResult);\r\n      }\r\n      dateIndex++;\r\n\r\n      date = dates[dateIndex % dates.length];\r\n      lastFormatPartResult = formatter.formatToParts(date);\r\n      for (const part of lastFormatPartResult) {\r\n        totalLength += part.value.length;\r\n      }\r\n      dateIndex++;\r\n    }\r\n    let dateRangeStart = dates[0];\r\n    for (let i = 0; i < FORMAT_RANGE_COUNT; i++) {\r\n      const date = dates[dateIndex % dates.length];\r\n      if (dateRangeStart < date) {\r\n        lastFormatRangeResult = formatter.formatRange(dateRangeStart, date);\r\n        if (verbose) {\r\n          console.log(dateRangeStart, date, lastFormatRangeResult);\r\n        }\r\n      }\r\n      dateRangeStart = date;\r\n    }\r\n  }\r\n  return {\r\n    lastResult: lastFormatResult + lastFormatRangeResult,\r\n    totalLength,\r\n    expectedMinLength: 438_000,\r\n  };\r\n}\r\n"};
+var __jetstreamResources = {"./intl/benchmark.js":"/*\n * Copyright (C) 2025 Apple Inc. All rights reserved.\n *\n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n *\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY\n * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\n * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR\n * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,\n * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,\n * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR\n * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY\n * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\n * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n */\n\nclass Benchmark {\n  iterationCount;\n  verbose;\n  lastResult;\n  totalLength = 0;\n  expectedMinLength = 0;\n\n  constructor({ iterationCount, verbose = false } = {}) {\n    this.iterationCount = iterationCount;\n    this.verbose = verbose;\n  }\n\n  runIteration() {\n    // See implementations in src/.\n    const { lastResult, totalLength, expectedMinLength } = runTest(\n      this.verbose\n    );\n    this.lastResult = lastResult;\n    this.totalLength += totalLength;\n    this.expectedMinLength = expectedMinLength;\n  }\n\n  validate() {\n    const expectedMinTotalLength = this.expectedMinLength * this.iterationCount;\n    console.assert(\n      this.totalLength >= expectedMinTotalLength,\n      `Invalid totalLength = ${this.totalLength}, expected >= ${expectedMinTotalLength}`\n    );\n  }\n}\n","./intl/src/DateTimeFormat.js":"/*\n * Copyright (C) 2025 Apple Inc. All rights reserved.\n * Copyright 2025 Google LLC\n * \n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n *\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\n * THE POSSIBILITY OF SUCH DAMAGE.\n */\n\nfunction generateRandomDates(count) {\n  const firstDate = new Date(1800, 11, 5, 13, 6);\n  let currentTimeStamp = firstDate.getTime();\n  const dates = [];\n\n  for (let i = 0; i < count; i++) {\n    dates.push(new Date(currentTimeStamp));\n    currentTimeStamp += 1234569;\n  }\n  return dates;\n}\n\nconst DATE_STYLE_OPTIONS = [\"full\", \"long\", \"medium\", \"short\"];\nconst TIME_STYLE_OPTIONS = [\"full\", \"long\", \"medium\", \"short\"];\n\nfunction* dateTimeFormatOptions() {\n  for (const locale of LOCALES) {\n    for (const dateStyle of DATE_STYLE_OPTIONS) {\n      for (const timeStyle of TIME_STYLE_OPTIONS) {\n        yield { locale, dateStyle, timeStyle };\n      }\n    }\n  }\n}\n\nfunction runTest(verbose = false) {\n  let totalLength = 0;\n  let lastFormatResult;\n  let lastFormatPartResult;\n  let lastFormatRangeResult;\n  const dates = generateRandomDates(100);\n  let dateIndex = 0;\n\n  const FORMAT_COUNT = 17;\n  const FORMAT_RANGE_COUNT = 7;\n  for (const { locale, dateStyle, timeStyle } of shuffleOptions(\n    dateTimeFormatOptions\n  )) {\n    const options = { dateStyle, timeStyle };\n    if (verbose) {\n      console.log(locale, JSON.stringify(options));\n    }\n    const formatter = new Intl.DateTimeFormat(locale, options);\n    for (let i = 0; i < FORMAT_COUNT; i++) {\n      let date = dates[dateIndex % dates.length];\n      lastFormatResult = formatter.format(date);\n      totalLength += lastFormatResult.length;\n      if (verbose) {\n        console.log(date, lastFormatResult);\n      }\n      dateIndex++;\n\n      date = dates[dateIndex % dates.length];\n      lastFormatPartResult = formatter.formatToParts(date);\n      for (const part of lastFormatPartResult) {\n        totalLength += part.value.length;\n      }\n      dateIndex++;\n    }\n    let dateRangeStart = dates[0];\n    for (let i = 0; i < FORMAT_RANGE_COUNT; i++) {\n      const date = dates[dateIndex % dates.length];\n      if (dateRangeStart < date) {\n        lastFormatRangeResult = formatter.formatRange(dateRangeStart, date);\n        if (verbose) {\n          console.log(dateRangeStart, date, lastFormatRangeResult);\n        }\n      }\n      dateRangeStart = date;\n    }\n  }\n  return {\n    lastResult: lastFormatResult + lastFormatRangeResult,\n    totalLength,\n    expectedMinLength: 438_000,\n  };\n}\n","./intl/src/ListFormat.js":"/*\n * Copyright (C) 2025 Apple Inc. All rights reserved.\n * Copyright 2025 Google LLC\n * \n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n *\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\n * THE POSSIBILITY OF SUCH DAMAGE.\n */\n\nconst LISTS = [\n  [\"One\"],\n  [\"1\", \"2\"],\n  [\"Motorcycle\", \"Bus\", \"Car\"],\n  LOCALES,\n  new Array(100).fill(9).map((_, index) => index.toString()),\n];\n\nfunction* listOptions() {\n  const styleOptions = [\"long\", \"short\", \"narrow\"];\n  const typeOptions = [\"conjunction\", \"disjunction\", \"unit\"];\n  for (const locale of LOCALES) {\n    for (const style of styleOptions) {\n      for (const type of typeOptions) {\n        yield { locale, style, type };\n      }\n    }\n  }\n}\n\nfunction runTest(verbose = false) {\n  let lastResult;\n  let totalLength = 0;\n  const LIST_FORMAT_COUNT = 10;\n  let listIndex = 0;\n  for (const { locale, style, type } of shuffleOptions(listOptions)) {\n    const options = { style, type };\n    if (verbose) {\n      console.log(locale, JSON.stringify(options));\n    }\n    const formatter = new Intl.ListFormat(locale, options);\n    for (let i = 0; i < LIST_FORMAT_COUNT; i++) {\n      const list = LISTS[listIndex % LISTS.length];\n      listIndex++;\n      lastResult = formatter.format(list);\n      totalLength += lastResult.length;\n      const formatPartsResult = formatter.formatToParts(list);\n      if (verbose) {\n        console.log(value, lastResult);\n      }\n      for (const part of formatPartsResult) {\n        totalLength += part.value.length;\n      }\n    }\n  }\n  return { lastResult, totalLength, expectedMinLength: 506_000 };\n}\n","./intl/src/NumberFormat.js":"/*\n * Copyright (C) 2025 Apple Inc. All rights reserved.\n * Copyright 2025 Google LLC\n * \n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n *\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\n * THE POSSIBILITY OF SUCH DAMAGE.\n */\n\nconst CURRENCIES = [\"USD\", \"EUR\", \"JPY\", \"INR\", \"NGN\"];\n\nconst NUMBER_UNITS = [\n  \"acre\",\n  \"bit\",\n  \"byte\",\n  \"celsius\",\n  \"centimeter\",\n  \"day\",\n  \"degree\",\n  \"fahrenheit\",\n  \"fluid-ounce\",\n  \"foot\",\n  \"gallon\",\n  \"gigabit\",\n  \"gigabyte\",\n  \"gram\",\n  \"hectare\",\n  \"hour\",\n  \"inch\",\n  \"kilobit\",\n  \"kilobyte\",\n  \"kilogram\",\n  \"kilometer\",\n  \"liter\",\n  \"megabit\",\n  \"megabyte\",\n  \"meter\",\n  \"microsecond\",\n  \"mile\",\n  \"mile-scandinavian\",\n  \"milliliter\",\n  \"millimeter\",\n  \"millisecond\",\n  \"minute\",\n  \"month\",\n  \"nanosecond\",\n  \"ounce\",\n  \"percent\",\n  \"petabyte\",\n  \"pound\",\n  \"second\",\n  \"stone\",\n  \"terabit\",\n  \"terabyte\",\n  \"week\",\n  \"yard\",\n  \"year\",\n];\n\nfunction* numberFormatOptions() {\n  const currencyDisplayOptions = [\"symbol\", \"narrowSymbol\", \"code\", \"name\"];\n  const unitDisplayOptions = [\"short\", \"long\", \"narrow\"];\n\n  for (const locale of LOCALES) {\n    for (const currency of CURRENCIES) {\n      for (const currencyDisplay of currencyDisplayOptions) {\n        yield { locale, style: \"currency\", currency, currencyDisplay };\n      }\n    }\n    for (const unit of NUMBER_UNITS.slice(0, 20)) {\n      for (const unitDisplay of unitDisplayOptions) {\n        yield { locale, style: \"unit\", unit, unitDisplay };\n      }\n    }\n    yield { locale, style: \"decimal\" };\n    yield { locale, style: \"percent\" };\n  }\n}\n\nfunction runTest(verbose = false) {\n  let lastResult;\n  let totalLength = 0;\n  const NUMBER_FORMAT_COUNT = 10;\n  let counter = 1;\n  for (const options of shuffleOptions(numberFormatOptions).slice(0, 200)) {\n    const formatter = new Intl.NumberFormat(options.locale, options);\n    if (verbose) {\n      console.log(options.locale, JSON.stringify(options));\n    }\n    for (let i = 0; i < NUMBER_FORMAT_COUNT; i++) {\n      counter += 599;\n      const value = counter % 10_000;\n      lastResult = formatter.format(value);\n      if (verbose) {\n        console.log(value, lastResult);\n      }\n      totalLength += lastResult.length;\n      const formatPartsResult = formatter.formatToParts(value);\n      for (const part of formatPartsResult) {\n        totalLength += part.value.length;\n      }\n    }\n  }\n  return { lastResult, totalLength, expectedMinLength: 40_000 };\n}\n","./intl/src/PluralRules.js":"/*\n * Copyright (C) 2025 Apple Inc. All rights reserved.\n * Copyright 2025 Google LLC\n * \n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n *\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\n * THE POSSIBILITY OF SUCH DAMAGE.\n */\n\nfunction* pluralRulesOptions() {\n  const typeOptions = [\"cardinal\", \"ordinal\"];\n  for (const locale of LOCALES) {\n    for (const type of typeOptions) {\n      yield { locale, type };\n    }\n  }\n}\n\nfunction runTest(verbose = false) {\n  let lastResult;\n  let totalLength = 0;\n  const PLURAL_RULES_COUNT = 1000;\n  for (const { locale, type } of shuffleOptions(pluralRulesOptions)) {\n    if (verbose) {\n      console.log(locale, type);\n    }\n    const formatter = new Intl.PluralRules(locale, { type });\n    let i = 0;\n    for (let value = 0; value < 4; value++) {\n      lastResult = formatter.select(value);\n      totalLength += lastResult.length;\n      if (verbose) {\n        console.log(value, lastResult);\n      }\n      i++;\n    }\n    for (; i < PLURAL_RULES_COUNT; i++) {\n      const value = Math.floor(Math.random() * 1000);\n      lastResult = formatter.select(value);\n      totalLength += lastResult.length;\n      if (verbose) {\n        console.log(value, lastResult);\n      }\n    }\n  }\n  return { lastResult, totalLength, expectedMinLength: 244_000 };\n}\n","./intl/src/RelativeTimeFormat.js":"/*\n * Copyright (C) 2025 Apple Inc. All rights reserved.\n * Copyright 2025 Google LLC\n * \n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n *\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\n * THE POSSIBILITY OF SUCH DAMAGE.\n */\n\nconst UNITS = [\n  \"year\",\n  \"quarter\",\n  \"month\",\n  \"week\",\n  \"day\",\n  \"hour\",\n  \"minute\",\n  \"second\",\n];\n\nfunction* relativeTimeFormatOptions() {\n  const styleOptions = [\"long\", \"short\", \"narrow\"];\n  const numericOptions = [\"always\", \"auto\"];\n  for (const locale of LOCALES) {\n    for (const style of styleOptions) {\n      for (const numeric of numericOptions) {\n        yield { locale, style, numeric };\n      }\n    }\n  }\n}\n\nfunction runTest(verbose = false) {\n  let lastResult;\n  let totalLength = 0;\n  const RELATIVE_TIME_FORMAT_COUNT = 100;\n  let unitIndex = 0;\n  for (const { locale, style, numeric } of shuffleOptions(\n    relativeTimeFormatOptions\n  )) {\n    const options = { style, numeric };\n    if (verbose) {\n      console.log(locale, JSON.stringify(options));\n    }\n    const formatter = new Intl.RelativeTimeFormat(locale, options);\n    for (let i = 0; i < RELATIVE_TIME_FORMAT_COUNT; i++) {\n      const unit = UNITS[unitIndex % UNITS.length];\n      unitIndex++;\n      const value = Math.random() * 100 - 50;\n      lastResult = formatter.format(value, unit);\n      if (verbose) {\n        console.log(value, unit, lastResult);\n      }\n      totalLength += lastResult.length;\n      const formatPartsResult = formatter.formatToParts(value, unit);\n      for (const part of formatPartsResult) {\n        totalLength += part.value.length;\n      }\n    }\n  }\n  return { lastResult, totalLength, expectedMinLength: 432_000 };\n}\n","./intl/src/helper.js":"/*\n * Copyright (C) 2025 Apple Inc. All rights reserved.\n * Copyright 2025 Google LLC\n * \n * Redistribution and use in source and binary forms, with or without\n * modification, are permitted provided that the following conditions\n * are met:\n * 1. Redistributions of source code must retain the above copyright\n *    notice, this list of conditions and the following disclaimer.\n * 2. Redistributions in binary form must reproduce the above copyright\n *    notice, this list of conditions and the following disclaimer in the\n *    documentation and/or other materials provided with the distribution.\n *\n * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''\n * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,\n * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR\n * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS\n * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\n * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\n * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\n * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\n * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\n * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF\n * THE POSSIBILITY OF SUCH DAMAGE.\n */\n\nfunction shuffleOptions(optionsGenerator) {\n  const options = Array.from(optionsGenerator());\n  for (let i = options.length - 1; i > 0; i--) {\n    const j = Math.floor(Math.random() * (i + 1));\n    [options[i], options[j]] = [options[j], options[i]];\n  }\n  return options;\n}\n\nconst LOCALES = [\n  \"ar-SA\",\n  \"zh-CN\",\n  \"zh-TW\",\n  \"da-DK\",\n  \"en-US\",\n  \"en-GB\",\n  \"en-CA\",\n  \"en-AU\",\n  \"fr-FR\",\n  \"fr-CA\",\n  \"de-DE\",\n  \"hi-IN\",\n  \"it-IT\",\n  \"ja-JP\",\n  \"ko-KR\",\n  \"pt-BR\",\n  \"pt-PT\",\n  \"ru-RU\",\n  \"es-ES\",\n  \"es-MX\",\n  \"sw-KE\",\n  \"sv-SE\",\n  \"th-TH\",\n  \"tr-TR\",\n  \"vi-VN\",\n];\n\nglobalThis.console ??= {};\nconsole.log ??= (...args) => print(...args);\n"};
 var readFile = function (name) {
     const normalized = String(name).replaceAll("\\", "/");
     if (!Object.prototype.hasOwnProperty.call(__jetstreamResources, normalized))
         throw new Error("JetStream resource not embedded: " + normalized);
     return __jetstreamResources[normalized];
+};
+var read = function (name, mode) {
+    const text = readFile(name);
+    if (mode !== "binary")
+        return text;
+    const bytes = [];
+    for (let i = 0; i < text.length; i++)
+        bytes.push(text.charCodeAt(i) & 0xff);
+    return bytes;
 };
 
 "use strict";
@@ -194,7 +213,7 @@ function uncompressedName(name) {
 }
 
 // TODO: Cleanup / remove / merge. This is only used for caching loads in the
-// non-browser setting. In the browser we use exclusively `loadCache`, 
+// non-browser setting. In the browser we use exclusively `loadCache`,
 // `loadBlob`, `doLoadBlob`, `prefetchResourcesForBrowser` etc., see below.
 class ShellFileLoader {
     constructor() {
@@ -738,7 +757,7 @@ class Scripts {
                     throw new Error(name + "." + property + " is not defined.");
                 }
             });
-            const JetStream = globalThis.JetStream = {
+            globalThis.JetStream = {
                 __proto__: throwOnAccess("JetStream"),
                 preload: {
                     __proto__: throwOnAccess("JetStream.preload"),
@@ -810,15 +829,48 @@ class ShellScripts extends Scripts {
     }
 
     run() {
-        globalThis.console = Object.assign({}, console);
-        globalThis.self = globalThis;
-        globalThis.top = {
+        let globalObject;
+        let realm;
+        if (isD8) {
+            realm = Realm.createAllowCrossRealmAccess();
+            globalObject = Realm.global(realm);
+            globalObject.loadString = function(s) {
+                return Realm.eval(realm, s);
+            };
+            globalObject.readFile = read;
+        } else if (isSpiderMonkey) {
+            globalObject = newGlobal();
+            globalObject.loadString = globalObject.evaluate;
+            globalObject.readFile = globalObject.readRelativeToScript;
+        } else
+            globalObject = runString("");
+
+        // Expose console copy in the realm so we don't accidentally modify
+        // the original object.
+        globalObject.console = Object.assign({}, console);
+        globalObject.self = globalObject;
+        globalObject.top = {
             currentResolve,
             currentReject
         };
-        globalThis.performance ??= performance;
-        new Function("top", this.scripts.join("\n"))(globalThis.top);
-        return globalThis;
+
+        // Pass the prefetched resources to the benchmark global.
+        if (JetStreamParams.prefetchResources) {
+            // Pass the 'TextDecoder' polyfill into the benchmark global. Don't
+            // use 'TextDecoder' as that will get picked up in the kotlin test
+            // without full support.
+            globalObject.ShellTextDecoder = TextDecoder;
+            // Store shellPrefetchedResources on ShellPrefetchedResources so that
+            // getBinary and getString can find them.
+            globalObject.ShellPrefetchedResources = this.prefetchedResources;
+        } else {
+            console.assert(Object.values(this.prefetchedResources).length === 0, "Unexpected prefetched resources");
+        }
+
+        globalObject.performance ??= performance;
+        globalObject.loadString(this.scripts.join("\n"));
+
+        return isD8 ? realm : globalObject;
     }
 
     addPrefetchedResources(prefetchedResources) {
@@ -871,10 +923,10 @@ class BrowserScripts extends Scripts {
 
 class Benchmark {
     constructor({
-            name, 
+            name,
             files,
             preload = {},
-            tags, 
+            tags,
             iterations,
             deterministicRandom = false,
             exposeBrowserTest = false,
@@ -886,7 +938,7 @@ class Benchmark {
         this.name = name
         this.tags = this._processTags(tags)
         this._arguments = args;
-        
+
         this.iterations = this._processIterationCount(iterations);
         this._deterministicRandom = deterministicRandom;
         this._exposeBrowserTest = exposeBrowserTest;
@@ -904,7 +956,7 @@ class Benchmark {
     get files() {
         return this._files;
     }
-    get preloadEntries() { 
+    get preloadEntries() {
         return this._preloadEntries;
     }
 
@@ -931,7 +983,7 @@ class Benchmark {
     _processWorstCaseCount(worstCaseCount) {
         if (this.name in JetStreamParams.testWorstCaseCountMap)
             return JetStreamParams.testWorstCaseCountMap[this.name];
-        if (JetStreamParams.testWorstCaseCount)
+        if (JetStreamParams.testWorstCaseCount !== undefined)
             return JetStreamParams.testWorstCaseCount;
         if (worstCaseCount !== undefined)
             return worstCaseCount;
@@ -1087,7 +1139,7 @@ class Benchmark {
             globalThis?.gc();
         }
 
-        const scripts = isInBrowser ? 
+        const scripts = isInBrowser ?
                 new BrowserScripts(this._preloadBlobData) :
                 new ShellScripts(this._preloadBlobData);
 
@@ -1203,7 +1255,7 @@ class Benchmark {
 
         for (const resource of this.files) {
             const allDone = await browserFileLoader.retryPrefetchResource("file", null, resource);
-            
+
             if (allDone)
                 return true; // All resources loaded, nothing more to do.
         }
@@ -1259,7 +1311,7 @@ class Benchmark {
 
     timeIdentifier(scoreName) {
         return `results-cell-${this.name}-${scoreName}-time`;
-    }    
+    }
 
     updateUIBeforeRun() {
         if (!JetStreamParams.dumpJSONResults)
@@ -1325,7 +1377,7 @@ class Benchmark {
         console.log(
             shellFriendlyLabel(`${this.name} ${name}`),
             value);
-    }    
+    }
 
     renderScatterPlot() {
         const plotContainer = document.getElementById(`plot-${this.name}`);
@@ -1383,7 +1435,7 @@ class GroupedBenchmark extends Benchmark {
         for (const benchmark of this.benchmarks)
             benchmark.prefetchResourcesForShell();
     }
-    
+
     renderHTML() {
         let text = super.renderHTML();
         if (JetStreamParams.groupDetails) {
@@ -1397,7 +1449,7 @@ class GroupedBenchmark extends Benchmark {
         if (!JetStreamParams.groupDetails)
             super.updateConsoleBeforeRun();
     }
-    
+
     updateConsoleAfterRun(scoreEntries) {
         if (JetStreamParams.groupDetails)
             super.updateConsoleBeforeRun();
@@ -1576,7 +1628,7 @@ class AsyncBenchmark extends DefaultBenchmark {
                     if ("ShellPrefetchedResources" in globalThis) {
                         return new ShellTextDecoder().decode(ShellPrefetchedResources[path]);
                     }
-                    return readFile(path);
+                    return read(path);
                 };
 
                 JetStream.dynamicImport = async function(path) {
@@ -2595,7 +2647,7 @@ let BENCHMARKS = [
         ],
         preload: {
             transformersJsModule: "./transformersjs/build/transformers.js",
-            
+
             onnxJsModule: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.mjs",
             onnxWasmBinary: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.wasm",
 
@@ -2617,7 +2669,7 @@ let BENCHMARKS = [
         ],
         preload: {
             transformersJsModule: "./transformersjs/build/transformers.js",
-            
+
             onnxJsModule: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.mjs",
             onnxWasmBinary: "./transformersjs/build/onnxruntime-web/ort-wasm-simd-threaded.wasm",
 
@@ -3141,7 +3193,7 @@ const WTB_TESTS = {
     "espree": true,
     "esprima-next": true,
     // Disabled: Converting ES5 code to ES6+ is no longer a realistic scenario.
-    "lebab": false, 
+    "lebab": false,
     "postcss": true,
     "prettier": true,
     "source-map": true,
@@ -3274,10 +3326,11 @@ if (JetStreamParams.testList.length) {
     benchmarks = findBenchmarksByTag("Default", defaultDisabledTags)
 }
 
-let JetStream = new Driver(benchmarks);
+this.JetStream = new Driver(benchmarks);
 
 
 JetStream.initialize()
     .then(() => JetStream.start())
+    .then(() => print("JETSTREAM_RUN_COMPLETE"))
     .catch((error) => print("JetStream2 failed:", error && error.stack ? error.stack : error));
 undefined;

@@ -1,0 +1,19 @@
+{
+  "benchmark": "stanford-crypto-sha256",
+  "sourceCommit": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "officialIterations": 120,
+  "requestedIterations": 1,
+  "entryFiles": [
+    "./SeaMonster/sjlc.js",
+    "./SeaMonster/stanford-crypto-sha256.js"
+  ],
+  "preloadFiles": [],
+  "runtimeDiscoveredFiles": [],
+  "embeddedFiles": [
+    "./SeaMonster/sjlc.js",
+    "./SeaMonster/stanford-crypto-sha256.js"
+  ],
+  "missingFiles": [],
+  "runnerSha256": "ace60e06aed48646aa9c69711114ceef2b3116eac4cf5e04daa6ea5e220ef4a7",
+  "phaseMarkers": false
+}
