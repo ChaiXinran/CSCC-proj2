@@ -87,3 +87,10 @@ Double-clicking it opens a standalone AgentJS window without a browser address
 bar; closing the window stops the local service. The packaged application does
 not require Python, Cargo, or the source repository. It uses the Microsoft
 Edge WebView2 runtime included with current Windows 10/11 installations.
+
+On a desktop launch, an existing `DEEPSEEK_API_KEY` environment variable is
+used directly. If it is absent, the application displays a masked API-key
+prompt before opening the chat window. The entered key exists only in the
+current process and is discarded when the application closes; canceling or
+submitting an empty value starts the fixed-script offline demo. API keys are
+never embedded in the packaged executable.

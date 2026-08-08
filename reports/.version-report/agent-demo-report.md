@@ -112,3 +112,47 @@ unaffected by this routing-only correction.
 - Frozen build completed successfully with the pywebview and pythonnet hooks;
   launch verification observed the packaged process and new WebView2 child
   processes. Final desktop executable size: 16.92 MiB.
+
+## Session-only desktop API key prompt
+
+- Desktop launches now reuse an existing `DEEPSEEK_API_KEY` or show a masked
+  prompt before the main window when no key is configured.
+- The entered key is held only in the current process environment and is not
+  persisted or embedded in the executable. Canceling or leaving it empty
+  keeps the fixed-script offline path available.
+- Browser and HTTP-only development modes remain non-interactive.
+- Validation: Python compile PASS; orchestrator tests PASS, 25/25; standalone
+  PyInstaller build PASS; packaged desktop process remained running at the key
+  prompt until closed by the launch check. Output size: 17,742,489 bytes; SHA-256
+  `4C2F4B55BBB560EB5B36EB2961DBF147B17F017EDEEBB41558BCF6292B026DF4`.
+
+## Desktop launch responsiveness fix
+
+- Removed synchronous WebView navigation from the exposed JavaScript API
+  callback. Navigation now runs on a short-lived background thread so the JS
+  bridge can return before the page is replaced, avoiding a callback/navigation
+  deadlock after API-key submission.
+- The launch page disables its controls and displays startup progress while
+  switching pages. Duplicate clicks are ignored to prevent competing loads.
+- Validation: Python compile PASS; orchestrator tests PASS, 26/26; fixed-mode
+  browser request PASS with a complete `92.56%` RenderTree response in 1.08 s;
+  standalone build PASS; packaged process remained responsive during the
+  launch check. Output size: 17,743,679 bytes; SHA-256
+  `4C24A4C15B653EF40C4C01716D0E394961B6EF43AEB30829CCC38E2E26366DAB`.
+
+## Cross-backend WebView navigation fix
+
+- Removed `window.load_url` from Python completely. The bridge now only stores
+  the session key and returns the loopback chat URL; the launch page performs
+  `window.location.replace(...)` after the bridge promise resolves.
+- This keeps all navigation on the WebView page/UI side and works around both
+  bridge-thread deadlocks and worker-thread navigation stalls observed with
+  different WebView2/pywebview combinations.
+- Frontend Agent requests now stop waiting after 35 seconds and display a
+  concrete network/API-key message instead of leaving the turn in an indefinite
+  `Working` state.
+- Validation: Python compile PASS; orchestrator tests PASS, 26/26; clicking the
+  compatibility preset and sending it through the refreshed UI returned the
+  complete `92.56%` panel; standalone build PASS. Output size: 17,743,464
+  bytes; SHA-256
+  `0991C0724AF616F7DADD93355B046EFD1409B2570047699D74290666003A92B9`.

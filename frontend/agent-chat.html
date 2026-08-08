@@ -610,6 +610,27 @@ return average.toFixed(2) + "%";`
     const sessionLabel = document.getElementById("sessionId");
     let sessionId = createSessionId();
     let turns = [];
+    const REQUEST_TIMEOUT_MS = 35000;
+
+    async function fetchAgent(body) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        return await fetch(AGENT_API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: controller.signal
+        });
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          throw new Error("模型请求超过 35 秒，已停止等待。请检查网络或 API Key 后重试。");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
 
     function createSessionId() {
       return "demo-" + Date.now().toString(36);
@@ -653,11 +674,7 @@ return average.toFixed(2) + "%";`
 
     async function requestAgent(prompt) {
       try {
-        const response = await fetch(AGENT_API, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sessionId, prompt })
-        });
+        const response = await fetchAgent({ sessionId, prompt });
         const payload = await parseAgentResponse(response, "Agent orchestrator request failed");
         return normalizeAgentResponse(payload);
       } catch (error) {
@@ -669,15 +686,11 @@ return average.toFixed(2) + "%";`
       // the fallback on the supported API contract instead of relying on the
       // Keep the fallback on the supported /api/agent contract.
       try {
-        const response = await fetch(AGENT_API, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            prompt,
-            scenario: chooseFallbackScenario(prompt),
-            mode: "fixed"
-          })
+        const response = await fetchAgent({
+          sessionId,
+          prompt,
+          scenario: chooseFallbackScenario(prompt),
+          mode: "fixed"
         });
         const payload = await parseAgentResponse(response, "AgentJS fallback request failed");
         return {

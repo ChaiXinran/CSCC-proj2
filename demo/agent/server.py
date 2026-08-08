@@ -54,6 +54,62 @@ SCENARIOS = {"chat", "json_analysis", "rule_processing", "test262_dashboard"}
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
+def configure_desktop_api_key(api_key: str | None) -> bool:
+    """Install a desktop-provided API key for this process only."""
+    if os.environ.get("DEEPSEEK_API_KEY", "").strip():
+        return True
+    api_key = (api_key or "").strip()
+    if not api_key:
+        return False
+    os.environ["DEEPSEEK_API_KEY"] = api_key
+    return True
+
+
+API_KEY_PROMPT_HTML = """<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><style>
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;
+font-family:Segoe UI,Microsoft YaHei,sans-serif;background:#f4f6f3;color:#1d2a24}
+.card{width:min(520px,calc(100vw - 40px));padding:34px;border:1px solid #d7dfd9;
+border-radius:18px;background:#fff;box-shadow:0 18px 55px #1d2a2418}
+h1{margin:0 0 10px;font-size:24px}p{margin:0 0 22px;color:#647169;line-height:1.65}
+input{width:100%;padding:13px 14px;border:1px solid #bdc9c1;border-radius:10px;font-size:15px}
+input:focus{outline:2px solid #82a991;border-color:transparent}.actions{display:flex;gap:10px;margin-top:18px}
+button{padding:11px 18px;border:0;border-radius:9px;cursor:pointer;font-weight:600}
+.primary{background:#244d38;color:white}.secondary{background:#edf1ee;color:#34443b}
+.note{margin-top:16px;font-size:12px;color:#829087}.status{min-height:20px;margin-top:12px;color:#476453}
+</style></head><body><main class="card"><h1>连接 DeepSeek</h1>
+<p>输入 API Key 后进入 AgentJS。密钥只用于本次运行，关闭程序后即失效。</p>
+<form onsubmit="start(event)"><input id="key" type="password" autocomplete="off"
+placeholder="sk-..." autofocus><div class="actions"><button class="primary" type="submit">连接并运行</button>
+<button class="secondary" type="button" onclick="offline()">离线演示</button></div></form>
+<div id="status" class="status"></div><div class="note">密钥不会写入文件，也不会被打包进 EXE。</div></main><script>
+let launching=false;function launch(k){if(launching)return;launching=true;
+document.getElementById('status').textContent='正在启动…';document.querySelectorAll('button,input').forEach(x=>x.disabled=true);
+pywebview.api.start(k).then(url=>window.location.replace(url)).catch(e=>{launching=false;document.getElementById('status').textContent='启动失败，请重试';
+document.querySelectorAll('button,input').forEach(x=>x.disabled=false)})}
+function start(e){e.preventDefault();const k=document.getElementById('key').value.trim();if(k)launch(k)}
+function offline(){launch('')}
+</script></body></html>"""
+
+
+class DesktopLaunchApi:
+    def __init__(self, url: str):
+        self.url = url
+        self._started = False
+        self._lock = threading.Lock()
+
+    def start(self, api_key: str) -> str:
+        with self._lock:
+            if self._started:
+                return self.url
+            self._started = True
+            configure_desktop_api_key(api_key)
+        # Let the page navigate itself after this bridge call has returned.
+        # Calling window.load_url from either the bridge or a worker thread is
+        # not reliable across pywebview backends.
+        return self.url
+
+
 SYSTEM_PROMPT = """You are the code generator for AgentJS, a constrained JavaScript runtime.
 Return one JSON object with exactly two string fields: title and code.
 The variable `input` contains JSON data. The code is inserted into a function body.
@@ -645,13 +701,16 @@ def main() -> None:
         worker = threading.Thread(target=server.serve_forever, name="agentjs-http", daemon=True)
         worker.start()
         try:
+            launch_api = DesktopLaunchApi(url)
+            window_options = {"url": url} if os.environ.get("DEEPSEEK_API_KEY", "").strip() else {"html": API_KEY_PROMPT_HTML}
             webview.create_window(
                 "AgentJS Conversation",
-                url,
+                js_api=launch_api,
                 width=1180,
                 height=780,
                 min_size=(760, 520),
                 background_color="#f4f6f3",
+                **window_options,
             )
             webview.start()
         finally:

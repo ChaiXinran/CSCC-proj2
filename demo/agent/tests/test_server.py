@@ -11,6 +11,34 @@ import server
 
 
 class AgentProtocolTests(unittest.TestCase):
+    def test_desktop_api_key_prompt_sets_session_environment(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(server.configure_desktop_api_key(" new-key "))
+            self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "new-key")
+
+    def test_desktop_api_key_prompt_can_select_offline_mode(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertFalse(server.configure_desktop_api_key(None))
+            self.assertNotIn("DEEPSEEK_API_KEY", os.environ)
+
+    def test_desktop_api_key_prompt_preserves_existing_key(self):
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "existing"}, clear=True):
+            self.assertTrue(server.configure_desktop_api_key("replacement"))
+            self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "existing")
+
+    def test_desktop_launch_switches_the_same_window_to_chat(self):
+        launch = server.DesktopLaunchApi("http://127.0.0.1/chat")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(launch.start("key"), "http://127.0.0.1/chat")
+            self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "key")
+
+    def test_desktop_launch_ignores_duplicate_clicks(self):
+        launch = server.DesktopLaunchApi("http://127.0.0.1/chat")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(launch.start("first"), "http://127.0.0.1/chat")
+            self.assertEqual(launch.start("second"), "http://127.0.0.1/chat")
+            self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "first")
+
     def test_accepts_frozen_request_protocol(self):
         request = server.validate_request({
             "sessionId": "demo-001",
