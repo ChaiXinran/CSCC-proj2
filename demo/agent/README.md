@@ -108,3 +108,11 @@ prompt before opening the chat window. The entered key exists only in the
 current process and is discarded when the application closes; canceling or
 submitting an empty value starts the fixed-script offline demo. API keys are
 never embedded in the packaged executable.
+The prompt accepts either a raw `sk-...` value or a pasted PowerShell
+`DEEPSEEK_API_KEY` assignment and extracts the key automatically. Non-ASCII
+values are rejected before constructing the HTTP Authorization header.
+
+Unexpected packaged-server failures are appended to
+`%LOCALAPPDATA%\AgentJS-Demo\agentjs-demo.log`. Request bodies and API keys are
+not written to this log. DeepSeek transport failures are returned as structured
+`deepseek_unavailable` errors instead of generic HTTP 500 responses.

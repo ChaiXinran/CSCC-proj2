@@ -889,7 +889,9 @@ return average.toFixed(2) + "%";`
         execution: {
           value: payload.execution?.value ?? payload.result ?? null,
           logs: payload.execution?.logs || payload.logs || [],
-          elapsedMs: payload.execution?.elapsedMs ?? payload.elapsedMs ?? 0
+          elapsedMs: payload.execution?.elapsedMs ?? payload.elapsedMs ?? 0,
+          modelMs: payload.execution?.modelMs ?? payload.metrics?.modelMs ?? 0,
+          totalMs: payload.execution?.totalMs ?? payload.metrics?.totalMs ?? 0
         },
         source: "orchestrator"
       };
@@ -990,8 +992,16 @@ return average.toFixed(2) + "%";`
       badge.classList.toggle("fallback", response.source !== "orchestrator");
 
       const toolbar = element("div", "result-toolbar");
-      toolbar.append(element("span", "", "Elapsed "));
+      if (response.execution.modelMs > 0) {
+        toolbar.append(element("span", "", "Model "));
+        toolbar.append(element("strong", "", Number(response.execution.modelMs).toFixed(0) + " ms"));
+      }
+      toolbar.append(element("span", "", "Engine "));
       toolbar.append(element("strong", "", Number(response.execution.elapsedMs).toFixed(2) + " ms"));
+      if (response.execution.totalMs > 0) {
+        toolbar.append(element("span", "", "Total "));
+        toolbar.append(element("strong", "", Number(response.execution.totalMs).toFixed(0) + " ms"));
+      }
       view.body.append(toolbar);
       view.body.append(renderNode(response.render));
 

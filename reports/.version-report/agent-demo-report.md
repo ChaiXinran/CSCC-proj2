@@ -156,6 +156,47 @@ unaffected by this routing-only correction.
   complete `92.56%` panel; standalone build PASS. Output size: 17,743,464
   bytes; SHA-256
   `0991C0724AF616F7DADD93355B046EFD1409B2570047699D74290666003A92B9`.
+
+## Windows child-process latency and console fix
+
+- AgentJS child processes now use Windows `CREATE_NO_WINDOW`, eliminating the
+  console flash during warmup and per-turn execution.
+- Desktop startup warms the bundled runtime on a daemon thread. Local timing
+  showed a cold first launch near 1.85 s and subsequent launches near 10 ms, so
+  warmup moves the one-time OS/antivirus cost out of the first submitted turn.
+- Responses and the UI now separate model generation, engine execution, and
+  combined orchestration time. The engine figure includes temporary-script and
+  child-process startup overhead; model generation was never included in the
+  old displayed elapsed value.
+- Validation: Python compile PASS; orchestrator tests PASS, 26/26; standalone
+  build PASS. Output size: 17,745,732 bytes; SHA-256
+  `C79151C2DC104D624BE740C27B329AD21B1E4003C185ADA6251DAF375A7CC839`.
+
+## Packaged DeepSeek error diagnostics
+
+- Confirmed both source and packaged fixed-mode APIs remain healthy; the
+  packaged request returned `92.56%` with a 249.71 ms engine measurement.
+- Added structured handling for disconnected/truncated HTTP responses, HTTP
+  protocol exceptions, invalid encodings, and platform-specific transport
+  failures so they return `deepseek_unavailable` rather than generic HTTP 500.
+- Unexpected errors are appended without request bodies or API keys to
+  `%LOCALAPPDATA%\AgentJS-Demo\agentjs-demo.log` for actionable diagnosis.
+- Validation: orchestrator tests PASS, 27/27; rebuilt packaged API fixed-mode
+  request PASS (`92.56%`, 260.0 ms engine time). Output size: 17,746,597 bytes;
+  SHA-256
+  `E48FD401FEDB2493C17AAE1697A25D5BB05ED190C85744B387FC0364E7C5643F`.
+
+## API-key paste normalization
+
+- Diagnosed the reported failure as a non-ASCII value reaching the HTTP
+  Authorization header (`latin-1` encoding failure), rather than a missing key.
+- Desktop entry now extracts `sk-...` from raw keys, quoted values, Bearer text,
+  and pasted PowerShell environment assignments.
+- The generator defensively rejects non-ASCII values with a
+  structured `invalid_api_key` error before opening a network connection.
+- Validation: orchestrator tests PASS, 29/29; standalone build PASS. Output
+  size: 17,745,196 bytes; SHA-256
+  `608C7213968658B447FD6561EC2C9644064D3A9547140317B5BE64C851F22702`.
 ## Structured input UI
 
 - Added an optional JSON text editor to the chat composer with send-time parse

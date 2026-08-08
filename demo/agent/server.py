@@ -9,6 +9,7 @@ publishes render events in ExecutionReport.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import re
@@ -17,6 +18,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 import uuid
@@ -52,17 +54,48 @@ DEFAULT_API_URL = "https://api.deepseek.com/chat/completions"
 ALLOWED_RENDER_TYPES = {"panel", "text", "metrics", "statuses", "table", "list"}
 SCENARIOS = {"chat", "json_analysis", "rule_processing", "test262_dashboard"}
 SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+LOG_ROOT = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "AgentJS-Demo"
+LOG_PATH = LOG_ROOT / "agentjs-demo.log"
+
+
+def log_internal_error(error: BaseException) -> None:
+    """Persist unexpected desktop errors without recording requests or keys."""
+    try:
+        LOG_ROOT.mkdir(parents=True, exist_ok=True)
+        with LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n[{time.strftime('%Y-%m-%d %H:%M:%S')}]\n")
+            handle.writelines(traceback.format_exception(type(error), error, error.__traceback__))
+    except OSError:
+        pass
 
 
 def configure_desktop_api_key(api_key: str | None) -> bool:
     """Install a desktop-provided API key for this process only."""
     if os.environ.get("DEEPSEEK_API_KEY", "").strip():
         return True
-    api_key = (api_key or "").strip()
+    api_key = normalize_deepseek_api_key(api_key)
     if not api_key:
         return False
     os.environ["DEEPSEEK_API_KEY"] = api_key
     return True
+
+
+def normalize_deepseek_api_key(value: str | None) -> str:
+    """Accept a raw key or extract one pasted inside a shell assignment."""
+    text = (value or "").strip()
+    if not text:
+        return ""
+    match = re.search(r"sk-[A-Za-z0-9._-]+", text)
+    if match:
+        return match.group(0)
+    if text.lower().startswith("bearer "):
+        text = text[7:].strip()
+    text = text.strip("\"'“”‘’")
+    try:
+        text.encode("ascii")
+    except UnicodeEncodeError as error:
+        raise AgentError("invalid_api_key", "API Key 包含非 ASCII 字符，请只输入 sk- 开头的密钥", 400) from error
+    return text
 
 
 API_KEY_PROMPT_HTML = """<!doctype html>
@@ -331,7 +364,7 @@ class FixedCodeGenerator:
 
 class DeepSeekCodeGenerator:
     def generate(self, history: list[Message], request: AgentRequest) -> GeneratedScript:
-        api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        api_key = normalize_deepseek_api_key(os.environ.get("DEEPSEEK_API_KEY"))
         if not api_key:
             raise AgentError("missing_api_key", "请先设置 DEEPSEEK_API_KEY", 503)
         sample = json.dumps(request.input, ensure_ascii=False, separators=(",", ":"))
@@ -363,8 +396,18 @@ class DeepSeekCodeGenerator:
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")[:500]
             raise AgentError("deepseek_http", f"DeepSeek API {error.code}: {detail}", 502) from error
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            http.client.HTTPException,
+            UnicodeError,
+            OSError,
+        ) as error:
             raise AgentError("deepseek_unavailable", f"DeepSeek API 调用失败: {error}", 502) from error
+        except Exception as error:
+            log_internal_error(error)
+            raise AgentError("deepseek_unavailable", f"DeepSeek API 调用异常: {type(error).__name__}", 502) from error
         try:
             content = body["choices"][0]["message"]["content"]
             generated = parse_model_json(content)
@@ -493,6 +536,28 @@ const __agentJson = JSON.stringify(__agentValue === undefined ? null : __agentVa
 '''
 
 
+def subprocess_window_options() -> dict[str, Any]:
+    """Prevent console-hosted child tools from flashing a window on Windows."""
+    if os.name == "nt":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
+def warm_agentjs_binary() -> None:
+    """Pay the OS/antivirus cold-start cost before the first user request."""
+    try:
+        subprocess.run(
+            [str(find_agentjs_binary()), "eval", "0"],
+            cwd=ROOT,
+            capture_output=True,
+            timeout=3,
+            check=False,
+            **subprocess_window_options(),
+        )
+    except (OSError, subprocess.TimeoutExpired, AgentError):
+        pass
+
+
 def validate_render_tree(tree: Any, depth: int = 0) -> dict[str, Any]:
     if depth > MAX_RENDER_DEPTH or not isinstance(tree, dict):
         raise AgentError("render_invalid", "RenderTree 类型错误或嵌套过深", 422)
@@ -525,6 +590,7 @@ def execute_agentjs(code: str, data: Any) -> ExecutionResult:
             completed = subprocess.run(
                 [str(binary), "run", temporary_path], cwd=ROOT, capture_output=True,
                 text=True, encoding="utf-8", timeout=3, check=False,
+                **subprocess_window_options(),
             )
         except FileNotFoundError as error:
             raise AgentError("engine_missing", "AgentJS release executable disappeared before execution", 503) from error
@@ -571,6 +637,7 @@ def run_agent(payload: Any, store: SessionStore = SESSION_STORE) -> dict[str, An
     script = validate_generated_script(generator.generate(history, request), require_render=True)
     model_ms = (time.perf_counter() - model_started) * 1_000
     execution = execute_agentjs(script.code, request.input)
+    total_ms = model_ms + execution.elapsed_ms
     render = execution.render_events[-1] if execution.render_events else None
     response = {
         "ok": True,
@@ -581,6 +648,8 @@ def run_agent(payload: Any, store: SessionStore = SESSION_STORE) -> dict[str, An
             "value": execution.value,
             "logs": execution.logs,
             "elapsedMs": round(execution.elapsed_ms, 2),
+            "modelMs": round(model_ms, 2),
+            "totalMs": round(total_ms, 2),
         },
         "render": render,
         "error": None,
@@ -590,7 +659,11 @@ def run_agent(payload: Any, store: SessionStore = SESSION_STORE) -> dict[str, An
         "model": "fixed-script" if request.mode == "fixed" else os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
         "plan": script.title or "",
         "result": execution.value,
-        "metrics": {"modelMs": round(model_ms, 2), "agentjsMs": round(execution.elapsed_ms, 2)},
+        "metrics": {
+            "modelMs": round(model_ms, 2),
+            "agentjsMs": round(execution.elapsed_ms, 2),
+            "totalMs": round(total_ms, 2),
+        },
     }
     store.append(request.session_id, request.prompt, script, {
         "prompt": request.prompt,
@@ -671,8 +744,9 @@ class AgentHandler(SimpleHTTPRequestHandler):
             self.send_json(error.status, error_response(error, payload))
         except AgentError as error:
             self.send_json(error.status, error_response(error, payload))
-        except Exception:
-            error = AgentError("internal", "编排服务内部错误", 500)
+        except Exception as unexpected:
+            log_internal_error(unexpected)
+            error = AgentError("internal", "编排服务内部错误（详情已写入本地日志）", 500)
             self.send_json(error.status, error_response(error, payload))
 
     def send_json(self, status: int, payload: Any) -> None:
@@ -700,6 +774,7 @@ def main() -> None:
     if webview is not None and not args.browser and not args.no_browser:
         worker = threading.Thread(target=server.serve_forever, name="agentjs-http", daemon=True)
         worker.start()
+        threading.Thread(target=warm_agentjs_binary, name="agentjs-warmup", daemon=True).start()
         try:
             launch_api = DesktopLaunchApi(url)
             window_options = {"url": url} if os.environ.get("DEEPSEEK_API_KEY", "").strip() else {"html": API_KEY_PROMPT_HTML}

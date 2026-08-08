@@ -1,4 +1,5 @@
 import io
+import http.client
 import json
 import os
 import sys
@@ -15,6 +16,17 @@ class AgentProtocolTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertTrue(server.configure_desktop_api_key(" new-key "))
             self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "new-key")
+
+    def test_desktop_api_key_extracts_key_from_powershell_assignment(self):
+        pasted = '$env:DEEPSEEK_API_KEY = “sk-demo_123”'
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(server.configure_desktop_api_key(pasted))
+            self.assertEqual(os.environ["DEEPSEEK_API_KEY"], "sk-demo_123")
+
+    def test_rejects_non_ascii_api_key_without_sk_token(self):
+        with self.assertRaises(server.AgentError) as raised:
+            server.normalize_deepseek_api_key("这里不是密钥")
+        self.assertEqual(raised.exception.code, "invalid_api_key")
 
     def test_desktop_api_key_prompt_can_select_offline_mode(self):
         with mock.patch.dict(os.environ, {}, clear=True):
@@ -142,6 +154,16 @@ class AgentProtocolTests(unittest.TestCase):
 
 
 class DeepSeekGeneratorTests(unittest.TestCase):
+    @mock.patch("urllib.request.urlopen")
+    def test_maps_disconnected_api_to_structured_error(self, urlopen):
+        urlopen.side_effect = http.client.RemoteDisconnected("closed")
+        request = server.AgentRequest("demo-1", "x", {}, "chat", "deepseek")
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            with self.assertRaises(server.AgentError) as raised:
+                server.DeepSeekCodeGenerator().generate([], request)
+        self.assertEqual(raised.exception.code, "deepseek_unavailable")
+        self.assertEqual(raised.exception.status, 502)
+
     def test_parses_fenced_or_prefixed_json(self):
         payload = '{"title":"sum","code":"return 1;"}'
         self.assertEqual(server.parse_model_json("```json\n" + payload + "\n```"), json.loads(payload))
@@ -216,6 +238,8 @@ class AgentOrchestratorTests(unittest.TestCase):
         self.assertTrue(response["ok"])
         self.assertEqual(response["sessionId"], "demo-001")
         self.assertEqual(response["execution"]["value"], "92%")
+        self.assertEqual(response["execution"]["elapsedMs"], 4.5)
+        self.assertGreaterEqual(response["execution"]["totalMs"], 4.5)
         self.assertEqual(response["render"]["type"], "panel")
         self.assertIsNone(response["error"])
         self.assertEqual(len(store.snapshot("demo-001")["turns"]), 1)
@@ -232,6 +256,7 @@ class AgentOrchestratorTests(unittest.TestCase):
         self.assertEqual(response["mode"], "offline")
         self.assertEqual(response["result"], [])
         self.assertIn("agentjsMs", response["metrics"])
+        self.assertIn("totalMs", response["metrics"])
 
     def test_error_response_uses_frozen_shape(self):
         response = server.error_response(
