@@ -28,6 +28,7 @@
 !/reports/.version-report/phase3-partH-report.md
 !/reports/.version-report/phase4-partJ-report.md
 !/reports/.version-report/phase4-jsdom-memory-report.md
+!/reports/.version-report/agent-demo-report.md
 !/reports/phase4-partK-report.md
 !/reports/.native-test262-tmp
 /reports/.native-test262-tmp/*
