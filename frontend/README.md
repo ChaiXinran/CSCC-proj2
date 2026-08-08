@@ -40,9 +40,10 @@ For the standalone local adapter, pass its origin in the query string:
 http://127.0.0.1:8765/frontend/agent-chat.html?apiBase=http://127.0.0.1:8766
 ```
 
-If `/api/agent` is unavailable, the page falls back to `/api/eval` with a
-small deterministic Rust AgentJS preset. The fallback is for frontend and
-engine integration testing only; it does not call a model provider.
+If the first `/api/agent` request is unreachable, the page retries the same
+endpoint with `mode: "fixed"`, using a deterministic Rust AgentJS preset. The
+fallback is for frontend and engine integration testing only; it does not call
+a model provider.
 
 ## Render Tree
 
@@ -52,6 +53,6 @@ The first frontend implementation accepts these child types:
 panel, text, metrics, statuses, table, list
 ```
 
-Unknown nodes are ignored and the response is displayed as a non-fatal empty
-render result. The backend should validate tree depth, node count, and string
-size before returning it to the browser.
+Unknown nodes are displayed as an explicit unsupported-node message. The
+backend validates tree depth and serialized size before returning it to the
+browser.
