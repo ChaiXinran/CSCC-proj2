@@ -5,9 +5,11 @@ use std::{
 };
 
 use crate::{
+    ast::{BindingPattern, Program, Statement, VariableKind},
     backend::{BackendKind, RuntimeBackend, create_runtime, create_runtime_with_host},
+    bytecode::SharedChunk,
     host::HostServices,
-    runtime::{GcMetrics, HeapStats},
+    runtime::{EnvironmentId, GcMetrics, HeapStats, JsString},
 };
 
 /// A monotonic deadline shared by every stage of one host-controlled run.
@@ -137,6 +139,106 @@ pub enum SourceKind {
     #[default]
     Script,
     Module,
+    /// A separately prepared fragment that executes in a persistent host scope.
+    HostScriptFragment,
+}
+
+/// Top-level declarations discovered while preparing one host-script fragment.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HostFragmentDeclarations {
+    pub var_names: Vec<JsString>,
+    pub function_names: Vec<JsString>,
+    pub lexical_names: Vec<JsString>,
+}
+
+/// A compiled host fragment. Source text is deliberately not retained here.
+#[derive(Debug, Clone)]
+pub struct PreparedHostFragment {
+    pub path: String,
+    pub chunk: SharedChunk,
+    pub declarations: HostFragmentDeclarations,
+}
+
+/// Persistent execution state for a group of staged host fragments.
+#[derive(Debug, Clone, Copy)]
+pub struct HostScriptSession {
+    pub(crate) environment: EnvironmentId,
+    pub(crate) instantiated: bool,
+}
+
+impl HostFragmentDeclarations {
+    pub(crate) fn from_program(program: &Program) -> Self {
+        let mut declarations = Self::default();
+        for statement in &program.body {
+            collect_host_declarations(statement, &mut declarations);
+        }
+        declarations
+    }
+}
+
+fn collect_host_declarations(statement: &Statement, declarations: &mut HostFragmentDeclarations) {
+    match statement {
+        Statement::FunctionDeclaration { name, .. } => {
+            declarations.function_names.push(name.clone().into());
+        }
+        Statement::ClassDeclaration(class) => {
+            declarations.lexical_names.push(class.name.clone().into());
+        }
+        Statement::VariableDeclaration {
+            kind,
+            declarations: entries,
+        } => {
+            for entry in entries {
+                let target = entry
+                    .pattern
+                    .as_ref()
+                    .map(binding_pattern_names)
+                    .unwrap_or_else(|| vec![entry.name.clone()]);
+                let destination = if *kind == VariableKind::Var {
+                    &mut declarations.var_names
+                } else {
+                    &mut declarations.lexical_names
+                };
+                destination.extend(target.into_iter().map(Into::into));
+            }
+        }
+        Statement::DestructuringDeclaration { kind, pattern, .. } => {
+            let destination = if *kind == VariableKind::Var {
+                &mut declarations.var_names
+            } else {
+                &mut declarations.lexical_names
+            };
+            destination.extend(binding_pattern_names(pattern).into_iter().map(Into::into));
+        }
+        _ => {}
+    }
+}
+
+fn binding_pattern_names(pattern: &BindingPattern) -> Vec<String> {
+    match pattern {
+        BindingPattern::Identifier(name) => vec![name.clone()],
+        BindingPattern::Array { elements, rest } => {
+            let mut names = elements
+                .iter()
+                .filter_map(|element| element.as_ref())
+                .flat_map(|element| binding_pattern_names(&element.pattern))
+                .collect::<Vec<_>>();
+            if let Some(rest) = rest {
+                names.extend(binding_pattern_names(rest));
+            }
+            names
+        }
+        BindingPattern::Object { props, rest } => {
+            let mut names = props
+                .iter()
+                .flat_map(|prop| binding_pattern_names(&prop.value))
+                .collect::<Vec<_>>();
+            if let Some(rest) = rest {
+                names.extend(binding_pattern_names(rest));
+            }
+            names
+        }
+    }
 }
 
 /// Options that can vary between evaluations in the same isolate.
@@ -259,6 +361,35 @@ impl Runtime {
     /// Selects the stable stage label used by diagnostics for the next evaluation.
     pub fn set_diagnostic_phase(&mut self, phase: &'static str) {
         self.backend.set_diagnostic_phase(phase);
+    }
+
+    pub fn prepare_host_fragment(
+        &mut self,
+        source: &str,
+        path: &str,
+    ) -> Result<PreparedHostFragment, EvalFailure> {
+        self.backend.prepare_host_fragment(source, path)
+    }
+
+    pub fn start_host_script_session(
+        &mut self,
+        fragments: &[PreparedHostFragment],
+    ) -> Result<HostScriptSession, EvalFailure> {
+        self.backend.start_host_script_session(fragments)
+    }
+
+    pub fn eval_host_fragment(
+        &mut self,
+        session: &mut HostScriptSession,
+        fragment: &PreparedHostFragment,
+    ) -> Result<ExecutionReport, EvalFailure> {
+        let started = Instant::now();
+        let result = self.backend.eval_host_fragment(session, fragment)?;
+        Ok(ExecutionReport {
+            value: result.value,
+            output: result.output,
+            elapsed: started.elapsed(),
+        })
     }
 
     /// Evaluates setup code without clearing captured output. Used by Test262.

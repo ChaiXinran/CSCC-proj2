@@ -16,13 +16,15 @@ use std::{
 use crate::{
     ast::ModuleDeclaration,
     builtins,
+    bytecode::{Constant, Instruction},
     contracts::{
         ChunkCacheMetadata, NativeContext, NativeError, NativePipeline, Program, SharedChunk,
         VmErrorKind,
     },
     engine::{
-        EvalFailure, ExecutionOptions, FailureKind, FrontendControl, PhaseDiagnostics, RunControl,
-        RuntimeConfig, SourceKind,
+        EvalFailure, ExecutionOptions, FailureKind, FrontendControl, HostFragmentDeclarations,
+        HostScriptSession, PhaseDiagnostics, PreparedHostFragment, RunControl, RuntimeConfig,
+        SourceKind,
     },
     host::HostServices,
     lexer::Lexer,
@@ -85,6 +87,23 @@ pub(crate) trait RuntimeBackend {
     fn set_run_control(&mut self, control: Option<RunControl>);
 
     fn set_diagnostic_phase(&mut self, phase: &'static str);
+
+    fn prepare_host_fragment(
+        &mut self,
+        source: &str,
+        path: &str,
+    ) -> Result<PreparedHostFragment, EvalFailure>;
+
+    fn start_host_script_session(
+        &mut self,
+        fragments: &[PreparedHostFragment],
+    ) -> Result<HostScriptSession, EvalFailure>;
+
+    fn eval_host_fragment(
+        &mut self,
+        session: &mut HostScriptSession,
+        fragment: &PreparedHostFragment,
+    ) -> Result<BackendExecution, EvalFailure>;
 }
 
 pub(crate) fn create_runtime(
@@ -456,6 +475,168 @@ impl NativeRuntime {
         }
     }
 
+    fn prepare_host_fragment_internal(
+        &mut self,
+        source: &str,
+        path: &str,
+    ) -> Result<PreparedHostFragment, EvalFailure> {
+        self.current_source_kind = SourceKind::HostScriptFragment;
+        self.context.set_strict(false);
+        self.reset_limits();
+        self.check_run_deadline()?;
+        let program = self
+            .parse_current_source(source)
+            .map_err(classify_native_error)?;
+        let declarations = HostFragmentDeclarations::from_program(&program);
+        let chunk = self
+            .compile_current_program(&program)
+            .map_err(classify_native_error)?;
+        let chunk = Self::host_execution_chunk(&chunk);
+        Ok(PreparedHostFragment {
+            path: path.to_owned(),
+            chunk,
+            declarations,
+        })
+    }
+
+    fn host_execution_chunk(chunk: &SharedChunk) -> SharedChunk {
+        let mut execution_chunk = (**chunk).clone();
+        let mut offset = 0;
+        while offset < execution_chunk.instructions.len() {
+            match execution_chunk.instructions[offset] {
+                Instruction::CreateMutableBinding(_)
+                | Instruction::CreateImmutableBinding(_)
+                | Instruction::DeclareFunction { .. } => offset += 1,
+                Instruction::Constant(index)
+                    if matches!(
+                        execution_chunk.constants.get(usize::from(index)),
+                        Some(Constant::Undefined)
+                    ) && matches!(
+                        execution_chunk.instructions.get(offset + 1),
+                        Some(Instruction::DeclareGlobal(_))
+                    ) =>
+                {
+                    // The session already created every cross-fragment var
+                    // binding. Preserve stack balance without overwriting a
+                    // value assigned by an earlier fragment.
+                    execution_chunk.instructions[offset + 1] = Instruction::Pop;
+                    offset += 2;
+                }
+                _ => break,
+            }
+        }
+        execution_chunk.constant_index = None;
+        std::sync::Arc::new(execution_chunk)
+    }
+
+    fn host_declaration_chunk(chunk: &SharedChunk) -> Option<SharedChunk> {
+        let mut instructions = Vec::new();
+        // Compiler lowering places top-level lexical/var predeclarations and
+        // function declarations before executable statements. Keep only the
+        // function declarations for the early instantiation pass; the normal
+        // fragment execution still performs the original predeclarations.
+        for instruction in &chunk.instructions {
+            match instruction {
+                Instruction::CreateMutableBinding(_)
+                | Instruction::CreateImmutableBinding(_)
+                | Instruction::Constant(_)
+                | Instruction::DeclareGlobal(_) => {}
+                Instruction::Pop => {}
+                Instruction::DeclareFunction { .. } => instructions.push(*instruction),
+                _ => break,
+            }
+        }
+        if instructions.is_empty() {
+            return None;
+        }
+        instructions.push(Instruction::ReturnUndefined);
+        let mut declaration_chunk = (**chunk).clone();
+        declaration_chunk.instructions = instructions;
+        declaration_chunk.handlers.clear();
+        declaration_chunk.function_body_start = 0;
+        declaration_chunk.constant_index = None;
+        Some(std::sync::Arc::new(declaration_chunk))
+    }
+
+    fn validate_host_declarations(fragments: &[PreparedHostFragment]) -> Result<(), EvalFailure> {
+        use std::collections::HashMap;
+
+        let mut lexical = HashMap::<String, String>::new();
+        let mut vars = HashMap::<String, String>::new();
+        let mut functions = HashMap::<String, String>::new();
+        for fragment in fragments {
+            for name in &fragment.declarations.lexical_names {
+                if let Some(previous) =
+                    lexical.insert(name.as_str().to_owned(), fragment.path.clone())
+                {
+                    return Err(EvalFailure::new(
+                        FailureKind::Syntax,
+                        format!(
+                            "duplicate lexical declaration `{name}` in {previous} and {}",
+                            fragment.path
+                        ),
+                    ));
+                }
+                if let Some(previous) = vars
+                    .get(name.as_ref())
+                    .or_else(|| functions.get(name.as_ref()))
+                {
+                    return Err(EvalFailure::new(
+                        FailureKind::Syntax,
+                        format!("lexical declaration `{name}` conflicts with {previous}"),
+                    ));
+                }
+            }
+            for name in &fragment.declarations.var_names {
+                if lexical.contains_key(name.as_ref()) {
+                    return Err(EvalFailure::new(
+                        FailureKind::Syntax,
+                        format!("var declaration `{name}` conflicts with a lexical declaration"),
+                    ));
+                }
+                vars.entry(name.as_str().to_owned())
+                    .or_insert_with(|| fragment.path.clone());
+            }
+            for name in &fragment.declarations.function_names {
+                if lexical.contains_key(name.as_ref()) {
+                    return Err(EvalFailure::new(
+                        FailureKind::Syntax,
+                        format!(
+                            "function declaration `{name}` conflicts with a lexical declaration"
+                        ),
+                    ));
+                }
+                functions
+                    .entry(name.as_str().to_owned())
+                    .or_insert_with(|| fragment.path.clone());
+            }
+        }
+        Ok(())
+    }
+
+    fn instantiate_host_session(
+        &mut self,
+        fragments: &[PreparedHostFragment],
+    ) -> Result<HostScriptSession, EvalFailure> {
+        Self::validate_host_declarations(fragments)?;
+        for fragment in fragments {
+            for name in &fragment.declarations.var_names {
+                self.context
+                    .declare_global(name.as_str(), JsValue::Undefined);
+            }
+            if let Some(chunk) = Self::host_declaration_chunk(&fragment.chunk) {
+                self.pipeline
+                    .executor
+                    .execute_with_context(&chunk, &mut self.context)
+                    .map_err(|error| classify_native_error(NativeError::Execute(error)))?;
+            }
+        }
+        Ok(HostScriptSession {
+            environment: self.context.global_environment(),
+            instantiated: true,
+        })
+    }
+
     pub fn eval_source(
         &mut self,
         source: &str,
@@ -779,6 +960,47 @@ impl RuntimeBackend for NativeRuntime {
 
     fn set_diagnostic_phase(&mut self, phase: &'static str) {
         self.diagnostic_phase = phase;
+    }
+
+    fn prepare_host_fragment(
+        &mut self,
+        source: &str,
+        path: &str,
+    ) -> Result<PreparedHostFragment, EvalFailure> {
+        self.prepare_host_fragment_internal(source, path)
+    }
+
+    fn start_host_script_session(
+        &mut self,
+        fragments: &[PreparedHostFragment],
+    ) -> Result<HostScriptSession, EvalFailure> {
+        self.instantiate_host_session(fragments)
+    }
+
+    fn eval_host_fragment(
+        &mut self,
+        session: &mut HostScriptSession,
+        fragment: &PreparedHostFragment,
+    ) -> Result<BackendExecution, EvalFailure> {
+        if !session.instantiated || session.environment != self.context.current_environment() {
+            return Err(EvalFailure::new(
+                FailureKind::Other,
+                "host-script session is not active in this runtime environment",
+            ));
+        }
+        self.current_source_kind = SourceKind::HostScriptFragment;
+        self.context.set_strict(false);
+        self.reset_limits();
+        self.context.clear_output();
+        self.pipeline
+            .executor
+            .execute_with_context(&fragment.chunk, &mut self.context)
+            .map_err(|error| classify_native_error(NativeError::Execute(error)))?;
+        self.run_jobs()?;
+        Ok(BackendExecution {
+            value: JsValue::Undefined.to_string(),
+            output: self.context.take_output(),
+        })
     }
 }
 

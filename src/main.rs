@@ -238,10 +238,13 @@ fn jetstream_run(
     runtime
         .eval(prelude, ExecutionOptions::default())
         .map_err(|error| error.to_string())?;
-    for line in prelude.lines() {
-        let Some(path) = line.strip_prefix("// AGENTJS_RESOURCE:") else {
-            continue;
-        };
+    let resource_paths = prelude
+        .lines()
+        .filter_map(|line| line.strip_prefix("// AGENTJS_RESOURCE:"))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let mut prepared_fragments = Vec::with_capacity(resource_paths.len());
+    for (fragment_index, path) in resource_paths.iter().enumerate() {
         if diagnostics {
             eprintln!("resource_read_start:{path}");
         }
@@ -259,10 +262,36 @@ fn jetstream_run(
         if diagnostics {
             eprintln!("resource_read_end:{path}:bytes={}", resource.len());
         }
+        if diagnostics {
+            eprintln!("host_script:phase=prepare fragment={fragment_index} path={path}");
+        }
         runtime.set_diagnostic_phase("resource");
+        prepared_fragments.push(
+            runtime
+                .prepare_host_fragment(resource.as_ref(), path)
+                .map_err(|error| format!("{path}: {error}"))?,
+        );
+    }
+    runtime.set_diagnostic_phase("host_instantiate");
+    if diagnostics {
+        eprintln!(
+            "host_script:phase=instantiate fragments={}",
+            prepared_fragments.len()
+        );
+    }
+    let mut host_session = runtime
+        .start_host_script_session(&prepared_fragments)
+        .map_err(|error| format!("host script session: {error}"))?;
+    for (fragment_index, fragment) in prepared_fragments.iter().enumerate() {
+        if diagnostics {
+            eprintln!(
+                "host_script:phase=execute fragment={} path={}",
+                fragment_index, fragment.path
+            );
+        }
         runtime
-            .eval(resource.as_ref(), ExecutionOptions::default())
-            .map_err(|error| format!("{path}: {error}"))?;
+            .eval_host_fragment(&mut host_session, fragment)
+            .map_err(|error| format!("{}: {error}", fragment.path))?;
     }
     runtime.set_diagnostic_phase("launch");
     let report = runtime

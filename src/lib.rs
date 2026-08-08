@@ -20,7 +20,7 @@ pub use backend::BackendKind;
 pub use contracts::{ChunkExecutor, NativeError, NativePipeline, ProgramCompiler, SourceParser};
 pub use engine::{
     AbsoluteDeadline, Engine, EvalFailure, ExecutionOptions, ExecutionReport, FailureKind,
-    FrontendControl, PhaseDiagnostics, RunControl, Runtime, RuntimeConfig, RuntimeLimitError,
-    SourceKind,
+    FrontendControl, HostFragmentDeclarations, HostScriptSession, PhaseDiagnostics,
+    PreparedHostFragment, RunControl, Runtime, RuntimeConfig, RuntimeLimitError, SourceKind,
 };
 pub use host::{HostFileLoader, HostLoadError, HostServices, RootedFileLoader};

@@ -197,6 +197,24 @@ if (benchmarks.length !== 1) {
 const benchmark = benchmarks[0];
 // Support both old API (benchmark.plan) and new API (benchmark directly).
 const plan = benchmark.plan ?? benchmark;
+const deterministicRandomSource = benchmark._deterministicRandom
+    ? `
+(() => {
+    const initialSeed = 49734321;
+    let seed = initialSeed;
+    Math.random = () => {
+        seed = ((seed + 0x7ed55d16) + (seed << 12)) & 0xffff_ffff;
+        seed = ((seed ^ 0xc761c23c) ^ (seed >>> 19)) & 0xffff_ffff;
+        seed = ((seed + 0x165667b1) + (seed << 5)) & 0xffff_ffff;
+        seed = ((seed + 0xd3a2646c) ^ (seed << 9)) & 0xffff_ffff;
+        seed = ((seed + 0xfd7046c5) + (seed << 3)) & 0xffff_ffff;
+        seed = ((seed ^ 0xb55a4f09) ^ (seed >>> 16)) & 0xffff_ffff;
+        return (seed >>> 0) / 0x1_0000_0000;
+    };
+    Math.random.__resetSeed = () => { seed = initialSeed; };
+})();
+`
+    : "";
 const benchmarkFiles = [
     ...(plan.files ?? []),
     ...(benchmark._files ?? []),
@@ -259,6 +277,7 @@ var console = {
             throw new Error(args.join(" ") || "Assertion failed");
     },
 };
+${deterministicRandomSource}
 var runString = () => {
     globalThis.loadString = (source) => {
         // Entry files are executed by the Rust host before launch. Only the
