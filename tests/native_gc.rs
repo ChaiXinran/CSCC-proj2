@@ -381,6 +381,8 @@ fn gc_preserves_private_slots_promise_reactions_and_jobs() {
         .unwrap();
     let reaction_value_id = object_id(&reaction_value);
     let promise = context.create_promise().unwrap();
+    let promise_object = context.create_promise_object(promise, None).unwrap();
+    context.declare_global("reaction_owner", promise_object);
     context
         .add_promise_reaction(
             promise,

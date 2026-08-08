@@ -175,6 +175,13 @@ impl AgentManager {
             .iter()
             .filter_map(|worker| worker.receiver.as_ref())
     }
+
+    pub(crate) fn buffer_roots(&self) -> impl Iterator<Item = ArrayBufferId> + '_ {
+        self.waiters
+            .iter()
+            .filter(|waiter| !waiter.completed)
+            .map(|waiter| waiter.buffer)
+    }
 }
 
 fn replace_wait_marker(template: &str, status: &str) -> String {

@@ -25,6 +25,7 @@
 !/reports/.version-report/three-track-partB-report.md
 !/reports/.version-report/phase2-partE-report.md
 !/reports/.version-report/phase3-partH-report.md
+!/reports/phase4-partK-report.md
 /reports/.native-test262-tmp
 # Local editor and agent state
 /.vscode/
