@@ -29,6 +29,10 @@ Optional settings are `DEEPSEEK_MODEL` (default `deepseek-v4-pro`),
 `AGENTJS_BIN` (path to a prebuilt AgentJS executable). Do not commit `.env`
 files or API keys.
 
+Chat requests that omit `mode` automatically use DeepSeek when
+`DEEPSEEK_API_KEY` is configured; otherwise they use the fixed-script demo.
+Explicit `fixed`, `offline`, and `deepseek` requests keep their selected mode.
+
 ## Boundaries
 
 - Request body: at most 256 KiB; task: at most 2,000 characters.

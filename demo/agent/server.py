@@ -306,8 +306,10 @@ def validate_request(payload: Any) -> AgentRequest:
         raise AgentError("invalid_request", "请求体必须是 JSON 对象")
     prompt = payload.get("prompt", payload.get("task"))
     session_id = payload.get("sessionId") or f"demo-{uuid.uuid4().hex[:12]}"
-    scenario = payload.get("scenario", "test262_dashboard")
-    raw_mode = payload.get("mode", "fixed")
+    scenario = payload.get("scenario", "chat")
+    raw_mode = payload.get("mode")
+    if raw_mode is None:
+        raw_mode = "deepseek" if os.environ.get("DEEPSEEK_API_KEY", "").strip() else "fixed"
     mode = "fixed" if raw_mode == "offline" else raw_mode
     data = payload.get("input", {})
     if not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(session_id):

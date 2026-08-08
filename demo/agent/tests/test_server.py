@@ -32,6 +32,17 @@ class AgentProtocolTests(unittest.TestCase):
         self.assertEqual(request.mode, "fixed")
         self.assertTrue(request.session_id.startswith("demo-"))
 
+    def test_chat_defaults_to_deepseek_when_key_is_configured(self):
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
+            request = server.validate_request({"sessionId": "demo-chat", "prompt": "1+1"})
+        self.assertEqual(request.scenario, "chat")
+        self.assertEqual(request.mode, "deepseek")
+
+    def test_chat_defaults_to_fixed_without_key(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            request = server.validate_request({"sessionId": "demo-chat", "prompt": "1+1"})
+        self.assertEqual(request.mode, "fixed")
+
     def test_rejects_unknown_scenario(self):
         with self.assertRaisesRegex(server.AgentError, "不支持"):
             server.validate_request({"prompt": "x", "scenario": "browser"})

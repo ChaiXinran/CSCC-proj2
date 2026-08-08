@@ -615,18 +615,22 @@ return average.toFixed(2) + "%";`
     }
 
     async function requestAgent(prompt) {
+      let orchestratorReached = false;
       try {
         const response = await fetch(AGENT_API, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId, prompt })
         });
-        if (response.ok) {
-          const payload = await response.json();
-          return normalizeAgentResponse(payload);
+        orchestratorReached = true;
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload?.error?.message || "Agent orchestrator request failed");
         }
-      } catch (_) {
-        // The Rust preset fallback below keeps frontend work independently testable.
+        return normalizeAgentResponse(payload);
+      } catch (error) {
+        if (orchestratorReached) throw error;
+        // Keep the Rust preset fallback only when the orchestrator is unreachable.
       }
 
       const code = chooseFallback(prompt);

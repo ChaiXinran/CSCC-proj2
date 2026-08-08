@@ -60,3 +60,17 @@ pre-merge `main`. Therefore the merge cannot change Test262 semantics, and the
 most recent same-engine full result remains 48,563/53,379. Live DeepSeek
 execution is not performed without a user-provided API key; the request,
 history and JSON-output path uses mocked HTTP coverage.
+
+## Post-merge mode routing fix
+
+- Fixed chat requests without an explicit `mode`: they now select `deepseek`
+  when `DEEPSEEK_API_KEY` is configured and `fixed` otherwise.
+- Changed the default chat scenario from the fixed Test262 alias to `chat`.
+- The frontend now uses its built-in Rust preset only when the orchestrator is
+  unreachable. A reachable API error is displayed instead of being silently
+  replaced by the compatibility dashboard.
+- Added focused routing coverage for configured and unconfigured API keys.
+
+Validation: Python compile PASS; orchestrator tests PASS, 17/17. No Rust source,
+Rust test or Cargo file changed, so Test262 and runtime performance are
+unaffected by this routing-only correction.
