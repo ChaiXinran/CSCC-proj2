@@ -48,6 +48,18 @@ fn strict_eval_declarations_do_not_leak() {
 }
 
 #[test]
+fn global_regexp_match_reuses_the_input_string_storage() {
+    let report = Engine::default()
+        .execute(
+            "let input = 'M'.repeat(1000) + 'x'.repeat(262144);\n\
+             input.match(/M/g).length;",
+            ExecutionOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(report.value, "1000");
+}
+
+#[test]
 fn with_object_environment_intercepts_and_falls_back_for_name_loads() {
     let report = Engine::default()
         .execute(

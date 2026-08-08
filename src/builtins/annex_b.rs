@@ -602,7 +602,7 @@ fn regexp_exec(
         arguments.first().cloned().unwrap_or(JsValue::Undefined),
         context,
     )?;
-    regexp_exec_value(vm, context, this_value, string.to_string())
+    regexp_exec_value(vm, context, this_value, string)
 }
 
 fn regexp_test(
@@ -619,7 +619,7 @@ fn regexp_exec_value(
     vm: &mut Vm,
     context: &mut NativeContext,
     this_value: JsValue,
-    string: String,
+    string: crate::runtime::JsString,
 ) -> Result<JsValue, VmError> {
     let (_, pattern, flags) = require_regexp(context, &this_value)?;
     let global_or_sticky = flags.contains('g') || flags.contains('y');
@@ -693,7 +693,7 @@ fn regexp_exec_value(
     context.define_own_property(
         array,
         "input".into(),
-        PropertyDescriptor::data_with(JsValue::String(string.into()), true, true, true),
+        PropertyDescriptor::data_with(JsValue::String(string), true, true, true),
     )?;
     context.define_own_property(
         array,
@@ -1019,13 +1019,13 @@ fn regexp_symbol_match(
     let flags = regexp_replace_flags(vm, context, this_value.clone())?;
     let global = flags.contains('g');
     if !global {
-        return regexp_exec_abstract(vm, context, this_value, string.to_string());
+        return regexp_exec_abstract(vm, context, this_value, string);
     }
     let full_unicode = flags.contains('u');
     set_last_index_number(vm, context, this_value.clone(), 0.0)?;
     let mut values = Vec::new();
     loop {
-        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.to_string())?;
+        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
         let JsValue::Object(object) = result else {
             break;
         };
@@ -1053,14 +1053,14 @@ fn regexp_exec_abstract(
     vm: &mut Vm,
     context: &mut NativeContext,
     regexp: JsValue,
-    string: String,
+    string: crate::runtime::JsString,
 ) -> Result<JsValue, VmError> {
     let exec = get_property(vm, context, regexp.clone(), "exec")?;
     if is_callable(&exec) {
         let result = vm.call_value_from_builtin(
             exec,
             regexp.clone(),
-            vec![JsValue::String(string.into())],
+            vec![JsValue::String(string)],
             context,
         )?;
         if matches!(result, JsValue::Null) || context.value_object(&result).is_some() {
@@ -1125,7 +1125,7 @@ fn regexp_symbol_match_all(
     set_last_index(vm, context, matcher.clone(), last_index)?;
     let mut matches = Vec::new();
     loop {
-        let result = regexp_exec_abstract(vm, context, matcher.clone(), string.to_string())?;
+        let result = regexp_exec_abstract(vm, context, matcher.clone(), string.clone())?;
         if matches!(result, JsValue::Null) {
             break;
         }
@@ -1170,7 +1170,7 @@ fn regexp_symbol_search(
     if !previous_last_index.same_value(&JsValue::Number(0.0)) {
         set_last_index_number(vm, context, this_value.clone(), 0.0)?;
     }
-    let result = regexp_exec_abstract(vm, context, this_value.clone(), string.to_string())?;
+    let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
     let current_last_index = get_property(vm, context, this_value.clone(), "lastIndex")?;
     if !current_last_index.same_value(&previous_last_index) {
         set_last_index_value(vm, context, this_value.clone(), previous_last_index.clone())?;
@@ -1222,7 +1222,7 @@ fn regexp_symbol_replace(
     };
     let mut results = Vec::new();
     loop {
-        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.to_string())?;
+        let result = regexp_exec_abstract(vm, context, this_value.clone(), string.clone())?;
         let JsValue::Object(object) = result else {
             break;
         };
@@ -1498,7 +1498,7 @@ fn regexp_symbol_split(
     }
     let size = string.encode_utf16().count();
     if size == 0 {
-        let z = regexp_exec_abstract(vm, context, splitter, string.to_string())?;
+        let z = regexp_exec_abstract(vm, context, splitter, string.clone())?;
         if !matches!(z, JsValue::Null) {
             return context.create_array(output);
         }
@@ -1511,7 +1511,7 @@ fn regexp_symbol_split(
     let mut q = 0usize;
     while q < size {
         set_last_index(vm, context, splitter.clone(), q)?;
-        let z = regexp_exec_abstract(vm, context, splitter.clone(), string.to_string())?;
+        let z = regexp_exec_abstract(vm, context, splitter.clone(), string.clone())?;
         if matches!(z, JsValue::Null) {
             q = advance_string_index(&string, q, unicode_matching);
             continue;
