@@ -12,6 +12,7 @@ mod gc;
 mod heap;
 mod iterator;
 mod job;
+mod memory;
 mod module;
 mod object;
 mod private;
@@ -50,6 +51,10 @@ pub use iterator::{IteratorMode, IteratorRecord};
 pub use job::{
     Job, JobQueue, NativeJob, PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction,
     PromiseRecord, PromiseState, PromiseThenReaction, ResolveThenableJob,
+};
+pub use memory::{
+    AllocationPressure, GcControllerState, GcPolicy, GcTriggerReason, MemoryClass,
+    RuntimeMemoryStats,
 };
 pub use module::{
     DynamicImportOutcome, DynamicImportRequest, ModuleEvaluationPromise, ModuleEvaluationState,

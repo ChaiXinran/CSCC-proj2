@@ -9,7 +9,7 @@ use crate::{
     backend::{BackendKind, RuntimeBackend, create_runtime, create_runtime_with_host},
     bytecode::SharedChunk,
     host::HostServices,
-    runtime::{EnvironmentId, GcMetrics, HeapStats, JsString},
+    runtime::{EnvironmentId, GcMetrics, HeapStats, JsString, RuntimeMemoryStats},
 };
 
 /// A monotonic deadline shared by every stage of one host-controlled run.
@@ -90,6 +90,7 @@ pub struct PhaseDiagnostics {
     pub function_count: Option<usize>,
     pub heap: HeapStats,
     pub gc: GcMetrics,
+    pub runtime_memory: RuntimeMemoryStats,
 }
 
 /// Limits applied to one JavaScript isolate.
