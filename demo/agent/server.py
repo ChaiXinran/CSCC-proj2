@@ -392,9 +392,11 @@ def build_wrapper(code: str, data: Any) -> str:
     encoded_input = json.dumps(input_json, ensure_ascii=False)
     return f'''"use strict";
 const input = JSON.parse({encoded_input});
-const __agentValue = (function (input) {{
+// Keep request data in the enclosing scope so generated code may safely
+// declare its own `input` binding without conflicting with a parameter.
+const __agentValue = (function () {{
 {code}
-}})(input);
+}})();
 "{RESULT_MARKER}" + JSON.stringify(__agentValue);
 '''
 

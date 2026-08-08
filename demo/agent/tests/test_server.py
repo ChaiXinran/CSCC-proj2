@@ -73,6 +73,15 @@ class AgentProtocolTests(unittest.TestCase):
         self.assertIn(server.RESULT_MARKER, source)
         self.assertNotIn("const agent =", source)
         self.assertNotIn("const input = {", source)
+        self.assertIn("(function ()", source)
+
+    def test_wrapper_allows_generated_input_binding(self):
+        source = server.build_wrapper(
+            "const input = {value: 7}; agent.render({type: 'text', value: input.value}); return input.value;",
+            {"value": 3},
+        )
+        self.assertIn("const input = {value: 7};", source)
+        self.assertNotIn("(function (input)", source)
 
     def test_render_tree_enforces_type_and_depth(self):
         self.assertEqual(server.validate_render_tree({"type": "panel", "children": []})["type"], "panel")
