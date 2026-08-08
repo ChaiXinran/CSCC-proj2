@@ -325,6 +325,23 @@ impl Compiler {
         Ok(chunk.into_shared())
     }
 
+    /// Compiles source introduced through `eval` while preserving dynamic
+    /// environment lookup semantics for every nested function.
+    pub(crate) fn compile_eval_program(
+        &mut self,
+        program: &Program,
+    ) -> Result<crate::bytecode::SharedChunk, CompileError> {
+        let mut chunk = self.compile_program(program)?;
+        {
+            let mutable_chunk = Arc::make_mut(&mut chunk);
+            for template in &mut mutable_chunk.functions {
+                deoptimize_template_upvalues(template)?;
+            }
+            mutable_chunk.validate().map_err(CompileError::from_chunk)?;
+        }
+        Ok(chunk)
+    }
+
     fn compile_statement(
         &mut self,
         statement: &Statement,
@@ -6809,6 +6826,34 @@ mod tests {
 
         assert_eq!(error.message, "wall-clock deadline exceeded");
         assert_eq!(compiler.nodes_until_checkpoint, 256);
+    }
+
+    #[test]
+    fn eval_compilation_deoptimizes_nested_upvalues() {
+        let tokens = Lexer::new(
+            "function outer() { var callback = function () { return 42; }; return function () { return callback(); }; }",
+        )
+        .tokenize()
+        .expect("lexing succeeds");
+        let program = Parser::new(tokens)
+            .parse_program()
+            .expect("parsing succeeds");
+        let chunk = Compiler::new()
+            .compile_eval_program(&program)
+            .expect("eval compilation succeeds");
+
+        fn assert_deoptimized(chunk: &crate::bytecode::Chunk) {
+            assert!(!chunk.instructions.iter().any(|instruction| matches!(
+                instruction,
+                Instruction::LoadUpvalue(_) | Instruction::StoreUpvalue(_)
+            )));
+            for template in &chunk.functions {
+                assert!(template.upvalue_layout.bindings.is_empty());
+                assert_deoptimized(&template.chunk);
+            }
+        }
+
+        assert_deoptimized(&chunk);
     }
 
     fn num_const(value: f64) -> Constant {

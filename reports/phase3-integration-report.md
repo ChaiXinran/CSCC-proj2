@@ -1,88 +1,153 @@
-# Phase 3 G/I Integration Report
+# Phase 3 G/H/I Integration Report
 
-Integration base: `main@dd69f5d` (G `89f9283`, I `dedbc4a`)
+Date: 2026-08-08
 
-## Integration result
+Integration base: `main@9ec36e0`
 
-- Connected I's absolute run deadline to G's bytecode compiler.
-- The compiler checks once at entry and then every 256 visited statement or
-  expression nodes. This follows the shared interface without checking the
-  clock for every emitted instruction.
-- The bytecode layer stores only `Option<Instant>` and therefore does not add a
-  reverse dependency on `engine::FrontendControl`.
-- `NativeRuntime` installs the current absolute deadline before compilation,
-  clears it afterwards, and classifies expiry as `FailureKind::RuntimeLimit`.
-- The same path is used with and without the script cache.
-- Added unit coverage for an expired entry deadline and the 256-node cadence.
+Tracks: G Upvalue Slot, H Shape / Property IC, I Lifecycle / Frontend Memory
 
-## Cross-track validation
+## Outcome
 
-Richards was run from `benchmarks/generated/richards.js` with the external
-resource root, a 32 MiB thread stack, diagnostics, and a one-second absolute
-deadline. It parsed and compiled the prelude and resource, entered job drain,
-and exited with:
+The three tracks are integrated. One cross-track correctness regression was
+found and fixed during the merged JetStream run: source introduced by direct
+`eval` was compiled as if its nested closures had a fully static environment.
+The web-ssr React bundle therefore loaded a function through an invalid upvalue
+slot and later reported `undefined is not callable`.
 
-```text
-RuntimeLimit: execution error: wall-clock deadline exceeded
-```
+`Compiler::compile_eval_program` now deoptimizes nested upvalues to name lookup
+for eval-introduced source. This implements the dynamic-scope fallback required
+by the shared interface while retaining Upvalue Slot for ordinary statically
+compiled functions. The focused web-ssr rerun changed from `CALL_ERROR` to
+`PASS` (`JETSTREAM_RUN_COMPLETE`). A structural compiler test verifies that
+eval chunks contain no `LoadUpvalue` / `StoreUpvalue` instructions or residual
+upvalue layouts.
 
-The diagnostic stream contained both I-track phase records and G-track name
-resolution counters, including `load_upvalue_count`, confirming that the two
-merged paths are active in the same protected run. The observed termination
-was within the requested one-second budget plus normal process/reporting
-overhead.
+I's unified diagnostics now also publish H's per-evaluation property-cache
+metrics. The JetStream diagnostics script aggregates Get/Set hits and misses,
+shape transitions, dictionary objects, and invalidations in its JSON output.
 
-The merged Upvalue suite also passed all 8 tests, including dynamic-scope
-deoptimization, async/generator capture, loop-created closures, fixed-hop
-ancestor access, and the 70% eligible-access lowering threshold.
+## Validation
 
-## Commands run
+Test262 was not run, per explicit user direction.
 
-| Command | Result |
+| Command / suite | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | PASS |
-| `cargo check --all-targets` | PASS |
-| `cargo test --all-targets` | PASS |
-| `cargo clippy --all-targets -- -D warnings` | PASS |
-| `cargo test --no-default-features --test native_test262` | PASS, 15/15 |
+| `cargo check --locked --all-targets` | PASS |
+| `cargo test --locked --lib` | PASS, 280/280 before the eval regression test; focused new test PASS afterwards |
+| `cargo test --locked --test upvalue_slots` | PASS, 8/8 |
+| `cargo test --locked --test native_gc` | PASS, 14/14 |
+| `cargo test --locked --test native_classes` | PASS, 20/20 |
+| `cargo clippy --locked --all-targets -- -D warnings` | PASS |
 | `cargo build --release --locked` | PASS |
-| Richards, `--wall-clock-seconds 1 --thread-stack-mib 32 --diagnostics` | Expected `RuntimeLimit` |
+| `git diff --check` | PASS |
 
-## I-track memory evidence retained from the merged report
+## JetStream 19-workload protected matrix
 
-The Part I protected 1.5 GiB runs remain valid integration evidence:
+Configuration: release build, one generated staged runner at a time, 150-second
+external timeout, 1536 MiB working-set limit, 32 MiB thread stack, GC threshold
+1,000,000. The initial full matrix found the web-ssr integration regression;
+the table below substitutes its post-fix focused rerun and is the final
+consolidated result.
 
-| Workload | Result | Peak RSS | Peak phase |
-| --- | --- | ---: | --- |
-| `jsdom-d3-startup` | `MEMORY_LIMIT` | 1580.3 MiB | job drain |
-| `WSL` | `MEMORY_LIMIT` | 1613.5 MiB | job drain |
-| `threejs` | `MEMORY_LIMIT` | 1729.2 MiB | job drain |
+| Workload | Result | Wall time | Peak RSS |
+| --- | --- | ---: | ---: |
+| ai-astar | MEMORY_LIMIT | 12.214 s | 1537.4 MiB |
+| crypto | PASS | 1.450 s | 164.7 MiB |
+| gaussian-blur | PASS | 5.896 s | 259.6 MiB |
+| hash-map | PASS | 9.491 s | 1234.9 MiB |
+| cdjs | PASS | 15.073 s | 1072.0 MiB |
+| intl | PASS | 1.199 s | 177.0 MiB |
+| jsdom-d3-startup | MEMORY_LIMIT | 2.055 s | 1578.9 MiB |
+| mobx | PASS | 6.423 s | 686.0 MiB |
+| threejs | MEMORY_LIMIT | 103.982 s | 1537.1 MiB |
+| validatorjs | CALL_ERROR | 0.535 s | 28.8 MiB |
+| web-ssr | PASS (post-fix) | 7.609 s | 1336.3 MiB |
+| WSL | MEMORY_LIMIT | 5.377 s | 1666.6 MiB |
+| navier-stokes | PASS | 0.831 s | 29.5 MiB |
+| raytrace | PASS | 13.054 s | 979.9 MiB |
+| regexp | ENGINE_FAILURE | 0.764 s | 128.3 MiB |
+| richards | PASS | 4.097 s | 361.4 MiB |
+| splay | PASS | 4.435 s | 1339.3 MiB |
+| stanford-crypto-sha256 | PASS | 6.712 s | 173.7 MiB |
+| test-cdjs | PASS | 14.648 s | 1069.8 MiB |
 
-These peaks occur after parsing and compilation. Compiler deadline integration
-therefore closes the cancellation gap but does not claim to solve the remaining
-runtime/GC growth.
+Final classification: 12/19 PASS, 4 MEMORY_LIMIT, 2 CALL_ERROR, and 1
+ENGINE_FAILURE. There were no orphaned runner processes. Compared with the
+pre-Phase-3 staged matrix, splay moved from MEMORY_LIMIT to PASS. The remaining
+regexp failure is the known staged Host-script environment mismatch; restoring
+a concatenated `new Function` runner is not an acceptable workaround.
 
-## Follow-up: low-threshold GC root repair
+Raw full-matrix data is under `reports/phase3-integration-jetstream19/`; the
+post-fix web-ssr data is under `reports/phase3-integration-web-ssr-fixed/`.
 
-The WSL 10k `missing object` failure was reproduced and fixed. Two native values
-were previously invisible to tracing while allocations could trigger GC:
+## H cache evidence
 
-- a Promise job after it had been popped from the queue but before execution
-  completed;
-- the result arrays of callback-driven `map`, `filter`, and `flatMap` loops.
+The post-integration hash-map rerun passed in 9.334 seconds at 1235.4 MiB peak
+RSS. Aggregated diagnostics reported:
 
-Active jobs now publish their carried values through temporary roots, and the
-array results remain rooted for the full callback loop. Regression tests force
-collections during Promise-job execution and allocating `map`/`filter`
-callbacks.
+| Metric | Value |
+| --- | ---: |
+| Get hits / misses | 1431 / 220 |
+| Set hits / misses | 0 / 2280 |
+| Shape transitions | 84 |
+| Dictionary objects | 22 |
+| Invalidations | 8742 |
 
-The protected WSL rerun at threshold 10,000 completed 920 collections without
-`missing object` and kept the reported engine heap near 16.6 MiB. It eventually
-reached the unified 150-second runtime deadline. GC pause time was about 19.0
-seconds, so 10k is now correct but remains too aggressive to become the default
-without performance tuning.
+The Get hit rate among eligible observations was 86.67% across the complete
+runner, including prelude and launch traffic. H's isolated five-run report
+remains the performance comparison: hash-map median improved 12.78% versus its
+frozen baseline. The zero Set hits and high invalidation count show that Set IC
+specialization needs profiling before expanding to polymorphic IC.
 
-The complete 19-workload, GC-threshold, and 8/16/32 MiB matrices were not
-repeated in this integration change; Part I's protected measurements and stack
-matrix are retained as the current evidence. No performance claim is made from
-the one-second Richards deadline run.
+## Stack and deadline matrices
+
+Crypto passed with 8, 16, and 32 MiB thread stacks:
+
+| Stack | Result | Wall time | Peak RSS |
+| ---: | --- | ---: | ---: |
+| 8 MiB | PASS | 1.355 s | 165.1 MiB |
+| 16 MiB | PASS | 1.368 s | 159.7 MiB |
+| 32 MiB | PASS | 1.451 s | 164.4 MiB |
+
+Richards with a single one-second absolute deadline reached job drain and
+returned `FailureKind::RuntimeLimit` after approximately one second. The same
+deadline covered runner/resource parsing, compilation, execution, and jobs.
+Compiler entry and 256-node cooperative checkpoints remain enabled.
+
+## GC threshold matrix
+
+WSL was sampled with the same 32 MiB stack and 1536 MiB protection:
+
+| Threshold | Result | Limit | Peak RSS | Interpretation |
+| ---: | --- | ---: | ---: | --- |
+| 10,000 | TIMEOUT | 20 s | 423.6 MiB | no `missing object`; correct but GC-bound |
+| 100,000 | MEMORY_LIMIT | 30 s | 1622.5 MiB | insufficient collection pressure |
+| 1,000,000 | MEMORY_LIMIT | 30 s | 1561.3 MiB | default remains memory-heavy |
+
+The prior GC-root corruption is closed: active Promise jobs and callback-built
+array results are rooted, and the 10k run no longer fails semantically. A fixed
+10k default is still unsuitable because collection throughput prevents WSL from
+finishing within its budget. The next GC work should be adaptive rather than a
+blind threshold reduction.
+
+## Remaining issues and next phase
+
+No undocumented shared-interface conflict was required for this integration.
+The eval fallback is an implementation of the interface's existing direct-eval
+rule, not a contract change.
+
+Recommended next order:
+
+1. Adaptive/generational GC work and allocation-pressure profiling for WSL,
+   jsdom, threejs, and ai-astar.
+2. Persistent Host-script environment semantics for staged regexp and other
+   cross-file top-level declarations.
+3. Diagnose validatorjs before classifying it as runner or builtin work.
+4. Profile Set IC invalidations; only then consider prototype or polymorphic
+   property IC.
+5. Re-profile block locals before deciding whether Block Slot is worth the
+   additional environment/deoptimization complexity.
+
+The data does not support jumping directly to polymorphic IC: memory/GC and
+Host-script semantics are still the larger integration blockers.

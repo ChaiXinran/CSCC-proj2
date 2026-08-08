@@ -183,7 +183,7 @@ fn eval_impl(
         predeclare_eval_annex_b_functions(&program, context)?;
     }
     let mut chunk = Compiler::new()
-        .compile_program(&program)
+        .compile_eval_program(&program)
         .map_err(dynamic_function_syntax_error)?;
     let strict_eval = caller_is_strict || eval_source_is_strict;
     rewrite_eval_global_accesses(std::sync::Arc::make_mut(&mut chunk), strict_eval);

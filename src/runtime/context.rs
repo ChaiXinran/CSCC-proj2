@@ -3098,6 +3098,10 @@ impl NativeContext {
         self.property_cache_metrics
     }
 
+    pub fn reset_property_cache_metrics(&mut self) {
+        self.property_cache_metrics = PropertyCacheMetrics::default();
+    }
+
     pub fn object_shape(&mut self, object: ObjectId) -> Option<ShapeId> {
         self.synchronize_ordinary_shape(object)
     }

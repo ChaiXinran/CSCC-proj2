@@ -208,6 +208,7 @@ impl NativeRuntime {
         if self.config.diagnostics {
             eprintln!("execute_start");
             self.context.reset_name_resolution_metrics();
+            self.context.reset_property_cache_metrics();
         }
         let execute_started = Instant::now();
         let result = self
@@ -239,6 +240,17 @@ impl NativeRuntime {
                 metrics.load_upvalue_count,
                 metrics.store_upvalue_count,
                 metrics.upvalue_environment_hops
+            );
+            let metrics = self.context.property_cache_metrics();
+            eprintln!(
+                "property_cache:get_hits={} get_misses={} set_hits={} set_misses={} shape_transitions={} dictionary_objects={} invalidations={}",
+                metrics.get_hits,
+                metrics.get_misses,
+                metrics.set_hits,
+                metrics.set_misses,
+                metrics.shape_transitions,
+                metrics.dictionary_objects,
+                metrics.invalidations
             );
         }
         result

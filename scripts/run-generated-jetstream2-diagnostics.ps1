@@ -122,6 +122,10 @@ foreach ($manifestFile in $manifests) {
         $combined,
         'name_resolution:load_local_count=(\d+) store_local_count=(\d+) load_name_count=(\d+) store_name_count=(\d+) environment_hops=(\d+)'
     ))
+    $propertyCaches = @([regex]::Matches(
+        $combined,
+        'property_cache:get_hits=(\d+) get_misses=(\d+) set_hits=(\d+) set_misses=(\d+) shape_transitions=(\d+) dictionary_objects=(\d+) invalidations=(\d+)'
+    ))
     $phaseDiagnostics = @([regex]::Matches(
         $combined,
         'phase_diagnostics:phase=([^ ]+) elapsed_ms=(\d+) source_bytes=(\d+) token_count=([^ ]+) instruction_count=([^ ]+) constant_count=([^ ]+) function_count=([^ ]+) heap_estimated_bytes=(\d+) heap_live_objects=(\d+) heap_live_environments=(\d+) heap_live_functions=(\d+) gc_count=(\d+) gc_total_pause_ns=(\d+) gc_max_pause_ns=(\d+)'
@@ -148,12 +152,28 @@ foreach ($manifestFile in $manifests) {
     [long]$loadNameCount = 0
     [long]$storeNameCount = 0
     [long]$environmentHops = 0
+    [long]$propertyGetHits = 0
+    [long]$propertyGetMisses = 0
+    [long]$propertySetHits = 0
+    [long]$propertySetMisses = 0
+    [long]$shapeTransitions = 0
+    [long]$dictionaryObjects = 0
+    [long]$propertyCacheInvalidations = 0
     foreach ($sample in $nameResolution) {
         $loadLocalCount += [long]$sample.Groups[1].Value
         $storeLocalCount += [long]$sample.Groups[2].Value
         $loadNameCount += [long]$sample.Groups[3].Value
         $storeNameCount += [long]$sample.Groups[4].Value
         $environmentHops += [long]$sample.Groups[5].Value
+    }
+    foreach ($sample in $propertyCaches) {
+        $propertyGetHits += [long]$sample.Groups[1].Value
+        $propertyGetMisses += [long]$sample.Groups[2].Value
+        $propertySetHits += [long]$sample.Groups[3].Value
+        $propertySetMisses += [long]$sample.Groups[4].Value
+        $shapeTransitions += [long]$sample.Groups[5].Value
+        $dictionaryObjects += [long]$sample.Groups[6].Value
+        $propertyCacheInvalidations += [long]$sample.Groups[7].Value
     }
     $localAccesses = $loadLocalCount + $storeLocalCount
     $namedAccesses = $loadNameCount + $storeNameCount
@@ -187,6 +207,14 @@ foreach ($manifestFile in $manifests) {
         storeNameCount = $storeNameCount
         environmentHops = $environmentHops
         localFastPathPercent = $localFastPathPercent
+        propertyCacheSamples = $propertyCaches.Count
+        propertyGetHits = $propertyGetHits
+        propertyGetMisses = $propertyGetMisses
+        propertySetHits = $propertySetHits
+        propertySetMisses = $propertySetMisses
+        shapeTransitions = $shapeTransitions
+        dictionaryObjects = $dictionaryObjects
+        propertyCacheInvalidations = $propertyCacheInvalidations
         phaseDiagnostics = $phaseDiagnostics
         rssSamples = $rssSamples
         log = (Split-Path -Leaf $logPath)
