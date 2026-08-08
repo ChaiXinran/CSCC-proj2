@@ -1,48 +1,47 @@
-# AgentJS Small Agent Demo
+# AgentJS Integrated Chat Demo
 
 ## Scope
 
-This integration adds a standalone demonstration layer without changing the
-parser, bytecode compiler, VM, runtime, builtins, backend contracts, or Test262
-runner. It connects a browser UI to a dependency-free Python orchestrator,
-DeepSeek V4 Pro, and a fresh AgentJS native process.
+This batch connects the conversational frontend, dependency-free Python
+orchestrator, DeepSeek adapter, and Rust Agent Host. Parser, bytecode, VM,
+builtins, backend contracts, and Test262 selection remain unchanged.
 
 ## Implementation
 
-- Two bounded scenarios: JSON analysis and rule processing.
-- DeepSeek `deepseek-v4-pro` Chat Completions adapter using JSON Output.
-- Deterministic offline mode for demonstrations and tests without API access.
-- Structured request, model-plan/code, AgentJS result, error, and timing data.
-- Fresh-process isolation, three-second host timeout, request/code size limits,
-  and rejection of host/dynamic-code APIs.
-- Responsive static UI showing the plan, generated JavaScript, result, and
-  model/engine latency independently.
+- Accepts the frontend `{sessionId, prompt}` request while retaining the legacy
+  `{task, input, scenario, mode}` data-demo contract.
+- Returns one response containing generated `code`, execution value, logs,
+  elapsed time, and the validated RenderTree.
+- Serves `frontend/agent-chat.html` and `POST /api/agent` from one origin.
+  Other repository paths are not exposed by the static-file handler.
+- Adds a reserved CLI RenderEvent marker so the orchestrator can distinguish
+  RenderTrees from ordinary console logs and the JavaScript return value.
+- Provides a deterministic offline compatibility dashboard and an optional
+  DeepSeek JSON-output path.
+- Preserves fresh-process isolation, the three-second host timeout, request/code
+  limits, and rejection of unsafe host capabilities.
 
-## Correctness and performance boundary
+## Correctness boundary
 
-The implementation is outside Rust production code and does not change any
-JavaScript-visible semantics or runtime hot path. Full project gates and the
-protected Test262 baseline must still be verified before delivery.
+The only Rust integration change is CLI serialization of RenderEvents already
+collected by the Agent Host. It does not change JavaScript-visible semantics or
+runtime hot paths.
 
 ## Validation
 
 | Command / check | Result |
 | --- | --- |
-| `python -m unittest discover -s demo/agent/tests -v` | PASS, 5/5 |
-| Offline JSON-analysis execution through release AgentJS | PASS |
-| Offline rule-processing execution through release AgentJS | PASS |
-| Browser UI/API end-to-end check | PASS |
-| Desktop overflow check (`scrollWidth == clientWidth`) | PASS |
+| `python -m py_compile demo/agent/server.py demo/agent/tests/test_server.py` | PASS |
+| `python -m unittest discover -s demo/agent/tests -v` | PASS, 6/6 |
+| `cargo build --release --locked` | PASS |
+| Release AgentJS offline chat execution | PASS: `92.56%`, panel RenderTree, native log captured |
+| Real local HTTP GET of chat page and POST to `/api/agent` | PASS |
 | `cargo fmt --all -- --check` | PASS |
-| `cargo check --locked --all-targets` | PASS |
-| `cargo test --locked --all-targets` | PASS |
-| `cargo clippy --locked --all-targets -- -D warnings` | PASS |
-| Full Test262 rerun, release/native, 4 jobs | PASS, 48,563/53,379, 4,814 failed, 2 skipped |
+| `cargo test --test agent_host` | PASS, 4/4 |
+| `cargo check --all-targets` | PASS |
+| `cargo test --all-targets` | PASS |
+| `cargo clippy --all-targets -- -D warnings` | PASS, zero warnings |
+| `cargo test --no-default-features --test native_test262` | PASS, 15/15 |
 
-The first full scan with high-frequency progress output produced 48,557 passes.
-An immediate same-binary rerun without progress output reproduced the protected
-J/K integration baseline exactly at 48,563. No file under `src/` or `tests/`
-differs as part of this demo change. Live DeepSeek execution was not performed
-because no API key was provided; its HTTP adapter follows the official JSON
-Output Chat Completions request shape and is covered with a mocked API-response
-test.
+Live DeepSeek execution was not performed because no API key was provided. Its
+request and JSON-output parsing path is covered by a mocked HTTP response test.

@@ -545,6 +545,9 @@ fn print_report(report: agentjs::ExecutionReport) {
     for line in report.output {
         println!("{line}");
     }
+    for event in report.render_events {
+        println!("__AGENTJS_RENDER__{}", event.payload);
+    }
     if report.value != "undefined" {
         println!("{}", report.value);
     }

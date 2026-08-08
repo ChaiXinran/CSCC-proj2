@@ -11,8 +11,9 @@ cargo build --release --locked
 python demo/agent/server.py
 ```
 
-Open `http://127.0.0.1:8787`. Offline mode is the default and requires no API
-key. It provides two deterministic demonstration paths.
+Open `http://127.0.0.1:8787/frontend/agent-chat.html`. Offline mode is the
+default and requires no API key. The same server hosts the conversational
+frontend and `POST /api/agent`, so no second static-file server is required.
 
 To use DeepSeek V4 Pro:
 
@@ -28,7 +29,9 @@ files or API keys.
 
 ## Boundaries
 
-- Request body: at most 256 KiB; task: at most 2,000 characters.
+- Chat request: `{ "sessionId": "demo-001", "prompt": "..." }`.
+- Legacy requests using `task`, `input`, and `scenario` remain supported.
+- Request body: at most 256 KiB; prompt/task: at most 2,000 characters.
 - Generated code: at most 16,000 characters and screened for host/dynamic APIs.
 - Execution: a fresh AgentJS process with a three-second host timeout.
 - AgentJS exposes no DOM, network, filesystem, or Node.js API to generated code.
