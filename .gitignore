@@ -1,6 +1,8 @@
 # Rust build output
 /target/
 /target-linux/
+/build/
+/dist/
 
 # Generated benchmark runners and raw measurements
 /reports/

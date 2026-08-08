@@ -70,3 +70,20 @@ Run the dependency-free service tests with:
 ```powershell
 python -m unittest discover -s demo/agent/tests -v
 ```
+
+## Build a standalone Windows EXE
+
+Install PyInstaller once in the Python environment used for packaging, then run
+the checked-in build script:
+
+```powershell
+python -m pip install pyinstaller pywebview
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-agentjs-demo.ps1
+```
+
+The single-file result is `dist/AgentJS-Demo.exe`. It embeds the release
+AgentJS runtime, chat frontend, and a native WebView desktop shell.
+Double-clicking it opens a standalone AgentJS window without a browser address
+bar; closing the window stops the local service. The packaged application does
+not require Python, Cargo, or the source repository. It uses the Microsoft
+Edge WebView2 runtime included with current Windows 10/11 installations.

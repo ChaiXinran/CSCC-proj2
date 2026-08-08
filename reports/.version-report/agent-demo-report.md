@@ -84,3 +84,31 @@ unaffected by this routing-only correction.
 - Added focused nested-tree coverage for both aliases. This changes only the
   presentation protocol adapter; AgentJS execution and Test262 semantics are
   unchanged.
+
+## Standalone Windows package
+
+- Added a PyInstaller specification and reproducible PowerShell build script.
+- `dist/AgentJS-Demo.exe` embeds the optimized Rust runtime and chat HTML.
+- Frozen-resource lookup uses PyInstaller's extraction directory; development
+  execution continues to use repository paths.
+- Double-click startup selects a free localhost port and opens the default
+  browser. Closing the console window stops the server.
+- Packaged end-to-end validation passed: page HTTP 200, health OK, embedded
+  engine detected, Agent request OK, value `92.56%`, one native log, and a
+  `panel` RenderTree. Final executable size: 11.83 MiB.
+- The package includes the fixed viewport/message-only scrolling layout and
+  omits the ENGINE and raw RESULT labels.
+
+## Native desktop shell
+
+- Replaced external-browser startup with a pywebview desktop window backed by
+  the installed Microsoft Edge WebView2 runtime.
+- The HTTP orchestrator runs on a daemon thread at a random loopback port and
+  shuts down when the desktop window closes.
+- The packaged executable uses the windowed PyInstaller bootloader, so no
+  browser address bar or console window is shown.
+- `--browser` remains available for explicit external-browser debugging and
+  `--no-browser` for automated HTTP testing.
+- Frozen build completed successfully with the pywebview and pythonnet hooks;
+  launch verification observed the packaged process and new WebView2 child
+  processes. Final desktop executable size: 16.92 MiB.

@@ -27,7 +27,11 @@
     }
 
     * { box-sizing: border-box; }
-    html, body { min-height: 100%; }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
 
     body {
       margin: 0;
@@ -44,7 +48,10 @@
     }
 
     .app {
-      min-height: 100vh;
+      height: 100vh;
+      height: 100dvh;
+      min-height: 0;
+      overflow: hidden;
       display: grid;
       grid-template-rows: 58px minmax(0, 1fr);
     }
@@ -119,6 +126,7 @@
 
     .workspace {
       min-height: 0;
+      overflow: hidden;
       display: grid;
       grid-template-columns: 248px minmax(0, 1fr);
     }
@@ -126,7 +134,7 @@
     .sidebar {
       min-height: 0;
       padding: 18px 14px;
-      overflow: auto;
+      overflow: hidden;
       border-right: 1px solid var(--line);
       background: #f9faf8;
     }
@@ -171,6 +179,7 @@
     .conversation {
       min-width: 0;
       min-height: 0;
+      overflow: hidden;
       display: grid;
       grid-template-rows: minmax(0, 1fr) auto;
       background: var(--surface);
@@ -179,6 +188,7 @@
     .messages {
       min-height: 0;
       overflow-y: auto;
+      overscroll-behavior: contain;
       padding: 24px clamp(16px, 5vw, 72px) 30px;
       scroll-behavior: smooth;
     }
@@ -754,13 +764,8 @@ return average.toFixed(2) + "%";`
       badge.classList.toggle("fallback", response.source !== "orchestrator");
 
       const toolbar = element("div", "result-toolbar");
-      toolbar.append(element("span", "", "Engine "));
-      toolbar.append(element("strong", "", "native"));
       toolbar.append(element("span", "", "Elapsed "));
       toolbar.append(element("strong", "", Number(response.execution.elapsedMs).toFixed(2) + " ms"));
-      toolbar.append(element("span", "", "Result "));
-      const value = response.execution.value;
-      toolbar.append(element("strong", "", typeof value === "object" ? JSON.stringify(value) : value));
       view.body.append(toolbar);
       view.body.append(renderNode(response.render));
 

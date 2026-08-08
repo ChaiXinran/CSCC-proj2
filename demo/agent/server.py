@@ -13,12 +13,14 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import time
 import urllib.error
 import urllib.request
 import uuid
+import webbrowser
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -26,9 +28,16 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Protocol
 
+try:
+    import webview
+except ImportError:  # Development mode may intentionally omit the desktop shell.
+    webview = None
 
-ROOT = Path(__file__).resolve().parents[2]
-STATIC_ROOT = ROOT / "frontend"
+
+SOURCE_ROOT = Path(__file__).resolve().parents[2]
+BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", SOURCE_ROOT))
+ROOT = SOURCE_ROOT
+STATIC_ROOT = BUNDLE_ROOT / "frontend"
 RESULT_MARKER = "__AGENTJS_RESULT__"
 RENDER_MARKER = "__AGENTJS_RENDER__"
 MAX_REQUEST_BYTES = 256 * 1024
@@ -380,7 +389,12 @@ def generate_with_deepseek(task: str, scenario: str, data: Any) -> dict[str, str
 def find_agentjs_binary() -> Path:
     configured = os.environ.get("AGENTJS_BIN")
     candidates = [Path(configured)] if configured else []
-    candidates.extend([ROOT / "target" / "release" / "agentjs.exe", ROOT / "target" / "release" / "agentjs"])
+    candidates.extend([
+        BUNDLE_ROOT / "agentjs.exe",
+        BUNDLE_ROOT / "agentjs",
+        SOURCE_ROOT / "target" / "release" / "agentjs.exe",
+        SOURCE_ROOT / "target" / "release" / "agentjs",
+    ])
     for candidate in candidates:
         if candidate.is_file():
             return candidate.resolve()
@@ -430,7 +444,7 @@ def execute_agentjs(code: str, data: Any) -> ExecutionResult:
             handle.write(source)
             temporary_path = handle.name
         completed = subprocess.run(
-            [str(binary), "run", temporary_path], cwd=ROOT, capture_output=True,
+            [str(binary), "run", temporary_path], cwd=binary.parent, capture_output=True,
             text=True, encoding="utf-8", timeout=3, check=False,
         )
     except subprocess.TimeoutExpired as error:
@@ -523,7 +537,12 @@ class AgentHandler(SimpleHTTPRequestHandler):
                 "ok": True,
                 "deepseekConfigured": bool(os.environ.get("DEEPSEEK_API_KEY", "").strip()),
                 "model": os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
-                "agentjsAvailable": any(path.is_file() for path in [ROOT / "target/release/agentjs.exe", ROOT / "target/release/agentjs"]),
+                "agentjsAvailable": any(path.is_file() for path in [
+                    BUNDLE_ROOT / "agentjs.exe",
+                    BUNDLE_ROOT / "agentjs",
+                    SOURCE_ROOT / "target/release/agentjs.exe",
+                    SOURCE_ROOT / "target/release/agentjs",
+                ]),
             })
             return
         if request_path.startswith("/api/sessions/"):
@@ -578,11 +597,35 @@ class AgentHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description="AgentJS orchestrator demo")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8787)
+    parser.add_argument("--port", type=int, default=0, help="listen port; 0 selects a free port")
+    parser.add_argument("--browser", action="store_true", help="open the UI in the default browser")
+    parser.add_argument("--no-browser", action="store_true", help="run only the HTTP service")
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), AgentHandler)
-    print(f"AgentJS demo: http://{args.host}:{args.port}/frontend/agent-chat.html")
+    actual_port = server.server_address[1]
+    url = f"http://{args.host}:{actual_port}/frontend/agent-chat.html"
+    print(f"AgentJS demo: {url}")
     print("Mode: DeepSeek enabled" if os.environ.get("DEEPSEEK_API_KEY", "").strip() else "Mode: fixed scripts (set DEEPSEEK_API_KEY for DeepSeek V4 Pro)")
+    if webview is not None and not args.browser and not args.no_browser:
+        worker = threading.Thread(target=server.serve_forever, name="agentjs-http", daemon=True)
+        worker.start()
+        try:
+            webview.create_window(
+                "AgentJS Conversation",
+                url,
+                width=1180,
+                height=780,
+                min_size=(760, 520),
+                background_color="#f4f6f3",
+            )
+            webview.start()
+        finally:
+            server.shutdown()
+            server.server_close()
+            worker.join(timeout=5)
+        return
+    if args.browser:
+        threading.Timer(0.35, webbrowser.open, args=(url,)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
