@@ -7,9 +7,26 @@ use std::{
 };
 
 use crate::{
-    runtime::{JsValue, NativeContext, PropertyDescriptor},
+    builtins::stringify_json,
+    runtime::{JsValue, NativeContext, ObjectId, ObjectKind, PropertyDescriptor, PropertyKind},
     vm::{Vm, VmError},
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RenderEvent {
+    /// Canonical JSON payload emitted by `agent.render(tree)`.
+    pub payload: String,
+}
+
+pub trait AgentHost {
+    fn render(&mut self, payload: String);
+}
+
+impl AgentHost for NativeContext {
+    fn render(&mut self, payload: String) {
+        self.push_render_event(payload);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostLoadError {
@@ -133,6 +150,128 @@ fn normalize_text_line_endings(text: String) -> String {
     } else {
         text
     }
+}
+
+pub(crate) fn install_agent_host(
+    context: &mut NativeContext,
+    byte_limit: usize,
+    depth_limit: usize,
+) -> Result<(), VmError> {
+    context.configure_render_limits(byte_limit, depth_limit);
+    let render = context.register_builtin("render", 1, agent_render, None)?;
+    if let Some(backing) = context.value_object(&render) {
+        context.prevent_extensions(backing)?;
+    }
+    let agent = context.create_object([("render".into(), render)])?;
+    let JsValue::Object(agent_id) = agent.clone() else {
+        unreachable!()
+    };
+    let render_value = context.get_property(agent.clone(), "render")?;
+    context.define_own_property(
+        agent_id,
+        "render".into(),
+        PropertyDescriptor::data_with(render_value, false, true, false),
+    )?;
+    context.prevent_extensions(agent_id)?;
+    context.declare_global("agent", agent.clone());
+    context.define_own_property(
+        context.global_object(),
+        "agent".into(),
+        PropertyDescriptor::data_with(agent, false, false, false),
+    )?;
+    Ok(())
+}
+
+fn agent_render(
+    _vm: &mut Vm,
+    context: &mut NativeContext,
+    _this: JsValue,
+    arguments: &[JsValue],
+) -> Result<JsValue, VmError> {
+    let tree = arguments.first().cloned().unwrap_or(JsValue::Undefined);
+    let JsValue::Object(root) = tree else {
+        return Err(VmError::type_error(
+            "agent.render expects a RenderTree object",
+        ));
+    };
+    validate_render_tree(context, root)?;
+    let payload = stringify_json(JsValue::Object(root), context)?
+        .ok_or_else(|| VmError::type_error("RenderTree is not JSON-serializable"))?;
+    let (byte_limit, _) = context.render_limits();
+    if payload.len() > byte_limit {
+        return Err(VmError::runtime_limit(format!(
+            "RenderTree exceeds {byte_limit} byte limit"
+        )));
+    }
+    context.render(payload);
+    Ok(JsValue::Undefined)
+}
+
+fn validate_render_tree(context: &mut NativeContext, root: ObjectId) -> Result<(), VmError> {
+    let type_value = context.get_property(JsValue::Object(root), "type")?;
+    let JsValue::String(tree_type) = type_value else {
+        return Err(VmError::type_error("RenderTree.type must be a string"));
+    };
+    if !matches!(
+        tree_type.as_str(),
+        "panel" | "text" | "metrics" | "statuses" | "table" | "list"
+    ) {
+        return Err(VmError::type_error(format!(
+            "unsupported RenderTree type `{tree_type}`"
+        )));
+    }
+    let (_, depth_limit) = context.render_limits();
+    let mut visiting = std::collections::HashSet::new();
+    validate_json_depth(
+        context,
+        JsValue::Object(root),
+        1,
+        depth_limit,
+        &mut visiting,
+    )
+}
+
+fn validate_json_depth(
+    context: &NativeContext,
+    value: JsValue,
+    depth: usize,
+    depth_limit: usize,
+    visiting: &mut std::collections::HashSet<ObjectId>,
+) -> Result<(), VmError> {
+    let JsValue::Object(object) = value else {
+        return Ok(());
+    };
+    if depth > depth_limit {
+        return Err(VmError::runtime_limit(format!(
+            "RenderTree exceeds depth limit {depth_limit}"
+        )));
+    }
+    if !visiting.insert(object) {
+        return Err(VmError::type_error("RenderTree contains a cycle"));
+    }
+    let object_value = context
+        .heap()
+        .object(object)
+        .ok_or_else(|| VmError::runtime("missing RenderTree object"))?;
+    let keys = match object_value.kind {
+        ObjectKind::Array { .. } => (0..object_value.array_length().unwrap_or(0))
+            .map(|index| index.to_string())
+            .collect::<Vec<_>>(),
+        _ => object_value.own_property_keys(),
+    };
+    for key in keys {
+        let Some(descriptor) = context.get_own_property_descriptor(object, &key) else {
+            continue;
+        };
+        if !descriptor.enumerable {
+            continue;
+        }
+        if let PropertyKind::Data { value, .. } = descriptor.kind {
+            validate_json_depth(context, value, depth + 1, depth_limit, visiting)?;
+        }
+    }
+    visiting.remove(&object);
+    Ok(())
 }
 
 pub(crate) fn install_jetstream_host(context: &mut NativeContext) -> Result<(), VmError> {

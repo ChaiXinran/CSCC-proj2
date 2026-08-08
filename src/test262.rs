@@ -264,6 +264,8 @@ impl Default for RunnerOptions {
                 // takes effect without any additional polling.
                 wall_clock_limit: Some(Duration::from_secs(10)),
                 gc_allocation_threshold: 25_000,
+                render_tree_byte_limit: 256 * 1024,
+                render_tree_depth_limit: 32,
             },
         }
     }

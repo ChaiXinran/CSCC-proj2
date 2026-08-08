@@ -113,6 +113,10 @@ pub struct RuntimeConfig {
     pub wall_clock_limit: Option<Duration>,
     /// Number of heap allocations between cooperative GC checks.
     pub gc_allocation_threshold: usize,
+    /// Maximum serialized size accepted by one `agent.render(...)` call.
+    pub render_tree_byte_limit: usize,
+    /// Maximum nesting depth accepted by one `agent.render(...)` call.
+    pub render_tree_depth_limit: usize,
 }
 
 impl Default for RuntimeConfig {
@@ -130,6 +134,8 @@ impl Default for RuntimeConfig {
             heap_byte_limit: 256 * 1024 * 1024,
             wall_clock_limit: None,
             gc_allocation_threshold: 10_000,
+            render_tree_byte_limit: 256 * 1024,
+            render_tree_depth_limit: 32,
         }
     }
 }
@@ -317,6 +323,7 @@ impl std::error::Error for EvalFailure {}
 pub struct ExecutionReport {
     pub value: String,
     pub output: Vec<String>,
+    pub render_events: Vec<crate::host::RenderEvent>,
     pub elapsed: Duration,
 }
 
@@ -350,8 +357,18 @@ impl Runtime {
         Ok(ExecutionReport {
             value: result.value,
             output: result.output,
+            render_events: result.render_events,
             elapsed: started.elapsed(),
         })
+    }
+
+    /// Evaluates one agent-generated script and returns its render events.
+    pub fn eval_agent(
+        &mut self,
+        source: &str,
+        options: ExecutionOptions,
+    ) -> Result<ExecutionReport, EvalFailure> {
+        self.eval(source, options)
     }
 
     /// Installs or clears host-level controls shared by subsequent evaluations.
@@ -389,6 +406,7 @@ impl Runtime {
         Ok(ExecutionReport {
             value: result.value,
             output: result.output,
+            render_events: result.render_events,
             elapsed: started.elapsed(),
         })
     }
@@ -410,6 +428,7 @@ impl Runtime {
         Ok(ExecutionReport {
             value: result.value,
             output: result.output,
+            render_events: result.render_events,
             elapsed: started.elapsed(),
         })
     }

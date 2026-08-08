@@ -8,6 +8,7 @@
 /reports/*
 !/reports/full-test262-summary.json
 !/reports/test262-latest-common-errors-2026-07-28.md
+!/reports/agent-host-demo-report.md
 !/reports/v17-partA-report.md
 !/reports/v17-partB-report.md
 !/reports/v17-partC-report.md

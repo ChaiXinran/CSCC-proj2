@@ -222,6 +222,8 @@ fn jetstream_run(
             // middle of a JetStream iteration distorts timing and can sweep
             // harness values that are still reachable through benchmark state.
             gc_allocation_threshold: gc_threshold,
+            render_tree_byte_limit: 256 * 1024,
+            render_tree_depth_limit: 32,
         },
         host,
     )

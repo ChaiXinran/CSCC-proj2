@@ -313,6 +313,9 @@ pub struct NativeContext {
     strict: bool,
     top_level_this: JsValue,
     output: Vec<String>,
+    render_events: Vec<String>,
+    render_tree_byte_limit: usize,
+    render_tree_depth_limit: usize,
     temporary_roots: Vec<JsValue>,
     active_promise_roots: Vec<PromiseId>,
     budget: ExecutionBudget,
@@ -420,6 +423,9 @@ impl NativeContext {
             strict: false,
             top_level_this: JsValue::Object(global_object),
             output: Vec::new(),
+            render_events: Vec::new(),
+            render_tree_byte_limit: 0,
+            render_tree_depth_limit: 0,
             temporary_roots: Vec::new(),
             active_promise_roots: Vec::new(),
             budget: ExecutionBudget::default(),
@@ -5705,6 +5711,30 @@ impl NativeContext {
 
     pub fn take_output(&mut self) -> Vec<String> {
         std::mem::take(&mut self.output)
+    }
+
+    pub(crate) fn configure_render_limits(&mut self, byte_limit: usize, depth_limit: usize) {
+        self.render_tree_byte_limit = byte_limit;
+        self.render_tree_depth_limit = depth_limit;
+    }
+
+    pub(crate) fn render_limits(&self) -> (usize, usize) {
+        (self.render_tree_byte_limit, self.render_tree_depth_limit)
+    }
+
+    pub(crate) fn push_render_event(&mut self, payload: String) {
+        self.render_events.push(payload);
+    }
+
+    pub(crate) fn clear_render_events(&mut self) {
+        self.render_events.clear();
+    }
+
+    pub(crate) fn take_render_events(&mut self) -> Vec<crate::host::RenderEvent> {
+        std::mem::take(&mut self.render_events)
+            .into_iter()
+            .map(|payload| crate::host::RenderEvent { payload })
+            .collect()
     }
 }
 

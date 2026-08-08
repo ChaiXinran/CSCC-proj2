@@ -53,6 +53,7 @@ pub enum BackendKind {
 pub(crate) struct BackendExecution {
     pub value: String,
     pub output: Vec<String>,
+    pub render_events: Vec<crate::host::RenderEvent>,
 }
 
 /// Internal contract implemented by every persistent JavaScript isolate.
@@ -185,6 +186,12 @@ impl NativeRuntime {
         context.install_host_services(host);
         context.configure_heap_limits(config.heap_byte_limit, config.gc_allocation_threshold);
         builtins::install_foundation(&mut context);
+        crate::host::install_agent_host(
+            &mut context,
+            config.render_tree_byte_limit,
+            config.render_tree_depth_limit,
+        )
+        .expect("install Agent host services");
         if config.install_test262_host {
             builtins::install_test262_harness(&mut context);
         }
@@ -788,6 +795,7 @@ impl RuntimeBackend for NativeRuntime {
         options: ExecutionOptions,
     ) -> Result<BackendExecution, EvalFailure> {
         self.context.clear_output();
+        self.context.clear_render_events();
         self.current_source_kind = options.source_kind;
         self.context
             .set_strict(options.strict || options.source_kind == SourceKind::Module);
@@ -812,6 +820,7 @@ impl RuntimeBackend for NativeRuntime {
             } else {
                 Vec::new()
             },
+            render_events: self.context.take_render_events(),
         })
     }
 
@@ -840,6 +849,7 @@ impl RuntimeBackend for NativeRuntime {
         drain_jobs: bool,
     ) -> Result<BackendExecution, EvalFailure> {
         self.context.clear_output();
+        self.context.clear_render_events();
         self.current_source_kind = SourceKind::Module;
         self.context.set_strict(true);
         self.context.set_top_level_this(JsValue::Undefined);
@@ -850,6 +860,7 @@ impl RuntimeBackend for NativeRuntime {
                 return Ok(BackendExecution {
                     value: JsValue::Undefined.to_string(),
                     output: self.context.take_output(),
+                    render_events: self.context.take_render_events(),
                 });
             }
             Some(ModuleStatus::Linked) => {
@@ -918,6 +929,7 @@ impl RuntimeBackend for NativeRuntime {
                     } else {
                         Vec::new()
                     },
+                    render_events: self.context.take_render_events(),
                 })
             }
             Err(error) => {
@@ -989,6 +1001,7 @@ impl RuntimeBackend for NativeRuntime {
 
     fn clear_output(&mut self) {
         self.context.clear_output();
+        self.context.clear_render_events();
     }
 
     fn take_output(&mut self) -> Vec<String> {
@@ -1047,6 +1060,7 @@ impl RuntimeBackend for NativeRuntime {
         Ok(BackendExecution {
             value: JsValue::Undefined.to_string(),
             output: self.context.take_output(),
+            render_events: self.context.take_render_events(),
         })
     }
 }

@@ -3,6 +3,7 @@
 mod array;
 mod function;
 mod json;
+pub(crate) use json::stringify_json;
 mod object;
 pub(crate) mod promise;
 pub(crate) mod proxy;

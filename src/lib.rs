@@ -23,4 +23,6 @@ pub use engine::{
     FrontendControl, HostFragmentDeclarations, HostScriptSession, PhaseDiagnostics,
     PreparedHostFragment, RunControl, Runtime, RuntimeConfig, RuntimeLimitError, SourceKind,
 };
-pub use host::{HostFileLoader, HostLoadError, HostServices, RootedFileLoader};
+pub use host::{
+    AgentHost, HostFileLoader, HostLoadError, HostServices, RenderEvent, RootedFileLoader,
+};
