@@ -99,6 +99,11 @@ impl Heap {
         threshold > 0 && self.allocations_since_collection >= threshold
     }
 
+    #[must_use]
+    pub const fn allocations_since_collection(&self) -> usize {
+        self.allocations_since_collection
+    }
+
     pub fn allocate_object(&mut self, object: JsObject) -> Option<ObjectId> {
         let estimated_bytes = object.estimated_bytes();
         if !self.can_allocate(estimated_bytes) {
@@ -219,6 +224,14 @@ impl Heap {
 
     pub(crate) fn function_slots(&self) -> usize {
         self.functions.len()
+    }
+
+    pub(crate) fn arena_capacity_bytes(&self) -> (usize, usize, usize) {
+        (
+            self.objects.capacity() * std::mem::size_of::<Option<JsObject>>(),
+            self.environments.capacity() * std::mem::size_of::<Option<Environment>>(),
+            self.functions.capacity() * std::mem::size_of::<Option<JsFunction>>(),
+        )
     }
 
     #[must_use]

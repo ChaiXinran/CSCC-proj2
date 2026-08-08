@@ -1,6 +1,8 @@
 //! Garbage-collection boundary.
 
-use super::{EnvironmentId, FunctionId, Heap, JsValue, ObjectId};
+use super::{
+    EnvironmentId, FunctionId, GcControllerState, GcTriggerReason, Heap, JsValue, ObjectId,
+};
 use crate::vm::CallFrame;
 
 /// Heap statistics exposed to runtime tests and benchmark/reporting code.
@@ -35,6 +37,8 @@ pub struct GcMetrics {
     pub total_pause_ns: u64,
     pub max_pause_ns: u64,
     pub last_collection: CollectionStats,
+    pub last_trigger_reason: GcTriggerReason,
+    pub controller: GcControllerState,
 }
 
 pub(crate) trait RootSink {

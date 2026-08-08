@@ -274,6 +274,7 @@ impl NativeRuntime {
             function_count,
             heap: self.context.heap_stats(),
             gc: self.context.gc_metrics(),
+            runtime_memory: self.context.runtime_memory_stats(),
         };
         eprintln!(
             "phase_diagnostics:phase={} elapsed_ms={} source_bytes={} token_count={} instruction_count={} constant_count={} function_count={} heap_estimated_bytes={} heap_live_objects={} heap_live_environments={} heap_live_functions={} gc_count={} gc_total_pause_ns={} gc_max_pause_ns={}",
@@ -299,6 +300,23 @@ impl NativeRuntime {
             diagnostic.gc.collection_count,
             diagnostic.gc.total_pause_ns,
             diagnostic.gc.max_pause_ns,
+        );
+        eprintln!(
+            "runtime_memory:heap_estimated_bytes={} tracked_runtime_bytes={} promise_records={} promise_reactions={} job_queue_len={} array_buffer_payload_bytes={} typed_array_views={} data_views={} shape_count={} property_ic_entries={} regexp_cache_entries={} charged_bytes_since_gc={} gc_reason={:?} gc_reclaim_percent={}",
+            diagnostic.runtime_memory.heap_estimated_bytes,
+            diagnostic.runtime_memory.tracked_runtime_bytes,
+            diagnostic.runtime_memory.promise_records,
+            diagnostic.runtime_memory.promise_reaction_capacity,
+            diagnostic.runtime_memory.job_queue_len,
+            diagnostic.runtime_memory.array_buffer_payload_bytes,
+            diagnostic.runtime_memory.typed_array_views,
+            diagnostic.runtime_memory.data_views,
+            diagnostic.runtime_memory.shape_count,
+            diagnostic.runtime_memory.property_ic_entries,
+            diagnostic.runtime_memory.regexp_cache_entries,
+            diagnostic.runtime_memory.charged_bytes_since_gc,
+            diagnostic.gc.last_trigger_reason,
+            diagnostic.gc.controller.last_reclaim_percent,
         );
     }
 

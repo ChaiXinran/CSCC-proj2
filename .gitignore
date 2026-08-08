@@ -25,7 +25,10 @@
 !/reports/.version-report/three-track-partB-report.md
 !/reports/.version-report/phase2-partE-report.md
 !/reports/.version-report/phase3-partH-report.md
-/reports/.native-test262-tmp
+!/reports/.version-report/phase4-partJ-report.md
+!/reports/.native-test262-tmp
+/reports/.native-test262-tmp/*
+!/reports/.native-test262-tmp/phase4-partJ-full-final.json
 # Local editor and agent state
 /.vscode/
 /.idea/

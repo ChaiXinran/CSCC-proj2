@@ -33,15 +33,16 @@ struct NameResolutionMetricCells {
 use fancy_regex::Regex;
 
 use super::{
-    AgentManager, ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction, BuiltinFunction,
-    BuiltinId, CollectionStats, DataViewId, DataViewRecord, Environment, EnvironmentId, FunctionId,
-    GcMetrics, Heap, HeapMarks, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction,
-    JsObject, JsValue, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
+    AgentManager, AllocationPressure, ArrayBufferId, ArrayBufferRecord, BigIntValue, BoundFunction,
+    BuiltinFunction, BuiltinId, CollectionStats, DataViewId, DataViewRecord, Environment,
+    EnvironmentId, FunctionId, GcControllerState, GcMetrics, GcPolicy, GcTriggerReason, Heap,
+    HeapMarks, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject,
+    JsValue, MemoryClass, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
     NativeErrorValue, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
     PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
     PromiseThenReaction, PropertyAttributes, PropertyCacheMetrics, PropertyDescriptor,
     PropertyDescriptorUpdate, PropertyKey, PropertyKind, PropertySlotId, ProxyRecord, ROOT_SHAPE,
-    RootSet, RootSink, ShapeId, ShapeTable, SymbolId, SymbolRegistry, Tracer,
+    RootSet, RootSink, RuntimeMemoryStats, ShapeId, ShapeTable, SymbolId, SymbolRegistry, Tracer,
     TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint,
     iterator::IteratorKind, object::array_index,
 };
@@ -265,7 +266,9 @@ pub struct NativeContext {
     temporary_roots: Vec<JsValue>,
     budget: ExecutionBudget,
     call_depth: u64,
-    gc_allocation_threshold: usize,
+    gc_policy: GcPolicy,
+    gc_controller: GcControllerState,
+    allocation_pressure: AllocationPressure,
     gc_marks: HeapMarks,
     gc_metrics: GcMetrics,
     host_services: HostServices,
@@ -366,7 +369,9 @@ impl NativeContext {
             temporary_roots: Vec::new(),
             budget: ExecutionBudget::default(),
             call_depth: 0,
-            gc_allocation_threshold: 10_000,
+            gc_policy: GcPolicy::from_legacy_threshold(10_000).normalized(),
+            gc_controller: GcControllerState::default(),
+            allocation_pressure: AllocationPressure::default(),
             gc_marks: HeapMarks::default(),
             gc_metrics: GcMetrics::default(),
             host_services: HostServices::default(),
@@ -443,7 +448,29 @@ impl NativeContext {
         gc_allocation_threshold: usize,
     ) {
         self.heap.set_byte_limit(heap_byte_limit);
-        self.gc_allocation_threshold = gc_allocation_threshold;
+        self.gc_policy = GcPolicy::from_legacy_threshold(gc_allocation_threshold).normalized();
+        self.gc_controller.last_tracked_runtime_bytes =
+            self.runtime_memory_stats().tracked_runtime_bytes;
+    }
+
+    pub fn configure_gc_policy(&mut self, policy: GcPolicy) {
+        self.gc_policy = policy.normalized();
+        self.gc_controller.last_tracked_runtime_bytes =
+            self.runtime_memory_stats().tracked_runtime_bytes;
+    }
+
+    #[must_use]
+    pub const fn gc_policy(&self) -> GcPolicy {
+        self.gc_policy
+    }
+
+    #[must_use]
+    pub fn gc_controller_state(&self) -> GcControllerState {
+        GcControllerState {
+            allocations_since_gc: self.heap.allocations_since_collection(),
+            pressure_bytes_since_gc: self.allocation_pressure.charged_bytes_since_gc,
+            ..self.gc_controller
+        }
     }
 
     #[must_use]
@@ -456,8 +483,103 @@ impl NativeContext {
         self.gc_metrics
     }
 
+    pub(crate) fn note_runtime_growth(&mut self, _class: MemoryClass, bytes: usize) {
+        self.allocation_pressure.charged_bytes_since_gc = self
+            .allocation_pressure
+            .charged_bytes_since_gc
+            .saturating_add(bytes);
+        self.allocation_pressure.allocations_since_gc = self.heap.allocations_since_collection();
+        self.gc_controller.pressure_bytes_since_gc =
+            self.allocation_pressure.charged_bytes_since_gc;
+        self.gc_controller.allocations_since_gc = self.allocation_pressure.allocations_since_gc;
+    }
+
+    #[must_use]
+    pub fn runtime_memory_stats(&self) -> RuntimeMemoryStats {
+        let heap = self.heap.stats();
+        let (
+            object_arena_capacity_bytes,
+            environment_arena_capacity_bytes,
+            function_arena_capacity_bytes,
+        ) = self.heap.arena_capacity_bytes();
+        let promise_reaction_capacity: usize = self
+            .promises
+            .iter()
+            .map(|record| record.reactions.capacity())
+            .sum();
+        let array_buffer_payload_bytes: usize = self
+            .array_buffers
+            .iter()
+            .map(|record| record.bytes.capacity())
+            .sum();
+        let private_slot_entries = self.private_slots.values().map(HashMap::len).sum();
+        let side_capacity_bytes = self
+            .promises
+            .capacity()
+            .saturating_mul(std::mem::size_of::<PromiseRecord>())
+            .saturating_add(
+                promise_reaction_capacity
+                    .saturating_mul(std::mem::size_of::<PromiseThenReaction>()),
+            )
+            .saturating_add(
+                self.array_buffers
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ArrayBufferRecord>()),
+            )
+            .saturating_add(array_buffer_payload_bytes)
+            .saturating_add(
+                self.typed_array_views
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<TypedArrayView>()),
+            )
+            .saturating_add(
+                self.data_views
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<DataViewRecord>()),
+            );
+        let tracked_runtime_bytes = heap
+            .estimated_bytes
+            .saturating_add(object_arena_capacity_bytes)
+            .saturating_add(environment_arena_capacity_bytes)
+            .saturating_add(function_arena_capacity_bytes)
+            .saturating_add(side_capacity_bytes);
+        RuntimeMemoryStats {
+            heap_estimated_bytes: heap.estimated_bytes,
+            heap_object_slots: heap.object_slots,
+            heap_live_objects: heap.live_objects,
+            heap_live_environments: heap.live_environments,
+            heap_live_functions: heap.live_functions,
+            object_arena_capacity_bytes,
+            environment_arena_capacity_bytes,
+            function_arena_capacity_bytes,
+            promise_records: self.promises.len(),
+            promise_capacity: self.promises.capacity(),
+            promise_reaction_capacity,
+            job_queue_len: self.job_queue.len(),
+            job_queue_capacity: self.job_queue.len(),
+            array_buffer_records: self.array_buffers.len(),
+            array_buffer_capacity: self.array_buffers.capacity(),
+            array_buffer_payload_bytes,
+            typed_array_views: self.typed_array_views.len(),
+            typed_array_view_capacity: self.typed_array_views.capacity(),
+            data_views: self.data_views.len(),
+            data_view_capacity: self.data_views.capacity(),
+            private_slot_entries,
+            function_object_entries: self.function_objects.len(),
+            object_value_entries: self.object_values.len(),
+            module_records: self.module_registry.len(),
+            realm_records: self.realms.len(),
+            shape_count: self.shape_table.shape_count(),
+            property_ic_entries: 0,
+            regexp_cache_entries: self.regexp_cache.len(),
+            tracked_runtime_bytes,
+            charged_bytes_since_gc: self.allocation_pressure.charged_bytes_since_gc,
+        }
+    }
+
     pub fn ensure_heap_capacity(&mut self, additional_bytes: usize) -> Result<(), VmError> {
         if self.heap.charge_bytes(additional_bytes) {
+            self.note_runtime_growth(MemoryClass::ObjectMutation, additional_bytes);
             Ok(())
         } else {
             Err(VmError::runtime_limit("heap byte limit exceeded"))
@@ -466,11 +588,46 @@ impl NativeContext {
 
     #[must_use]
     pub fn should_collect_garbage(&self) -> bool {
-        self.heap.should_collect(self.gc_allocation_threshold)
+        self.gc_trigger_reason().is_some()
+    }
+
+    fn gc_trigger_reason(&self) -> Option<GcTriggerReason> {
+        let allocations = self.heap.allocations_since_collection();
+        if allocations >= self.gc_policy.max_allocations {
+            return Some(GcTriggerReason::Allocation);
+        }
+        let effective_min = if self.gc_controller.last_reclaim_percent
+            < self.gc_policy.min_reclaim_percent
+            && self.gc_metrics.collection_count > 0
+        {
+            self.gc_policy
+                .min_allocations
+                .saturating_mul(2)
+                .min(self.gc_policy.max_allocations)
+        } else {
+            self.gc_policy.min_allocations
+        };
+        if allocations < effective_min {
+            return None;
+        }
+        if self.allocation_pressure.charged_bytes_since_gc >= self.gc_policy.min_pressure_bytes {
+            return Some(GcTriggerReason::Bytes);
+        }
+        let tracked = self.runtime_memory_stats().tracked_runtime_bytes;
+        let baseline = self.gc_controller.last_tracked_runtime_bytes;
+        if baseline > 0
+            && tracked.saturating_mul(self.gc_policy.growth_factor_den)
+                > baseline.saturating_mul(self.gc_policy.growth_factor_num)
+        {
+            return Some(GcTriggerReason::Growth);
+        }
+        None
     }
 
     pub fn maybe_collect_garbage(&mut self, roots: &RootSet) -> Result<CollectionStats, VmError> {
         let started = Instant::now();
+        let trigger = self.gc_trigger_reason().unwrap_or(GcTriggerReason::Manual);
+        let tracked_before = self.runtime_memory_stats().tracked_runtime_bytes;
         let marks = std::mem::take(&mut self.gc_marks);
         let marks = {
             let mut tracer = Tracer::with_marks(&self.heap, marks);
@@ -480,12 +637,14 @@ impl NativeContext {
         let stats = self.heap.sweep(&marks);
         self.gc_marks = marks;
         self.prune_swept_metadata();
-        self.record_collection(started, stats);
+        self.record_collection(started, stats, trigger, tracked_before);
         Ok(stats)
     }
 
     pub fn collect_garbage_for_vm(&mut self, vm: &Vm) -> Result<CollectionStats, VmError> {
         let started = Instant::now();
+        let trigger = self.gc_trigger_reason().unwrap_or(GcTriggerReason::Manual);
+        let tracked_before = self.runtime_memory_stats().tracked_runtime_bytes;
         let marks = std::mem::take(&mut self.gc_marks);
         let marks = {
             let mut tracer = Tracer::with_marks(&self.heap, marks);
@@ -496,7 +655,7 @@ impl NativeContext {
         let stats = self.heap.sweep(&marks);
         self.gc_marks = marks;
         self.prune_swept_metadata();
-        self.record_collection(started, stats);
+        self.record_collection(started, stats, trigger, tracked_before);
         Ok(stats)
     }
 
@@ -535,12 +694,35 @@ impl NativeContext {
         result
     }
 
-    fn record_collection(&mut self, started: Instant, stats: CollectionStats) {
+    fn record_collection(
+        &mut self,
+        started: Instant,
+        stats: CollectionStats,
+        trigger: GcTriggerReason,
+        tracked_before: usize,
+    ) {
+        let tracked_after = self.runtime_memory_stats().tracked_runtime_bytes;
+        let reclaimed = tracked_before.saturating_sub(tracked_after);
+        let reclaim_percent = reclaimed
+            .saturating_mul(100)
+            .checked_div(tracked_before.max(1))
+            .unwrap_or(0)
+            .min(100) as u8;
         let pause_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         self.gc_metrics.collection_count = self.heap.stats().collection_count;
         self.gc_metrics.total_pause_ns = self.gc_metrics.total_pause_ns.saturating_add(pause_ns);
         self.gc_metrics.max_pause_ns = self.gc_metrics.max_pause_ns.max(pause_ns);
         self.gc_metrics.last_collection = stats;
+        self.gc_controller = GcControllerState {
+            last_live_bytes: stats.bytes_after,
+            last_tracked_runtime_bytes: tracked_after,
+            allocations_since_gc: 0,
+            pressure_bytes_since_gc: 0,
+            last_reclaim_percent: reclaim_percent,
+        };
+        self.allocation_pressure = AllocationPressure::default();
+        self.gc_metrics.last_trigger_reason = trigger;
+        self.gc_metrics.controller = self.gc_controller;
     }
 
     fn trace_context_roots(&self, roots: &mut impl RootSink) {
