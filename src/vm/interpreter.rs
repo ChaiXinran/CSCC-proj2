@@ -8062,7 +8062,7 @@ impl Vm {
 
     pub fn drain_jobs(&mut self, context: &mut NativeContext) -> Result<(), VmError> {
         while let Some(job) = context.pop_job() {
-            let root_base = context.push_temporary_roots(job.root_values());
+            let root_base = context.push_active_job_roots(&job);
             let result = match job {
                 Job::HostCallback(crate::runtime::NativeJob::PushOutput(line)) => {
                     context.push_output(line);
@@ -8081,7 +8081,7 @@ impl Vm {
                     self.run_promise_resolve_thenable_job(context, job)
                 }
             };
-            context.truncate_temporary_roots(root_base);
+            context.truncate_active_job_roots(root_base);
             result?;
         }
         Ok(())

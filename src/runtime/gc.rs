@@ -286,6 +286,14 @@ impl<'a> Tracer<'a> {
     pub(crate) fn into_marks(self) -> HeapMarks {
         self.marks
     }
+
+    pub(crate) fn is_object_marked(&self, id: ObjectId) -> bool {
+        self.marks.contains_object(id)
+    }
+
+    pub(crate) fn marked_object_count(&self) -> usize {
+        self.marks.objects.iter().filter(|marked| **marked).count()
+    }
 }
 
 impl RootSink for Tracer<'_> {

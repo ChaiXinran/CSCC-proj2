@@ -2,11 +2,19 @@
 
 use std::collections::VecDeque;
 
-use super::{JsValue, Trace, Tracer};
+use super::{JsValue, StableId, Trace, Tracer};
 
 /// Stable handle for a native Promise record.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PromiseId(pub u32);
+impl StableId for PromiseId {
+    fn from_u32(value: u32) -> Self {
+        Self(value)
+    }
+    fn to_u32(self) -> u32 {
+        self.0
+    }
+}
 
 /// Minimal Promise state model shared by V9 runtime and future builtins.
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +118,14 @@ impl Job {
             Self::HostCallback(_) => Vec::new(),
         }
     }
+
+    pub(crate) fn root_promises(&self) -> Vec<PromiseId> {
+        match self {
+            Self::PromiseReaction(job) => vec![job.promise],
+            Self::PromiseCallback(job) => job.result_promise.into_iter().collect(),
+            Self::PromiseResolveThenable(_) | Self::HostCallback(_) => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -138,6 +154,11 @@ impl JobQueue {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
+    }
+
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.queue.capacity()
     }
 }
 

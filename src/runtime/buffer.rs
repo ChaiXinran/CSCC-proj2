@@ -1,8 +1,18 @@
 //! V10 ArrayBuffer, TypedArray, and DataView runtime substrate.
 
+use super::StableId;
+
 /// Stable handle for shared ArrayBuffer byte storage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ArrayBufferId(pub u32);
+impl StableId for ArrayBufferId {
+    fn from_u32(value: u32) -> Self {
+        Self(value)
+    }
+    fn to_u32(self) -> u32 {
+        self.0
+    }
+}
 
 /// Shared byte storage used by future ArrayBuffer, TypedArray, and DataView builtins.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,9 +67,25 @@ impl ArrayBufferRecord {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TypedArrayViewId(pub u32);
+impl StableId for TypedArrayViewId {
+    fn from_u32(value: u32) -> Self {
+        Self(value)
+    }
+    fn to_u32(self) -> u32 {
+        self.0
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DataViewId(pub u32);
+impl StableId for DataViewId {
+    fn from_u32(value: u32) -> Self {
+        Self(value)
+    }
+    fn to_u32(self) -> u32 {
+        self.0
+    }
+}
 
 /// Element kind and byte-width information for typed-array views.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

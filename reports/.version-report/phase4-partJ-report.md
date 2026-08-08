@@ -85,3 +85,13 @@ side-registry reclamation is available.
 
 Merge K's side-registry sweep before final policy tuning, then run the protected
 WSL/jsdom/threejs matrix at 10k, 100k, 1m, and adaptive settings with OS peak RSS.
+
+## J/K merge validation
+
+The remote K stable-arena and side-sweep changes were merged into J's shared
+`NativeContext` GC boundary. `RuntimeMemoryStats` now consumes K's live/capacity
+provider, and J computes reclaim ratio only after both side registries and the
+ordinary heap have been swept. J/K focused tests passed 21/21, all-target tests
+and Clippy passed, and the post-merge full Test262 run reached
+48,563/53,379 (90.98%, 2 skipped), three passes above the protected 48,560
+baseline.

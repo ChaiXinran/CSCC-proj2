@@ -20,6 +20,7 @@ mod property;
 mod property_map;
 pub mod realm;
 mod shape;
+mod stable_arena;
 mod string_value;
 mod symbol;
 mod value;
@@ -33,8 +34,8 @@ pub use buffer::{
 pub use coercion::PreferredType;
 pub(crate) use context::DisposableStackEntry;
 pub use context::{
-    ExecutionBudget, Intrinsics, NativeContext, checked_array_length, checked_string_repeat_len,
-    checked_utf16_allocation, to_property_key,
+    ExecutionBudget, Intrinsics, NativeContext, RuntimeSideMemoryStats, SideCollectionStats,
+    checked_array_length, checked_string_repeat_len, checked_utf16_allocation, to_property_key,
 };
 pub use environment::{Binding, Environment, EnvironmentId};
 pub use function::{
@@ -74,6 +75,7 @@ pub use shape::{
     DICTIONARY_SHAPE, PropertyAttributes, PropertyCacheMetrics, PropertyKindTag, ROOT_SHAPE,
     ShapeId, ShapeMode, ShapeRecord, ShapeTable,
 };
+pub use stable_arena::{SideSweepStats, StableArena, StableId};
 pub use string_value::JsString;
 pub use symbol::{Symbol, SymbolId, SymbolRegistry, WellKnownSymbols};
 pub use value::{JsValue, NativeErrorKind, NativeErrorValue};

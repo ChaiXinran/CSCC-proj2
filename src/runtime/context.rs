@@ -42,9 +42,9 @@ use super::{
     PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
     PromiseThenReaction, PropertyAttributes, PropertyCacheMetrics, PropertyDescriptor,
     PropertyDescriptorUpdate, PropertyKey, PropertyKind, PropertySlotId, ProxyRecord, ROOT_SHAPE,
-    RootSet, RootSink, RuntimeMemoryStats, ShapeId, ShapeTable, SymbolId, SymbolRegistry, Tracer,
-    TypedArrayElementKind, TypedArrayView, TypedArrayViewId, WellKnownSymbols, bigint,
-    iterator::IteratorKind, object::array_index,
+    RootSet, RootSink, RuntimeMemoryStats, ShapeId, ShapeTable, StableArena, SymbolId,
+    SymbolRegistry, Trace, Tracer, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
+    WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
 };
 use crate::host::{HostLoadError, HostServices};
 use crate::vm::{CallFrame, Vm, VmError};
@@ -205,6 +205,55 @@ impl StringPrototypePropertyCache {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RuntimeSideMemoryStats {
+    pub promise_records: usize,
+    pub promise_capacity: usize,
+    pub promise_reaction_capacity: usize,
+    pub job_queue_len: usize,
+    pub job_queue_capacity: usize,
+    pub array_buffer_records: usize,
+    pub array_buffer_capacity: usize,
+    pub array_buffer_payload_bytes: usize,
+    pub typed_array_views: usize,
+    pub typed_array_view_capacity: usize,
+    pub data_views: usize,
+    pub data_view_capacity: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SideCollectionStats {
+    pub promises_before: usize,
+    pub promises_after: usize,
+    pub array_buffers_before: usize,
+    pub array_buffers_after: usize,
+    pub array_buffer_bytes_before: usize,
+    pub array_buffer_bytes_after: usize,
+    pub typed_array_views_before: usize,
+    pub typed_array_views_after: usize,
+    pub data_views_before: usize,
+    pub data_views_after: usize,
+}
+
+#[derive(Debug, Default)]
+struct SideMarks {
+    promises: Vec<bool>,
+    array_buffers: Vec<bool>,
+    typed_array_views: Vec<bool>,
+    data_views: Vec<bool>,
+}
+
+fn mark_side_slot(marks: &mut [bool], index: u32) -> bool {
+    let Some(mark) = marks.get_mut(index as usize) else {
+        return false;
+    };
+    if *mark {
+        return false;
+    }
+    *mark = true;
+    true
+}
+
 #[derive(Debug)]
 pub struct NativeContext {
     heap: Heap,
@@ -251,10 +300,10 @@ pub struct NativeContext {
     symbol_registry: SymbolRegistry,
     symbol_for_registry: HashMap<String, SymbolId>,
     job_queue: JobQueue,
-    promises: Vec<PromiseRecord>,
-    array_buffers: Vec<ArrayBufferRecord>,
-    typed_array_views: Vec<TypedArrayView>,
-    data_views: Vec<DataViewRecord>,
+    promises: StableArena<PromiseRecord, PromiseId>,
+    array_buffers: StableArena<ArrayBufferRecord, ArrayBufferId>,
+    typed_array_views: StableArena<TypedArrayView, TypedArrayViewId>,
+    data_views: StableArena<DataViewRecord, DataViewId>,
     regexp_cache: HashMap<(String, String), Regex>,
     regexp_cache_order: VecDeque<(String, String)>,
     realms: Vec<RealmRecord>,
@@ -264,6 +313,7 @@ pub struct NativeContext {
     top_level_this: JsValue,
     output: Vec<String>,
     temporary_roots: Vec<JsValue>,
+    active_promise_roots: Vec<PromiseId>,
     budget: ExecutionBudget,
     call_depth: u64,
     gc_policy: GcPolicy,
@@ -271,6 +321,7 @@ pub struct NativeContext {
     allocation_pressure: AllocationPressure,
     gc_marks: HeapMarks,
     gc_metrics: GcMetrics,
+    last_side_collection: SideCollectionStats,
     host_services: HostServices,
     name_resolution_metrics: NameResolutionMetricCells,
     shape_table: ShapeTable,
@@ -354,10 +405,10 @@ impl NativeContext {
             symbol_registry: SymbolRegistry::new(),
             symbol_for_registry: HashMap::new(),
             job_queue: JobQueue::default(),
-            promises: Vec::new(),
-            array_buffers: Vec::new(),
-            typed_array_views: Vec::new(),
-            data_views: Vec::new(),
+            promises: StableArena::default(),
+            array_buffers: StableArena::default(),
+            typed_array_views: StableArena::default(),
+            data_views: StableArena::default(),
             regexp_cache: HashMap::new(),
             regexp_cache_order: VecDeque::new(),
             realms: Vec::new(),
@@ -367,6 +418,7 @@ impl NativeContext {
             top_level_this: JsValue::Object(global_object),
             output: Vec::new(),
             temporary_roots: Vec::new(),
+            active_promise_roots: Vec::new(),
             budget: ExecutionBudget::default(),
             call_depth: 0,
             gc_policy: GcPolicy::from_legacy_threshold(10_000).normalized(),
@@ -374,6 +426,7 @@ impl NativeContext {
             allocation_pressure: AllocationPressure::default(),
             gc_marks: HeapMarks::default(),
             gc_metrics: GcMetrics::default(),
+            last_side_collection: SideCollectionStats::default(),
             host_services: HostServices::default(),
             name_resolution_metrics: NameResolutionMetricCells::default(),
             shape_table: ShapeTable::default(),
@@ -495,47 +548,55 @@ impl NativeContext {
     }
 
     #[must_use]
+    pub const fn last_side_collection(&self) -> SideCollectionStats {
+        self.last_side_collection
+    }
+
+    #[must_use]
+    pub fn runtime_side_memory_stats(&self) -> RuntimeSideMemoryStats {
+        RuntimeSideMemoryStats {
+            promise_records: self.promises.len(),
+            promise_capacity: self.promises.capacity(),
+            promise_reaction_capacity: self
+                .promises
+                .iter()
+                .map(|(_, record)| record.reactions.capacity())
+                .sum(),
+            job_queue_len: self.job_queue.len(),
+            job_queue_capacity: self.job_queue.capacity(),
+            array_buffer_records: self.array_buffers.len(),
+            array_buffer_capacity: self.array_buffers.capacity(),
+            array_buffer_payload_bytes: self
+                .array_buffers
+                .iter()
+                .map(|(_, record)| record.bytes.capacity())
+                .sum(),
+            typed_array_views: self.typed_array_views.len(),
+            typed_array_view_capacity: self.typed_array_views.capacity(),
+            data_views: self.data_views.len(),
+            data_view_capacity: self.data_views.capacity(),
+        }
+    }
+
+    #[must_use]
     pub fn runtime_memory_stats(&self) -> RuntimeMemoryStats {
         let heap = self.heap.stats();
+        let side = self.runtime_side_memory_stats();
         let (
             object_arena_capacity_bytes,
             environment_arena_capacity_bytes,
             function_arena_capacity_bytes,
         ) = self.heap.arena_capacity_bytes();
-        let promise_reaction_capacity: usize = self
-            .promises
-            .iter()
-            .map(|record| record.reactions.capacity())
-            .sum();
-        let array_buffer_payload_bytes: usize = self
-            .array_buffers
-            .iter()
-            .map(|record| record.bytes.capacity())
-            .sum();
-        let private_slot_entries = self.private_slots.values().map(HashMap::len).sum();
         let side_capacity_bytes = self
             .promises
-            .capacity()
-            .saturating_mul(std::mem::size_of::<PromiseRecord>())
+            .capacity_bytes()
+            .saturating_add(self.array_buffers.capacity_bytes())
+            .saturating_add(self.typed_array_views.capacity_bytes())
+            .saturating_add(self.data_views.capacity_bytes())
+            .saturating_add(side.array_buffer_payload_bytes)
             .saturating_add(
-                promise_reaction_capacity
+                side.promise_reaction_capacity
                     .saturating_mul(std::mem::size_of::<PromiseThenReaction>()),
-            )
-            .saturating_add(
-                self.array_buffers
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<ArrayBufferRecord>()),
-            )
-            .saturating_add(array_buffer_payload_bytes)
-            .saturating_add(
-                self.typed_array_views
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<TypedArrayView>()),
-            )
-            .saturating_add(
-                self.data_views
-                    .capacity()
-                    .saturating_mul(std::mem::size_of::<DataViewRecord>()),
             );
         let tracked_runtime_bytes = heap
             .estimated_bytes
@@ -543,6 +604,7 @@ impl NativeContext {
             .saturating_add(environment_arena_capacity_bytes)
             .saturating_add(function_arena_capacity_bytes)
             .saturating_add(side_capacity_bytes);
+        let private_slot_entries = self.private_slots.values().map(HashMap::len).sum();
         RuntimeMemoryStats {
             heap_estimated_bytes: heap.estimated_bytes,
             heap_object_slots: heap.object_slots,
@@ -552,18 +614,18 @@ impl NativeContext {
             object_arena_capacity_bytes,
             environment_arena_capacity_bytes,
             function_arena_capacity_bytes,
-            promise_records: self.promises.len(),
-            promise_capacity: self.promises.capacity(),
-            promise_reaction_capacity,
-            job_queue_len: self.job_queue.len(),
-            job_queue_capacity: self.job_queue.len(),
-            array_buffer_records: self.array_buffers.len(),
-            array_buffer_capacity: self.array_buffers.capacity(),
-            array_buffer_payload_bytes,
-            typed_array_views: self.typed_array_views.len(),
-            typed_array_view_capacity: self.typed_array_views.capacity(),
-            data_views: self.data_views.len(),
-            data_view_capacity: self.data_views.capacity(),
+            promise_records: side.promise_records,
+            promise_capacity: side.promise_capacity,
+            promise_reaction_capacity: side.promise_reaction_capacity,
+            job_queue_len: side.job_queue_len,
+            job_queue_capacity: side.job_queue_capacity,
+            array_buffer_records: side.array_buffer_records,
+            array_buffer_capacity: side.array_buffer_capacity,
+            array_buffer_payload_bytes: side.array_buffer_payload_bytes,
+            typed_array_views: side.typed_array_views,
+            typed_array_view_capacity: side.typed_array_view_capacity,
+            data_views: side.data_views,
+            data_view_capacity: side.data_view_capacity,
             private_slot_entries,
             function_object_entries: self.function_objects.len(),
             object_value_entries: self.object_values.len(),
@@ -629,11 +691,13 @@ impl NativeContext {
         let trigger = self.gc_trigger_reason().unwrap_or(GcTriggerReason::Manual);
         let tracked_before = self.runtime_memory_stats().tracked_runtime_bytes;
         let marks = std::mem::take(&mut self.gc_marks);
-        let marks = {
+        let (marks, side_marks) = {
             let mut tracer = Tracer::with_marks(&self.heap, marks);
             roots.trace(&mut tracer);
-            tracer.into_marks()
+            let side_marks = self.trace_side_graph(&mut tracer);
+            (tracer.into_marks(), side_marks)
         };
+        self.sweep_side_registries(side_marks);
         let stats = self.heap.sweep(&marks);
         self.gc_marks = marks;
         self.prune_swept_metadata();
@@ -646,12 +710,14 @@ impl NativeContext {
         let trigger = self.gc_trigger_reason().unwrap_or(GcTriggerReason::Manual);
         let tracked_before = self.runtime_memory_stats().tracked_runtime_bytes;
         let marks = std::mem::take(&mut self.gc_marks);
-        let marks = {
+        let (marks, side_marks) = {
             let mut tracer = Tracer::with_marks(&self.heap, marks);
             vm.trace_roots(&mut tracer);
             self.trace_context_roots(&mut tracer);
-            tracer.into_marks()
+            let side_marks = self.trace_side_graph(&mut tracer);
+            (tracer.into_marks(), side_marks)
         };
+        self.sweep_side_registries(side_marks);
         let stats = self.heap.sweep(&marks);
         self.gc_marks = marks;
         self.prune_swept_metadata();
@@ -872,24 +938,6 @@ impl NativeContext {
                 }
             }
         }
-        for promise in &self.promises {
-            match &promise.state {
-                PromiseState::Fulfilled(value) | PromiseState::Rejected(value) => {
-                    roots.mark_value_root(value);
-                }
-                PromiseState::Pending => {}
-            }
-            for reaction in &promise.reactions {
-                roots.mark_value_root(&reaction.resolve);
-                roots.mark_value_root(&reaction.reject);
-                if let Some(value) = &reaction.on_fulfilled {
-                    roots.mark_value_root(value);
-                }
-                if let Some(value) = &reaction.on_rejected {
-                    roots.mark_value_root(value);
-                }
-            }
-        }
         for job in self.job_queue.iter() {
             match job {
                 Job::PromiseReaction(job) => roots.mark_value_root(&job.value),
@@ -919,6 +967,136 @@ impl NativeContext {
                 roots.mark_value_root(&entry.this_value);
             }
         }
+    }
+
+    fn trace_side_graph(&self, tracer: &mut Tracer<'_>) -> SideMarks {
+        let mut marks = SideMarks {
+            promises: vec![false; self.promises.slots_len()],
+            array_buffers: vec![false; self.array_buffers.slots_len()],
+            typed_array_views: vec![false; self.typed_array_views.slots_len()],
+            data_views: vec![false; self.data_views.slots_len()],
+        };
+
+        for job in self.job_queue.iter() {
+            match job {
+                Job::PromiseReaction(job) => {
+                    mark_side_slot(&mut marks.promises, job.promise.0);
+                }
+                Job::PromiseCallback(job) => {
+                    if let Some(promise) = job.result_promise {
+                        mark_side_slot(&mut marks.promises, promise.0);
+                    }
+                }
+                Job::PromiseResolveThenable(_) | Job::HostCallback(_) => {}
+            }
+        }
+        for promise in &self.active_promise_roots {
+            mark_side_slot(&mut marks.promises, promise.0);
+        }
+        for buffer in self.agent_manager.buffer_roots() {
+            mark_side_slot(&mut marks.array_buffers, buffer.0);
+        }
+
+        loop {
+            let mut changed = false;
+            let marked_objects_before = tracer.marked_object_count();
+            for index in 0..self.heap.object_slots() {
+                let Ok(index) = u32::try_from(index) else {
+                    break;
+                };
+                let id = ObjectId(index);
+                if !tracer.is_object_marked(id) {
+                    continue;
+                }
+                let Some(object) = self.heap.object(id) else {
+                    continue;
+                };
+                changed |= match object.kind {
+                    ObjectKind::Promise { promise } => {
+                        mark_side_slot(&mut marks.promises, promise.0)
+                    }
+                    ObjectKind::ArrayBuffer { buffer } => {
+                        mark_side_slot(&mut marks.array_buffers, buffer.0)
+                    }
+                    ObjectKind::TypedArray { view, .. } => {
+                        mark_side_slot(&mut marks.typed_array_views, view.0)
+                    }
+                    ObjectKind::DataView { view } => mark_side_slot(&mut marks.data_views, view.0),
+                    _ => false,
+                };
+            }
+            for (view, record) in self.typed_array_views.iter() {
+                if marks
+                    .typed_array_views
+                    .get(view.0 as usize)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    changed |= mark_side_slot(&mut marks.array_buffers, record.buffer.0);
+                }
+            }
+            for (view, record) in self.data_views.iter() {
+                if marks
+                    .data_views
+                    .get(view.0 as usize)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    changed |= mark_side_slot(&mut marks.array_buffers, record.buffer.0);
+                }
+            }
+            for (promise, record) in self.promises.iter() {
+                if !marks
+                    .promises
+                    .get(promise.0 as usize)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                record.trace(tracer);
+                for reaction in &record.reactions {
+                    if let Some(result) = reaction.result_promise {
+                        changed |= mark_side_slot(&mut marks.promises, result.0);
+                    }
+                }
+            }
+            changed |= tracer.marked_object_count() != marked_objects_before;
+            if !changed {
+                break;
+            }
+        }
+        marks
+    }
+
+    fn sweep_side_registries(&mut self, marks: SideMarks) {
+        let array_buffer_bytes_before = self
+            .array_buffers
+            .iter()
+            .map(|(_, record)| record.bytes.capacity())
+            .sum();
+        let promises = self.promises.sweep_unmarked(&marks.promises);
+        let array_buffers = self.array_buffers.sweep_unmarked(&marks.array_buffers);
+        let typed_array_views = self
+            .typed_array_views
+            .sweep_unmarked(&marks.typed_array_views);
+        let data_views = self.data_views.sweep_unmarked(&marks.data_views);
+        self.last_side_collection = SideCollectionStats {
+            promises_before: promises.before,
+            promises_after: promises.after,
+            array_buffers_before: array_buffers.before,
+            array_buffers_after: array_buffers.after,
+            array_buffer_bytes_before,
+            array_buffer_bytes_after: self
+                .array_buffers
+                .iter()
+                .map(|(_, record)| record.bytes.capacity())
+                .sum(),
+            typed_array_views_before: typed_array_views.before,
+            typed_array_views_after: typed_array_views.after,
+            data_views_before: data_views.before,
+            data_views_after: data_views.after,
+        };
     }
 
     fn prune_swept_metadata(&mut self) {
@@ -3280,6 +3458,10 @@ impl NativeContext {
         self.property_cache_metrics
     }
 
+    pub fn reset_property_cache_metrics(&mut self) {
+        self.property_cache_metrics = PropertyCacheMetrics::default();
+    }
+
     pub fn object_shape(&mut self, object: ObjectId) -> Option<ShapeId> {
         self.synchronize_ordinary_shape(object)
     }
@@ -4688,10 +4870,9 @@ impl NativeContext {
     }
 
     pub fn create_promise(&mut self) -> Result<PromiseId, VmError> {
-        let index = u32::try_from(self.promises.len())
-            .map_err(|_| VmError::runtime("promise registry full"))?;
-        self.promises.push(PromiseRecord::default());
-        Ok(PromiseId(index))
+        self.promises
+            .allocate(PromiseRecord::default())
+            .ok_or_else(|| VmError::runtime("promise registry full"))
     }
 
     pub fn create_promise_object(
@@ -4699,7 +4880,7 @@ impl NativeContext {
         promise: PromiseId,
         prototype: Option<ObjectId>,
     ) -> Result<JsValue, VmError> {
-        if self.promises.get(promise.0 as usize).is_none() {
+        if self.promises.get(promise).is_none() {
             return Err(VmError::runtime("invalid promise id"));
         }
         let mut object = JsObject::ordinary();
@@ -4726,7 +4907,7 @@ impl NativeContext {
     #[must_use]
     pub fn promise_state(&self, promise: PromiseId) -> Option<PromiseState> {
         self.promises
-            .get(promise.0 as usize)
+            .get(promise)
             .map(|record| record.state.clone())
     }
 
@@ -4741,7 +4922,7 @@ impl NativeContext {
     fn settle_promise(&mut self, promise: PromiseId, state: PromiseState) -> Result<bool, VmError> {
         let record = self
             .promises
-            .get_mut(promise.0 as usize)
+            .get_mut(promise)
             .ok_or_else(|| VmError::runtime("invalid promise id"))?;
         if !matches!(record.state, PromiseState::Pending) {
             return Ok(false);
@@ -4776,7 +4957,7 @@ impl NativeContext {
     ) -> Result<(), VmError> {
         let record = self
             .promises
-            .get_mut(promise.0 as usize)
+            .get_mut(promise)
             .ok_or_else(|| VmError::runtime("invalid promise id"))?;
         match &record.state {
             PromiseState::Pending => record.reactions.push(reaction),
@@ -4819,11 +5000,23 @@ impl NativeContext {
         self.job_queue.pop()
     }
 
+    pub(crate) fn push_active_job_roots(&mut self, job: &Job) -> (usize, usize) {
+        let value_base = self.push_temporary_roots(job.root_values());
+        let promise_base = self.active_promise_roots.len();
+        self.active_promise_roots.extend(job.root_promises());
+        (value_base, promise_base)
+    }
+
+    pub(crate) fn truncate_active_job_roots(&mut self, bases: (usize, usize)) {
+        self.truncate_temporary_roots(bases.0);
+        self.active_promise_roots.truncate(bases.1);
+    }
+
     pub fn drain_jobs(&mut self) -> Result<(), VmError> {
         while let Some(job) = self.job_queue.pop() {
-            let root_base = self.push_temporary_roots(job.root_values());
+            let root_base = self.push_active_job_roots(&job);
             let result = self.run_job(job);
-            self.truncate_temporary_roots(root_base);
+            self.truncate_active_job_roots(root_base);
             result?;
         }
         Ok(())
@@ -4920,21 +5113,19 @@ impl NativeContext {
             ));
         }
         self.ensure_heap_capacity(byte_length)?;
-        let index = u32::try_from(self.array_buffers.len())
-            .map_err(|_| VmError::runtime("ArrayBuffer registry full"))?;
         self.array_buffers
-            .push(ArrayBufferRecord::with_options_and_shared(
+            .allocate(ArrayBufferRecord::with_options_and_shared(
                 byte_length,
                 max_byte_length,
                 resizable,
                 immutable,
                 shared,
-            ));
-        Ok(ArrayBufferId(index))
+            ))
+            .ok_or_else(|| VmError::runtime("ArrayBuffer registry full"))
     }
 
     pub fn array_buffer_record(&self, buffer: ArrayBufferId) -> Option<&ArrayBufferRecord> {
-        self.array_buffers.get(buffer.0 as usize)
+        self.array_buffers.get(buffer)
     }
 
     pub fn array_buffer_byte_length(&self, buffer: ArrayBufferId) -> Result<usize, VmError> {
@@ -4986,7 +5177,7 @@ impl NativeContext {
     pub fn detach_array_buffer(&mut self, buffer: ArrayBufferId) -> Result<(), VmError> {
         let record = self
             .array_buffers
-            .get_mut(buffer.0 as usize)
+            .get_mut(buffer)
             .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
         record.bytes.clear();
         record.detached = true;
@@ -5000,7 +5191,7 @@ impl NativeContext {
     ) -> Result<(), VmError> {
         let record = self
             .array_buffers
-            .get_mut(buffer.0 as usize)
+            .get_mut(buffer)
             .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
         if record.detached {
             return Err(VmError::type_error("ArrayBuffer is detached"));
@@ -5024,7 +5215,7 @@ impl NativeContext {
     pub fn mark_array_buffer_immutable(&mut self, buffer: ArrayBufferId) -> Result<(), VmError> {
         let record = self
             .array_buffers
-            .get_mut(buffer.0 as usize)
+            .get_mut(buffer)
             .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
         if record.detached {
             return Err(VmError::type_error("ArrayBuffer is detached"));
@@ -5145,20 +5336,19 @@ impl NativeContext {
             ));
         }
         self.validate_buffer_range(buffer, byte_offset, byte_length)?;
-        let index = u32::try_from(self.typed_array_views.len())
-            .map_err(|_| VmError::runtime("TypedArray view registry full"))?;
-        self.typed_array_views.push(TypedArrayView {
-            buffer,
-            byte_offset,
-            length,
-            length_tracking,
-            element_kind,
-        });
-        Ok(TypedArrayViewId(index))
+        self.typed_array_views
+            .allocate(TypedArrayView {
+                buffer,
+                byte_offset,
+                length,
+                length_tracking,
+                element_kind,
+            })
+            .ok_or_else(|| VmError::runtime("TypedArray view registry full"))
     }
 
     pub fn typed_array_view(&self, view: TypedArrayViewId) -> Option<&TypedArrayView> {
-        self.typed_array_views.get(view.0 as usize)
+        self.typed_array_views.get(view)
     }
 
     pub fn typed_array_byte_length(&self, view: TypedArrayViewId) -> Result<usize, VmError> {
@@ -5245,19 +5435,18 @@ impl NativeContext {
         length_tracking: bool,
     ) -> Result<DataViewId, VmError> {
         self.validate_data_view_creation(buffer, byte_offset, byte_length, length_tracking)?;
-        let index = u32::try_from(self.data_views.len())
-            .map_err(|_| VmError::runtime("DataView registry full"))?;
-        self.data_views.push(DataViewRecord {
-            buffer,
-            byte_offset,
-            byte_length,
-            length_tracking,
-        });
-        Ok(DataViewId(index))
+        self.data_views
+            .allocate(DataViewRecord {
+                buffer,
+                byte_offset,
+                byte_length,
+                length_tracking,
+            })
+            .ok_or_else(|| VmError::runtime("DataView registry full"))
     }
 
     pub fn data_view_record(&self, view: DataViewId) -> Option<&DataViewRecord> {
-        self.data_views.get(view.0 as usize)
+        self.data_views.get(view)
     }
 
     pub fn data_view_byte_length(&self, view: DataViewId) -> Result<usize, VmError> {
@@ -5433,7 +5622,7 @@ impl NativeContext {
     ) -> Result<(), VmError> {
         let record = self
             .array_buffers
-            .get_mut(buffer.0 as usize)
+            .get_mut(buffer)
             .ok_or_else(|| VmError::runtime("invalid ArrayBuffer id"))?;
         if record.detached {
             return Err(VmError::type_error("ArrayBuffer is detached"));
