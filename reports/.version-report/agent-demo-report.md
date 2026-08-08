@@ -104,3 +104,11 @@ unaffected by this routing-only correction.
 - Added `demo/agent/sample-sales-data.json` with eight typed sales records for
   exercising count, sum, average, maximum, grouping, filtering, and table
   rendering through the JSON upload UI.
+
+## Remote frontend reconciliation
+
+- Rebased the structured-input UI onto the remote frontend update from
+  `e24aed7`, preserving its structured response parsing, explicit unsupported
+  RenderTree feedback, and `/api/agent` fixed-mode fallback.
+- Both the primary DeepSeek request and the fixed-mode retry now retain
+  `input` and `inputMeta`, so JSON/CSV data is not dropped during fallback.

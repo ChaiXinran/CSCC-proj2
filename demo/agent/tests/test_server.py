@@ -83,6 +83,11 @@ class AgentProtocolTests(unittest.TestCase):
         self.assertIn("const input = {value: 7};", source)
         self.assertNotIn("(function (input)", source)
 
+    def test_wrapper_normalizes_undefined_result_to_json_null(self):
+        source = server.build_wrapper("agent.render({type: 'panel', children: []});", {})
+        self.assertIn("__agentValue === undefined ? null : __agentValue", source)
+        self.assertIn('__agentJson === undefined ? "null" : __agentJson', source)
+
     def test_render_tree_enforces_type_and_depth(self):
         self.assertEqual(server.validate_render_tree({"type": "panel", "children": []})["type"], "panel")
         with self.assertRaisesRegex(server.AgentError, "不支持"):
@@ -109,6 +114,11 @@ class AgentProtocolTests(unittest.TestCase):
 
 
 class DeepSeekGeneratorTests(unittest.TestCase):
+    def test_parses_fenced_or_prefixed_json(self):
+        payload = '{"title":"sum","code":"return 1;"}'
+        self.assertEqual(server.parse_model_json("```json\n" + payload + "\n```"), json.loads(payload))
+        self.assertEqual(server.parse_model_json("Here is the result:\n" + payload), json.loads(payload))
+
     @mock.patch("urllib.request.urlopen")
     def test_parses_json_output_and_sends_history(self, urlopen):
         content = json.dumps({
