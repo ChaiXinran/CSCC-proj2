@@ -1,0 +1,78 @@
+{
+  "dataset": "2026 Q2 product sales",
+  "currency": "CNY",
+  "records": [
+    {
+      "id": 1,
+      "product": "AgentJS Starter",
+      "category": "runtime",
+      "region": "East",
+      "sales": 12800,
+      "units": 32,
+      "active": true
+    },
+    {
+      "id": 2,
+      "product": "AgentJS Pro",
+      "category": "runtime",
+      "region": "North",
+      "sales": 21600,
+      "units": 36,
+      "active": true
+    },
+    {
+      "id": 3,
+      "product": "Parser Toolkit",
+      "category": "tooling",
+      "region": "South",
+      "sales": 9400,
+      "units": 47,
+      "active": true
+    },
+    {
+      "id": 4,
+      "product": "VM Inspector",
+      "category": "tooling",
+      "region": "East",
+      "sales": 15750,
+      "units": 35,
+      "active": true
+    },
+    {
+      "id": 5,
+      "product": "Test262 Reporter",
+      "category": "analytics",
+      "region": "West",
+      "sales": 18200,
+      "units": 28,
+      "active": true
+    },
+    {
+      "id": 6,
+      "product": "Benchmark Dashboard",
+      "category": "analytics",
+      "region": "North",
+      "sales": 11300,
+      "units": 22,
+      "active": false
+    },
+    {
+      "id": 7,
+      "product": "Agent Host SDK",
+      "category": "runtime",
+      "region": "South",
+      "sales": 24600,
+      "units": 41,
+      "active": true
+    },
+    {
+      "id": 8,
+      "product": "RenderTree Studio",
+      "category": "tooling",
+      "region": "West",
+      "sales": 13650,
+      "units": 39,
+      "active": false
+    }
+  ]
+}

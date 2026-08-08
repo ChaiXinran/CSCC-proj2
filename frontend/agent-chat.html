@@ -459,6 +459,72 @@
       text-align: center;
     }
 
+    .data-input {
+      width: min(880px, 100%);
+      margin: 0 auto 10px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .data-input summary {
+      padding: 10px 13px;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .data-input-body { padding: 0 12px 12px; }
+
+    .data-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+
+    .file-input, .clear-data-button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      background: var(--panel-soft);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .file-input:hover, .clear-data-button:hover { border-color: var(--green); }
+    .file-input { max-width: 250px; padding: 4px; }
+    .file-input::file-selector-button {
+      border: 0;
+      border-radius: 5px;
+      margin-right: 8px;
+      padding: 4px 7px;
+      background: var(--green-dark);
+      color: #fff;
+      cursor: pointer;
+    }
+    .data-status { color: var(--muted); font-size: 10px; }
+    .data-status.error { color: var(--red); }
+
+    .json-input {
+      display: block;
+      width: 100%;
+      min-height: 96px;
+      max-height: 220px;
+      resize: vertical;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #0c0f0d;
+      color: var(--text);
+      font: 11px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+
     @media (max-width: 820px) {
       .workspace { grid-template-columns: 1fr; }
       .sidebar { display: none; }
@@ -517,6 +583,17 @@
         </section>
 
         <div class="composer-shell">
+          <details class="data-input">
+            <summary>Optional input data (JSON text or .json/.csv file)</summary>
+            <div class="data-input-body">
+              <div class="data-actions">
+                <input id="dataFile" class="file-input" type="file" accept=".json,.csv,application/json,text/csv" aria-label="Choose JSON or CSV file">
+                <button id="clearData" class="clear-data-button" type="button">Clear data</button>
+                <span id="dataStatus" class="data-status">No input data</span>
+              </div>
+              <textarea id="jsonInput" class="json-input" spellcheck="false" placeholder='{"values":[12,35,18,42,23]}' aria-label="JSON input data"></textarea>
+            </div>
+          </details>
           <form id="composer" class="composer">
             <textarea id="prompt" rows="1" placeholder="Ask AgentJS to build a result view..." aria-label="Prompt"></textarea>
             <button id="send" class="send-button" type="submit">Send</button>
@@ -604,6 +681,9 @@ return average.toFixed(2) + "%";`
     const messages = document.getElementById("messages");
     const emptyState = document.getElementById("emptyState");
     const promptInput = document.getElementById("prompt");
+    const jsonInput = document.getElementById("jsonInput");
+    const dataFile = document.getElementById("dataFile");
+    const dataStatus = document.getElementById("dataStatus");
     const sendButton = document.getElementById("send");
     const connection = document.getElementById("connection");
     const turnCount = document.getElementById("turnCount");
@@ -672,7 +752,7 @@ return average.toFixed(2) + "%";`
       return payload;
     }
 
-    async function requestAgent(prompt) {
+    async function requestAgent(prompt, input) {
       try {
         const response = await fetchAgent({ sessionId, prompt });
         const payload = await parseAgentResponse(response, "Agent orchestrator request failed");
@@ -703,6 +783,99 @@ return average.toFixed(2) + "%";`
           (fallbackError?.message || "network request failed")
         );
       }
+    }
+
+    function setDataStatus(message, isError = false) {
+      dataStatus.textContent = message;
+      dataStatus.classList.toggle("error", isError);
+    }
+
+    function parseInputData() {
+      const text = jsonInput.value.trim();
+      if (!text) return {};
+      let value;
+      try {
+        value = JSON.parse(text);
+      } catch (error) {
+        setDataStatus("Invalid JSON: " + error.message, true);
+        throw new Error("Input data is not valid JSON: " + error.message);
+      }
+      if (new TextEncoder().encode(JSON.stringify(value)).length > MAX_INPUT_BYTES) {
+        setDataStatus("Input data exceeds the 200 KiB request-safe limit", true);
+        throw new Error("Input data exceeds the 200 KiB request-safe limit");
+      }
+      setDataStatus(inputMeta.fileName ? `${inputMeta.fileName} ready` : "JSON data ready");
+      return value;
+    }
+
+    function parseCsv(text) {
+      const rows = [];
+      let row = [];
+      let field = "";
+      let quoted = false;
+      for (let index = 0; index < text.length; index += 1) {
+        const char = text[index];
+        if (quoted) {
+          if (char === '"' && text[index + 1] === '"') {
+            field += '"';
+            index += 1;
+          } else if (char === '"') {
+            quoted = false;
+          } else {
+            field += char;
+          }
+        } else if (char === '"') {
+          quoted = true;
+        } else if (char === ",") {
+          row.push(field);
+          field = "";
+        } else if (char === "\n") {
+          row.push(field.replace(/\r$/, ""));
+          if (row.some(value => value !== "")) rows.push(row);
+          row = [];
+          field = "";
+        } else {
+          field += char;
+        }
+      }
+      if (quoted) throw new Error("CSV contains an unclosed quoted field");
+      row.push(field.replace(/\r$/, ""));
+      if (row.some(value => value !== "")) rows.push(row);
+      if (rows.length < 2) throw new Error("CSV must contain a header and at least one data row");
+      if (rows.length - 1 > MAX_CSV_ROWS) throw new Error(`CSV exceeds ${MAX_CSV_ROWS.toLocaleString()} data rows`);
+      const headers = rows[0].map(value => value.trim());
+      if (headers.some(value => !value)) throw new Error("CSV headers cannot be empty");
+      if (new Set(headers).size !== headers.length) throw new Error("CSV headers must be unique");
+      const records = rows.slice(1).map((values, rowIndex) => {
+        if (values.length !== headers.length) throw new Error(`CSV row ${rowIndex + 2} has ${values.length} columns; expected ${headers.length}`);
+        return Object.fromEntries(headers.map((header, index) => [header, csvValue(values[index])]));
+      });
+      return { rows: records };
+    }
+
+    function csvValue(value) {
+      const trimmed = value.trim();
+      if (trimmed === "") return "";
+      if (/^-?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)) return Number(trimmed);
+      if (trimmed === "true") return true;
+      if (trimmed === "false") return false;
+      return value;
+    }
+
+    async function loadDataFile(file) {
+      if (!file) return;
+      if (file.size > MAX_INPUT_BYTES) throw new Error("File exceeds the 200 KiB limit");
+      const extension = file.name.split(".").pop().toLowerCase();
+      if (!['json', 'csv'].includes(extension)) throw new Error("Only .json and .csv files are supported");
+      const text = await file.text();
+      const value = extension === "json" ? JSON.parse(text) : parseCsv(text);
+      if (new TextEncoder().encode(JSON.stringify(value)).length > MAX_INPUT_BYTES) {
+        throw new Error("Parsed data exceeds the 200 KiB request-safe limit");
+      }
+      jsonInput.value = JSON.stringify(value, null, 2);
+      inputMeta = { source: "file", format: extension, fileName: file.name };
+      const count = Array.isArray(value) ? value.length : (Array.isArray(value.rows) ? value.rows.length : null);
+      setDataStatus(`${file.name} ready${count === null ? "" : ` · ${count.toLocaleString()} records`}`);
     }
 
     function normalizeAgentResponse(payload) {
@@ -844,6 +1017,12 @@ return average.toFixed(2) + "%";`
 
     async function submitPrompt(prompt) {
       if (!prompt.trim()) return;
+      let input;
+      try {
+        input = parseInputData();
+      } catch (error) {
+        return;
+      }
       sendButton.disabled = true;
       const view = createTurn(prompt.trim());
       turns.push({ prompt: prompt.trim() });
@@ -852,7 +1031,7 @@ return average.toFixed(2) + "%";`
       resizePrompt();
 
       try {
-        const response = await requestAgent(prompt.trim());
+        const response = await requestAgent(prompt.trim(), input);
         turns[turns.length - 1].response = response;
         showResult(view, response);
         if (response.source === "orchestrator") {
@@ -911,6 +1090,26 @@ return average.toFixed(2) + "%";`
     });
 
     document.getElementById("newSession").addEventListener("click", resetSession);
+    jsonInput.addEventListener("input", () => {
+      inputMeta = jsonInput.value.trim()
+        ? { source: "text", format: "json", fileName: null }
+        : { source: "none", format: null, fileName: null };
+      setDataStatus(jsonInput.value.trim() ? "JSON text edited; validation occurs on send" : "No input data");
+    });
+    dataFile.addEventListener("change", async () => {
+      try {
+        await loadDataFile(dataFile.files[0]);
+      } catch (error) {
+        setDataStatus(error.message, true);
+      } finally {
+        dataFile.value = "";
+      }
+    });
+    document.getElementById("clearData").addEventListener("click", () => {
+      jsonInput.value = "";
+      inputMeta = { source: "none", format: null, fileName: null };
+      setDataStatus("No input data");
+    });
     sessionLabel.textContent = sessionId;
     promptInput.focus();
   </script>

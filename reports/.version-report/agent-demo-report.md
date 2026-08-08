@@ -156,3 +156,30 @@ unaffected by this routing-only correction.
   complete `92.56%` panel; standalone build PASS. Output size: 17,743,464
   bytes; SHA-256
   `0991C0724AF616F7DADD93355B046EFD1409B2570047699D74290666003A92B9`.
+## Structured input UI
+
+- Added an optional JSON text editor to the chat composer with send-time parse
+  validation and a clear action.
+- Added browser-local `.json` and `.csv` upload. CSV supports quoted fields,
+  escaped quotes, CRLF, primitive number/boolean conversion, unique headers,
+  consistent column counts, a 10,000-row cap, and a 200 KiB request-safe cap.
+- Uploaded files are converted to JSON in the browser and sent through the
+  existing `input` request field. No filesystem capability was added to the
+  runtime or orchestrator.
+- Browser validation covered JSON text submission, a real JSON report upload,
+  and a real six-row CSV upload. JavaScript syntax and the existing Python and
+  Rust Agent Host suites remain part of the final gate.
+
+## Structured-input sample
+
+- Added `demo/agent/sample-sales-data.json` with eight typed sales records for
+  exercising count, sum, average, maximum, grouping, filtering, and table
+  rendering through the JSON upload UI.
+
+## Remote frontend reconciliation
+
+- Rebased the structured-input UI onto the remote frontend update from
+  `e24aed7`, preserving its structured response parsing, explicit unsupported
+  RenderTree feedback, and `/api/agent` fixed-mode fallback.
+- Both the primary DeepSeek request and the fixed-mode retry now retain
+  `input` and `inputMeta`, so JSON/CSV data is not dropped during fallback.
