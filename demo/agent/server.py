@@ -1,48 +1,66 @@
 #!/usr/bin/env python3
-"""Small, dependency-free AgentJS demo server."""
+"""Dependency-free AgentJS orchestrator and HTTP adapter.
+
+This module owns only the model/orchestration layer. The JavaScript `agent`
+object below is a temporary compatibility adapter until the Rust Agent Host
+publishes render events in ExecutionReport.
+"""
 
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+import uuid
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 RESULT_MARKER = "__AGENTJS_RESULT__"
 MAX_REQUEST_BYTES = 256 * 1024
-MAX_TASK_CHARS = 2_000
+MAX_PROMPT_CHARS = 2_000
 MAX_CODE_CHARS = 16_000
+MAX_HISTORY_MESSAGES = 20
+MAX_SESSIONS = 128
+MAX_RENDER_BYTES = 64 * 1024
+MAX_RENDER_DEPTH = 8
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_API_URL = "https://api.deepseek.com/chat/completions"
-SCENARIOS = {"json_analysis", "rule_processing"}
+ALLOWED_RENDER_TYPES = {"panel", "text", "metrics", "statuses", "table", "list"}
+SCENARIOS = {"json_analysis", "rule_processing", "test262_dashboard"}
+SESSION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 
-SYSTEM_PROMPT = """You generate a small JavaScript function body for AgentJS.
-Return one JSON object with exactly these string fields: plan and code.
-The variable `input` contains JSON data. The code is inserted into a function body
-and MUST end by returning a JSON-serializable value. Use conservative ES2015
-JavaScript: functions, let/const/var, if, for/for-of, Array, Object, JSON, Math,
-String, Number, Boolean, map/filter/reduce/sort. Do not use DOM, fetch, network,
-filesystem, Node.js APIs, import/export, eval, Function, WebAssembly, Worker,
-dynamic code generation, console, print, async/await, or promises. Do not wrap code
-in Markdown. Keep the code deterministic and do not mutate input."""
+SYSTEM_PROMPT = """You are the code generator for AgentJS, a constrained JavaScript runtime.
+Return one JSON object with exactly two string fields: title and code.
+The variable `input` contains JSON data. The code is inserted into a function body.
+It MUST call agent.render(tree) exactly once and MUST return a JSON-serializable value.
+The render tree root must use one of: panel, text, metrics, statuses, table, list.
+Children may only use those same types. Keep nesting at most 6 levels.
+Use conservative ES2015 JavaScript: functions, let/const/var, if, for, Array,
+Object, JSON, Math, String, Number, Boolean, map/filter/reduce/sort.
+Do not use DOM, HTML, CSS, fetch, network, filesystem, Node.js APIs, import/export,
+eval, Function, WebAssembly, Worker, dynamic code generation, console, print,
+async/await, or promises. Do not wrap code in Markdown. Keep it deterministic and
+do not mutate input. Never claim that the code ran; only generate the script."""
 
 
-OFFLINE_PROGRAMS = {
+FIXED_PROGRAMS = {
     "json_analysis": {
-        "plan": "遍历订单，按地区聚合销售额，再按销售额降序返回。",
+        "title": "区域销售分析",
         "code": """const orders = Array.isArray(input.orders) ? input.orders : [];
 const totals = {};
 for (let i = 0; i < orders.length; i += 1) {
@@ -55,20 +73,50 @@ const rows = Object.keys(totals).map(function (region) {
   return { region: region, total: totals[region] };
 });
 rows.sort(function (left, right) { return right.total - left.total; });
-return rows.slice(0, 3);""",
+const top = rows.slice(0, 3);
+agent.render({
+  type: "panel",
+  title: "区域销售 Top 3",
+  children: [{ type: "table", columns: ["region", "total"], rows: top }]
+});
+return top;""",
     },
     "rule_processing": {
-        "plan": "逐条校验订单金额，并按会员等级计算折扣后的应付金额。",
+        "title": "订单规则计算",
         "code": """const orders = Array.isArray(input.orders) ? input.orders : [];
-return orders.map(function (order) {
+const results = orders.map(function (order) {
   const amount = Number(order.amount || 0);
   const rate = order.member === "gold" ? 0.85 : (order.member === "silver" ? 0.92 : 1);
-  return {
-    id: order.id,
-    valid: amount >= 0,
-    payable: amount >= 0 ? Math.round(amount * rate * 100) / 100 : null
-  };
-});""",
+  return { id: order.id, valid: amount >= 0, payable: amount >= 0 ? Math.round(amount * rate * 100) / 100 : null };
+});
+agent.render({
+  type: "panel",
+  title: "订单处理结果",
+  children: [{ type: "statuses", items: results }]
+});
+return results;""",
+    },
+    "test262_dashboard": {
+        "title": "Test262 兼容性分析",
+        "code": """const modules = Array.isArray(input.modules) ? input.modules : [];
+const rows = modules.map(function (item) {
+  const total = Number(item.total || 0);
+  const passed = Number(item.passed || 0);
+  const rate = total > 0 ? Math.round(passed * 10000 / total) / 100 : 0;
+  return { module: String(item.module || "unknown"), passed: passed, total: total, rate: rate };
+});
+const passed = rows.reduce(function (sum, row) { return sum + row.passed; }, 0);
+const total = rows.reduce(function (sum, row) { return sum + row.total; }, 0);
+const rate = total > 0 ? Math.round(passed * 10000 / total) / 100 : 0;
+agent.render({
+  type: "panel",
+  title: "Test262 Result",
+  children: [
+    { type: "metrics", items: [{ label: "Passed", value: passed }, { label: "Total", value: total }, { label: "Rate", value: String(rate) + "%" }] },
+    { type: "table", columns: ["module", "passed", "total", "rate"], rows: rows }
+  ]
+});
+return String(rate) + "%";""",
     },
 }
 
@@ -81,96 +129,204 @@ class AgentError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Message:
+    role: str
+    content: str
+
+
+@dataclass(frozen=True)
+class GeneratedScript:
+    code: str
+    title: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentRequest:
+    session_id: str
+    prompt: str
+    input: Any
+    scenario: str
+    mode: str
+
+
+@dataclass(frozen=True)
 class ExecutionResult:
-    result: Any
+    value: Any
+    logs: list[str]
+    render_events: list[dict[str, Any]]
     elapsed_ms: float
-    stdout: list[str]
+
+    @property
+    def result(self) -> Any:  # Backward-compatible alias used by the old UI/tests.
+        return self.value
 
 
-def validate_request(payload: Any) -> tuple[str, str, Any, str]:
+@dataclass
+class Session:
+    messages: list[Message] = field(default_factory=list)
+    turns: list[dict[str, Any]] = field(default_factory=list)
+
+
+class CodeGenerator(Protocol):
+    def generate(self, history: list[Message], request: AgentRequest) -> GeneratedScript: ...
+
+
+class SessionStore:
+    def __init__(self, capacity: int = MAX_SESSIONS):
+        self.capacity = capacity
+        self._sessions: OrderedDict[str, Session] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def history(self, session_id: str) -> list[Message]:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            return list(session.messages[-MAX_HISTORY_MESSAGES:]) if session else []
+
+    def append(self, session_id: str, prompt: str, script: GeneratedScript, turn: dict[str, Any]) -> None:
+        with self._lock:
+            session = self._sessions.setdefault(session_id, Session())
+            session.messages.extend([
+                Message("user", prompt),
+                Message("assistant", json.dumps({"title": script.title, "code": script.code}, ensure_ascii=False)),
+            ])
+            session.messages = session.messages[-MAX_HISTORY_MESSAGES:]
+            session.turns.append(turn)
+            session.turns = session.turns[-MAX_HISTORY_MESSAGES // 2:]
+            self._sessions.move_to_end(session_id)
+            while len(self._sessions) > self.capacity:
+                self._sessions.popitem(last=False)
+
+    def snapshot(self, session_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            return {
+                "sessionId": session_id,
+                "messages": [{"role": item.role, "content": item.content} for item in session.messages],
+                "turns": list(session.turns),
+            }
+
+
+SESSION_STORE = SessionStore()
+
+
+class FixedCodeGenerator:
+    def generate(self, history: list[Message], request: AgentRequest) -> GeneratedScript:
+        del history
+        program = FIXED_PROGRAMS[request.scenario]
+        return GeneratedScript(code=program["code"], title=program["title"])
+
+
+class DeepSeekCodeGenerator:
+    def generate(self, history: list[Message], request: AgentRequest) -> GeneratedScript:
+        api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        if not api_key:
+            raise AgentError("missing_api_key", "请先设置 DEEPSEEK_API_KEY", 503)
+        sample = json.dumps(request.input, ensure_ascii=False, separators=(",", ":"))
+        user_prompt = (
+            f"Scenario: {request.scenario}\nUser prompt: {request.prompt}\n"
+            f"Input JSON sample: {sample[:12_000]}\n"
+            "Return valid JSON containing title and code."
+        )
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        messages.extend({"role": item.role, "content": item.content} for item in history[-MAX_HISTORY_MESSAGES:])
+        messages.append({"role": "user", "content": user_prompt})
+        request_body = json.dumps({
+            "model": os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
+            "messages": messages,
+            "response_format": {"type": "json_object"},
+            "thinking": {"type": "disabled"},
+            "max_tokens": 2_500,
+            "stream": False,
+        }).encode("utf-8")
+        api_request = urllib.request.Request(
+            os.environ.get("DEEPSEEK_API_URL", DEFAULT_API_URL),
+            data=request_body,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(api_request, timeout=45) as response:
+                body = json.load(response)
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")[:500]
+            raise AgentError("deepseek_http", f"DeepSeek API {error.code}: {detail}", 502) from error
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+            raise AgentError("deepseek_unavailable", f"DeepSeek API 调用失败: {error}", 502) from error
+        try:
+            content = body["choices"][0]["message"]["content"]
+            generated = json.loads(content)
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
+            raise AgentError("model_output", "无法解析 DeepSeek 返回内容", 502) from error
+        return validate_generated_script(generated, require_render=True)
+
+
+def validate_request(payload: Any) -> AgentRequest:
     if not isinstance(payload, dict):
         raise AgentError("invalid_request", "请求体必须是 JSON 对象")
-    task = payload.get("task")
-    scenario = payload.get("scenario", "json_analysis")
-    mode = payload.get("mode", "offline")
-    data = payload.get("input")
-    if not isinstance(task, str) or not task.strip():
-        raise AgentError("invalid_task", "task 必须是非空字符串")
-    if len(task) > MAX_TASK_CHARS:
-        raise AgentError("task_too_large", f"task 不能超过 {MAX_TASK_CHARS} 个字符")
+    prompt = payload.get("prompt", payload.get("task"))
+    session_id = payload.get("sessionId") or f"demo-{uuid.uuid4().hex[:12]}"
+    scenario = payload.get("scenario", "test262_dashboard")
+    raw_mode = payload.get("mode", "fixed")
+    mode = "fixed" if raw_mode == "offline" else raw_mode
+    data = payload.get("input", {})
+    if not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(session_id):
+        raise AgentError("invalid_session", "sessionId 只能包含字母、数字、点、下划线和连字符，长度不超过 64")
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise AgentError("invalid_prompt", "prompt 必须是非空字符串")
+    if len(prompt) > MAX_PROMPT_CHARS:
+        raise AgentError("prompt_too_large", f"prompt 不能超过 {MAX_PROMPT_CHARS} 个字符")
     if scenario not in SCENARIOS:
         raise AgentError("invalid_scenario", "不支持的场景")
-    if mode not in {"offline", "deepseek"}:
-        raise AgentError("invalid_mode", "mode 必须是 offline 或 deepseek")
-    if data is None:
-        raise AgentError("invalid_input", "input 不能为空")
-    return task.strip(), scenario, data, mode
+    if mode not in {"fixed", "deepseek"}:
+        raise AgentError("invalid_mode", "mode 必须是 fixed、offline 或 deepseek")
+    return AgentRequest(session_id, prompt.strip(), data, scenario, mode)
+
+
+def validate_generated_script(program: Any, require_render: bool = False) -> GeneratedScript:
+    if isinstance(program, GeneratedScript):
+        program = {"code": program.code, "title": program.title}
+    if not isinstance(program, dict):
+        raise AgentError("model_output", "模型没有返回 JSON 对象", 502)
+    code = program.get("code")
+    title = program.get("title", program.get("plan"))
+    if not isinstance(code, str) or (title is not None and not isinstance(title, str)):
+        raise AgentError("model_output", "模型输出缺少 code 或 title 类型错误", 502)
+    code = code.strip()
+    if not code or len(code) > MAX_CODE_CHARS:
+        raise AgentError("model_output", "模型代码为空或过长", 502)
+    forbidden = (
+        "import(", "import ", "export ", "require(", "eval(", "Function(", "fetch(",
+        "XMLHttpRequest", "WebAssembly", "Worker(", "process.", "Deno.", "Bun.",
+        "print(", "console.", "document.", "window.", "innerHTML",
+    )
+    if any(token in code.replace("\t", " ") for token in forbidden):
+        raise AgentError("unsafe_code", "模型代码包含禁止的宿主、DOM 或动态执行能力", 502)
+    if "return" not in code:
+        raise AgentError("model_output", "模型代码必须返回结果", 502)
+    if require_render:
+        render_calls = re.sub(r"\s+", "", code).count("agent.render(")
+        if render_calls != 1:
+            raise AgentError("model_output", "模型代码必须且只能调用一次 agent.render(tree)", 502)
+    return GeneratedScript(code=code, title=title.strip() if title else None)
 
 
 def validate_generated_program(program: Any) -> dict[str, str]:
-    if not isinstance(program, dict):
-        raise AgentError("model_output", "模型没有返回 JSON 对象", 502)
-    plan = program.get("plan")
-    code = program.get("code")
-    if not isinstance(plan, str) or not isinstance(code, str):
-        raise AgentError("model_output", "模型输出缺少 plan 或 code", 502)
-    if not code.strip() or len(code) > MAX_CODE_CHARS:
-        raise AgentError("model_output", "模型代码为空或过长", 502)
-    forbidden = ("import(", "import ", "export ", "require(", "eval(", "Function(",
-                 "fetch(", "XMLHttpRequest", "WebAssembly", "Worker(", "process.",
-                 "Deno.", "Bun.", "print(", "console.")
-    compact = code.replace("\t", " ")
-    if any(token in compact for token in forbidden):
-        raise AgentError("unsafe_code", "模型代码包含禁止的宿主或动态执行能力", 502)
-    if "return" not in code:
-        raise AgentError("model_output", "模型代码必须返回结果", 502)
-    return {"plan": plan.strip(), "code": code.strip()}
+    """Compatibility facade for the first demo revision."""
+    script = validate_generated_script(program)
+    return {"plan": script.title or "", "code": script.code}
 
 
 def generate_offline(scenario: str) -> dict[str, str]:
-    return dict(OFFLINE_PROGRAMS[scenario])
+    program = FIXED_PROGRAMS[scenario]
+    return {"plan": program["title"], "code": program["code"]}
 
 
 def generate_with_deepseek(task: str, scenario: str, data: Any) -> dict[str, str]:
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    if not api_key:
-        raise AgentError("missing_api_key", "请先设置 DEEPSEEK_API_KEY", 503)
-    sample = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    user_prompt = (
-        f"Scenario: {scenario}\nUser task: {task}\n"
-        f"Input JSON sample: {sample[:12_000]}\n"
-        "Respond with valid JSON containing plan and code."
-    )
-    request_body = json.dumps({
-        "model": os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "response_format": {"type": "json_object"},
-        "thinking": {"type": "disabled"},
-        "max_tokens": 2_000,
-        "stream": False,
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        os.environ.get("DEEPSEEK_API_URL", DEFAULT_API_URL),
-        data=request_body,
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=45) as response:
-            body = json.load(response)
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")[:500]
-        raise AgentError("deepseek_http", f"DeepSeek API {error.code}: {detail}", 502) from error
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
-        raise AgentError("deepseek_unavailable", f"DeepSeek API 调用失败: {error}", 502) from error
-    try:
-        content = body["choices"][0]["message"]["content"]
-        return validate_generated_program(json.loads(content))
-    except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
-        raise AgentError("model_output", "无法解析 DeepSeek 返回内容", 502) from error
+    request = AgentRequest("compat", task, data, scenario, "deepseek")
+    script = DeepSeekCodeGenerator().generate([], request)
+    return {"plan": script.title or "", "code": script.code}
 
 
 def find_agentjs_binary() -> Path:
@@ -188,11 +344,33 @@ def build_wrapper(code: str, data: Any) -> str:
     encoded_input = json.dumps(input_json, ensure_ascii=False)
     return f'''"use strict";
 const input = JSON.parse({encoded_input});
-const __agentResult = (function (input) {{
+const __agentRenderEvents = [];
+const agent = Object.freeze({{
+  render: function (tree) {{ __agentRenderEvents.push(tree); }}
+}});
+const __agentValue = (function (input, agent) {{
 {code}
-}})(input);
-"{RESULT_MARKER}" + JSON.stringify(__agentResult);
+}})(input, agent);
+"{RESULT_MARKER}" + JSON.stringify({{
+  value: __agentValue,
+  logs: [],
+  renderEvents: __agentRenderEvents
+}});
 '''
+
+
+def validate_render_tree(tree: Any, depth: int = 0) -> dict[str, Any]:
+    if depth > MAX_RENDER_DEPTH or not isinstance(tree, dict):
+        raise AgentError("render_invalid", "RenderTree 类型错误或嵌套过深", 422)
+    tree_type = tree.get("type")
+    if tree_type not in ALLOWED_RENDER_TYPES:
+        raise AgentError("render_invalid", f"不支持的 RenderTree 类型: {tree_type}", 422)
+    children = tree.get("children", [])
+    if not isinstance(children, list):
+        raise AgentError("render_invalid", "RenderTree children 必须是数组", 422)
+    for child in children:
+        validate_render_tree(child, depth + 1)
+    return tree
 
 
 def execute_agentjs(code: str, data: Any) -> ExecutionResult:
@@ -205,13 +383,8 @@ def execute_agentjs(code: str, data: Any) -> ExecutionResult:
             handle.write(source)
             temporary_path = handle.name
         completed = subprocess.run(
-            [str(binary), "run", temporary_path],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=3,
-            check=False,
+            [str(binary), "run", temporary_path], cwd=ROOT, capture_output=True,
+            text=True, encoding="utf-8", timeout=3, check=False,
         )
     except subprocess.TimeoutExpired as error:
         raise AgentError("execution_timeout", "AgentJS 执行超过 3 秒限制", 422) from error
@@ -227,28 +400,71 @@ def execute_agentjs(code: str, data: Any) -> ExecutionResult:
     if marked is None:
         raise AgentError("result_missing", "AgentJS 没有返回结构化结果", 422)
     try:
-        result = json.loads(marked)
+        envelope = json.loads(marked)
     except json.JSONDecodeError as error:
         raise AgentError("result_invalid", "AgentJS 返回结果不是有效 JSON", 422) from error
-    return ExecutionResult(result=result, elapsed_ms=elapsed_ms, stdout=lines)
+    if not isinstance(envelope, dict):
+        raise AgentError("result_invalid", "AgentJS 返回协议不是对象", 422)
+    render_events = envelope.get("renderEvents", [])
+    logs = envelope.get("logs", [])
+    if not isinstance(render_events, list) or not isinstance(logs, list):
+        raise AgentError("result_invalid", "AgentJS 日志或渲染事件格式错误", 422)
+    if len(json.dumps(render_events, ensure_ascii=False).encode("utf-8")) > MAX_RENDER_BYTES:
+        raise AgentError("render_too_large", "RenderTree 超过 64 KiB", 422)
+    validated_events = [validate_render_tree(tree) for tree in render_events]
+    return ExecutionResult(envelope.get("value"), [str(line) for line in logs], validated_events, elapsed_ms)
 
 
-def run_agent(payload: Any) -> dict[str, Any]:
-    task, scenario, data, mode = validate_request(payload)
+def run_agent(payload: Any, store: SessionStore = SESSION_STORE) -> dict[str, Any]:
+    request = validate_request(payload)
+    history = store.history(request.session_id)
+    generator: CodeGenerator = FixedCodeGenerator() if request.mode == "fixed" else DeepSeekCodeGenerator()
     model_started = time.perf_counter()
-    program = generate_offline(scenario) if mode == "offline" else generate_with_deepseek(task, scenario, data)
-    program = validate_generated_program(program)
+    script = validate_generated_script(generator.generate(history, request), require_render=True)
     model_ms = (time.perf_counter() - model_started) * 1_000
-    execution = execute_agentjs(program["code"], data)
-    return {
+    execution = execute_agentjs(script.code, request.input)
+    render = execution.render_events[-1] if execution.render_events else None
+    response = {
         "ok": True,
-        "scenario": scenario,
-        "mode": mode,
-        "model": "offline-template" if mode == "offline" else os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
-        "plan": program["plan"],
-        "code": program["code"],
-        "result": execution.result,
+        "sessionId": request.session_id,
+        "prompt": request.prompt,
+        "code": script.code,
+        "execution": {
+            "value": execution.value,
+            "logs": execution.logs,
+            "elapsedMs": round(execution.elapsed_ms, 2),
+        },
+        "render": render,
+        "error": None,
+        # Compatibility fields for the first static UI. Student 3 can remove these.
+        "scenario": request.scenario,
+        "mode": "offline" if request.mode == "fixed" else request.mode,
+        "model": "fixed-script" if request.mode == "fixed" else os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
+        "plan": script.title or "",
+        "result": execution.value,
         "metrics": {"modelMs": round(model_ms, 2), "agentjsMs": round(execution.elapsed_ms, 2)},
+    }
+    store.append(request.session_id, request.prompt, script, {
+        "prompt": request.prompt,
+        "code": script.code,
+        "render": render,
+        "logs": execution.logs,
+        "result": execution.value,
+        "elapsedMs": round(execution.elapsed_ms, 2),
+    })
+    return response
+
+
+def error_response(error: AgentError, payload: Any = None) -> dict[str, Any]:
+    payload = payload if isinstance(payload, dict) else {}
+    return {
+        "ok": False,
+        "sessionId": payload.get("sessionId"),
+        "prompt": payload.get("prompt", payload.get("task")),
+        "code": None,
+        "execution": None,
+        "render": None,
+        "error": {"code": error.code, "message": str(error)},
     }
 
 
@@ -256,10 +472,30 @@ class AgentHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, directory=str(STATIC_ROOT), **kwargs)
 
+    def do_GET(self) -> None:
+        if self.path == "/api/health":
+            self.send_json(HTTPStatus.OK, {
+                "ok": True,
+                "deepseekConfigured": bool(os.environ.get("DEEPSEEK_API_KEY", "").strip()),
+                "model": os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
+                "agentjsAvailable": any(path.is_file() for path in [ROOT / "target/release/agentjs.exe", ROOT / "target/release/agentjs"]),
+            })
+            return
+        if self.path.startswith("/api/sessions/"):
+            session_id = self.path.removeprefix("/api/sessions/")
+            snapshot = SESSION_STORE.snapshot(session_id)
+            if snapshot is None:
+                self.send_json(HTTPStatus.NOT_FOUND, error_response(AgentError("session_not_found", "会话不存在", 404)))
+            else:
+                self.send_json(HTTPStatus.OK, {"ok": True, **snapshot})
+            return
+        super().do_GET()
+
     def do_POST(self) -> None:
         if self.path != "/api/agent":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
+        payload: Any = None
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0 or length > MAX_REQUEST_BYTES:
@@ -267,11 +503,13 @@ class AgentHandler(SimpleHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             self.send_json(HTTPStatus.OK, run_agent(payload))
         except json.JSONDecodeError:
-            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": {"code": "invalid_json", "message": "请求不是有效 JSON"}})
+            error = AgentError("invalid_json", "请求不是有效 JSON", 400)
+            self.send_json(error.status, error_response(error, payload))
         except AgentError as error:
-            self.send_json(error.status, {"ok": False, "error": {"code": error.code, "message": str(error)}})
-        except Exception as error:  # Keep one bad request from terminating the demo.
-            self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": {"code": "internal", "message": str(error)}})
+            self.send_json(error.status, error_response(error, payload))
+        except Exception:
+            error = AgentError("internal", "编排服务内部错误", 500)
+            self.send_json(error.status, error_response(error, payload))
 
     def send_json(self, status: int, payload: Any) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -284,13 +522,13 @@ class AgentHandler(SimpleHTTPRequestHandler):
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="AgentJS small-agent demo")
+    parser = argparse.ArgumentParser(description="AgentJS orchestrator demo")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), AgentHandler)
     print(f"AgentJS demo: http://{args.host}:{args.port}")
-    print("Mode: DeepSeek enabled" if os.environ.get("DEEPSEEK_API_KEY") else "Mode: offline (set DEEPSEEK_API_KEY for DeepSeek V4 Pro)")
+    print("Mode: DeepSeek enabled" if os.environ.get("DEEPSEEK_API_KEY", "").strip() else "Mode: fixed scripts (set DEEPSEEK_API_KEY for DeepSeek V4 Pro)")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

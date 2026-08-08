@@ -1,5 +1,5 @@
-import json
 import io
+import json
 import os
 import sys
 import unittest
@@ -10,42 +10,170 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import server
 
 
-class AgentDemoTests(unittest.TestCase):
+class AgentProtocolTests(unittest.TestCase):
+    def test_accepts_frozen_request_protocol(self):
+        request = server.validate_request({
+            "sessionId": "demo-001",
+            "prompt": "生成面板",
+            "scenario": "test262_dashboard",
+            "mode": "fixed",
+        })
+        self.assertEqual(request.session_id, "demo-001")
+        self.assertEqual(request.prompt, "生成面板")
+
+    def test_legacy_request_maps_to_frozen_protocol(self):
+        request = server.validate_request({
+            "task": "统计",
+            "scenario": "json_analysis",
+            "mode": "offline",
+            "input": {"orders": []},
+        })
+        self.assertEqual(request.prompt, "统计")
+        self.assertEqual(request.mode, "fixed")
+        self.assertTrue(request.session_id.startswith("demo-"))
+
     def test_rejects_unknown_scenario(self):
         with self.assertRaisesRegex(server.AgentError, "不支持"):
-            server.validate_request({"task": "x", "scenario": "browser", "input": {}})
+            server.validate_request({"prompt": "x", "scenario": "browser"})
+
+    def test_rejects_invalid_session_id(self):
+        with self.assertRaisesRegex(server.AgentError, "sessionId"):
+            server.validate_request({"sessionId": "../escape", "prompt": "x"})
 
     def test_rejects_host_capability_in_generated_code(self):
         with self.assertRaisesRegex(server.AgentError, "禁止"):
-            server.validate_generated_program({"plan": "x", "code": "return fetch('x');"})
+            server.validate_generated_script({"title": "x", "code": "return fetch('x');"})
 
-    def test_wrapper_round_trips_untrusted_input_as_json_string(self):
-        source = server.build_wrapper("return input;", {"text": "</script> ' 中文"})
+    def test_requires_render_call_for_orchestrated_script(self):
+        with self.assertRaisesRegex(server.AgentError, "agent.render"):
+            server.validate_generated_script({"title": "x", "code": "return 1;"}, require_render=True)
+        with self.assertRaisesRegex(server.AgentError, "只能调用一次"):
+            server.validate_generated_script({
+                "title": "x",
+                "code": "agent.render({type:'text'}); agent.render({type:'text'}); return 1;",
+            }, require_render=True)
+
+    def test_wrapper_round_trips_input_and_installs_render_adapter(self):
+        source = server.build_wrapper(
+            "agent.render({type: 'text'}); return input;",
+            {"text": "</script> ' 中文"},
+        )
         self.assertIn("JSON.parse", source)
+        self.assertIn("Object.freeze", source)
+        self.assertIn("renderEvents", source)
         self.assertIn(server.RESULT_MARKER, source)
         self.assertNotIn("const input = {", source)
 
+    def test_render_tree_enforces_type_and_depth(self):
+        self.assertEqual(server.validate_render_tree({"type": "panel", "children": []})["type"], "panel")
+        with self.assertRaisesRegex(server.AgentError, "不支持"):
+            server.validate_render_tree({"type": "html"})
+        tree = {"type": "panel"}
+        cursor = tree
+        for _ in range(server.MAX_RENDER_DEPTH + 1):
+            child = {"type": "panel"}
+            cursor["children"] = [child]
+            cursor = child
+        with self.assertRaisesRegex(server.AgentError, "过深"):
+            server.validate_render_tree(tree)
+
+
+class DeepSeekGeneratorTests(unittest.TestCase):
     @mock.patch("urllib.request.urlopen")
-    def test_deepseek_adapter_parses_json_output(self, urlopen):
-        content = json.dumps({"plan": "sum", "code": "return input.value;"})
+    def test_parses_json_output_and_sends_history(self, urlopen):
+        content = json.dumps({
+            "title": "sum",
+            "code": "agent.render({type: 'text', value: input.value}); return input.value;",
+        })
         urlopen.return_value = io.BytesIO(json.dumps({
             "choices": [{"message": {"content": content}}]
         }).encode("utf-8"))
-        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}, clear=False):
-            program = server.generate_with_deepseek("return value", "json_analysis", {"value": 3})
-        self.assertEqual(program["code"], "return input.value;")
-        request = urlopen.call_args.args[0]
-        body = json.loads(request.data)
+        request = server.AgentRequest("demo-1", "return value", {"value": 3}, "json_analysis", "deepseek")
+        history = [server.Message("user", "previous"), server.Message("assistant", "previous code")]
+        with mock.patch.dict(os.environ, {"DEEPSEEK_API_KEY": " test-key "}, clear=False):
+            script = server.DeepSeekCodeGenerator().generate(history, request)
+        self.assertEqual(script.title, "sum")
+        api_request = urlopen.call_args.args[0]
+        body = json.loads(api_request.data)
         self.assertEqual(body["model"], "deepseek-v4-pro")
         self.assertEqual(body["response_format"], {"type": "json_object"})
+        self.assertEqual(body["messages"][1]["content"], "previous")
+        self.assertNotIn("test-key", api_request.data.decode("utf-8"))
+
+    def test_missing_key_is_structured_error(self):
+        request = server.AgentRequest("demo-1", "x", {}, "json_analysis", "deepseek")
+        with mock.patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(server.AgentError, "DEEPSEEK_API_KEY") as raised:
+                server.DeepSeekCodeGenerator().generate([], request)
+        self.assertEqual(raised.exception.code, "missing_api_key")
+
+
+class SessionStoreTests(unittest.TestCase):
+    def test_history_is_bounded_and_snapshot_contains_turns(self):
+        store = server.SessionStore(capacity=2)
+        script = server.GeneratedScript("agent.render({type:'text'}); return 1;", "one")
+        for index in range(15):
+            store.append("demo", f"p{index}", script, {"result": index})
+        self.assertEqual(len(store.history("demo")), server.MAX_HISTORY_MESSAGES)
+        snapshot = store.snapshot("demo")
+        self.assertEqual(len(snapshot["turns"]), server.MAX_HISTORY_MESSAGES // 2)
+        self.assertEqual(snapshot["turns"][-1]["result"], 14)
+
+    def test_session_capacity_evicts_least_recent(self):
+        store = server.SessionStore(capacity=2)
+        script = server.GeneratedScript("agent.render({type:'text'}); return 1;")
+        for session_id in ["a", "b", "c"]:
+            store.append(session_id, "p", script, {})
+        self.assertIsNone(store.snapshot("a"))
+        self.assertIsNotNone(store.snapshot("c"))
+
+
+class AgentOrchestratorTests(unittest.TestCase):
+    @mock.patch.object(server, "execute_agentjs")
+    def test_fixed_chain_returns_complete_response(self, execute):
+        execute.return_value = server.ExecutionResult(
+            value="92%",
+            logs=["checked"],
+            render_events=[{"type": "panel", "title": "Result", "children": []}],
+            elapsed_ms=4.5,
+        )
+        store = server.SessionStore()
+        response = server.run_agent({
+            "sessionId": "demo-001",
+            "prompt": "生成结果面板",
+            "scenario": "test262_dashboard",
+            "mode": "fixed",
+            "input": {"modules": []},
+        }, store=store)
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["sessionId"], "demo-001")
+        self.assertEqual(response["execution"]["value"], "92%")
+        self.assertEqual(response["render"]["type"], "panel")
+        self.assertIsNone(response["error"])
+        self.assertEqual(len(store.snapshot("demo-001")["turns"]), 1)
 
     @mock.patch.object(server, "execute_agentjs")
-    def test_offline_agent_returns_protocol_shape(self, execute):
-        execute.return_value = server.ExecutionResult(result=[{"region": "华东", "total": 2}], elapsed_ms=4.5, stdout=[])
-        response = server.run_agent({"task": "统计", "scenario": "json_analysis", "input": {"orders": []}, "mode": "offline"})
-        self.assertTrue(response["ok"])
-        self.assertEqual(response["model"], "offline-template")
-        self.assertEqual(response["result"][0]["region"], "华东")
+    def test_legacy_response_aliases_remain_available(self, execute):
+        execute.return_value = server.ExecutionResult([], [], [], 2.0)
+        response = server.run_agent({
+            "task": "统计",
+            "scenario": "json_analysis",
+            "mode": "offline",
+            "input": {"orders": []},
+        }, store=server.SessionStore())
+        self.assertEqual(response["mode"], "offline")
+        self.assertEqual(response["result"], [])
+        self.assertIn("agentjsMs", response["metrics"])
+
+    def test_error_response_uses_frozen_shape(self):
+        response = server.error_response(
+            server.AgentError("execution_failed", "bad", 422),
+            {"sessionId": "demo-1", "prompt": "x"},
+        )
+        self.assertFalse(response["ok"])
+        self.assertIsNone(response["execution"])
+        self.assertIsNone(response["render"])
+        self.assertEqual(response["error"]["code"], "execution_failed")
 
 
 if __name__ == "__main__":
