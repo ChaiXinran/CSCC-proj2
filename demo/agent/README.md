@@ -33,6 +33,20 @@ Chat requests that omit `mode` automatically use DeepSeek when
 `DEEPSEEK_API_KEY` is configured; otherwise they use the fixed-script demo.
 Explicit `fixed`, `offline`, and `deepseek` requests keep their selected mode.
 
+## Input data
+
+Expand **Optional input data** above the prompt box to attach structured data.
+You can either paste JSON directly or choose a `.json`/`.csv` file. CSV files
+must have a non-empty, unique header row and are converted in the browser to:
+
+```json
+{"rows": [{"name": "Product A", "sales": 120}]}
+```
+
+The current limits are 200 KiB for parsed input and 10,000 CSV data rows. The parsed
+value is sent as the `/api/agent` request's `input` field; AgentJS does not
+receive filesystem access or a local file path.
+
 ## Boundaries
 
 - Request body: at most 256 KiB; task: at most 2,000 characters.

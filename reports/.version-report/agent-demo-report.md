@@ -84,3 +84,17 @@ unaffected by this routing-only correction.
 - Added focused nested-tree coverage for both aliases. This changes only the
   presentation protocol adapter; AgentJS execution and Test262 semantics are
   unchanged.
+
+## Structured input UI
+
+- Added an optional JSON text editor to the chat composer with send-time parse
+  validation and a clear action.
+- Added browser-local `.json` and `.csv` upload. CSV supports quoted fields,
+  escaped quotes, CRLF, primitive number/boolean conversion, unique headers,
+  consistent column counts, a 10,000-row cap, and a 200 KiB request-safe cap.
+- Uploaded files are converted to JSON in the browser and sent through the
+  existing `input` request field. No filesystem capability was added to the
+  runtime or orchestrator.
+- Browser validation covered JSON text submission, a real JSON report upload,
+  and a real six-row CSV upload. JavaScript syntax and the existing Python and
+  Rust Agent Host suites remain part of the final gate.
