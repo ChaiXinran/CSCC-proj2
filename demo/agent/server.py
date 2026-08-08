@@ -307,14 +307,35 @@ class DeepSeekCodeGenerator:
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")[:500]
             raise AgentError("deepseek_http", f"DeepSeek API {error.code}: {detail}", 502) from error
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as error:
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError) as error:
             raise AgentError("deepseek_unavailable", f"DeepSeek API 调用失败: {error}", 502) from error
         try:
             content = body["choices"][0]["message"]["content"]
-            generated = json.loads(content)
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as error:
+            generated = parse_model_json(content)
+        except (KeyError, IndexError, TypeError, ValueError) as error:
             raise AgentError("model_output", "无法解析 DeepSeek 返回内容", 502) from error
         return validate_generated_script(generated, require_render=True)
+
+
+def parse_model_json(content: Any) -> Any:
+    """Parse model JSON with tolerance for Markdown fences and short preambles."""
+    if not isinstance(content, str):
+        raise ValueError("model content must be a string")
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, count=1, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text, count=1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as original:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise ValueError("model output does not contain a JSON object") from original
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError as error:
+            raise ValueError("model output contains invalid JSON") from error
 
 
 def validate_request(payload: Any) -> AgentRequest:
@@ -411,7 +432,8 @@ const input = JSON.parse({encoded_input});
 const __agentValue = (function () {{
 {code}
 }})();
-"{RESULT_MARKER}" + JSON.stringify(__agentValue);
+const __agentJson = JSON.stringify(__agentValue === undefined ? null : __agentValue);
+"{RESULT_MARKER}" + (__agentJson === undefined ? "null" : __agentJson);
 '''
 
 
@@ -443,15 +465,27 @@ def execute_agentjs(code: str, data: Any) -> ExecutionResult:
         with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as handle:
             handle.write(source)
             temporary_path = handle.name
-        completed = subprocess.run(
-            [str(binary), "run", temporary_path], cwd=binary.parent, capture_output=True,
-            text=True, encoding="utf-8", timeout=3, check=False,
-        )
+        try:
+            completed = subprocess.run(
+                [str(binary), "run", temporary_path], cwd=ROOT, capture_output=True,
+                text=True, encoding="utf-8", timeout=3, check=False,
+            )
+        except FileNotFoundError as error:
+            raise AgentError("engine_missing", "AgentJS release executable disappeared before execution", 503) from error
+        except OSError as error:
+            raise AgentError("engine_spawn_failed", f"AgentJS process could not start: {error}", 503) from error
+        except UnicodeError as error:
+            raise AgentError("engine_output_invalid", "AgentJS returned non-UTF-8 output", 422) from error
     except subprocess.TimeoutExpired as error:
         raise AgentError("execution_timeout", "AgentJS 执行超过 3 秒限制", 422) from error
+    except OSError as error:
+        raise AgentError("execution_setup_failed", f"AgentJS temporary file could not be created: {error}", 503) from error
     finally:
         if temporary_path:
-            Path(temporary_path).unlink(missing_ok=True)
+            try:
+                Path(temporary_path).unlink(missing_ok=True)
+            except OSError:
+                pass
     elapsed_ms = (time.perf_counter() - started) * 1_000
     if completed.returncode != 0:
         detail = completed.stderr.strip() or completed.stdout.strip() or "未知执行错误"
@@ -565,7 +599,8 @@ class AgentHandler(SimpleHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:
-        if self.path != "/api/agent":
+        request_path = self.path.split("?", 1)[0]
+        if request_path != "/api/agent":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         payload: Any = None

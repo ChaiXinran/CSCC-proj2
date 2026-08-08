@@ -28,9 +28,8 @@
 
     * { box-sizing: border-box; }
     html, body {
-      width: 100%;
       height: 100%;
-      overflow: hidden;
+      min-height: 100%;
     }
 
     body {
@@ -38,6 +37,7 @@
       min-width: 320px;
       background: var(--paper);
       color: var(--ink);
+      overflow: hidden;
     }
 
     button, textarea { font: inherit; }
@@ -49,14 +49,15 @@
 
     .app {
       height: 100vh;
-      height: 100dvh;
-      min-height: 0;
-      overflow: hidden;
+      min-height: 100vh;
       display: grid;
       grid-template-rows: 58px minmax(0, 1fr);
+      overflow: hidden;
     }
 
     .topbar {
+      position: relative;
+      z-index: 2;
       display: flex;
       align-items: center;
       gap: 14px;
@@ -129,6 +130,7 @@
       overflow: hidden;
       display: grid;
       grid-template-columns: 248px minmax(0, 1fr);
+      overflow: hidden;
     }
 
     .sidebar {
@@ -183,6 +185,7 @@
       display: grid;
       grid-template-rows: minmax(0, 1fr) auto;
       background: var(--surface);
+      overflow: hidden;
     }
 
     .messages {
@@ -318,6 +321,10 @@
     .render-title { margin: 0 0 6px; font-size: 19px; line-height: 1.3; letter-spacing: 0; }
     .render-subtitle { margin: 0 0 18px; color: var(--muted); font-size: 12px; line-height: 1.55; }
     .render-text { margin: 12px 0; color: #37433b; font-size: 13px; line-height: 1.6; }
+    .render-list { margin: 12px 0; padding-left: 22px; color: #37433b; font-size: 13px; line-height: 1.7; }
+    .render-nested-panel { margin-top: 14px; padding: 12px; border: 1px solid var(--line); background: var(--surface-soft); }
+    .render-nested-title { margin: 0 0 8px; font-size: 14px; }
+    .render-unsupported { margin-top: 12px; padding: 9px 10px; border: 1px dashed #d9a8a8; color: var(--red); font-size: 12px; }
 
     .metric-grid {
       display: grid;
@@ -524,7 +531,6 @@
     const configuredApiBase = new URLSearchParams(location.search).get("apiBase");
     const API_BASE = configuredApiBase ? configuredApiBase.replace(/\/$/, "") : "";
     const AGENT_API = API_BASE + "/api/agent";
-    const EVAL_API = API_BASE + "/api/eval";
 
     const fallbackScripts = {
       compatibility: `const modules = [
@@ -624,46 +630,66 @@ return average.toFixed(2) + "%";`
       return fallbackScripts.compatibility;
     }
 
+    function chooseFallbackScenario(prompt) {
+      const text = prompt.toLowerCase();
+      if (text.includes("workflow") || text.includes("flow") || text.includes("step")) return "chat";
+      if (text.includes("table") || text.includes("transform") || text.includes("record")) return "chat";
+      return "chat";
+    }
+
+    async function parseAgentResponse(response, fallbackMessage) {
+      const raw = await response.text();
+      let payload;
+      try {
+        payload = raw ? JSON.parse(raw) : null;
+      } catch (_) {
+        throw new Error(`${fallbackMessage} (HTTP ${response.status}, invalid JSON response)`);
+      }
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.error?.message || `${fallbackMessage} (HTTP ${response.status})`);
+      }
+      return payload;
+    }
+
     async function requestAgent(prompt) {
-      let orchestratorReached = false;
       try {
         const response = await fetch(AGENT_API, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ sessionId, prompt })
         });
-        orchestratorReached = true;
-        const payload = await response.json();
-        if (!response.ok || !payload.ok) {
-          throw new Error(payload?.error?.message || "Agent orchestrator request failed");
-        }
+        const payload = await parseAgentResponse(response, "Agent orchestrator request failed");
         return normalizeAgentResponse(payload);
       } catch (error) {
-        if (orchestratorReached) throw error;
-        // Keep the Rust preset fallback only when the orchestrator is unreachable.
+        // A structured HTTP/API error is actionable and should be shown as-is.
+        if (!(error instanceof TypeError) && error?.name !== "TypeError") throw error;
       }
 
-      const code = chooseFallback(prompt);
-      const response = await fetch(EVAL_API, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain; charset=utf-8" },
-        body: code
-      });
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error?.message || "AgentJS execution failed");
+      // Retry through the same orchestrator in deterministic mode. This keeps
+      // the fallback on the supported API contract instead of relying on the
+      // Keep the fallback on the supported /api/agent contract.
+      try {
+        const response = await fetch(AGENT_API, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionId,
+            prompt,
+            scenario: chooseFallbackScenario(prompt),
+            mode: "fixed"
+          })
+        });
+        const payload = await parseAgentResponse(response, "AgentJS fallback request failed");
+        return {
+          ...normalizeAgentResponse(payload),
+          source: "fallback"
+        };
+      } catch (fallbackError) {
+        throw new Error(
+          "Agent orchestrator is unavailable. Start demo/agent/server.py and try again. " +
+          (fallbackError?.message || "network request failed")
+        );
       }
-      return {
-        ok: true,
-        code,
-        render: payload.render,
-        execution: {
-          value: payload.result,
-          logs: payload.logs || [],
-          elapsedMs: payload.elapsedMs || 0
-        },
-        source: "fallback"
-      };
     }
 
     function normalizeAgentResponse(payload) {
@@ -683,17 +709,8 @@ return average.toFixed(2) + "%";`
       };
     }
 
-    function renderNode(tree) {
-      const root = element("div", "render-root");
-      if (!tree || tree.type !== "panel") {
-        root.append(element("div", "render-panel", "No render tree was returned."));
-        return root;
-      }
-      const panel = element("div", "render-panel");
-      panel.append(element("h2", "render-title", tree.title || "Untitled result"));
-      if (tree.subtitle) panel.append(element("p", "render-subtitle", tree.subtitle));
-
-      for (const child of tree.children || []) {
+    function appendRenderChildren(panel, children) {
+      for (const child of children || []) {
         if (child.type === "metrics") {
           const grid = element("div", "metric-grid");
           for (const item of child.items || []) {
@@ -730,8 +747,31 @@ return average.toFixed(2) + "%";`
           panel.append(table);
         } else if (child.type === "text") {
           panel.append(element("p", "render-text", child.value));
+        } else if (child.type === "list") {
+          const list = element("ul", "render-list");
+          for (const item of child.items || []) list.append(element("li", "", item));
+          panel.append(list);
+        } else if (child.type === "panel") {
+          const nested = element("section", "render-nested-panel");
+          nested.append(element("h3", "render-nested-title", child.title || "Untitled section"));
+          appendRenderChildren(nested, child.children);
+          panel.append(nested);
+        } else {
+          panel.append(element("div", "render-unsupported", "Unsupported RenderTree node: " + (child.type || "unknown")));
         }
       }
+    }
+
+    function renderNode(tree) {
+      const root = element("div", "render-root");
+      if (!tree || tree.type !== "panel") {
+        root.append(element("div", "render-panel", "No render tree was returned."));
+        return root;
+      }
+      const panel = element("div", "render-panel");
+      panel.append(element("h2", "render-title", tree.title || "Untitled result"));
+      if (tree.subtitle) panel.append(element("p", "render-subtitle", tree.subtitle));
+      appendRenderChildren(panel, tree.children);
       root.append(panel);
       return root;
     }
