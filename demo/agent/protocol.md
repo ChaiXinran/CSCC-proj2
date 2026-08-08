@@ -48,6 +48,10 @@ and `list`. The Rust Agent Host is authoritative for collecting render events;
 the orchestrator validates the serialized events again at 64 KiB and eight
 levels before returning them to the frontend.
 
+Text nodes use `{ "type": "text", "value": "..." }`. For resilience at the
+model boundary, the orchestrator normalizes the common `content` and `text`
+aliases to `value` before returning the tree.
+
 ## Conversation history
 
 Successful turns append one user message and one structured assistant message.

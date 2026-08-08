@@ -86,6 +86,17 @@ class AgentProtocolTests(unittest.TestCase):
             cursor = child
         with self.assertRaisesRegex(server.AgentError, "过深"):
             server.validate_render_tree(tree)
+    def test_render_tree_normalizes_text_value_aliases(self):
+        tree = server.validate_render_tree({
+            "type": "panel",
+            "children": [
+                {"type": "text", "content": "2"},
+                {"type": "text", "text": "four"},
+            ],
+        })
+        self.assertEqual(tree["children"][0]["value"], "2")
+        self.assertNotIn("content", tree["children"][0])
+        self.assertEqual(tree["children"][1]["value"], "four")
 
 
 class DeepSeekGeneratorTests(unittest.TestCase):

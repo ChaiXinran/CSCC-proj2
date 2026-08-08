@@ -74,3 +74,13 @@ history and JSON-output path uses mocked HTTP coverage.
 Validation: Python compile PASS; orchestrator tests PASS, 17/17. No Rust source,
 Rust test or Cargo file changed, so Test262 and runtime performance are
 unaffected by this routing-only correction.
+
+## RenderTree text interoperability fix
+
+- Documented every supported RenderTree node shape in the DeepSeek system
+  prompt, including the required `value` field for text nodes.
+- Normalized model-produced text-node `content` and `text` aliases to the
+  frozen `value` field at the orchestrator boundary.
+- Added focused nested-tree coverage for both aliases. This changes only the
+  presentation protocol adapter; AgentJS execution and Test262 semantics are
+  unchanged.

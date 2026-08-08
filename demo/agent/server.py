@@ -51,6 +51,13 @@ The variable `input` contains JSON data. The code is inserted into a function bo
 It MUST call agent.render(tree) exactly once and MUST return a JSON-serializable value.
 The render tree root must be a panel. Children may only use text, metrics,
 statuses, table, list, or nested panels. Keep nesting at most 6 levels.
+Use exactly these node fields:
+- panel: {"type":"panel","title":"...","children":[...]}
+- text: {"type":"text","value":"..."}; never use content or text for its value
+- metrics: {"type":"metrics","items":[{"label":"...","value":"..."}]}
+- statuses: {"type":"statuses","items":[{"label":"...","status":"..."}]}
+- table: {"type":"table","columns":["..."],"rows":[["..."]]}
+- list: {"type":"list","items":["..."]}
 Use conservative ES2015 JavaScript: functions, let/const/var, if, for, Array,
 Object, JSON, Math, String, Number, Boolean, map/filter/reduce/sort.
 Do not use DOM, HTML, CSS, fetch, network, filesystem, Node.js APIs, import/export,
@@ -398,12 +405,17 @@ def validate_render_tree(tree: Any, depth: int = 0) -> dict[str, Any]:
     tree_type = tree.get("type")
     if tree_type not in ALLOWED_RENDER_TYPES:
         raise AgentError("render_invalid", f"不支持的 RenderTree 类型: {tree_type}", 422)
-    children = tree.get("children", [])
+    normalized = dict(tree)
+    if tree_type == "text" and "value" not in normalized:
+        for alias in ("content", "text"):
+            if alias in normalized:
+                normalized["value"] = normalized.pop(alias)
+                break
+    children = normalized.get("children", [])
     if not isinstance(children, list):
         raise AgentError("render_invalid", "RenderTree children 必须是数组", 422)
-    for child in children:
-        validate_render_tree(child, depth + 1)
-    return tree
+    normalized["children"] = [validate_render_tree(child, depth + 1) for child in children]
+    return normalized
 
 
 def execute_agentjs(code: str, data: Any) -> ExecutionResult:
