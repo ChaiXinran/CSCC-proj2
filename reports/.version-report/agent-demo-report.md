@@ -98,3 +98,9 @@ unaffected by this routing-only correction.
 - Browser validation covered JSON text submission, a real JSON report upload,
   and a real six-row CSV upload. JavaScript syntax and the existing Python and
   Rust Agent Host suites remain part of the final gate.
+
+## Structured-input sample
+
+- Added `demo/agent/sample-sales-data.json` with eight typed sales records for
+  exercising count, sum, average, maximum, grouping, filtering, and table
+  rendering through the JSON upload UI.
