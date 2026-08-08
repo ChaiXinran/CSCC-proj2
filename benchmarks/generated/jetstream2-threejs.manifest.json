@@ -6,7 +6,7 @@
   "requestedIterations": 1,
   "resourceRootMode": "cli",
   "entryExecutionMode": "staged",
-  "entrySourceBytes": 1284409,
+  "entrySourceBytes": 1284408,
   "entryFiles": [
     "./threejs/three.js",
     "./threejs/benchmark.js"
@@ -17,6 +17,6 @@
     "./threejs/benchmark.js": "sha256:d970caada644f035fa000820dba27d8d68cee7192364945f465de95fe750f6ac",
     "./threejs/three.js": "sha256:bdae33e8de1ad252d53c48100ea6bb565aee233e9d6e44dd153244f494d9f2ea"
   },
-  "runnerSha256": "196190b4bddcb80768e3c84188800107969b841b9a8560e5833ac03ea5004b88",
+  "runnerSha256": "0c97ca6a8973ed518e5b46f1f3a388c0aaf518005446fd4bd49c0a3baf3ef9cd",
   "phaseMarkers": false
 }

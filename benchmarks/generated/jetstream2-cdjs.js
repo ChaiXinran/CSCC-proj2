@@ -30,6 +30,7 @@ var console = {
             throw new Error(args.join(" ") || "Assertion failed");
     },
 };
+
 var runString = () => {
     globalThis.loadString = (source) => {
         // Entry files are executed by the Rust host before launch. Only the

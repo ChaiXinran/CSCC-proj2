@@ -46,6 +46,7 @@ use super::{
     SymbolRegistry, Trace, Tracer, TypedArrayElementKind, TypedArrayView, TypedArrayViewId,
     WellKnownSymbols, bigint, iterator::IteratorKind, object::array_index,
 };
+use crate::bytecode::DynamicScopePolicy;
 use crate::host::{HostLoadError, HostServices};
 use crate::vm::{CallFrame, Vm, VmError};
 use crate::{builtins::string, intl::IntlObjectData};
@@ -318,6 +319,8 @@ pub struct NativeContext {
     call_depth: u64,
     gc_policy: GcPolicy,
     gc_controller: GcControllerState,
+    gc_growth_check_allocations: usize,
+    gc_growth_check_triggered: bool,
     allocation_pressure: AllocationPressure,
     gc_marks: HeapMarks,
     gc_metrics: GcMetrics,
@@ -423,6 +426,8 @@ impl NativeContext {
             call_depth: 0,
             gc_policy: GcPolicy::from_legacy_threshold(10_000).normalized(),
             gc_controller: GcControllerState::default(),
+            gc_growth_check_allocations: 0,
+            gc_growth_check_triggered: false,
             allocation_pressure: AllocationPressure::default(),
             gc_marks: HeapMarks::default(),
             gc_metrics: GcMetrics::default(),
@@ -649,11 +654,11 @@ impl NativeContext {
     }
 
     #[must_use]
-    pub fn should_collect_garbage(&self) -> bool {
+    pub fn should_collect_garbage(&mut self) -> bool {
         self.gc_trigger_reason().is_some()
     }
 
-    fn gc_trigger_reason(&self) -> Option<GcTriggerReason> {
+    fn gc_trigger_reason(&mut self) -> Option<GcTriggerReason> {
         let allocations = self.heap.allocations_since_collection();
         if allocations >= self.gc_policy.max_allocations {
             return Some(GcTriggerReason::Allocation);
@@ -675,12 +680,32 @@ impl NativeContext {
         if self.allocation_pressure.charged_bytes_since_gc >= self.gc_policy.min_pressure_bytes {
             return Some(GcTriggerReason::Bytes);
         }
+        // `runtime_memory_stats()` walks the side registries.  Calling it from
+        // every bytecode dispatch after `min_allocations` turns a large live
+        // TypedArray/Promise arena into an O(instructions * registry size)
+        // tax.  Runtime growth can only change when allocation or mutation
+        // accounting advances, so sample it at bounded allocation intervals;
+        // byte pressure and the hard allocation cap above remain immediate.
+        if allocations < self.gc_growth_check_allocations {
+            self.gc_growth_check_allocations = 0;
+            self.gc_growth_check_triggered = false;
+        }
+        const GROWTH_CHECK_ALLOCATION_INTERVAL: usize = 1024;
+        if self.gc_growth_check_allocations != 0
+            && allocations.saturating_sub(self.gc_growth_check_allocations)
+                < GROWTH_CHECK_ALLOCATION_INTERVAL
+        {
+            return self
+                .gc_growth_check_triggered
+                .then_some(GcTriggerReason::Growth);
+        }
+        self.gc_growth_check_allocations = allocations;
         let tracked = self.runtime_memory_stats().tracked_runtime_bytes;
         let baseline = self.gc_controller.last_tracked_runtime_bytes;
-        if baseline > 0
+        self.gc_growth_check_triggered = baseline > 0
             && tracked.saturating_mul(self.gc_policy.growth_factor_den)
-                > baseline.saturating_mul(self.gc_policy.growth_factor_num)
-        {
+                > baseline.saturating_mul(self.gc_policy.growth_factor_num);
+        if self.gc_growth_check_triggered {
             return Some(GcTriggerReason::Growth);
         }
         None
@@ -2996,6 +3021,19 @@ impl NativeContext {
         Err(VmError::reference(format!("{name} is not defined")))
     }
 
+    pub(crate) fn set_binding_in_environment(
+        &mut self,
+        environment: EnvironmentId,
+        name: &str,
+        value: JsValue,
+    ) -> Result<(), VmError> {
+        self.heap
+            .environment_mut(environment)
+            .ok_or_else(|| VmError::runtime("missing lexical environment"))?
+            .set_mutable_binding(name, value.clone())?;
+        self.refresh_module_namespace_binding(environment, name, value)
+    }
+
     fn refresh_module_namespace_binding(
         &mut self,
         environment: EnvironmentId,
@@ -3102,6 +3140,26 @@ impl NativeContext {
     #[must_use]
     pub fn function(&self, id: FunctionId) -> Option<&JsFunction> {
         self.heap.function(id)
+    }
+
+    #[must_use]
+    pub(crate) fn current_scope_is_static(&self) -> bool {
+        self.current_function()
+            .and_then(|function| self.function(function))
+            .is_none_or(|function| function.dynamic_scope == DynamicScopePolicy::Static)
+    }
+
+    #[must_use]
+    pub fn diagnostic_call_stack(&self) -> Vec<String> {
+        self.call_frames
+            .iter()
+            .filter_map(|frame| frame.function)
+            .map(|id| {
+                self.function(id)
+                    .and_then(|function| function.name.clone())
+                    .unwrap_or_else(|| "<anonymous>".to_string())
+            })
+            .collect()
     }
 
     pub fn set_function_home_object(

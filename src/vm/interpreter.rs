@@ -972,6 +972,8 @@ pub struct Vm {
     pending_exception: Option<JsValue>,
     finally_stack: Vec<Completion>,
     name_references: HashMap<String, Vec<JsValue>>,
+    name_load_caches: HashMap<BytecodeSite, (EnvironmentId, EnvironmentId)>,
+    name_store_caches: HashMap<BytecodeSite, (EnvironmentId, EnvironmentId)>,
     property_caches: PropertyInlineCaches,
 }
 
@@ -2252,8 +2254,29 @@ impl Vm {
                     let name = self
                         .constant_string(chunk, index, current_instruction)?
                         .to_string();
+                    let site = BytecodeSite::new(chunk, current_instruction);
+                    let current_environment = context.current_environment();
+                    if context.current_scope_is_static()
+                        && let Some((cached_current, cached_target)) =
+                            self.name_load_caches.get(&site).copied()
+                        && cached_current == current_environment
+                    {
+                        match context.binding_value_in_environment(cached_target, &name) {
+                            Ok(value) => {
+                                self.stack.push(value);
+                                continue 'dispatch;
+                            }
+                            Err(_) => {
+                                self.name_load_caches.remove(&site);
+                            }
+                        }
+                    }
                     let needs_object_resolution = match context.resolve_binding_value_fast(&name) {
-                        Ok((false, Some((_, value)))) => {
+                        Ok((false, Some((environment, value)))) => {
+                            if context.current_scope_is_static() {
+                                self.name_load_caches
+                                    .insert(site, (current_environment, environment));
+                            }
                             self.stack.push(value);
                             false
                         }
@@ -2394,11 +2417,54 @@ impl Vm {
                             },
                         }
                     } else {
-                        match context.set_binding(&name, value.clone()) {
-                            Ok(()) => self.stack.push(value),
-                            Err(error) => {
-                                abrupt = Some(Completion::Throw(vm_error_to_value(error)));
-                                discard_saved_finally = true;
+                        let site = BytecodeSite::new(chunk, current_instruction);
+                        let current_environment = context.current_environment();
+                        if context.current_scope_is_static()
+                            && let Some((cached_current, cached_target)) =
+                                self.name_store_caches.get(&site).copied()
+                            && cached_current == current_environment
+                        {
+                            match context.set_binding_in_environment(
+                                cached_target,
+                                &name,
+                                value.clone(),
+                            ) {
+                                Ok(()) => {
+                                    self.stack.push(value);
+                                    continue 'dispatch;
+                                }
+                                Err(_) => {
+                                    self.name_store_caches.remove(&site);
+                                }
+                            }
+                        }
+                        if context.current_scope_is_static()
+                            && let Some(environment) = context.resolve_binding_environment(&name)?
+                        {
+                            match context.set_binding_in_environment(
+                                environment,
+                                &name,
+                                value.clone(),
+                            ) {
+                                Ok(()) => {
+                                    self.name_store_caches
+                                        .insert(site, (current_environment, environment));
+                                    self.stack.push(value);
+                                    continue 'dispatch;
+                                }
+                                Err(error) => {
+                                    abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                    discard_saved_finally = true;
+                                }
+                            }
+                        }
+                        if abrupt.is_none() {
+                            match context.set_binding(&name, value.clone()) {
+                                Ok(()) => self.stack.push(value),
+                                Err(error) => {
+                                    abrupt = Some(Completion::Throw(vm_error_to_value(error)));
+                                    discard_saved_finally = true;
+                                }
                             }
                         }
                     }

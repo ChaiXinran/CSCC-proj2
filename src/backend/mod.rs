@@ -946,6 +946,35 @@ impl RuntimeBackend for NativeRuntime {
         if self.config.diagnostics {
             eprintln!("job_drain_end");
             self.emit_phase_diagnostics("job_drain", started, 0, None, None);
+            if result.is_err() {
+                eprintln!(
+                    "job_error_stack:{}",
+                    self.context.diagnostic_call_stack().join(" -> ")
+                );
+                let names = self.context.name_resolution_metrics();
+                eprintln!(
+                    "job_name_resolution:load_local_count={} store_local_count={} load_name_count={} store_name_count={} environment_hops={} load_upvalue_count={} store_upvalue_count={} upvalue_environment_hops={}",
+                    names.load_local_count,
+                    names.store_local_count,
+                    names.load_name_count,
+                    names.store_name_count,
+                    names.environment_hops,
+                    names.load_upvalue_count,
+                    names.store_upvalue_count,
+                    names.upvalue_environment_hops
+                );
+                let properties = self.context.property_cache_metrics();
+                eprintln!(
+                    "job_property_cache:get_hits={} get_misses={} set_hits={} set_misses={} shape_transitions={} dictionary_objects={} invalidations={}",
+                    properties.get_hits,
+                    properties.get_misses,
+                    properties.set_hits,
+                    properties.set_misses,
+                    properties.shape_transitions,
+                    properties.dictionary_objects,
+                    properties.invalidations
+                );
+            }
         }
         result
     }
