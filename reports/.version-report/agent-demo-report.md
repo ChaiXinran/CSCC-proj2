@@ -197,6 +197,50 @@ unaffected by this routing-only correction.
 - Validation: orchestrator tests PASS, 29/29; standalone build PASS. Output
   size: 17,745,196 bytes; SHA-256
   `608C7213968658B447FD6561EC2C9644064D3A9547140317B5BE64C851F22702`.
+
+## Structured file-input regression fix
+
+- Restored the lost `inputMeta`, 200 KiB input limit, and 10,000-row CSV limit
+  declarations; their absence caused a `ReferenceError` immediately after file
+  selection.
+- Restored `input` and `inputMeta` in both primary and fixed-fallback API request
+  bodies. Parsed file data is now actually delivered to the orchestrator.
+- Successful selections remain in the native file control so the chosen name
+  stays visible. The control is cleared only when parsing fails.
+- Browser upload validation PASS: a JSON fixture remained selected, displayed
+  `upload-fixture.json ready`, and populated the editable JSON area with both
+  records. Orchestrator tests PASS, 29/29; standalone build PASS. Output size:
+  17,745,033 bytes; SHA-256
+  `519EC30C871BE2B3F20406FA6F743D276397725E5D1C0211E713F74E27908134`.
+
+## Per-turn attachment and repeated-result fix
+
+- Host input is now embedded as an ASCII-escaped JSON/JavaScript literal rather
+  than parsed again inside AgentJS. This bypasses the native `JSON.parse`
+  compatibility failure reported for uploaded data.
+- Attachments are snapshotted into one request, shown on that user message, and
+  cleared from the composer immediately after submission. Later prompts no
+  longer silently reuse the previous file.
+- The model instruction now makes the current prompt/input authoritative and
+  prohibits repeating an older script unless the user explicitly requests it.
+- Validation: direct AgentJS execution with nested uploaded input PASS (returned
+  two rows without `JSON.parse`); browser two-turn attachment lifecycle PASS;
+  orchestrator tests PASS, 29/29; standalone build PASS. Output size: 17,747,724
+  bytes; SHA-256
+  `8FFF7926E1F5D5098E92D46375FB651BA1465F9A2D2F2A418DD600D3087A4033`.
+
+## Attachment editor contrast and collapse behavior
+
+- Replaced the undefined `--text` color in file controls and the JSON editor
+  with explicit high-contrast colors. JSON content is now near-white on the
+  dark editor background, with a brighter caret and readable placeholder.
+- After a prompt passes input validation and is submitted, the optional input
+  panel clears its one-turn attachment and collapses automatically. Validation
+  failures leave the panel open for correction.
+- Browser validation confirmed computed editor colors of `rgb(240, 250, 243)`
+  on `rgb(17, 23, 19)` and a closed details panel after a successful request.
+  Standalone build PASS. Output size: 17,747,577 bytes; SHA-256
+  `EB1634C6B8737D35B09A3150376E9ED59609EE1D3676BF91472C220639658C1A`.
 ## Structured input UI
 
 - Added an optional JSON text editor to the chat composer with send-time parse

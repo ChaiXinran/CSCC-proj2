@@ -146,6 +146,9 @@ class DesktopLaunchApi:
 SYSTEM_PROMPT = """You are the code generator for AgentJS, a constrained JavaScript runtime.
 Return one JSON object with exactly two string fields: title and code.
 The variable `input` contains JSON data. The code is inserted into a function body.
+Treat the current user prompt and current input as authoritative. Generate a new
+script for the current turn; do not repeat a previous script unless the user asks
+to revise or reuse it.
 It MUST call agent.render(tree) exactly once and MUST return a JSON-serializable value.
 The render tree root must be a panel. Children may only use text, metrics,
 statuses, table, list, or nested panels. Keep nesting at most 6 levels.
@@ -522,10 +525,11 @@ def find_agentjs_binary() -> Path:
 
 
 def build_wrapper(code: str, data: Any) -> str:
-    input_json = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-    encoded_input = json.dumps(input_json, ensure_ascii=False)
+    # JSON is a JavaScript expression already. Injecting the parsed value avoids
+    # depending on the runtime's JSON.parse implementation for host input.
+    input_json = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
     return f'''"use strict";
-const input = JSON.parse({encoded_input});
+const input = {input_json};
 // Keep request data in the enclosing scope so generated code may safely
 // declare its own `input` binding without conflicting with a parameter.
 const __agentValue = (function () {{

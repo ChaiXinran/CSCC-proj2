@@ -109,10 +109,10 @@ class AgentProtocolTests(unittest.TestCase):
             "agent.render({type: 'text'}); return input;",
             {"text": "</script> ' 中文"},
         )
-        self.assertIn("JSON.parse", source)
+        self.assertNotIn("JSON.parse", source)
+        self.assertIn(r'''const input = {"text":"</script> ' \u4e2d\u6587"};''', source)
         self.assertIn(server.RESULT_MARKER, source)
         self.assertNotIn("const agent =", source)
-        self.assertNotIn("const input = {", source)
         self.assertIn("(function ()", source)
 
     def test_wrapper_allows_generated_input_binding(self):
