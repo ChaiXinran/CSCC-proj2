@@ -8,7 +8,7 @@ submodules. Results are reproducible only when these revisions are recorded:
 | Boa | `de2221a09c132951c2ebad36e62ecd20b9987215` | Current ECMAScript backend |
 | QuickJS | `04be246001599f5995fa2f2d8c91a0f198d3f34c` | Performance/design reference |
 | Test262 | `de8e621cdba4f40cff3cf244e6cfb8cb48746b4a` | Conformance corpus |
-| JetStream 2.0 | `60cdba17bef0dcdb3fca2263e3916c3c45bfb7c2` | Performance benchmark |
+| JetStream 2.0 | `b7babdf323e64e69bd2f6c376189c15825f5c73a` | Performance benchmark |
 
 After cloning, initialize all dependencies with:
 

@@ -1,0 +1,1160 @@
+{
+    "schemaVersion":  1,
+    "generatedAtUtc":  "2026-08-11T19:40:17.6965446Z",
+    "protocol":  {
+                     "benchmark":  "JetStream2 portable workload kernels",
+                     "runner":  "self-contained runner from prepare-simple-benchmark.mjs",
+                     "iterationsPerProcess":  1,
+                     "warmupProcesses":  2,
+                     "measuredProcesses":  7,
+                     "timeoutSeconds":  180,
+                     "maxRssMiB":  1536,
+                     "engines":  [
+                                     "agentjs",
+                                     "boa"
+                                 ],
+                     "timing":  "workload marker average; process wall time and WorkingSet64 sampled every 50 ms"
+                 },
+    "projectRevision":  "ddbea712beebc7b2127e703178161123368873d0",
+    "projectDirty":  true,
+    "jetstreamRevision":  "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+    "binaries":  {
+                     "agentjs":  {
+                                     "path":  "target/release/agentjs.exe",
+                                     "sizeBytes":  10891776,
+                                     "sha256":  "60cc6bed63ecc82c8d99352b1003f2223c4a7be47e94e765b8d2349132f75793"
+                                 },
+                     "boa":  {
+                                 "path":  "boa/target/release/boa.exe",
+                                 "sizeBytes":  29693440,
+                                 "sha256":  "c32d98d47a14c576f161775de4a13916cd5987c5840df633e98a9778b0d5a913"
+                             }
+                 },
+    "runners":  {
+                    "n-body-SP":  {
+                                      "sha256":  "a5749de989b0a3e6a947fbfadfa996d97645d53db913b25363d37213d4bc2154",
+                                      "generator":  "scripts/prepare-simple-benchmark.mjs",
+                                      "iterations":  1,
+                                      "discovery":  {
+                                                        "test":  "n-body-SP",
+                                                        "iterations":  1,
+                                                        "files":  [
+                                                                      "./SunSpider/n-body.js"
+                                                                  ],
+                                                        "output":  "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\jetstream2-agentjs-boa\\runners\\n-body-SP.js"
+                                                    }
+                                  },
+                    "crypto-sha1-SP":  {
+                                           "sha256":  "240c1bed250965e76f6538d1dc0bf0fb03bc91600af3a4362280e92e613a3e56",
+                                           "generator":  "scripts/prepare-simple-benchmark.mjs",
+                                           "iterations":  1,
+                                           "discovery":  {
+                                                             "test":  "crypto-sha1-SP",
+                                                             "iterations":  1,
+                                                             "files":  [
+                                                                           "./SunSpider/crypto-sha1.js"
+                                                                       ],
+                                                             "output":  "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\jetstream2-agentjs-boa\\runners\\crypto-sha1-SP.js"
+                                                         }
+                                       },
+                    "crypto-md5-SP":  {
+                                          "sha256":  "07cccc52cf35b1292acb754d80bd61a45c588ca5ea5b05ad8163087331baf449",
+                                          "generator":  "scripts/prepare-simple-benchmark.mjs",
+                                          "iterations":  1,
+                                          "discovery":  {
+                                                            "test":  "crypto-md5-SP",
+                                                            "iterations":  1,
+                                                            "files":  [
+                                                                          "./SunSpider/crypto-md5.js"
+                                                                      ],
+                                                            "output":  "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\jetstream2-agentjs-boa\\runners\\crypto-md5-SP.js"
+                                                        }
+                                      },
+                    "3d-cube-SP":  {
+                                       "sha256":  "4c48f38b24507bec72c26bfdf33526f41c2d676cbd953daee5ee5877db002b96",
+                                       "generator":  "scripts/prepare-simple-benchmark.mjs",
+                                       "iterations":  1,
+                                       "discovery":  {
+                                                         "test":  "3d-cube-SP",
+                                                         "iterations":  1,
+                                                         "files":  [
+                                                                       "./SunSpider/3d-cube.js"
+                                                                   ],
+                                                         "output":  "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\jetstream2-agentjs-boa\\runners\\3d-cube-SP.js"
+                                                     }
+                                   },
+                    "navier-stokes":  {
+                                          "sha256":  "b6345ce5e8de00e83cee7965e5abfdab33e5fd2b1b5bbd6c161729a3c89abaa9",
+                                          "generator":  "scripts/prepare-simple-benchmark.mjs",
+                                          "iterations":  1,
+                                          "discovery":  {
+                                                            "test":  "navier-stokes",
+                                                            "iterations":  1,
+                                                            "files":  [
+                                                                          "./Octane/navier-stokes.js"
+                                                                      ],
+                                                            "output":  "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\jetstream2-agentjs-boa\\runners\\navier-stokes.js"
+                                                        }
+                                      },
+                    "richards":  {
+                                     "sha256":  "aff3a4ce9db101c885c8c82d974b6d0c961fa0afd305193f1ce572ef1d0f8cfe",
+                                     "generator":  "scripts/prepare-simple-benchmark.mjs",
+                                     "iterations":  1,
+                                     "discovery":  {
+                                                       "test":  "richards",
+                                                       "iterations":  1,
+                                                       "files":  [
+                                                                     "./Octane/richards.js"
+                                                                 ],
+                                                       "output":  "C:\\Users\\36123\\Desktop\\OS 功能赛\\CSCC-proj2\\target\\jetstream2-agentjs-boa\\runners\\richards.js"
+                                                   }
+                                 }
+                },
+    "engines":  {
+                    "agentjs":  {
+                                    "n-body-SP":  {
+                                                      "passes":  7,
+                                                      "repeats":  7,
+                                                      "summary":  {
+                                                                      "medianWorkloadTimeMs":  1316,
+                                                                      "medianWallTimeMs":  1383.098,
+                                                                      "minWallTimeMs":  1326.216,
+                                                                      "maxWallTimeMs":  1417.017,
+                                                                      "p90WallTimeMs":  1408.294,
+                                                                      "madWallTimeMs":  19.381,
+                                                                      "standardDeviationMs":  28.909,
+                                                                      "peakWorkingSetBytes":  28307456
+                                                                  },
+                                                      "samples":  [
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  1326.216,
+                                                                          "workloadTimeMs":  1295,
+                                                                          "cpuTimeMs":  1312.5,
+                                                                          "peakWorkingSetBytes":  26451968,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "n-body-SP iteration 1/1: 1295ms\nn-body-SP avg: 1295ms  total: 1295ms  iterations: 1\nn-body-SP avg: 1295ms  total: 1295ms  iterations: 1\n\n",
+                                                                          "repeat":  1
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  1378.568,
+                                                                          "workloadTimeMs":  1326,
+                                                                          "cpuTimeMs":  1281.25,
+                                                                          "peakWorkingSetBytes":  26845184,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "n-body-SP iteration 1/1: 1326ms\nn-body-SP avg: 1326ms  total: 1326ms  iterations: 1\nn-body-SP avg: 1326ms  total: 1326ms  iterations: 1\n\n",
+                                                                          "repeat":  2
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  1347.609,
+                                                                          "workloadTimeMs":  1314,
+                                                                          "cpuTimeMs":  1312.5,
+                                                                          "peakWorkingSetBytes":  27410432,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "n-body-SP iteration 1/1: 1314ms\nn-body-SP avg: 1314ms  total: 1314ms  iterations: 1\nn-body-SP avg: 1314ms  total: 1314ms  iterations: 1\n\n",
+                                                                          "repeat":  3
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  1417.017,
+                                                                          "workloadTimeMs":  1318,
+                                                                          "cpuTimeMs":  1312.5,
+                                                                          "peakWorkingSetBytes":  26308608,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "n-body-SP iteration 1/1: 1318ms\nn-body-SP avg: 1318ms  total: 1318ms  iterations: 1\nn-body-SP avg: 1318ms  total: 1318ms  iterations: 1\n\n",
+                                                                          "repeat":  4
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  1402.479,
+                                                                          "workloadTimeMs":  1315,
+                                                                          "cpuTimeMs":  1328.125,
+                                                                          "peakWorkingSetBytes":  25718784,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "n-body-SP iteration 1/1: 1315ms\nn-body-SP avg: 1315ms  total: 1315ms  iterations: 1\nn-body-SP avg: 1315ms  total: 1315ms  iterations: 1\n\n",
+                                                                          "repeat":  5
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  1387.913,
+                                                                          "workloadTimeMs":  1319,
+                                                                          "cpuTimeMs":  1312.5,
+                                                                          "peakWorkingSetBytes":  28307456,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "n-body-SP iteration 1/1: 1319ms\nn-body-SP avg: 1319ms  total: 1319ms  iterations: 1\nn-body-SP avg: 1319ms  total: 1319ms  iterations: 1\n\n",
+                                                                          "repeat":  6
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  1383.098,
+                                                                          "workloadTimeMs":  1316,
+                                                                          "cpuTimeMs":  1296.875,
+                                                                          "peakWorkingSetBytes":  27549696,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "n-body-SP iteration 1/1: 1316ms\nn-body-SP avg: 1316ms  total: 1316ms  iterations: 1\nn-body-SP avg: 1316ms  total: 1316ms  iterations: 1\n\n",
+                                                                          "repeat":  7
+                                                                      }
+                                                                  ]
+                                                  },
+                                    "crypto-sha1-SP":  {
+                                                           "passes":  7,
+                                                           "repeats":  7,
+                                                           "summary":  {
+                                                                           "medianWorkloadTimeMs":  4324,
+                                                                           "medianWallTimeMs":  4385.509,
+                                                                           "minWallTimeMs":  4337.934,
+                                                                           "maxWallTimeMs":  5412.951,
+                                                                           "p90WallTimeMs":  5293.416,
+                                                                           "madWallTimeMs":  47.575,
+                                                                           "standardDeviationMs":  421.882,
+                                                                           "peakWorkingSetBytes":  15192064
+                                                                       },
+                                                           "samples":  [
+                                                                           {
+                                                                               "status":  "PASS",
+                                                                               "wallTimeMs":  4337.934,
+                                                                               "workloadTimeMs":  4302,
+                                                                               "cpuTimeMs":  4187.5,
+                                                                               "peakWorkingSetBytes":  14999552,
+                                                                               "exitCode":  0,
+                                                                               "outputTail":  "crypto-sha1-SP iteration 1/1: 4302ms\ncrypto-sha1-SP avg: 4302ms  total: 4302ms  iterations: 1\ncrypto-sha1-SP avg: 4302ms  total: 4302ms  iterations: 1\n\n",
+                                                                               "repeat":  1
+                                                                           },
+                                                                           {
+                                                                               "status":  "PASS",
+                                                                               "wallTimeMs":  4354.861,
+                                                                               "workloadTimeMs":  4317,
+                                                                               "cpuTimeMs":  4218.75,
+                                                                               "peakWorkingSetBytes":  15065088,
+                                                                               "exitCode":  0,
+                                                                               "outputTail":  "crypto-sha1-SP iteration 1/1: 4317ms\ncrypto-sha1-SP avg: 4317ms  total: 4317ms  iterations: 1\ncrypto-sha1-SP avg: 4317ms  total: 4317ms  iterations: 1\n\n",
+                                                                               "repeat":  2
+                                                                           },
+                                                                           {
+                                                                               "status":  "PASS",
+                                                                               "wallTimeMs":  4385.509,
+                                                                               "workloadTimeMs":  4324,
+                                                                               "cpuTimeMs":  4203.125,
+                                                                               "peakWorkingSetBytes":  15192064,
+                                                                               "exitCode":  0,
+                                                                               "outputTail":  "crypto-sha1-SP iteration 1/1: 4324ms\ncrypto-sha1-SP avg: 4324ms  total: 4324ms  iterations: 1\ncrypto-sha1-SP avg: 4324ms  total: 4324ms  iterations: 1\n\n",
+                                                                               "repeat":  3
+                                                                           },
+                                                                           {
+                                                                               "status":  "PASS",
+                                                                               "wallTimeMs":  4365.624,
+                                                                               "workloadTimeMs":  4322,
+                                                                               "cpuTimeMs":  4171.875,
+                                                                               "peakWorkingSetBytes":  15056896,
+                                                                               "exitCode":  0,
+                                                                               "outputTail":  "crypto-sha1-SP iteration 1/1: 4322ms\ncrypto-sha1-SP avg: 4322ms  total: 4322ms  iterations: 1\ncrypto-sha1-SP avg: 4322ms  total: 4322ms  iterations: 1\n\n",
+                                                                               "repeat":  4
+                                                                           },
+                                                                           {
+                                                                               "status":  "PASS",
+                                                                               "wallTimeMs":  4813.093,
+                                                                               "workloadTimeMs":  4733,
+                                                                               "cpuTimeMs":  4640.625,
+                                                                               "peakWorkingSetBytes":  14999552,
+                                                                               "exitCode":  0,
+                                                                               "outputTail":  "crypto-sha1-SP iteration 1/1: 4733ms\ncrypto-sha1-SP avg: 4733ms  total: 4733ms  iterations: 1\ncrypto-sha1-SP avg: 4733ms  total: 4733ms  iterations: 1\n\n",
+                                                                               "repeat":  5
+                                                                           },
+                                                                           {
+                                                                               "status":  "PASS",
+                                                                               "wallTimeMs":  5213.726,
+                                                                               "workloadTimeMs":  5188,
+                                                                               "cpuTimeMs":  5093.75,
+                                                                               "peakWorkingSetBytes":  14942208,
+                                                                               "exitCode":  0,
+                                                                               "outputTail":  "crypto-sha1-SP iteration 1/1: 5188ms\ncrypto-sha1-SP avg: 5188ms  total: 5188ms  iterations: 1\ncrypto-sha1-SP avg: 5188ms  total: 5188ms  iterations: 1\n\n",
+                                                                               "repeat":  6
+                                                                           },
+                                                                           {
+                                                                               "status":  "PASS",
+                                                                               "wallTimeMs":  5412.951,
+                                                                               "workloadTimeMs":  5331,
+                                                                               "cpuTimeMs":  5250,
+                                                                               "peakWorkingSetBytes":  14938112,
+                                                                               "exitCode":  0,
+                                                                               "outputTail":  "crypto-sha1-SP iteration 1/1: 5331ms\ncrypto-sha1-SP avg: 5331ms  total: 5331ms  iterations: 1\ncrypto-sha1-SP avg: 5331ms  total: 5331ms  iterations: 1\n\n",
+                                                                               "repeat":  7
+                                                                           }
+                                                                       ]
+                                                       },
+                                    "crypto-md5-SP":  {
+                                                          "passes":  7,
+                                                          "repeats":  7,
+                                                          "summary":  {
+                                                                          "medianWorkloadTimeMs":  5162,
+                                                                          "medianWallTimeMs":  5235.535,
+                                                                          "minWallTimeMs":  4411.297,
+                                                                          "maxWallTimeMs":  5363.574,
+                                                                          "p90WallTimeMs":  5295.605,
+                                                                          "madWallTimeMs":  128.039,
+                                                                          "standardDeviationMs":  359.296,
+                                                                          "peakWorkingSetBytes":  16871424
+                                                                      },
+                                                          "samples":  [
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  5363.574,
+                                                                              "workloadTimeMs":  5330,
+                                                                              "cpuTimeMs":  5218.75,
+                                                                              "peakWorkingSetBytes":  16572416,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "crypto-md5-SP iteration 1/1: 5330ms\ncrypto-md5-SP avg: 5330ms  total: 5330ms  iterations: 1\ncrypto-md5-SP avg: 5330ms  total: 5330ms  iterations: 1\n\n",
+                                                                              "repeat":  1
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  5236.073,
+                                                                              "workloadTimeMs":  5185,
+                                                                              "cpuTimeMs":  5093.75,
+                                                                              "peakWorkingSetBytes":  16871424,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "crypto-md5-SP iteration 1/1: 5185ms\ncrypto-md5-SP avg: 5185ms  total: 5185ms  iterations: 1\ncrypto-md5-SP avg: 5185ms  total: 5185ms  iterations: 1\n\n",
+                                                                              "repeat":  2
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  5235.535,
+                                                                              "workloadTimeMs":  5162,
+                                                                              "cpuTimeMs":  5000,
+                                                                              "peakWorkingSetBytes":  16867328,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "crypto-md5-SP iteration 1/1: 5162ms\ncrypto-md5-SP avg: 5162ms  total: 5162ms  iterations: 1\ncrypto-md5-SP avg: 5162ms  total: 5162ms  iterations: 1\n\n",
+                                                                              "repeat":  3
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  5250.293,
+                                                                              "workloadTimeMs":  5193,
+                                                                              "cpuTimeMs":  5031.25,
+                                                                              "peakWorkingSetBytes":  16793600,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "crypto-md5-SP iteration 1/1: 5193ms\ncrypto-md5-SP avg: 5193ms  total: 5193ms  iterations: 1\ncrypto-md5-SP avg: 5193ms  total: 5193ms  iterations: 1\n\n",
+                                                                              "repeat":  4
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  4828.085,
+                                                                              "workloadTimeMs":  4779,
+                                                                              "cpuTimeMs":  4671.875,
+                                                                              "peakWorkingSetBytes":  16633856,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "crypto-md5-SP iteration 1/1: 4779ms\ncrypto-md5-SP avg: 4779ms  total: 4779ms  iterations: 1\ncrypto-md5-SP avg: 4779ms  total: 4779ms  iterations: 1\n\n",
+                                                                              "repeat":  5
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  4526.01,
+                                                                              "workloadTimeMs":  4475,
+                                                                              "cpuTimeMs":  4328.125,
+                                                                              "peakWorkingSetBytes":  16785408,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "crypto-md5-SP iteration 1/1: 4475ms\ncrypto-md5-SP avg: 4475ms  total: 4475ms  iterations: 1\ncrypto-md5-SP avg: 4475ms  total: 4475ms  iterations: 1\n\n",
+                                                                              "repeat":  6
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  4411.297,
+                                                                              "workloadTimeMs":  4325,
+                                                                              "cpuTimeMs":  4250,
+                                                                              "peakWorkingSetBytes":  16297984,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "crypto-md5-SP iteration 1/1: 4325ms\ncrypto-md5-SP avg: 4325ms  total: 4325ms  iterations: 1\ncrypto-md5-SP avg: 4325ms  total: 4325ms  iterations: 1\n\n",
+                                                                              "repeat":  7
+                                                                          }
+                                                                      ]
+                                                      },
+                                    "3d-cube-SP":  {
+                                                       "passes":  7,
+                                                       "repeats":  7,
+                                                       "summary":  {
+                                                                       "medianWorkloadTimeMs":  1885,
+                                                                       "medianWallTimeMs":  1934.402,
+                                                                       "minWallTimeMs":  1892.118,
+                                                                       "maxWallTimeMs":  2279.575,
+                                                                       "p90WallTimeMs":  2268.414,
+                                                                       "madWallTimeMs":  42.284,
+                                                                       "standardDeviationMs":  160.998,
+                                                                       "peakWorkingSetBytes":  24129536
+                                                                   },
+                                                       "samples":  [
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  1928.883,
+                                                                           "workloadTimeMs":  1854,
+                                                                           "cpuTimeMs":  1828.125,
+                                                                           "peakWorkingSetBytes":  22769664,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "3d-cube-SP iteration 1/1: 1854ms\n3d-cube-SP avg: 1854ms  total: 1854ms  iterations: 1\n3d-cube-SP avg: 1854ms  total: 1854ms  iterations: 1\n\n",
+                                                                           "repeat":  1
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  1895.548,
+                                                                           "workloadTimeMs":  1844,
+                                                                           "cpuTimeMs":  1812.5,
+                                                                           "peakWorkingSetBytes":  23396352,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "3d-cube-SP iteration 1/1: 1844ms\n3d-cube-SP avg: 1844ms  total: 1844ms  iterations: 1\n3d-cube-SP avg: 1844ms  total: 1844ms  iterations: 1\n\n",
+                                                                           "repeat":  2
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  1892.118,
+                                                                           "workloadTimeMs":  1848,
+                                                                           "cpuTimeMs":  1765.625,
+                                                                           "peakWorkingSetBytes":  23920640,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "3d-cube-SP iteration 1/1: 1848ms\n3d-cube-SP avg: 1848ms  total: 1848ms  iterations: 1\n3d-cube-SP avg: 1848ms  total: 1848ms  iterations: 1\n\n",
+                                                                           "repeat":  3
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  1934.402,
+                                                                           "workloadTimeMs":  1885,
+                                                                           "cpuTimeMs":  1906.25,
+                                                                           "peakWorkingSetBytes":  23932928,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "3d-cube-SP iteration 1/1: 1885ms\n3d-cube-SP avg: 1885ms  total: 1885ms  iterations: 1\n3d-cube-SP avg: 1885ms  total: 1885ms  iterations: 1\n\n",
+                                                                           "repeat":  4
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  2260.973,
+                                                                           "workloadTimeMs":  2180,
+                                                                           "cpuTimeMs":  2171.875,
+                                                                           "peakWorkingSetBytes":  23502848,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "3d-cube-SP iteration 1/1: 2180ms\n3d-cube-SP avg: 2180ms  total: 2180ms  iterations: 1\n3d-cube-SP avg: 2180ms  total: 2180ms  iterations: 1\n\n",
+                                                                           "repeat":  5
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  2279.575,
+                                                                           "workloadTimeMs":  2224,
+                                                                           "cpuTimeMs":  2234.375,
+                                                                           "peakWorkingSetBytes":  24129536,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "3d-cube-SP iteration 1/1: 2224ms\n3d-cube-SP avg: 2224ms  total: 2224ms  iterations: 1\n3d-cube-SP avg: 2224ms  total: 2224ms  iterations: 1\n\n",
+                                                                           "repeat":  6
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  2136.508,
+                                                                           "workloadTimeMs":  2072,
+                                                                           "cpuTimeMs":  2078.125,
+                                                                           "peakWorkingSetBytes":  23560192,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "3d-cube-SP iteration 1/1: 2072ms\n3d-cube-SP avg: 2072ms  total: 2072ms  iterations: 1\n3d-cube-SP avg: 2072ms  total: 2072ms  iterations: 1\n\n",
+                                                                           "repeat":  7
+                                                                       }
+                                                                   ]
+                                                   },
+                                    "navier-stokes":  {
+                                                          "passes":  7,
+                                                          "repeats":  7,
+                                                          "summary":  {
+                                                                          "medianWorkloadTimeMs":  842,
+                                                                          "medianWallTimeMs":  949.849,
+                                                                          "minWallTimeMs":  874.46,
+                                                                          "maxWallTimeMs":  963.649,
+                                                                          "p90WallTimeMs":  963.232,
+                                                                          "madWallTimeMs":  5.564,
+                                                                          "standardDeviationMs":  28.445,
+                                                                          "peakWorkingSetBytes":  19230720
+                                                                      },
+                                                          "samples":  [
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  944.285,
+                                                                              "workloadTimeMs":  865,
+                                                                              "cpuTimeMs":  906.25,
+                                                                              "peakWorkingSetBytes":  19230720,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "navier-stokes iteration 1/1: 865ms\nnavier-stokes avg: 865ms  total: 865ms  iterations: 1\nnavier-stokes avg: 865ms  total: 865ms  iterations: 1\n\n",
+                                                                              "repeat":  1
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  963.649,
+                                                                              "workloadTimeMs":  828,
+                                                                              "cpuTimeMs":  875,
+                                                                              "peakWorkingSetBytes":  19189760,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "navier-stokes iteration 1/1: 828ms\nnavier-stokes avg: 828ms  total: 828ms  iterations: 1\nnavier-stokes avg: 828ms  total: 828ms  iterations: 1\n\n",
+                                                                              "repeat":  2
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  962.954,
+                                                                              "workloadTimeMs":  842,
+                                                                              "cpuTimeMs":  859.375,
+                                                                              "peakWorkingSetBytes":  19177472,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "navier-stokes iteration 1/1: 842ms\nnavier-stokes avg: 842ms  total: 842ms  iterations: 1\nnavier-stokes avg: 842ms  total: 842ms  iterations: 1\n\n",
+                                                                              "repeat":  3
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  949.849,
+                                                                              "workloadTimeMs":  845,
+                                                                              "cpuTimeMs":  890.625,
+                                                                              "peakWorkingSetBytes":  18976768,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "navier-stokes iteration 1/1: 845ms\nnavier-stokes avg: 845ms  total: 845ms  iterations: 1\nnavier-stokes avg: 845ms  total: 845ms  iterations: 1\n\n",
+                                                                              "repeat":  4
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  950.623,
+                                                                              "workloadTimeMs":  840,
+                                                                              "cpuTimeMs":  859.375,
+                                                                              "peakWorkingSetBytes":  18882560,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "navier-stokes iteration 1/1: 840ms\nnavier-stokes avg: 840ms  total: 840ms  iterations: 1\nnavier-stokes avg: 840ms  total: 840ms  iterations: 1\n\n",
+                                                                              "repeat":  5
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  949.311,
+                                                                              "workloadTimeMs":  860,
+                                                                              "cpuTimeMs":  921.875,
+                                                                              "peakWorkingSetBytes":  19165184,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "navier-stokes iteration 1/1: 860ms\nnavier-stokes avg: 860ms  total: 860ms  iterations: 1\nnavier-stokes avg: 860ms  total: 860ms  iterations: 1\n\n",
+                                                                              "repeat":  6
+                                                                          },
+                                                                          {
+                                                                              "status":  "PASS",
+                                                                              "wallTimeMs":  874.46,
+                                                                              "workloadTimeMs":  801,
+                                                                              "cpuTimeMs":  828.125,
+                                                                              "peakWorkingSetBytes":  19169280,
+                                                                              "exitCode":  0,
+                                                                              "outputTail":  "navier-stokes iteration 1/1: 801ms\nnavier-stokes avg: 801ms  total: 801ms  iterations: 1\nnavier-stokes avg: 801ms  total: 801ms  iterations: 1\n\n",
+                                                                              "repeat":  7
+                                                                          }
+                                                                      ]
+                                                      },
+                                    "richards":  {
+                                                     "passes":  7,
+                                                     "repeats":  7,
+                                                     "summary":  {
+                                                                     "medianWorkloadTimeMs":  4934,
+                                                                     "medianWallTimeMs":  4975.178,
+                                                                     "minWallTimeMs":  4613.975,
+                                                                     "maxWallTimeMs":  5681.481,
+                                                                     "p90WallTimeMs":  5596.226,
+                                                                     "madWallTimeMs":  295.516,
+                                                                     "standardDeviationMs":  364.31,
+                                                                     "peakWorkingSetBytes":  12787712
+                                                                 },
+                                                     "samples":  [
+                                                                     {
+                                                                         "status":  "PASS",
+                                                                         "wallTimeMs":  4846.454,
+                                                                         "workloadTimeMs":  4759,
+                                                                         "cpuTimeMs":  4718.75,
+                                                                         "peakWorkingSetBytes":  12673024,
+                                                                         "exitCode":  0,
+                                                                         "outputTail":  "richards iteration 1/1: 4759ms\nrichards avg: 4759ms  total: 4759ms  iterations: 1\nrichards avg: 4759ms  total: 4759ms  iterations: 1\n\n",
+                                                                         "repeat":  1
+                                                                     },
+                                                                     {
+                                                                         "status":  "PASS",
+                                                                         "wallTimeMs":  4613.975,
+                                                                         "workloadTimeMs":  4556,
+                                                                         "cpuTimeMs":  4453.125,
+                                                                         "peakWorkingSetBytes":  12697600,
+                                                                         "exitCode":  0,
+                                                                         "outputTail":  "richards iteration 1/1: 4556ms\nrichards avg: 4556ms  total: 4556ms  iterations: 1\nrichards avg: 4556ms  total: 4556ms  iterations: 1\n\n",
+                                                                         "repeat":  2
+                                                                     },
+                                                                     {
+                                                                         "status":  "PASS",
+                                                                         "wallTimeMs":  4867.76,
+                                                                         "workloadTimeMs":  4824,
+                                                                         "cpuTimeMs":  4812.5,
+                                                                         "peakWorkingSetBytes":  12648448,
+                                                                         "exitCode":  0,
+                                                                         "outputTail":  "richards iteration 1/1: 4824ms\nrichards avg: 4824ms  total: 4824ms  iterations: 1\nrichards avg: 4824ms  total: 4824ms  iterations: 1\n\n",
+                                                                         "repeat":  3
+                                                                     },
+                                                                     {
+                                                                         "status":  "PASS",
+                                                                         "wallTimeMs":  4975.178,
+                                                                         "workloadTimeMs":  4934,
+                                                                         "cpuTimeMs":  4875,
+                                                                         "peakWorkingSetBytes":  12730368,
+                                                                         "exitCode":  0,
+                                                                         "outputTail":  "richards iteration 1/1: 4934ms\nrichards avg: 4934ms  total: 4934ms  iterations: 1\nrichards avg: 4934ms  total: 4934ms  iterations: 1\n\n",
+                                                                         "repeat":  4
+                                                                     },
+                                                                     {
+                                                                         "status":  "PASS",
+                                                                         "wallTimeMs":  5539.389,
+                                                                         "workloadTimeMs":  5442,
+                                                                         "cpuTimeMs":  5359.375,
+                                                                         "peakWorkingSetBytes":  12787712,
+                                                                         "exitCode":  0,
+                                                                         "outputTail":  "richards iteration 1/1: 5442ms\nrichards avg: 5442ms  total: 5442ms  iterations: 1\nrichards avg: 5442ms  total: 5442ms  iterations: 1\n\n",
+                                                                         "repeat":  5
+                                                                     },
+                                                                     {
+                                                                         "status":  "PASS",
+                                                                         "wallTimeMs":  5681.481,
+                                                                         "workloadTimeMs":  5602,
+                                                                         "cpuTimeMs":  5500,
+                                                                         "peakWorkingSetBytes":  12705792,
+                                                                         "exitCode":  0,
+                                                                         "outputTail":  "richards iteration 1/1: 5602ms\nrichards avg: 5602ms  total: 5602ms  iterations: 1\nrichards avg: 5602ms  total: 5602ms  iterations: 1\n\n",
+                                                                         "repeat":  6
+                                                                     },
+                                                                     {
+                                                                         "status":  "PASS",
+                                                                         "wallTimeMs":  5270.694,
+                                                                         "workloadTimeMs":  5239,
+                                                                         "cpuTimeMs":  5062.5,
+                                                                         "peakWorkingSetBytes":  12664832,
+                                                                         "exitCode":  0,
+                                                                         "outputTail":  "richards iteration 1/1: 5239ms\nrichards avg: 5239ms  total: 5239ms  iterations: 1\nrichards avg: 5239ms  total: 5239ms  iterations: 1\n\n",
+                                                                         "repeat":  7
+                                                                     }
+                                                                 ]
+                                                 }
+                                },
+                    "boa":  {
+                                "n-body-SP":  {
+                                                  "passes":  7,
+                                                  "repeats":  7,
+                                                  "summary":  {
+                                                                  "medianWorkloadTimeMs":  360,
+                                                                  "medianWallTimeMs":  436.716,
+                                                                  "minWallTimeMs":  435.205,
+                                                                  "maxWallTimeMs":  449.975,
+                                                                  "p90WallTimeMs":  444.124,
+                                                                  "madWallTimeMs":  1.511,
+                                                                  "standardDeviationMs":  4.782,
+                                                                  "peakWorkingSetBytes":  12283904
+                                                              },
+                                                  "samples":  [
+                                                                  {
+                                                                      "status":  "PASS",
+                                                                      "wallTimeMs":  440.224,
+                                                                      "workloadTimeMs":  352,
+                                                                      "cpuTimeMs":  359.375,
+                                                                      "peakWorkingSetBytes":  12271616,
+                                                                      "exitCode":  0,
+                                                                      "outputTail":  "n-body-SP iteration 1/1: 352ms\nn-body-SP avg: 352ms  total: 352ms  iterations: 1\n\"n-body-SP avg: 352ms  total: 352ms  iterations: 1\"\n\n",
+                                                                      "repeat":  1
+                                                                  },
+                                                                  {
+                                                                      "status":  "PASS",
+                                                                      "wallTimeMs":  435.408,
+                                                                      "workloadTimeMs":  357,
+                                                                      "cpuTimeMs":  359.375,
+                                                                      "peakWorkingSetBytes":  12275712,
+                                                                      "exitCode":  0,
+                                                                      "outputTail":  "n-body-SP iteration 1/1: 357ms\nn-body-SP avg: 357ms  total: 357ms  iterations: 1\n\"n-body-SP avg: 357ms  total: 357ms  iterations: 1\"\n\n",
+                                                                      "repeat":  2
+                                                                  },
+                                                                  {
+                                                                      "status":  "PASS",
+                                                                      "wallTimeMs":  438.783,
+                                                                      "workloadTimeMs":  351,
+                                                                      "cpuTimeMs":  359.375,
+                                                                      "peakWorkingSetBytes":  12263424,
+                                                                      "exitCode":  0,
+                                                                      "outputTail":  "n-body-SP iteration 1/1: 351ms\nn-body-SP avg: 351ms  total: 351ms  iterations: 1\n\"n-body-SP avg: 351ms  total: 351ms  iterations: 1\"\n\n",
+                                                                      "repeat":  3
+                                                                  },
+                                                                  {
+                                                                      "status":  "PASS",
+                                                                      "wallTimeMs":  435.205,
+                                                                      "workloadTimeMs":  360,
+                                                                      "cpuTimeMs":  375,
+                                                                      "peakWorkingSetBytes":  12275712,
+                                                                      "exitCode":  0,
+                                                                      "outputTail":  "n-body-SP iteration 1/1: 360ms\nn-body-SP avg: 360ms  total: 360ms  iterations: 1\n\"n-body-SP avg: 360ms  total: 360ms  iterations: 1\"\n\n",
+                                                                      "repeat":  4
+                                                                  },
+                                                                  {
+                                                                      "status":  "PASS",
+                                                                      "wallTimeMs":  449.975,
+                                                                      "workloadTimeMs":  364,
+                                                                      "cpuTimeMs":  359.375,
+                                                                      "peakWorkingSetBytes":  12271616,
+                                                                      "exitCode":  0,
+                                                                      "outputTail":  "n-body-SP iteration 1/1: 364ms\nn-body-SP avg: 364ms  total: 364ms  iterations: 1\n\"n-body-SP avg: 364ms  total: 364ms  iterations: 1\"\n\n",
+                                                                      "repeat":  5
+                                                                  },
+                                                                  {
+                                                                      "status":  "PASS",
+                                                                      "wallTimeMs":  436.716,
+                                                                      "workloadTimeMs":  372,
+                                                                      "cpuTimeMs":  390.625,
+                                                                      "peakWorkingSetBytes":  12275712,
+                                                                      "exitCode":  0,
+                                                                      "outputTail":  "n-body-SP iteration 1/1: 372ms\nn-body-SP avg: 372ms  total: 372ms  iterations: 1\n\"n-body-SP avg: 372ms  total: 372ms  iterations: 1\"\n\n",
+                                                                      "repeat":  6
+                                                                  },
+                                                                  {
+                                                                      "status":  "PASS",
+                                                                      "wallTimeMs":  436.65,
+                                                                      "workloadTimeMs":  372,
+                                                                      "cpuTimeMs":  375,
+                                                                      "peakWorkingSetBytes":  12283904,
+                                                                      "exitCode":  0,
+                                                                      "outputTail":  "n-body-SP iteration 1/1: 372ms\nn-body-SP avg: 372ms  total: 372ms  iterations: 1\n\"n-body-SP avg: 372ms  total: 372ms  iterations: 1\"\n\n",
+                                                                      "repeat":  7
+                                                                  }
+                                                              ]
+                                              },
+                                "crypto-sha1-SP":  {
+                                                       "passes":  7,
+                                                       "repeats":  7,
+                                                       "summary":  {
+                                                                       "medianWorkloadTimeMs":  673,
+                                                                       "medianWallTimeMs":  749.42,
+                                                                       "minWallTimeMs":  719.488,
+                                                                       "maxWallTimeMs":  753.549,
+                                                                       "p90WallTimeMs":  752.009,
+                                                                       "madWallTimeMs":  1.563,
+                                                                       "standardDeviationMs":  14.068,
+                                                                       "peakWorkingSetBytes":  14401536
+                                                                   },
+                                                       "samples":  [
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  750.983,
+                                                                           "workloadTimeMs":  673,
+                                                                           "cpuTimeMs":  687.5,
+                                                                           "peakWorkingSetBytes":  14385152,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "crypto-sha1-SP iteration 1/1: 673ms\ncrypto-sha1-SP avg: 673ms  total: 673ms  iterations: 1\n\"crypto-sha1-SP avg: 673ms  total: 673ms  iterations: 1\"\n\n",
+                                                                           "repeat":  1
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  749.42,
+                                                                           "workloadTimeMs":  675,
+                                                                           "cpuTimeMs":  671.875,
+                                                                           "peakWorkingSetBytes":  14401536,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "crypto-sha1-SP iteration 1/1: 675ms\ncrypto-sha1-SP avg: 675ms  total: 675ms  iterations: 1\n\"crypto-sha1-SP avg: 675ms  total: 675ms  iterations: 1\"\n\n",
+                                                                           "repeat":  2
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  748.161,
+                                                                           "workloadTimeMs":  661,
+                                                                           "cpuTimeMs":  671.875,
+                                                                           "peakWorkingSetBytes":  14381056,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "crypto-sha1-SP iteration 1/1: 661ms\ncrypto-sha1-SP avg: 661ms  total: 661ms  iterations: 1\n\"crypto-sha1-SP avg: 661ms  total: 661ms  iterations: 1\"\n\n",
+                                                                           "repeat":  3
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  750.627,
+                                                                           "workloadTimeMs":  673,
+                                                                           "cpuTimeMs":  656.25,
+                                                                           "peakWorkingSetBytes":  14393344,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "crypto-sha1-SP iteration 1/1: 673ms\ncrypto-sha1-SP avg: 673ms  total: 673ms  iterations: 1\n\"crypto-sha1-SP avg: 673ms  total: 673ms  iterations: 1\"\n\n",
+                                                                           "repeat":  4
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  753.549,
+                                                                           "workloadTimeMs":  694,
+                                                                           "cpuTimeMs":  703.125,
+                                                                           "peakWorkingSetBytes":  14319616,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "crypto-sha1-SP iteration 1/1: 694ms\ncrypto-sha1-SP avg: 694ms  total: 694ms  iterations: 1\n\"crypto-sha1-SP avg: 694ms  total: 694ms  iterations: 1\"\n\n",
+                                                                           "repeat":  5
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  719.488,
+                                                                           "workloadTimeMs":  670,
+                                                                           "cpuTimeMs":  671.875,
+                                                                           "peakWorkingSetBytes":  14221312,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "crypto-sha1-SP iteration 1/1: 670ms\ncrypto-sha1-SP avg: 670ms  total: 670ms  iterations: 1\n\"crypto-sha1-SP avg: 670ms  total: 670ms  iterations: 1\"\n\n",
+                                                                           "repeat":  6
+                                                                       },
+                                                                       {
+                                                                           "status":  "PASS",
+                                                                           "wallTimeMs":  719.693,
+                                                                           "workloadTimeMs":  685,
+                                                                           "cpuTimeMs":  656.25,
+                                                                           "peakWorkingSetBytes":  14237696,
+                                                                           "exitCode":  0,
+                                                                           "outputTail":  "crypto-sha1-SP iteration 1/1: 685ms\ncrypto-sha1-SP avg: 685ms  total: 685ms  iterations: 1\n\"crypto-sha1-SP avg: 685ms  total: 685ms  iterations: 1\"\n\n",
+                                                                           "repeat":  7
+                                                                       }
+                                                                   ]
+                                                   },
+                                "crypto-md5-SP":  {
+                                                      "passes":  7,
+                                                      "repeats":  7,
+                                                      "summary":  {
+                                                                      "medianWorkloadTimeMs":  486,
+                                                                      "medianWallTimeMs":  557.709,
+                                                                      "minWallTimeMs":  507.295,
+                                                                      "maxWallTimeMs":  571.34,
+                                                                      "p90WallTimeMs":  570.881,
+                                                                      "madWallTimeMs":  13.631,
+                                                                      "standardDeviationMs":  22.924,
+                                                                      "peakWorkingSetBytes":  16822272
+                                                                  },
+                                                      "samples":  [
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  507.295,
+                                                                          "workloadTimeMs":  481,
+                                                                          "cpuTimeMs":  500,
+                                                                          "peakWorkingSetBytes":  15671296,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "crypto-md5-SP iteration 1/1: 481ms\ncrypto-md5-SP avg: 481ms  total: 481ms  iterations: 1\n\"crypto-md5-SP avg: 481ms  total: 481ms  iterations: 1\"\n\n",
+                                                                          "repeat":  1
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  559.221,
+                                                                          "workloadTimeMs":  486,
+                                                                          "cpuTimeMs":  500,
+                                                                          "peakWorkingSetBytes":  15949824,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "crypto-md5-SP iteration 1/1: 486ms\ncrypto-md5-SP avg: 486ms  total: 486ms  iterations: 1\n\"crypto-md5-SP avg: 486ms  total: 486ms  iterations: 1\"\n\n",
+                                                                          "repeat":  2
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  571.34,
+                                                                          "workloadTimeMs":  486,
+                                                                          "cpuTimeMs":  484.375,
+                                                                          "peakWorkingSetBytes":  15912960,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "crypto-md5-SP iteration 1/1: 486ms\ncrypto-md5-SP avg: 486ms  total: 486ms  iterations: 1\n\"crypto-md5-SP avg: 486ms  total: 486ms  iterations: 1\"\n\n",
+                                                                          "repeat":  3
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  538.571,
+                                                                          "workloadTimeMs":  494,
+                                                                          "cpuTimeMs":  500,
+                                                                          "peakWorkingSetBytes":  15663104,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "crypto-md5-SP iteration 1/1: 494ms\ncrypto-md5-SP avg: 494ms  total: 494ms  iterations: 1\n\"crypto-md5-SP avg: 494ms  total: 494ms  iterations: 1\"\n\n",
+                                                                          "repeat":  4
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  522.114,
+                                                                          "workloadTimeMs":  486,
+                                                                          "cpuTimeMs":  500,
+                                                                          "peakWorkingSetBytes":  15646720,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "crypto-md5-SP iteration 1/1: 486ms\ncrypto-md5-SP avg: 486ms  total: 486ms  iterations: 1\n\"crypto-md5-SP avg: 486ms  total: 486ms  iterations: 1\"\n\n",
+                                                                          "repeat":  5
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  557.709,
+                                                                          "workloadTimeMs":  485,
+                                                                          "cpuTimeMs":  484.375,
+                                                                          "peakWorkingSetBytes":  15937536,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "crypto-md5-SP iteration 1/1: 485ms\ncrypto-md5-SP avg: 485ms  total: 485ms  iterations: 1\n\"crypto-md5-SP avg: 485ms  total: 485ms  iterations: 1\"\n\n",
+                                                                          "repeat":  6
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  570.575,
+                                                                          "workloadTimeMs":  487,
+                                                                          "cpuTimeMs":  531.25,
+                                                                          "peakWorkingSetBytes":  16822272,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "crypto-md5-SP iteration 1/1: 487ms\ncrypto-md5-SP avg: 487ms  total: 487ms  iterations: 1\n\"crypto-md5-SP avg: 487ms  total: 487ms  iterations: 1\"\n\n",
+                                                                          "repeat":  7
+                                                                      }
+                                                                  ]
+                                                  },
+                                "3d-cube-SP":  {
+                                                   "passes":  7,
+                                                   "repeats":  7,
+                                                   "summary":  {
+                                                                   "medianWorkloadTimeMs":  529,
+                                                                   "medianWallTimeMs":  561.938,
+                                                                   "minWallTimeMs":  543.995,
+                                                                   "maxWallTimeMs":  625.599,
+                                                                   "p90WallTimeMs":  623.53,
+                                                                   "madWallTimeMs":  17.943,
+                                                                   "standardDeviationMs":  30.172,
+                                                                   "peakWorkingSetBytes":  16748544
+                                                               },
+                                                   "samples":  [
+                                                                   {
+                                                                       "status":  "PASS",
+                                                                       "wallTimeMs":  561.938,
+                                                                       "workloadTimeMs":  529,
+                                                                       "cpuTimeMs":  546.875,
+                                                                       "peakWorkingSetBytes":  16629760,
+                                                                       "exitCode":  0,
+                                                                       "outputTail":  "3d-cube-SP iteration 1/1: 529ms\n3d-cube-SP avg: 529ms  total: 529ms  iterations: 1\n\"3d-cube-SP avg: 529ms  total: 529ms  iterations: 1\"\n\n",
+                                                                       "repeat":  1
+                                                                   },
+                                                                   {
+                                                                       "status":  "PASS",
+                                                                       "wallTimeMs":  589.034,
+                                                                       "workloadTimeMs":  543,
+                                                                       "cpuTimeMs":  562.5,
+                                                                       "peakWorkingSetBytes":  16633856,
+                                                                       "exitCode":  0,
+                                                                       "outputTail":  "3d-cube-SP iteration 1/1: 543ms\n3d-cube-SP avg: 543ms  total: 543ms  iterations: 1\n\"3d-cube-SP avg: 543ms  total: 543ms  iterations: 1\"\n\n",
+                                                                       "repeat":  2
+                                                                   },
+                                                                   {
+                                                                       "status":  "PASS",
+                                                                       "wallTimeMs":  560.479,
+                                                                       "workloadTimeMs":  518,
+                                                                       "cpuTimeMs":  515.625,
+                                                                       "peakWorkingSetBytes":  16613376,
+                                                                       "exitCode":  0,
+                                                                       "outputTail":  "3d-cube-SP iteration 1/1: 518ms\n3d-cube-SP avg: 518ms  total: 518ms  iterations: 1\n\"3d-cube-SP avg: 518ms  total: 518ms  iterations: 1\"\n\n",
+                                                                       "repeat":  3
+                                                                   },
+                                                                   {
+                                                                       "status":  "PASS",
+                                                                       "wallTimeMs":  559.211,
+                                                                       "workloadTimeMs":  523,
+                                                                       "cpuTimeMs":  515.625,
+                                                                       "peakWorkingSetBytes":  16539648,
+                                                                       "exitCode":  0,
+                                                                       "outputTail":  "3d-cube-SP iteration 1/1: 523ms\n3d-cube-SP avg: 523ms  total: 523ms  iterations: 1\n\"3d-cube-SP avg: 523ms  total: 523ms  iterations: 1\"\n\n",
+                                                                       "repeat":  4
+                                                                   },
+                                                                   {
+                                                                       "status":  "PASS",
+                                                                       "wallTimeMs":  622.15,
+                                                                       "workloadTimeMs":  536,
+                                                                       "cpuTimeMs":  531.25,
+                                                                       "peakWorkingSetBytes":  16748544,
+                                                                       "exitCode":  0,
+                                                                       "outputTail":  "3d-cube-SP iteration 1/1: 536ms\n3d-cube-SP avg: 536ms  total: 536ms  iterations: 1\n\"3d-cube-SP avg: 536ms  total: 536ms  iterations: 1\"\n\n",
+                                                                       "repeat":  5
+                                                                   },
+                                                                   {
+                                                                       "status":  "PASS",
+                                                                       "wallTimeMs":  625.599,
+                                                                       "workloadTimeMs":  563,
+                                                                       "cpuTimeMs":  578.125,
+                                                                       "peakWorkingSetBytes":  16519168,
+                                                                       "exitCode":  0,
+                                                                       "outputTail":  "3d-cube-SP iteration 1/1: 563ms\n3d-cube-SP avg: 563ms  total: 563ms  iterations: 1\n\"3d-cube-SP avg: 563ms  total: 563ms  iterations: 1\"\n\n",
+                                                                       "repeat":  6
+                                                                   },
+                                                                   {
+                                                                       "status":  "PASS",
+                                                                       "wallTimeMs":  543.995,
+                                                                       "workloadTimeMs":  510,
+                                                                       "cpuTimeMs":  500,
+                                                                       "peakWorkingSetBytes":  16506880,
+                                                                       "exitCode":  0,
+                                                                       "outputTail":  "3d-cube-SP iteration 1/1: 510ms\n3d-cube-SP avg: 510ms  total: 510ms  iterations: 1\n\"3d-cube-SP avg: 510ms  total: 510ms  iterations: 1\"\n\n",
+                                                                       "repeat":  7
+                                                                   }
+                                                               ]
+                                               },
+                                "navier-stokes":  {
+                                                      "passes":  7,
+                                                      "repeats":  7,
+                                                      "summary":  {
+                                                                      "medianWorkloadTimeMs":  260,
+                                                                      "medianWallTimeMs":  374.417,
+                                                                      "minWallTimeMs":  372.255,
+                                                                      "maxWallTimeMs":  388.948,
+                                                                      "p90WallTimeMs":  388.288,
+                                                                      "madWallTimeMs":  1.197,
+                                                                      "standardDeviationMs":  6.638,
+                                                                      "peakWorkingSetBytes":  16031744
+                                                                  },
+                                                      "samples":  [
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  373.4,
+                                                                          "workloadTimeMs":  255,
+                                                                          "cpuTimeMs":  328.125,
+                                                                          "peakWorkingSetBytes":  15970304,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "navier-stokes iteration 1/1: 255ms\nnavier-stokes avg: 255ms  total: 255ms  iterations: 1\n\"navier-stokes avg: 255ms  total: 255ms  iterations: 1\"\n\n",
+                                                                          "repeat":  1
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  374.417,
+                                                                          "workloadTimeMs":  275,
+                                                                          "cpuTimeMs":  343.75,
+                                                                          "peakWorkingSetBytes":  15982592,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "navier-stokes iteration 1/1: 275ms\nnavier-stokes avg: 275ms  total: 275ms  iterations: 1\n\"navier-stokes avg: 275ms  total: 275ms  iterations: 1\"\n\n",
+                                                                          "repeat":  2
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  373.647,
+                                                                          "workloadTimeMs":  261,
+                                                                          "cpuTimeMs":  328.125,
+                                                                          "peakWorkingSetBytes":  15970304,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "navier-stokes iteration 1/1: 261ms\nnavier-stokes avg: 261ms  total: 261ms  iterations: 1\n\"navier-stokes avg: 261ms  total: 261ms  iterations: 1\"\n\n",
+                                                                          "repeat":  3
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  375.614,
+                                                                          "workloadTimeMs":  260,
+                                                                          "cpuTimeMs":  328.125,
+                                                                          "peakWorkingSetBytes":  15966208,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "navier-stokes iteration 1/1: 260ms\nnavier-stokes avg: 260ms  total: 260ms  iterations: 1\n\"navier-stokes avg: 260ms  total: 260ms  iterations: 1\"\n\n",
+                                                                          "repeat":  4
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  388.948,
+                                                                          "workloadTimeMs":  260,
+                                                                          "cpuTimeMs":  343.75,
+                                                                          "peakWorkingSetBytes":  16031744,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "navier-stokes iteration 1/1: 260ms\nnavier-stokes avg: 260ms  total: 260ms  iterations: 1\n\"navier-stokes avg: 260ms  total: 260ms  iterations: 1\"\n\n",
+                                                                          "repeat":  5
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  387.848,
+                                                                          "workloadTimeMs":  259,
+                                                                          "cpuTimeMs":  343.75,
+                                                                          "peakWorkingSetBytes":  15974400,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "navier-stokes iteration 1/1: 259ms\nnavier-stokes avg: 259ms  total: 259ms  iterations: 1\n\"navier-stokes avg: 259ms  total: 259ms  iterations: 1\"\n\n",
+                                                                          "repeat":  6
+                                                                      },
+                                                                      {
+                                                                          "status":  "PASS",
+                                                                          "wallTimeMs":  372.255,
+                                                                          "workloadTimeMs":  257,
+                                                                          "cpuTimeMs":  328.125,
+                                                                          "peakWorkingSetBytes":  16023552,
+                                                                          "exitCode":  0,
+                                                                          "outputTail":  "navier-stokes iteration 1/1: 257ms\nnavier-stokes avg: 257ms  total: 257ms  iterations: 1\n\"navier-stokes avg: 257ms  total: 257ms  iterations: 1\"\n\n",
+                                                                          "repeat":  7
+                                                                      }
+                                                                  ]
+                                                  },
+                                "richards":  {
+                                                 "passes":  7,
+                                                 "repeats":  7,
+                                                 "summary":  {
+                                                                 "medianWorkloadTimeMs":  713,
+                                                                 "medianWallTimeMs":  772.056,
+                                                                 "minWallTimeMs":  699.16,
+                                                                 "maxWallTimeMs":  869.567,
+                                                                 "p90WallTimeMs":  862.441,
+                                                                 "madWallTimeMs":  47.816,
+                                                                 "standardDeviationMs":  58.768,
+                                                                 "peakWorkingSetBytes":  13041664
+                                                             },
+                                                 "samples":  [
+                                                                 {
+                                                                     "status":  "PASS",
+                                                                     "wallTimeMs":  796.949,
+                                                                     "workloadTimeMs":  707,
+                                                                     "cpuTimeMs":  718.75,
+                                                                     "peakWorkingSetBytes":  13041664,
+                                                                     "exitCode":  0,
+                                                                     "outputTail":  "richards iteration 1/1: 707ms\nrichards avg: 707ms  total: 707ms  iterations: 1\n\"richards avg: 707ms  total: 707ms  iterations: 1\"\n\n",
+                                                                     "repeat":  1
+                                                                 },
+                                                                 {
+                                                                     "status":  "PASS",
+                                                                     "wallTimeMs":  857.691,
+                                                                     "workloadTimeMs":  776,
+                                                                     "cpuTimeMs":  828.125,
+                                                                     "peakWorkingSetBytes":  12804096,
+                                                                     "exitCode":  0,
+                                                                     "outputTail":  "richards iteration 1/1: 776ms\nrichards avg: 776ms  total: 776ms  iterations: 1\n\"richards avg: 776ms  total: 776ms  iterations: 1\"\n\n",
+                                                                     "repeat":  2
+                                                                 },
+                                                                 {
+                                                                     "status":  "PASS",
+                                                                     "wallTimeMs":  869.567,
+                                                                     "workloadTimeMs":  776,
+                                                                     "cpuTimeMs":  750,
+                                                                     "peakWorkingSetBytes":  12787712,
+                                                                     "exitCode":  0,
+                                                                     "outputTail":  "richards iteration 1/1: 776ms\nrichards avg: 776ms  total: 776ms  iterations: 1\n\"richards avg: 776ms  total: 776ms  iterations: 1\"\n\n",
+                                                                     "repeat":  3
+                                                                 },
+                                                                 {
+                                                                     "status":  "PASS",
+                                                                     "wallTimeMs":  765.417,
+                                                                     "workloadTimeMs":  713,
+                                                                     "cpuTimeMs":  671.875,
+                                                                     "peakWorkingSetBytes":  12800000,
+                                                                     "exitCode":  0,
+                                                                     "outputTail":  "richards iteration 1/1: 713ms\nrichards avg: 713ms  total: 713ms  iterations: 1\n\"richards avg: 713ms  total: 713ms  iterations: 1\"\n\n",
+                                                                     "repeat":  4
+                                                                 },
+                                                                 {
+                                                                     "status":  "PASS",
+                                                                     "wallTimeMs":  772.056,
+                                                                     "workloadTimeMs":  723,
+                                                                     "cpuTimeMs":  718.75,
+                                                                     "peakWorkingSetBytes":  12791808,
+                                                                     "exitCode":  0,
+                                                                     "outputTail":  "richards iteration 1/1: 723ms\nrichards avg: 723ms  total: 723ms  iterations: 1\n\"richards avg: 723ms  total: 723ms  iterations: 1\"\n\n",
+                                                                     "repeat":  5
+                                                                 },
+                                                                 {
+                                                                     "status":  "PASS",
+                                                                     "wallTimeMs":  724.24,
+                                                                     "workloadTimeMs":  693,
+                                                                     "cpuTimeMs":  703.125,
+                                                                     "peakWorkingSetBytes":  12787712,
+                                                                     "exitCode":  0,
+                                                                     "outputTail":  "richards iteration 1/1: 693ms\nrichards avg: 693ms  total: 693ms  iterations: 1\n\"richards avg: 693ms  total: 693ms  iterations: 1\"\n\n",
+                                                                     "repeat":  6
+                                                                 },
+                                                                 {
+                                                                     "status":  "PASS",
+                                                                     "wallTimeMs":  699.16,
+                                                                     "workloadTimeMs":  668,
+                                                                     "cpuTimeMs":  671.875,
+                                                                     "peakWorkingSetBytes":  12795904,
+                                                                     "exitCode":  0,
+                                                                     "outputTail":  "richards iteration 1/1: 668ms\nrichards avg: 668ms  total: 668ms  iterations: 1\n\"richards avg: 668ms  total: 668ms  iterations: 1\"\n\n",
+                                                                     "repeat":  7
+                                                                 }
+                                                             ]
+                                             }
+                            }
+                },
+    "boaOverAgentjsWorkloadP50":  {
+                                      "n-body-SP":  0.273556,
+                                      "crypto-sha1-SP":  0.155643,
+                                      "crypto-md5-SP":  0.09415,
+                                      "3d-cube-SP":  0.280637,
+                                      "navier-stokes":  0.308789,
+                                      "richards":  0.144507
+                                  },
+    "boaOverAgentjsWorkloadP50Geomean":  0.192065
+}
