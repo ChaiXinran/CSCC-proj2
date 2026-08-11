@@ -1,0 +1,128 @@
+﻿{
+    "schemaVersion":  1,
+    "generatedAtUtc":  "2026-08-11T16:56:46.7172001Z",
+    "agentRevision":  "b8c2d305545aad2e77b7fee157ff52f59cb8ffb7",
+    "agentDirty":  true,
+    "binary":  "D:\\00_OS\\CSCC\\target\\release\\agentjs.exe",
+    "timeoutSeconds":  180,
+    "benchmarks":  [
+                       {
+                           "benchmark":  "richards",
+                           "iterations":  2,
+                           "repeats":  5,
+                           "passes":  5,
+                           "runnerSha256":  "e7f048f7540e552c32e5b73a50bdd1cd9191de70d73ebc0ea2a73e0f249c2059",
+                           "jetStreamRevision":  "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+                           "summary":  {
+                                           "medianWallTimeMs":  8362.752,
+                                           "minWallTimeMs":  8245.633,
+                                           "maxWallTimeMs":  8487.79,
+                                           "p90WallTimeMs":  8456.44,
+                                           "madWallTimeMs":  55.097,
+                                           "standardDeviationMs":  83.144,
+                                           "peakWorkingSetBytes":  25653248
+                                       },
+                           "samples":  [
+                                           {
+                                               "repeat":  1,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  8245.633,
+                                               "cpuTimeMs":  8093.75,
+                                               "peakWorkingSetBytes":  25612288,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  2,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  8487.79,
+                                               "cpuTimeMs":  8343.75,
+                                               "peakWorkingSetBytes":  25620480,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  3,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  8409.414,
+                                               "cpuTimeMs":  8171.875,
+                                               "peakWorkingSetBytes":  25071616,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  4,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  8307.655,
+                                               "cpuTimeMs":  8156.25,
+                                               "peakWorkingSetBytes":  24829952,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  5,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  8362.752,
+                                               "cpuTimeMs":  8187.5,
+                                               "peakWorkingSetBytes":  25653248,
+                                               "exitCode":  0
+                                           }
+                                       ]
+                       },
+                       {
+                           "benchmark":  "splay",
+                           "iterations":  2,
+                           "repeats":  5,
+                           "passes":  5,
+                           "runnerSha256":  "977fa7fda3e7b4f6bcf8b5fbe3a965c1ad860f8efa86c14438ff65f504a9e9e8",
+                           "jetStreamRevision":  "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+                           "summary":  {
+                                           "medianWallTimeMs":  7691.097,
+                                           "minWallTimeMs":  7405.659,
+                                           "maxWallTimeMs":  18134.548,
+                                           "p90WallTimeMs":  14206.502,
+                                           "madWallTimeMs":  285.438,
+                                           "standardDeviationMs":  4156.216,
+                                           "peakWorkingSetBytes":  1034457088
+                                       },
+                           "samples":  [
+                                           {
+                                               "repeat":  1,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  7405.659,
+                                               "cpuTimeMs":  7281.25,
+                                               "peakWorkingSetBytes":  1034457088,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  2,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  7691.097,
+                                               "cpuTimeMs":  7468.75,
+                                               "peakWorkingSetBytes":  1031995392,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  3,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  7672.038,
+                                               "cpuTimeMs":  7468.75,
+                                               "peakWorkingSetBytes":  1032380416,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  4,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  8314.434,
+                                               "cpuTimeMs":  8171.875,
+                                               "peakWorkingSetBytes":  1032228864,
+                                               "exitCode":  0
+                                           },
+                                           {
+                                               "repeat":  5,
+                                               "status":  "PASS",
+                                               "wallTimeMs":  18134.548,
+                                               "cpuTimeMs":  16812.5,
+                                               "peakWorkingSetBytes":  1020940288,
+                                               "exitCode":  0
+                                           }
+                                       ]
+                       }
+                   ]
+}
