@@ -1,0 +1,2553 @@
+{
+  "meta": {
+    "benchmark": "AgentBench",
+    "version": "2.0",
+    "mode": "cold",
+    "label_a": "agentjs",
+    "references": [
+      "boa"
+    ],
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": {
+      "boa": ".\\boa\\target\\release\\boa.exe"
+    },
+    "warmup": 3,
+    "repeat": 15,
+    "timeout": 120,
+    "batch_repeat": 5,
+    "cases": [
+      "descriptor-side-table-array",
+      "json-parse-transform",
+      "json-record-aggregate",
+      "large-index-dense-array",
+      "object-property-hot-loop",
+      "rule-filter-dense-window",
+      "short-lived-object-churn",
+      "startup-noop",
+      "string-ascii-index-scan",
+      "string-cleanup-replace-window",
+      "string-log-token-slice",
+      "tool-result-schema-filter"
+    ]
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": "3.14.5",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "manifest_version": "2.0",
+    "commands": {
+      "primary": ".\\target\\release\\agentjs.exe",
+      "references": {
+        "boa": ".\\boa\\target\\release\\boa.exe"
+      }
+    },
+    "binary_sha256": {
+      "primary": "60cc6bed63ecc82c8d99352b1003f2223c4a7be47e94e765b8d2349132f75793",
+      "references": {
+        "boa": "c32d98d47a14c576f161775de4a13916cd5987c5840df633e98a9778b0d5a913"
+      }
+    },
+    "binary_size_bytes": {
+      "primary": 10891776,
+      "references": {
+        "boa": 29693440
+      }
+    },
+    "memory_sampler": "windows-psapi",
+    "generated_at_utc": "2026-08-11T16:44:49Z"
+  },
+  "results": {
+    "agentjs": {
+      "descriptor-side-table-array": {
+        "status": "pass",
+        "median_ms": 427.2,
+        "p90_ms": 444.1,
+        "p95_ms": 450.4,
+        "min_ms": 417.4,
+        "max_ms": 450.4,
+        "tasks_per_second": 2.34,
+        "peak_rss_mb": 13.04,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 437.7,
+            "peak_rss_mb": 12.99,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 440.5,
+            "peak_rss_mb": 13.03,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 450.4,
+            "peak_rss_mb": 13.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 444.1,
+            "peak_rss_mb": 13.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 437.2,
+            "peak_rss_mb": 12.99,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 423.0,
+            "peak_rss_mb": 13.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 434.0,
+            "peak_rss_mb": 13.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 422.1,
+            "peak_rss_mb": 13.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 421.8,
+            "peak_rss_mb": 13.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 427.2,
+            "peak_rss_mb": 13.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 433.6,
+            "peak_rss_mb": 13.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 426.4,
+            "peak_rss_mb": 13.04,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 417.4,
+            "peak_rss_mb": 13.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 422.1,
+            "peak_rss_mb": 13.03,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 426.7,
+            "peak_rss_mb": 13.02,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-parse-transform": {
+        "status": "pass",
+        "median_ms": 25.2,
+        "p90_ms": 26.4,
+        "p95_ms": 27.5,
+        "min_ms": 24.8,
+        "max_ms": 27.5,
+        "tasks_per_second": 39.68,
+        "peak_rss_mb": 12.46,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 25.2,
+            "peak_rss_mb": 12.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.8,
+            "peak_rss_mb": 12.42,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.0,
+            "peak_rss_mb": 12.46,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.9,
+            "peak_rss_mb": 12.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.2,
+            "peak_rss_mb": 12.39,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.3,
+            "peak_rss_mb": 12.39,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 26.4,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.2,
+            "peak_rss_mb": 12.39,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.0,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.0,
+            "peak_rss_mb": 12.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.4,
+            "peak_rss_mb": 12.42,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.4,
+            "peak_rss_mb": 12.37,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.4,
+            "peak_rss_mb": 12.43,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 26.3,
+            "peak_rss_mb": 12.44,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 27.5,
+            "peak_rss_mb": 12.44,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-record-aggregate": {
+        "status": "pass",
+        "median_ms": 25.4,
+        "p90_ms": 27.2,
+        "p95_ms": 31.0,
+        "min_ms": 24.8,
+        "max_ms": 31.0,
+        "tasks_per_second": 39.37,
+        "peak_rss_mb": 10.55,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 25.4,
+            "peak_rss_mb": 10.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 26.5,
+            "peak_rss_mb": 10.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 26.8,
+            "peak_rss_mb": 10.37,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.3,
+            "peak_rss_mb": 10.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.3,
+            "peak_rss_mb": 10.39,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 27.2,
+            "peak_rss_mb": 10.45,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.7,
+            "peak_rss_mb": 10.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.4,
+            "peak_rss_mb": 10.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.0,
+            "peak_rss_mb": 10.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.8,
+            "peak_rss_mb": 10.37,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.4,
+            "peak_rss_mb": 10.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.9,
+            "peak_rss_mb": 10.35,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.1,
+            "peak_rss_mb": 10.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 31.0,
+            "peak_rss_mb": 10.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.9,
+            "peak_rss_mb": 10.52,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "large-index-dense-array": {
+        "status": "pass",
+        "median_ms": 629.9,
+        "p90_ms": 657.5,
+        "p95_ms": 683.9,
+        "min_ms": 616.4,
+        "max_ms": 683.9,
+        "tasks_per_second": 1.59,
+        "peak_rss_mb": 14.13,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 627.6,
+            "peak_rss_mb": 14.13,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 621.4,
+            "peak_rss_mb": 14.12,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 683.9,
+            "peak_rss_mb": 14.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 657.5,
+            "peak_rss_mb": 14.12,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 650.2,
+            "peak_rss_mb": 14.09,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 629.9,
+            "peak_rss_mb": 14.11,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 629.5,
+            "peak_rss_mb": 14.13,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 627.2,
+            "peak_rss_mb": 14.12,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 631.0,
+            "peak_rss_mb": 14.12,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 620.2,
+            "peak_rss_mb": 14.09,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 646.3,
+            "peak_rss_mb": 14.11,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 616.4,
+            "peak_rss_mb": 14.12,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 632.7,
+            "peak_rss_mb": 14.13,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 624.4,
+            "peak_rss_mb": 14.12,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 633.5,
+            "peak_rss_mb": 14.11,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 64.0,
+        "p90_ms": 69.3,
+        "p95_ms": 69.8,
+        "min_ms": 63.0,
+        "max_ms": 69.8,
+        "tasks_per_second": 15.62,
+        "peak_rss_mb": 14.51,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 69.0,
+            "peak_rss_mb": 14.51,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 69.2,
+            "peak_rss_mb": 14.45,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 69.8,
+            "peak_rss_mb": 14.48,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.4,
+            "peak_rss_mb": 14.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.2,
+            "peak_rss_mb": 14.48,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.3,
+            "peak_rss_mb": 14.46,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.7,
+            "peak_rss_mb": 14.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.9,
+            "peak_rss_mb": 14.49,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.6,
+            "peak_rss_mb": 14.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.7,
+            "peak_rss_mb": 14.44,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.0,
+            "peak_rss_mb": 14.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 69.3,
+            "peak_rss_mb": 14.46,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.0,
+            "peak_rss_mb": 14.48,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.7,
+            "peak_rss_mb": 14.45,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.5,
+            "peak_rss_mb": 14.47,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "rule-filter-dense-window": {
+        "status": "pass",
+        "median_ms": 455.9,
+        "p90_ms": 473.7,
+        "p95_ms": 476.9,
+        "min_ms": 444.0,
+        "max_ms": 476.9,
+        "tasks_per_second": 2.19,
+        "peak_rss_mb": 101.95,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 450.0,
+            "peak_rss_mb": 101.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 449.4,
+            "peak_rss_mb": 101.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 444.2,
+            "peak_rss_mb": 101.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 460.2,
+            "peak_rss_mb": 101.91,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 476.9,
+            "peak_rss_mb": 101.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 473.7,
+            "peak_rss_mb": 101.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 462.1,
+            "peak_rss_mb": 101.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 458.4,
+            "peak_rss_mb": 101.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 470.3,
+            "peak_rss_mb": 101.95,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 448.8,
+            "peak_rss_mb": 101.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 444.4,
+            "peak_rss_mb": 101.91,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 455.9,
+            "peak_rss_mb": 101.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 463.2,
+            "peak_rss_mb": 101.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 444.0,
+            "peak_rss_mb": 101.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 450.2,
+            "peak_rss_mb": 101.88,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "short-lived-object-churn": {
+        "status": "pass",
+        "median_ms": 41.6,
+        "p90_ms": 42.0,
+        "p95_ms": 42.4,
+        "min_ms": 36.1,
+        "max_ms": 42.4,
+        "tasks_per_second": 24.04,
+        "peak_rss_mb": 18.08,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 36.1,
+            "peak_rss_mb": 18.08,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.5,
+            "peak_rss_mb": 18.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.7,
+            "peak_rss_mb": 17.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.6,
+            "peak_rss_mb": 18.06,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.4,
+            "peak_rss_mb": 18.05,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.6,
+            "peak_rss_mb": 18.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.8,
+            "peak_rss_mb": 18.05,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.0,
+            "peak_rss_mb": 18.07,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.5,
+            "peak_rss_mb": 18.04,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.6,
+            "peak_rss_mb": 18.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.3,
+            "peak_rss_mb": 18.06,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.5,
+            "peak_rss_mb": 18.08,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.2,
+            "peak_rss_mb": 18.04,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 41.3,
+            "peak_rss_mb": 18.04,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.0,
+            "peak_rss_mb": 18.08,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "startup-noop": {
+        "status": "pass",
+        "median_ms": 13.9,
+        "p90_ms": 14.2,
+        "p95_ms": 14.3,
+        "min_ms": 8.7,
+        "max_ms": 14.3,
+        "tasks_per_second": 71.94,
+        "peak_rss_mb": 6.86,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 14.0,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.2,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 13.9,
+            "peak_rss_mb": 6.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.3,
+            "peak_rss_mb": 6.81,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.2,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.0,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.2,
+            "peak_rss_mb": 6.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 13.7,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 13.6,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.2,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 13.7,
+            "peak_rss_mb": 6.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 9.0,
+            "peak_rss_mb": 6.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 13.5,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 8.7,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 13.7,
+            "peak_rss_mb": 6.84,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-ascii-index-scan": {
+        "status": "pass",
+        "median_ms": 362.3,
+        "p90_ms": 379.6,
+        "p95_ms": 384.2,
+        "min_ms": 350.9,
+        "max_ms": 384.2,
+        "tasks_per_second": 2.76,
+        "peak_rss_mb": 7.56,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 360.5,
+            "peak_rss_mb": 7.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 373.2,
+            "peak_rss_mb": 7.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 366.7,
+            "peak_rss_mb": 7.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 354.8,
+            "peak_rss_mb": 7.54,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 361.1,
+            "peak_rss_mb": 7.56,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 361.7,
+            "peak_rss_mb": 7.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 363.1,
+            "peak_rss_mb": 7.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 362.3,
+            "peak_rss_mb": 7.54,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 361.8,
+            "peak_rss_mb": 7.56,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 350.9,
+            "peak_rss_mb": 7.56,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 377.9,
+            "peak_rss_mb": 7.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 379.6,
+            "peak_rss_mb": 7.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 356.9,
+            "peak_rss_mb": 7.54,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 384.2,
+            "peak_rss_mb": 7.51,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 369.1,
+            "peak_rss_mb": 7.56,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-cleanup-replace-window": {
+        "status": "pass",
+        "median_ms": 138.9,
+        "p90_ms": 142.1,
+        "p95_ms": 185.1,
+        "min_ms": 129.4,
+        "max_ms": 185.1,
+        "tasks_per_second": 7.2,
+        "peak_rss_mb": 7.91,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 138.9,
+            "peak_rss_mb": 7.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 135.8,
+            "peak_rss_mb": 7.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 185.1,
+            "peak_rss_mb": 7.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 136.5,
+            "peak_rss_mb": 7.78,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 136.3,
+            "peak_rss_mb": 7.91,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 141.0,
+            "peak_rss_mb": 7.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 136.8,
+            "peak_rss_mb": 7.81,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 135.6,
+            "peak_rss_mb": 7.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 140.2,
+            "peak_rss_mb": 7.79,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 139.7,
+            "peak_rss_mb": 7.79,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 135.7,
+            "peak_rss_mb": 7.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 140.3,
+            "peak_rss_mb": 7.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 140.4,
+            "peak_rss_mb": 7.74,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 129.4,
+            "peak_rss_mb": 7.91,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 142.1,
+            "peak_rss_mb": 7.89,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-log-token-slice": {
+        "status": "pass",
+        "median_ms": 424.4,
+        "p90_ms": 459.2,
+        "p95_ms": 466.2,
+        "min_ms": 416.6,
+        "max_ms": 466.2,
+        "tasks_per_second": 2.36,
+        "peak_rss_mb": 8.59,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 422.5,
+            "peak_rss_mb": 8.59,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 416.9,
+            "peak_rss_mb": 8.56,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 459.2,
+            "peak_rss_mb": 8.59,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 421.5,
+            "peak_rss_mb": 8.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 424.4,
+            "peak_rss_mb": 8.51,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 459.0,
+            "peak_rss_mb": 8.48,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 418.1,
+            "peak_rss_mb": 8.56,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 466.2,
+            "peak_rss_mb": 8.59,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 421.6,
+            "peak_rss_mb": 8.58,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 429.1,
+            "peak_rss_mb": 8.51,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 427.1,
+            "peak_rss_mb": 8.58,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 418.1,
+            "peak_rss_mb": 8.57,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 424.6,
+            "peak_rss_mb": 8.56,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 433.8,
+            "peak_rss_mb": 8.58,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 416.6,
+            "peak_rss_mb": 8.57,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "tool-result-schema-filter": {
+        "status": "pass",
+        "median_ms": 36.2,
+        "p90_ms": 37.0,
+        "p95_ms": 41.7,
+        "min_ms": 35.8,
+        "max_ms": 41.7,
+        "tasks_per_second": 27.62,
+        "peak_rss_mb": 19.54,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 41.7,
+            "peak_rss_mb": 19.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.2,
+            "peak_rss_mb": 19.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.0,
+            "peak_rss_mb": 19.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.6,
+            "peak_rss_mb": 19.53,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.2,
+            "peak_rss_mb": 19.51,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 37.0,
+            "peak_rss_mb": 19.49,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 35.8,
+            "peak_rss_mb": 19.51,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.1,
+            "peak_rss_mb": 19.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.4,
+            "peak_rss_mb": 19.48,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.4,
+            "peak_rss_mb": 19.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.2,
+            "peak_rss_mb": 19.51,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.6,
+            "peak_rss_mb": 19.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.2,
+            "peak_rss_mb": 19.49,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.2,
+            "peak_rss_mb": 19.54,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.2,
+            "peak_rss_mb": 19.54,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    },
+    "boa": {
+      "descriptor-side-table-array": {
+        "status": "pass",
+        "median_ms": 485.7,
+        "p90_ms": 500.2,
+        "p95_ms": 505.9,
+        "min_ms": 478.4,
+        "max_ms": 505.9,
+        "tasks_per_second": 2.06,
+        "peak_rss_mb": 25.54,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 499.6,
+            "peak_rss_mb": 25.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 505.9,
+            "peak_rss_mb": 25.53,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 500.2,
+            "peak_rss_mb": 25.53,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 484.3,
+            "peak_rss_mb": 25.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 485.2,
+            "peak_rss_mb": 25.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 484.9,
+            "peak_rss_mb": 25.54,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 495.6,
+            "peak_rss_mb": 25.54,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 482.9,
+            "peak_rss_mb": 25.53,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 490.8,
+            "peak_rss_mb": 25.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 483.4,
+            "peak_rss_mb": 25.53,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 489.2,
+            "peak_rss_mb": 25.53,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 487.9,
+            "peak_rss_mb": 25.53,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 478.4,
+            "peak_rss_mb": 25.54,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 484.6,
+            "peak_rss_mb": 25.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 485.7,
+            "peak_rss_mb": 25.53,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-parse-transform": {
+        "status": "pass",
+        "median_ms": 30.9,
+        "p90_ms": 31.5,
+        "p95_ms": 32.0,
+        "min_ms": 30.2,
+        "max_ms": 32.0,
+        "tasks_per_second": 32.36,
+        "peak_rss_mb": 18.84,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 31.5,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 31.2,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 32.0,
+            "peak_rss_mb": 18.83,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 31.2,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.9,
+            "peak_rss_mb": 18.83,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 31.4,
+            "peak_rss_mb": 18.81,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 31.1,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.9,
+            "peak_rss_mb": 18.83,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.6,
+            "peak_rss_mb": 18.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.5,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.7,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.2,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.5,
+            "peak_rss_mb": 18.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 31.1,
+            "peak_rss_mb": 18.82,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 30.9,
+            "peak_rss_mb": 18.83,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-record-aggregate": {
+        "status": "pass",
+        "median_ms": 20.4,
+        "p90_ms": 25.3,
+        "p95_ms": 25.5,
+        "min_ms": 19.2,
+        "max_ms": 25.5,
+        "tasks_per_second": 49.02,
+        "peak_rss_mb": 11.99,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 24.6,
+            "peak_rss_mb": 11.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.7,
+            "peak_rss_mb": 11.99,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.6,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.3,
+            "peak_rss_mb": 11.95,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.5,
+            "peak_rss_mb": 11.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.3,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.2,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.9,
+            "peak_rss_mb": 11.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.5,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.3,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.7,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.5,
+            "peak_rss_mb": 11.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.4,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.5,
+            "peak_rss_mb": 11.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.2,
+            "peak_rss_mb": 11.97,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "large-index-dense-array": {
+        "status": "pass",
+        "median_ms": 766.2,
+        "p90_ms": 829.8,
+        "p95_ms": 837.4,
+        "min_ms": 642.1,
+        "max_ms": 837.4,
+        "tasks_per_second": 1.31,
+        "peak_rss_mb": 17.86,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 643.2,
+            "peak_rss_mb": 17.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 654.8,
+            "peak_rss_mb": 17.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 642.1,
+            "peak_rss_mb": 17.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 654.1,
+            "peak_rss_mb": 17.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 659.6,
+            "peak_rss_mb": 17.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 648.0,
+            "peak_rss_mb": 17.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 672.8,
+            "peak_rss_mb": 17.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 774.8,
+            "peak_rss_mb": 17.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 766.2,
+            "peak_rss_mb": 17.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 829.8,
+            "peak_rss_mb": 17.83,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 805.7,
+            "peak_rss_mb": 17.85,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 768.9,
+            "peak_rss_mb": 17.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 775.6,
+            "peak_rss_mb": 17.86,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 771.5,
+            "peak_rss_mb": 17.84,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 837.4,
+            "peak_rss_mb": 17.83,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 70.3,
+        "p90_ms": 78.4,
+        "p95_ms": 78.6,
+        "min_ms": 65.0,
+        "max_ms": 78.6,
+        "tasks_per_second": 14.22,
+        "peak_rss_mb": 12.43,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 78.6,
+            "peak_rss_mb": 12.42,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 72.1,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.0,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 66.2,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.1,
+            "peak_rss_mb": 12.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.0,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 71.5,
+            "peak_rss_mb": 12.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 78.4,
+            "peak_rss_mb": 12.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 71.7,
+            "peak_rss_mb": 12.43,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.3,
+            "peak_rss_mb": 12.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 71.2,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.6,
+            "peak_rss_mb": 12.22,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 66.6,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.1,
+            "peak_rss_mb": 12.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.0,
+            "peak_rss_mb": 12.41,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "rule-filter-dense-window": {
+        "status": "pass",
+        "median_ms": 339.6,
+        "p90_ms": 351.4,
+        "p95_ms": 356.8,
+        "min_ms": 330.3,
+        "max_ms": 356.8,
+        "tasks_per_second": 2.94,
+        "peak_rss_mb": 26.77,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 356.8,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 342.0,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 346.9,
+            "peak_rss_mb": 26.76,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 348.3,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 351.4,
+            "peak_rss_mb": 26.74,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 339.5,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 339.6,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 330.3,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 335.7,
+            "peak_rss_mb": 26.77,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 345.7,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 341.9,
+            "peak_rss_mb": 26.74,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 336.5,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 335.3,
+            "peak_rss_mb": 26.74,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 333.0,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 331.9,
+            "peak_rss_mb": 26.75,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "short-lived-object-churn": {
+        "status": "pass",
+        "median_ms": 42.4,
+        "p90_ms": 44.4,
+        "p95_ms": 50.0,
+        "min_ms": 36.3,
+        "max_ms": 50.0,
+        "tasks_per_second": 23.58,
+        "peak_rss_mb": 13.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 36.6,
+            "peak_rss_mb": 13.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.4,
+            "peak_rss_mb": 13.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.3,
+            "peak_rss_mb": 13.29,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 36.7,
+            "peak_rss_mb": 13.28,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.4,
+            "peak_rss_mb": 13.28,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.0,
+            "peak_rss_mb": 13.29,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 37.1,
+            "peak_rss_mb": 13.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 44.4,
+            "peak_rss_mb": 13.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 50.0,
+            "peak_rss_mb": 13.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 44.1,
+            "peak_rss_mb": 13.28,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 43.9,
+            "peak_rss_mb": 13.28,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 44.4,
+            "peak_rss_mb": 13.29,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 43.0,
+            "peak_rss_mb": 13.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.9,
+            "peak_rss_mb": 13.28,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.2,
+            "peak_rss_mb": 13.27,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "startup-noop": {
+        "status": "pass",
+        "median_ms": 20.0,
+        "p90_ms": 20.5,
+        "p95_ms": 20.6,
+        "min_ms": 14.3,
+        "max_ms": 20.6,
+        "tasks_per_second": 50.0,
+        "peak_rss_mb": 10.97,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 20.0,
+            "peak_rss_mb": 10.94,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.3,
+            "peak_rss_mb": 10.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.6,
+            "peak_rss_mb": 10.94,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.0,
+            "peak_rss_mb": 10.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.8,
+            "peak_rss_mb": 10.95,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.9,
+            "peak_rss_mb": 10.92,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.4,
+            "peak_rss_mb": 10.95,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.5,
+            "peak_rss_mb": 10.95,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.3,
+            "peak_rss_mb": 10.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.9,
+            "peak_rss_mb": 10.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.1,
+            "peak_rss_mb": 10.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.3,
+            "peak_rss_mb": 10.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 14.5,
+            "peak_rss_mb": 10.95,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.3,
+            "peak_rss_mb": 10.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 19.9,
+            "peak_rss_mb": 10.97,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-ascii-index-scan": {
+        "status": "pass",
+        "median_ms": 108.9,
+        "p90_ms": 110.3,
+        "p95_ms": 114.3,
+        "min_ms": 106.2,
+        "max_ms": 114.3,
+        "tasks_per_second": 9.18,
+        "peak_rss_mb": 12.79,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 107.0,
+            "peak_rss_mb": 12.76,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.9,
+            "peak_rss_mb": 12.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.6,
+            "peak_rss_mb": 12.71,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 109.2,
+            "peak_rss_mb": 12.79,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.1,
+            "peak_rss_mb": 12.72,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 109.2,
+            "peak_rss_mb": 12.73,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 106.2,
+            "peak_rss_mb": 12.71,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 110.3,
+            "peak_rss_mb": 12.72,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 109.3,
+            "peak_rss_mb": 12.69,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 109.7,
+            "peak_rss_mb": 12.77,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 109.1,
+            "peak_rss_mb": 12.76,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.8,
+            "peak_rss_mb": 12.71,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 114.3,
+            "peak_rss_mb": 12.73,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.2,
+            "peak_rss_mb": 12.68,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.3,
+            "peak_rss_mb": 12.76,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-cleanup-replace-window": {
+        "status": "pass",
+        "median_ms": 1075.0,
+        "p90_ms": 1318.6,
+        "p95_ms": 1468.4,
+        "min_ms": 1064.8,
+        "max_ms": 1468.4,
+        "tasks_per_second": 0.93,
+        "peak_rss_mb": 14.37,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 1105.6,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1132.2,
+            "peak_rss_mb": 14.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1318.6,
+            "peak_rss_mb": 14.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1468.4,
+            "peak_rss_mb": 14.28,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1284.4,
+            "peak_rss_mb": 14.37,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1082.3,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1079.8,
+            "peak_rss_mb": 14.23,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1070.1,
+            "peak_rss_mb": 14.23,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1074.7,
+            "peak_rss_mb": 14.25,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1075.0,
+            "peak_rss_mb": 14.29,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1064.8,
+            "peak_rss_mb": 14.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1069.8,
+            "peak_rss_mb": 14.23,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1068.9,
+            "peak_rss_mb": 14.24,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1074.0,
+            "peak_rss_mb": 14.27,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 1071.7,
+            "peak_rss_mb": 14.36,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-log-token-slice": {
+        "status": "pass",
+        "median_ms": 483.6,
+        "p90_ms": 495.2,
+        "p95_ms": 500.6,
+        "min_ms": 478.0,
+        "max_ms": 500.6,
+        "tasks_per_second": 2.07,
+        "peak_rss_mb": 13.66,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 482.8,
+            "peak_rss_mb": 13.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 484.6,
+            "peak_rss_mb": 13.59,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 484.0,
+            "peak_rss_mb": 13.57,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 481.5,
+            "peak_rss_mb": 13.52,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 483.6,
+            "peak_rss_mb": 13.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 481.2,
+            "peak_rss_mb": 13.62,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 487.1,
+            "peak_rss_mb": 13.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 487.1,
+            "peak_rss_mb": 13.57,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 481.0,
+            "peak_rss_mb": 13.56,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 482.9,
+            "peak_rss_mb": 13.55,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 481.8,
+            "peak_rss_mb": 13.57,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 478.0,
+            "peak_rss_mb": 13.66,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 490.5,
+            "peak_rss_mb": 13.58,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 500.6,
+            "peak_rss_mb": 13.61,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 495.2,
+            "peak_rss_mb": 13.55,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "tool-result-schema-filter": {
+        "status": "pass",
+        "median_ms": 25.4,
+        "p90_ms": 26.0,
+        "p95_ms": 32.4,
+        "min_ms": 24.7,
+        "max_ms": 32.4,
+        "tasks_per_second": 39.37,
+        "peak_rss_mb": 14.34,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 25.6,
+            "peak_rss_mb": 14.31,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 32.4,
+            "peak_rss_mb": 14.31,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.8,
+            "peak_rss_mb": 14.33,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.4,
+            "peak_rss_mb": 14.12,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.8,
+            "peak_rss_mb": 14.34,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.8,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.7,
+            "peak_rss_mb": 14.31,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.2,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.8,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.3,
+            "peak_rss_mb": 14.31,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 26.0,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.1,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.1,
+            "peak_rss_mb": 14.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.3,
+            "peak_rss_mb": 14.32,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 25.6,
+            "peak_rss_mb": 14.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  },
+  "speedups": {
+    "boa": {
+      "all": 1.0970726749214617,
+      "general": 1.287075163107795,
+      "pressure": 0.877242132213967
+    }
+  },
+  "memory_ratios": {
+    "boa": {
+      "all": 1.1233376798718353,
+      "general": 0.9797724308123322,
+      "pressure": 1.3603463097596054
+    }
+  }
+}
