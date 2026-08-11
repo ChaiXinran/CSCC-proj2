@@ -47,3 +47,8 @@ reduced to the official runner generator, verifier, AgentJS/Node runners,
 measurement, comparison, and diagnostic scripts. Legacy simple-runner and
 one-off generation scripts were removed, as was the text-log Test262 folder
 statistics helper after raw Test262 logs ceased to be retained.
+
+The examples directory now contains only maintained JavaScript demonstrations.
+An unrelated compiled Rust Fibonacci executable/source pair and superseded
+V3/V8-A/generator smoke scripts were removed; the V2 fixture remains because
+the parser control-flow integration test embeds it directly.
