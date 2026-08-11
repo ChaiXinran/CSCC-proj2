@@ -1,0 +1,290 @@
+{
+  "meta": {
+    "benchmark": "AgentBench",
+    "version": "2.0",
+    "mode": "batch",
+    "label_a": "agentjs",
+    "references": [
+      "node"
+    ],
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": {
+      "node": "node"
+    },
+    "warmup": 0,
+    "repeat": 1,
+    "timeout": 30,
+    "batch_repeat": 3,
+    "cases": [
+      "json-record-aggregate",
+      "object-property-hot-loop",
+      "rule-filter-dense-window",
+      "string-cleanup-replace-window",
+      "string-log-token-slice",
+      "tool-result-schema-filter"
+    ]
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": "3.14.5",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "manifest_version": "2.0",
+    "commands": {
+      "primary": ".\\target\\release\\agentjs.exe",
+      "references": {
+        "node": "node"
+      }
+    },
+    "binary_sha256": {
+      "primary": "cc012c31d977e3fdd2320d47714b09fddcd0eb01b57d70125179574dffd66626",
+      "references": {
+        "node": "b3094d0b49f9ad602262a9921551737bb97637c05dd357a06ae98188d7290aa3"
+      }
+    },
+    "psutil_available": false,
+    "generated_at_utc": "2026-08-11T09:49:41Z"
+  },
+  "results": {
+    "agentjs": {
+      "json-record-aggregate": {
+        "status": "runtime-error",
+        "median_ms": null,
+        "p90_ms": null,
+        "p95_ms": null,
+        "min_ms": null,
+        "max_ms": null,
+        "tasks_per_second": null,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "runtime-error",
+            "time_ms": 309.9,
+            "peak_rss_mb": null,
+            "stderr": "agentjs: Error: execution error: uncaught ERROR: bad aggregate"
+          }
+        ],
+        "error": "agentjs: Error: execution error: uncaught ERROR: bad aggregate"
+      },
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 10000.2,
+        "p90_ms": 10000.2,
+        "p95_ms": 10000.2,
+        "min_ms": 10000.2,
+        "max_ms": 10000.2,
+        "tasks_per_second": 0.3,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 10000.2,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "rule-filter-dense-window": {
+        "status": "pass",
+        "median_ms": 977.4,
+        "p90_ms": 977.4,
+        "p95_ms": 977.4,
+        "min_ms": 977.4,
+        "max_ms": 977.4,
+        "tasks_per_second": 3.07,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 977.4,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-cleanup-replace-window": {
+        "status": "pass",
+        "median_ms": 205.8,
+        "p90_ms": 205.8,
+        "p95_ms": 205.8,
+        "min_ms": 205.8,
+        "max_ms": 205.8,
+        "tasks_per_second": 14.58,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 205.8,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-log-token-slice": {
+        "status": "pass",
+        "median_ms": 787.3,
+        "p90_ms": 787.3,
+        "p95_ms": 787.3,
+        "min_ms": 787.3,
+        "max_ms": 787.3,
+        "tasks_per_second": 3.81,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 787.3,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "tool-result-schema-filter": {
+        "status": "pass",
+        "median_ms": 1177.8,
+        "p90_ms": 1177.8,
+        "p95_ms": 1177.8,
+        "min_ms": 1177.8,
+        "max_ms": 1177.8,
+        "tasks_per_second": 2.55,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 1177.8,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    },
+    "node": {
+      "json-record-aggregate": {
+        "status": "runtime-error",
+        "median_ms": null,
+        "p90_ms": null,
+        "p95_ms": null,
+        "min_ms": null,
+        "max_ms": null,
+        "tasks_per_second": null,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "runtime-error",
+            "time_ms": 56.7,
+            "peak_rss_mb": null,
+            "stderr": "C:\\Users\\36123\\AppData\\Local\\Temp\\tmpdborfh32.agentbench-batch.js:33\nif (keys.length !== 20 || checksum <= 0) throw \"ERROR: bad aggregate\";\n                                         ^\nERROR: bad aggregate\n(Use `node --trace-uncaught ...` to show where the exception was thrown)\n\nNode.js v24.16.0"
+          }
+        ],
+        "error": "C:\\Users\\36123\\AppData\\Local\\Temp\\tmpdborfh32.agentbench-batch.js:33\nif (keys.length !== 20 || checksum <= 0) throw \"ERROR: bad aggregate\";\n                                         ^\nERROR: bad aggregate\n(Use `node --trace-uncaught ...` to show where the exception was thrown)\n\nNode.js v24.16.0"
+      },
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 55.6,
+        "p90_ms": 55.6,
+        "p95_ms": 55.6,
+        "min_ms": 55.6,
+        "max_ms": 55.6,
+        "tasks_per_second": 53.96,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 55.6,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "rule-filter-dense-window": {
+        "status": "pass",
+        "median_ms": 70.1,
+        "p90_ms": 70.1,
+        "p95_ms": 70.1,
+        "min_ms": 70.1,
+        "max_ms": 70.1,
+        "tasks_per_second": 42.8,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 70.1,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-cleanup-replace-window": {
+        "status": "pass",
+        "median_ms": 80.1,
+        "p90_ms": 80.1,
+        "p95_ms": 80.1,
+        "min_ms": 80.1,
+        "max_ms": 80.1,
+        "tasks_per_second": 37.45,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 80.1,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-log-token-slice": {
+        "status": "pass",
+        "median_ms": 49.4,
+        "p90_ms": 49.4,
+        "p95_ms": 49.4,
+        "min_ms": 49.4,
+        "max_ms": 49.4,
+        "tasks_per_second": 60.73,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 49.4,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "tool-result-schema-filter": {
+        "status": "pass",
+        "median_ms": 60.4,
+        "p90_ms": 60.4,
+        "p95_ms": 60.4,
+        "min_ms": 60.4,
+        "max_ms": 60.4,
+        "tasks_per_second": 49.67,
+        "peak_rss_mb": null,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 60.4,
+            "peak_rss_mb": null,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  },
+  "speedups": {
+    "node": {
+      "all": 0.05491490089501197,
+      "general": 0.05491490089501197,
+      "pressure": null
+    }
+  }
+}
