@@ -41,7 +41,7 @@ local competitor runtime and includes the official Test262 summary.
 
 ## Repository consolidation
 
-The current Demo serves and packages `frontend/agent-chat.html`; its earlier
+The current Demo serves and packages `demo/agent/frontend/agent-chat.html`; its earlier
 standalone `demo/agent/static/` page was removed. The JetStream toolchain was
 reduced to the official runner generator, verifier, AgentJS/Node runners,
 measurement, comparison, and diagnostic scripts. Legacy simple-runner and
@@ -50,5 +50,11 @@ statistics helper after raw Test262 logs ceased to be retained.
 
 The examples directory now contains only maintained JavaScript demonstrations.
 An unrelated compiled Rust Fibonacci executable/source pair and superseded
-V3/V8-A/generator smoke scripts were removed; the V2 fixture remains because
-the parser control-flow integration test embeds it directly.
+V3/V8-A/generator smoke scripts were removed. The V2 control-flow program was
+moved to `tests/fixtures/control_flow_v2.js`, where its integration-test role
+is explicit.
+
+The standalone root `frontend/` directory was then folded into
+`demo/agent/frontend/`, keeping all Demo source, protocol, UI, tests, and
+packaging inputs under one project boundary. The public browser route remains
+`/frontend/agent-chat.html` for compatibility.

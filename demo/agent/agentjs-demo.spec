@@ -2,7 +2,10 @@
 from pathlib import Path
 
 project = Path(SPECPATH).parents[1]
-datas = [(str(project / "frontend" / "agent-chat.html"), "frontend")]
+datas = [(
+    str(project / "demo" / "agent" / "frontend" / "agent-chat.html"),
+    "demo/agent/frontend",
+)]
 test262_report = project / "Test262-final" / "full-test262-summary.json"
 if test262_report.is_file():
     datas.append((str(test262_report), "Test262-final"))
