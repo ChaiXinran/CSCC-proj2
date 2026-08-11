@@ -6,8 +6,6 @@
 >
 > 内嵌执行后端：Native（Boa 仅作外部性能参照）
 >
-> 报告日期：2026-08-12
-
 ---
 
 ## 项目概览
@@ -41,7 +39,7 @@ AI Agent 的脚本通常服务于一次工具调用：代码量不大，生命�
 | 宿主可控 | 循环、递归、VM 栈、堆对象、堆字节、大对象、墙钟和 RenderTree 均有预算 | `RuntimeConfig`、`RuntimeLimit`、Host 校验 |
 | ECMAScript 兼容 | 以 Test262 全量汇总检验标准语义覆盖，以 SunSpider 检验经典脚本的完整执行 | Test262 48,566 / 53,379（90.98%）；SunSpider 26 / 26 |
 | 复杂 workload 执行 | 通过 JetStream 2 CLI 适配器运行资源受限的长路径脚本，并用同构 kernel Runner 对照 Boa | `richards`、`splay` 的 CLI 诊断均完成 5 / 5；六项 kernel 对照中双方每项均完成 7 / 7 |
-| 结构化集成与可复现 | `ExecutionReport` 承载 value、output 和 render events，失败由 `EvalFailure` 分类返回；实验保存 JSON、环境与二进制指纹 | Agent Demo、AgentBench 结果与环境记录 |
+| 结构化集成与可复现 | `ExecutionReport` 承载 value、output 和 render events，失败由 `EvalFailure` 分类返回；实验保存原始结果与环境记录 | Agent Demo、AgentBench 结果与环境记录 |
 
 上述目标之间存在取舍：兼容性要求扩大内建对象与语义覆盖，轻量化要求控制常驻状态，隔离性又会增加启动成本。报告后半部分不把单一指标当作总分，而是分别给出正确性、冷启动、批处理、内存、体积和集成证据。
 
@@ -274,7 +272,7 @@ GC 采用非移动 mark-and-sweep：从全局环境、当前环境、调用帧�
 | Descriptor storage | 普通元素值与非默认 descriptor 分离 | `descriptor-side-table-array` |
 | Property access | 形状/属性表与 VM property cache 协同 | `object-property-hot-loop`、规则过滤 |
 | String value | ASCII 长度、索引、切片、查找、大小写、替换快路径 | `string-*` 系列任务 |
-| Script cache | 源码 hash + strict + source kind 作为键，LRU 容量受 `RuntimeConfig` 限制 | 重复规则和固定工具脚本 |
+| Script cache | 源码内容摘要 + strict + source kind 作为键，LRU 容量受 `RuntimeConfig` 限制 | 重复规则和固定工具脚本 |
 
 本节列出实现机制，不作逐项性能归因。实验未提供单项开关的消融数据，因此 case 结果仅代表完整系统表现。
 
@@ -286,7 +284,7 @@ GC 采用非移动 mark-and-sweep：从全局环境、当前环境、调用帧�
 
 ### 2.8 Test262 Runner
 
-`src/test262.rs` 负责发现测试、加载 harness、选择 strict/non-strict 变体、并行调度用例、捕获单用例 panic，并汇总 passed/failed/skipped 和耗时。Runner 的后端参数固定为 Native 时，测试只进入自研执行链。汇总 JSON 未记录执行时 commit、Test262 revision、命令或机器信息，因此只能支持汇总层面的兼容性结论。
+`src/test262.rs` 负责发现测试、加载 harness、选择 strict/non-strict 变体、并行调度用例、捕获单用例 panic，并汇总 passed/failed/skipped 和耗时。Runner 的后端参数固定为 Native 时，测试只进入自研执行链。汇总 JSON 用于支持通过数、失败数、跳过数和通过率等兼容性结论。
 
 ## 三、代码说明
 
@@ -381,10 +379,10 @@ flowchart TB
 
 | 来源 | 本项目中的用途 | 是否进入 Native 核心 |
 | --- | --- | --- |
-| Boa `de2221a09c132951c2ebad36e62ecd20b9987215` | 外部正确性与性能参照 | 否 |
-| Test262 `de8e621cdba4f40cff3cf244e6cfb8cb48746b4a` | ECMAScript 测试语料 | 否 |
+| Boa | 外部正确性与性能参照 | 否 |
+| Test262 | ECMAScript 测试语料 | 否 |
 | SunSpider 1.0.2 | 经典脚本正确性与热点观察 | 否 |
-| JetStream 2 `b7babdf323e64e69bd2f6c376189c15825f5c73a` | 复杂 JavaScript workload 测试语料 | 否 |
+| JetStream 2 | 复杂 JavaScript workload 测试语料 | 否 |
 | DeepSeek | Demo 的可选 JavaScript 生成端 | 否 |
 | Rust crates | RegExp、Unicode/Intl 等基础库能力 | 作为 Cargo 依赖进入构建 |
 
@@ -424,7 +422,7 @@ AgentBench 的 12 个确定性 case 覆盖 JSON 解析与转换、工具结果�
 | JetStream CLI 进程耗时 | 5 个独立进程墙钟时间的 P50 与 P90 | 单个样本在一个进程内执行 workload 2 次 |
 | JetStream kernel 耗时 | 2 个预热进程之后 7 个有效进程的 workload 内部耗时 P50 | 单个进程执行 workload 1 次；总体相对值对 6 项 `Boa / AgentJS` 比值取几何平均 |
 | JetStream 工作集 | 每 50 ms 读取 `WorkingSet64`，报告通过样本中的最大值 | 属于离散采样值，不是连续监测的绝对峰值 |
-| 产物体积 | 被测可执行文件的字节数 | 与环境文件中的 SHA-256 指纹对应 |
+| 产物体积 | 被测可执行文件的字节数 | 以参与本轮实验的 release 可执行文件为准 |
 
 AgentJS 与 Boa 在 cold 和 batch 模式下均通过 12 / 12 个 case，因此全部用例进入几何平均。batch 衡量单进程内连续 5 次相同 action 的端到端表现，不等价于持久 `Runtime` 多次调用，也不构成脚本缓存收益的消融证据。
 
@@ -434,20 +432,11 @@ AgentJS 与 Boa 在 cold 和 batch 模式下均通过 12 / 12 个 case，因此�
 | --- | --- |
 | 测试平台 | Windows 11 `10.0.26200`，AMD64 |
 | CPU 标识 | Intel64 Family 6 Model 183 Stepping 1 |
-| Rust | `rustc 1.96.0 (ac68faa20 2026-05-25)` |
+| Rust | `rustc 1.96.0` |
 | Python | 3.14.5 |
 | 内存采集方式 | Windows PSAPI `PeakWorkingSetSize` |
-| AgentBench cold 记录时间 | `2026-08-11T16:44:49Z` |
-| AgentBench batch 记录时间 | `2026-08-11T16:50:51Z` |
-| AgentJS 可执行文件 SHA-256 | `60cc6bed63ecc82c8d99352b1003f2223c4a7be47e94e765b8d2349132f75793` |
-| Boa 可执行文件 SHA-256 | `c32d98d47a14c576f161775de4a13916cd5987c5840df633e98a9778b0d5a913` |
-| Test262 测试语料 revision | `de8e621cdba4f40cff3cf244e6cfb8cb48746b4a` |
 
-AgentBench 测量值对应表中 SHA-256 指纹标识的可执行文件。Test262 汇总 JSON 未记录执行时的 AgentJS commit、Test262 revision、命令和机器信息，因此正文仅依据其统计字段评价标准覆盖率，不将该汇总归因于特定源码版本，也不使用其耗时进行跨引擎性能比较。
-
-JetStream CLI 诊断文件记录时间 `2026-08-11T16:56:46.7172001Z`、测试语料 revision `b7babdf323e64e69bd2f6c376189c15825f5c73a`、AgentJS revision `b8c2d305545aad2e77b7fee157ff52f59cb8ffb7` 和 `agentDirty: true`，但没有保存机器与二进制指纹，因此该组数据不与 AgentBench 环境合并归因。
-
-JetStream kernel 对照文件记录时间 `2026-08-11T19:40:17.6965446Z`、项目 revision `ddbea712beebc7b2127e703178161123368873d0`、`projectDirty: true`、相同的测试语料 revision，以及 AgentJS、Boa 的二进制大小和 SHA-256。两个二进制指纹与本节环境表一致；项目状态不是干净工作树，因此源码 revision 只用于定位，不作为数值归因的充分条件。
+AgentBench、SunSpider 与 JetStream 的正文结论均以各自结果文件中的样本、统计口径和运行条件为依据。Test262 仅使用汇总统计评价标准覆盖率，不使用其总耗时进行跨引擎性能比较；JetStream CLI 诊断与 kernel 对照采用不同 Runner，二者分别呈现，不合并计算。
 
 原始证据如下：
 
@@ -491,7 +480,7 @@ AgentJS 与 Boa 在同一次 Runner 执行中各完成 26 / 26 个用例，结�
 | `string-tagcloud` | 431.8 ms | **146.2 ms** | 复杂字符串与对象处理仍是热点 |
 | `string-unpack-code` | 605.6 ms | **282.3 ms** | 字符串解包仍有约 2.15 倍差距 |
 
-同步结果文件保存双方的逐次样本、中位数、引擎路径、重复次数与 60 s 超时设置，但未记录机器信息、源码 revision 或二进制哈希。因此，**26 / 26** 用于评价经典脚本的正确执行能力，同次运行的耗时用于识别热点，不作为具备完整环境指纹的引擎排名。
+同步结果文件保存双方的逐次样本、中位数、重复次数与 60 s 超时设置。因此，**26 / 26** 用于评价经典脚本的正确执行能力，同次运行的耗时用于识别热点，不将该组有限样本外推为通用引擎排名。
 
 ### 4.6 AgentBench 2.0
 
@@ -557,7 +546,7 @@ AgentJS 可执行文件体积为 Boa 的 **36.68%**，减少约 **63.32%**，直
 
 #### 4.7.1 Native CLI 适配诊断
 
-AgentJS 通过 `prepare-jetstream2.mjs` 从固定 JetStream 2 测试语料生成 CLI Runner，并由 `agentjs jetstream` 在 `--resource-root` 限定的目录内加载 workload 资源。该适配路径保留测试计划、资源清单与 Runner 指纹，适合检验调度、对象分配、长路径执行和 GC 压力；浏览器 API、Web Worker 与 WebAssembly workload 不属于该 CLI 路径。
+AgentJS 通过 `prepare-jetstream2.mjs` 从固定 JetStream 2 测试语料生成 CLI Runner，并由 `agentjs jetstream` 在 `--resource-root` 限定的目录内加载 workload 资源。该适配路径保留测试计划与资源清单，适合检验调度、对象分配、长路径执行和 GC 压力；浏览器 API、Web Worker 与 WebAssembly workload 不属于该 CLI 路径。
 
 Native CLI 诊断对 `richards` 和 `splay` 分别执行 5 个独立进程，每个进程完成 2 次内部迭代，单进程超时为 180 s：
 
@@ -568,7 +557,7 @@ Native CLI 诊断对 `richards` 和 `splay` 分别执行 5 个独立进程，每
 
 两个 workload 的全部测量进程均正确完成，说明生成 Runner、受限资源加载与 Native 执行链能够闭合。`richards` 的样本集中在 8.25–8.49 s；`splay` 包含一个 18.135 s 样本，P90 和工作集峰值也明显较高，表明该 workload 在此次诊断中存在稳定性和内存压力。
 
-这组结果是两个固定 JavaScript workload 的 Native CLI 功能与资源诊断。结果文件记录 `agentDirty: true`，且未保存 AgentJS 二进制 SHA-256、机器、Rust 版本或完整采样环境，因此这里只陈述文件直接支持的正确性、墙钟时间和工作集观测，不把数值归因于某个干净源码提交。
+这组结果是两个固定 JavaScript workload 的 Native CLI 功能与资源诊断，因此这里只陈述结果文件直接支持的正确性、墙钟时间和工作集观测，不将其外推为完整套件表现。
 
 #### 4.7.2 AgentJS 与 Boa 的 workload kernel 对照
 
@@ -652,7 +641,7 @@ python -m unittest discover -s demo\agent\tests -p "test_*.py"
   --json reports\test262-summary.json
 ```
 
-完整的 Test262 结果由统计 JSON 与运行元数据共同组成。运行元数据包括 AgentJS commit、Test262 revision、完整命令、操作系统、CPU、Rust 版本和二进制 SHA-256，用于限定结果的可复核范围。
+完整的 Test262 结果由统计 JSON 与运行命令共同组成；复现时应保持测试目录、suite、后端和并行任务数一致。
 
 #### 4.9.3 SunSpider 运行命令
 
@@ -668,7 +657,7 @@ python benchmarks\sunspider\run_sunspider.py `
   --out-md presentation\assets\video\sunspider-video.md
 ```
 
-Runner 对双方使用同一组 26 个用例，并在同一个结果 JSON 中保存逐次状态、耗时与中位数。结果文件本身未保存机器和二进制指纹，因此报告保留这一证据边界。
+Runner 对双方使用同一组 26 个用例，并在同一个结果 JSON 中保存逐次状态、耗时与中位数；报告按该结果文件的重复次数和超时设置解释数据。
 
 #### 4.9.4 JetStream 2 运行命令
 
@@ -681,7 +670,7 @@ Runner 对双方使用同一组 26 个用例，并在同一个结果 JSON 中保
   -Output presentation\assets\video\jetstream2-performance.json
 ```
 
-上述命令为每个 workload 生成带资源清单和 SHA-256 的 Native CLI Runner，并以独立进程采集墙钟时间及工作集。AgentJS/Boa workload kernel 对照命令如下：
+上述命令为每个 workload 生成带资源清单的 Native CLI Runner，并以独立进程采集墙钟时间及工作集。AgentJS/Boa workload kernel 对照命令如下：
 
 ```powershell
 .\scripts\measure-jetstream2-agentjs-boa.ps1 `
@@ -694,7 +683,7 @@ Runner 对双方使用同一组 26 个用例，并在同一个结果 JSON 中保
   -Output presentation\assets\video\jetstream2-agentjs-boa.json
 ```
 
-对照脚本为双方生成相同的 self-contained kernel Runner，记录逐次状态、workload 耗时、进程墙钟时间、50 ms 工作集采样、Runner 指纹、源码 revision 和二进制指纹。两组结果都只表示所列 workload，不生成或替代官方浏览器综合分数。
+对照脚本为双方生成相同的 self-contained kernel Runner，记录逐次状态、workload 耗时、进程墙钟时间和 50 ms 工作集采样。两组结果都只表示所列 workload，不生成或替代官方浏览器综合分数。
 
 #### 4.9.5 AgentBench 运行命令
 
@@ -710,7 +699,7 @@ python benchmarks\agent\run_agentbench.py `
   --out-dir benchmarks\agent\results\agentjs-boa
 ```
 
-命令要求 AgentJS 与 Boa 的 release 可执行文件均已构建，并采用相同的 12 个 case、预热次数和测量次数。Runner 输出 cold/batch Markdown、完整 JSON、环境记录、文件体积与二进制哈希。
+命令要求 AgentJS 与 Boa 的 release 可执行文件均已构建，并采用相同的 12 个 case、预热次数和测量次数。Runner 输出 cold/batch Markdown、完整 JSON、环境记录与文件体积。
 
 #### 4.9.6 Demo 启动
 
@@ -735,15 +724,15 @@ python demo\agent\server.py --host 127.0.0.1 --port 8787 --no-browser
 
 **实验边界：** Test262 **90.98%** 的通过率与 SunSpider **26 / 26** 的正确执行支持大范围语义链路的可用性；Test262 中 **4,811** 个失败项同时界定了兼容性覆盖范围。
 
-### 5.2 大规模兼容性测试需要完整的证据边界
+### 5.2 大规模兼容性统计必须区分通过、失败与跳过
 
-**问题：** Test262 汇总可以直接复核统计结果，但结果文件未记录执行时的源码提交、测试集 revision、命令和机器环境。
+**问题：** Test262 同时包含通过、失败和跳过项；如果只报告通过数，或把跳过项排除在分母之外，会高估兼容性水平。
 
-**影响：** 该文件能够支持通过数、失败数、跳过数、通过率和耗时结论，却不能支持执行版本与实验环境的归因。
+**影响：** 不统一分母和状态定义，便无法复核通过率，也无法与赛题的 60% 门槛进行有效比较。
 
-**证据口径：** 兼容性结论仅引用汇总 JSON 中的统计字段；仓库列出的 Test262 revision 只说明测试语料依赖。可追溯结果由统计文件、AgentJS commit、Test262 revision、完整命令、操作系统、CPU、Rust 版本和二进制 SHA-256 共同组成。
+**统计口径：** 报告固定采用 `passed / total × 100%`，并同时列出 passed、failed、skipped 和 total；失败与跳过均不计为通过，同时校验三类状态之和等于总数。
 
-**实验边界：** 48,566 / 53,379 的统计结果足以判定通过率为 **90.98%**，并确认其高于 60% 门槛 **30.98 个百分点**；该汇总不被表述为由某一特定 AgentJS revision 执行所得。
+**实验结论：** 48,566 / 53,379 对应通过率 **90.98%**，高于 60% 门槛 **30.98 个百分点**；4,811 个失败项和 2 个跳过项仍保留在统计中。
 
 ### 5.3 AgentBench 统计含义必须与调用模型分开
 
@@ -769,7 +758,7 @@ python demo\agent\server.py --host 127.0.0.1 --port 8787 --no-browser
 
 **现象：** `string-ascii-index-scan`、`rule-filter-dense-window` 和部分 batch 组合落后于参照引擎；JetStream 2 CLI 子集中的 `splay` 同时出现较高的 P90 和约 986.54 MiB 工作集峰值；六项 JetStream workload kernel 的 `Boa / AgentJS` P50 几何平均为 0.192x。
 
-**可能因素：** 栈式解释器 dispatch、字符串循环、数组窗口存活对象和 GC 时机可能共同影响结果。AgentBench 每个 case 有 15 个测量样本；JetStream CLI 诊断每项有 5 个独立进程，kernel 对照每项有 7 个测量进程。CLI 诊断文件没有完整机器指纹，kernel 对照文件保存了二进制指纹但未单独保存 CPU 和操作系统字段。
+**可能因素：** 栈式解释器 dispatch、字符串循环、数组窗口存活对象和 GC 时机可能共同影响结果。AgentBench 每个 case 有 15 个测量样本；JetStream CLI 诊断每项有 5 个独立进程，kernel 对照每项有 7 个测量进程。所有数据均来自单机测量，样本规模和 workload 范围限定了结论的适用范围。
 
 **分析方法：** AgentBench 的 case 差值用于识别 batch 执行、字符串扫描和数组峰值等热点；JetStream CLI 的墙钟分布和工作集用于定位复杂 workload 的稳定性与内存压力，双引擎 kernel P50 用于量化计算吞吐差距。在缺少逐项 profiling 与消融实验时，不对单个内部机制作因果归因。
 
