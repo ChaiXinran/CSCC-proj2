@@ -313,6 +313,11 @@ Validation:
 
 ```powershell
 python -m py_compile benchmarks/jetstream/run_four_engine.py
+node --check scripts/prepare-simple-benchmark.mjs
 python benchmarks/jetstream/run_four_engine.py --iterations 1 --warmup 0 --repeat 1 --out-dir benchmarks/jetstream/results/four-engine-smoke
 python benchmarks/jetstream/run_four_engine.py --tests n-body-SP,crypto-sha1-SP,crypto-md5-SP,3d-cube-SP,navier-stokes,richards --iterations 1 --warmup 2 --repeat 7 --timeout 180 --out-dir benchmarks/jetstream/results/four-engine
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
 ```

@@ -1,9 +1,12 @@
 # AgentJS 实验报告
 
-> 项目名称：AgentJS，基于 Rust 的轻量级 JavaScript 执行引擎  
-> 参赛队伍：**【待补】**  
-> 成员与分工：**【待补】**  
-> 报告版本：2026-08-11 样例版  
+> 项目名称：AgentJS，基于 Rust 的轻量级 JavaScript 执行引擎
+>
+> 参赛队伍：**【待补】**
+>
+> 成员与分工：**【待补】**
+>
+> 报告版本：2026-08-11 样例版
 > 对应提交：`a9e2f71f2f27c8a6b9b0414d1446d9822ec5c908`（报告完成时工作区提交）
 
 ## 0. 实验结果概览
@@ -14,8 +17,8 @@
 
 | 项目 | 当前结果 | 数据来源 |
 | --- | ---: | --- |
-| Test262 | **48,560 / 53,379，90.97%** | `reports/full-test262-summary.json` |
-| Test262 失败 / 跳过 | 4,817 / 2 | 同上 |
+| Test262 | **48,557 / 53,379，90.97%** | `Test262-final/full-test262-summary.json` |
+| Test262 失败 / 跳过 | 4,820 / 2 | 同上 |
 | SunSpider 1.0.2 | **26 / 26 通过** | `benchmarks/sunspider/results/` |
 | AgentBench 2.0 cold | AgentJS 与 Boa 几何平均比 **1.643x** | `benchmarks/agent/results/comparison/` |
 | AgentBench 2.0 batch | AgentJS 与 Boa 几何平均比 **2.039x** | 同上 |
@@ -24,7 +27,7 @@
 
 这里的“几何平均比”定义为 `参考引擎耗时 / AgentJS 耗时`，大于 1 表示 AgentJS 更快。这个结果只适用于 AgentBench 当前覆盖的短脚本任务，不能理解为 AgentJS 已经在所有 JavaScript 程序上超过 Boa 或 Node。
 
-> 数据口径说明：旧 `report.md` 中的 71.78% 是 2026-06-28 的阶段性完整扫描；当前 90.97% 来自更新时间更晚的 `reports/full-test262-summary.json`。该最新 JSON 还没有记录 commit、CPU 和完整命令，答辩前应补跑一次带环境信息的正式全量测试，避免只有百分比而缺少复现上下文。
+> 数据口径说明：旧 `report.md` 中的 71.78% 是 2026-06-28 的阶段性完整扫描；当前 90.97% 来自更新时间更晚的 `Test262-final/full-test262-summary.json`。该最新 JSON 还没有记录 commit、CPU 和完整命令，答辩前应补跑一次带环境信息的正式全量测试，避免只有百分比而缺少复现上下文。
 
 ## 1. 实验目的
 
@@ -145,7 +148,7 @@ Agent 生成的脚本不一定可靠，所以引擎不能默认相信输入。�
 
 | Total | Passed | Failed | Skipped | Pass rate | Elapsed |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 53,379 | **48,560** | 4,817 | 2 | **90.97%** | 797.834 s |
+| 53,379 | **48,557** | 4,820 | 2 | **90.97%** | 452.354 s |
 
 通过率的阶段变化能够比较直观地反映项目迭代过程：
 
@@ -154,9 +157,9 @@ Agent 生成的脚本不一定可靠，所以引擎不能默认相信输入。�
 | 早期完整基线 | 14,035 / 53,379 | 26.29% | Native 最小链路形成后 |
 | FixRTLE / Fixup8 | 35,472 / 53,379 | 66.45% | 跨层语义集中修复 |
 | 2026-06-28 完整扫描 | 38,315 / 53,379 | 71.78% | 原 `report.md` 的最终值 |
-| 2026-08-09 最新汇总 | **48,560 / 53,379** | **90.97%** | 当前最新结果 |
+| 2026-08-09 最新汇总 | **48,557 / 53,379** | **90.97%** | 当前最新结果 |
 
-从早期基线到最新汇总，共新增 34,525 个通过用例，提高 64.68 个百分点。最新结果已经超过赛题 60% 的基础要求，但仍有 4,817 个失败，不能把“构造器存在”或“部分方法可用”描述成完全兼容。
+从早期基线到最新汇总，共新增 34,522 个通过用例，提高 64.68 个百分点。最新结果已经超过赛题 60% 的基础要求，但仍有 4,820 个失败，不能把“构造器存在”或“部分方法可用”描述成完全兼容。
 
 ### 4.3 SunSpider 结果
 
@@ -269,9 +272,9 @@ sequenceDiagram
 
 ### 6.2 实际展示效果
 
-下面是 2026-08-11 使用 fixed-script 模式、Native AgentJS 后端运行“Compatibility report”后的真实截图。页面中的 Test262 数据来自 `reports/full-test262-summary.json`。
+下面是 2026-08-11 使用 fixed-script 模式、Native AgentJS 后端运行“Compatibility report”后的真实截图。页面中的 Test262 数据来自 `Test262-final/full-test262-summary.json`。
 
-![AgentJS Demo 展示 Test262 兼容率](assets/agentjs-demo-test262.png)
+![AgentJS Demo 展示 Test262 兼容率](../presentation/assets/agentjs-demo-test262.png)
 
 截图中的单次 `Internal` 和 `End-to-end` 时间只用于说明页面能够显示两类计时，不作为正式性能结论。正式对比使用 AgentBench 的多次测量数据。
 
@@ -329,7 +332,7 @@ return passRate;
 2. 首次请求报错：`unknown option --time`；
 3. 检查发现 `src/main.rs` 已支持 `--time`，但 `target/release/agentjs.exe` 是三天前的旧产物；
 4. 重新执行 `cargo build --release --locked`；
-5. 再次请求成功，页面展示 48,560 / 53,379 和 90.97%。
+5. 再次请求成功，页面展示 48,557 / 53,379 和 90.97%。
 
 这个问题说明 Demo 部署时不能只复制前端和 `server.py`，还要确保可执行文件与源码/协议是同一版本。建议打包阶段写入版本号和 SHA-256，并让 `/api/health` 同时返回 CLI 协议版本。
 

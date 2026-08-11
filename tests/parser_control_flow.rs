@@ -87,7 +87,7 @@ fn compiles_conditional_typeof_throw_and_construct_source() {
 
 #[test]
 fn compiles_the_checked_in_v2_example() {
-    let chunk = compile(include_str!("../examples/v2.js"));
+    let chunk = compile(include_str!("fixtures/control_flow_v2.js"));
 
     assert_eq!(chunk.instructions.last(), Some(&Instruction::Return));
     assert_eq!(chunk.validate(), Ok(()));

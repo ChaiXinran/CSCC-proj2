@@ -65,7 +65,7 @@ scripts/run-jetstream2-node.ps1 -Tests richards,splay -Iterations 5
 
 ```sh
 target/release/agentjs test262 --root test262 --suite test \
-  --jobs 8 --json reports/test262.json
+  --jobs 4 --json Test262-final/full-test262-summary.json
 ```
 
 Pin the Test262 commit in the report. Skipped tests are not counted as passed;
