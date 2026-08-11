@@ -2,6 +2,7 @@
 /target/
 /target-linux/
 /build/
+/tmp/
 
 
 # Generated benchmark runners and raw measurements

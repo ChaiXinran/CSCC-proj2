@@ -958,6 +958,82 @@ impl JsObject {
         dense_value_cloned(elements, element_descriptors, dense_segments, index)
     }
 
+    /// Pops the last element from an ordinary dense Array in one mutation.
+    ///
+    /// Returning `None` asks the caller to use the full ECMAScript property
+    /// path. That fallback is required for holes (prototype lookup), accessors,
+    /// non-configurable elements, sparse property-map indices, and a
+    /// non-writable `length`. The guarded data-property case is equivalent to
+    /// Get/Delete/Set(length), but avoids rescanning and truncating the array
+    /// storage twice for every `Array.prototype.pop` call.
+    pub fn pop_dense_array_last(&mut self) -> Option<JsValue> {
+        let ObjectKind::Array {
+            elements,
+            element_descriptors,
+            dense_segments,
+            length,
+            length_writable,
+        } = &mut self.kind
+        else {
+            return None;
+        };
+        if !*length_writable || *length == 0 {
+            return None;
+        }
+
+        let index = *length as usize - 1;
+        let descriptor =
+            dense_descriptor_ref(elements, element_descriptors, dense_segments, index)?;
+        if !descriptor.configurable {
+            return None;
+        }
+        let value = descriptor.value_cloned()?;
+        delete_dense_descriptor(elements, element_descriptors, dense_segments, index)??;
+        truncate_dense_storage(elements, element_descriptors, dense_segments, index);
+        *length -= 1;
+        Some(value)
+    }
+
+    /// Appends one default data element to a dense Array when no observable
+    /// property semantics need the generic Set path.
+    pub fn push_dense_array_element(&mut self, expected_length: usize, value: JsValue) -> bool {
+        let ObjectKind::Array {
+            elements,
+            element_descriptors,
+            dense_segments,
+            length,
+            length_writable,
+        } = &mut self.kind
+        else {
+            return false;
+        };
+        if !*length_writable
+            || !self.extensible
+            || *length as usize != expected_length
+            || expected_length >= MAX_DENSE_SIZE
+            || dense_descriptor_ref(
+                elements,
+                element_descriptors,
+                dense_segments,
+                expected_length,
+            )
+            .is_some()
+        {
+            return false;
+        }
+        if !define_dense_descriptor(
+            elements,
+            element_descriptors,
+            dense_segments,
+            expected_length,
+            PropertyDescriptor::data(value),
+        ) {
+            return false;
+        }
+        *length += 1;
+        true
+    }
+
     pub fn define_array_element(&mut self, index: usize, descriptor: PropertyDescriptor) -> bool {
         // Dense path: handle directly inside the Array variant.
         if let ObjectKind::Array {

@@ -13,5 +13,6 @@ pub(crate) use invocation::{
     InvocationOutcome,
 };
 pub use property_cache::{
-    BytecodeSite, GetPropertyCacheEntry, PropertyInlineCaches, SetPropertyCacheEntry,
+    BytecodeSite, GetPropertyCacheEntries, GetPropertyCacheEntry, PropertyInlineCaches,
+    SetPropertyCacheEntry,
 };

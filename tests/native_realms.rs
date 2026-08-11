@@ -81,3 +81,17 @@ fn cross_realm_sloppy_function_boxes_primitive_this_in_callee_realm() {
         "true:true"
     );
 }
+
+#[test]
+fn array_prototype_method_cache_is_realm_scoped() {
+    assert_eq!(
+        test262_eval(
+            "var local = []; local.push(1); \
+             var r = $262.createRealm(); \
+             r.evalScript('Array.prototype.push = function() { return 77; };'); \
+             var remote = r.evalScript('var value = []; value.push(2);'); \
+             remote + ':' + local.push(3) + ':' + local.length;"
+        ),
+        "77:2:2"
+    );
+}

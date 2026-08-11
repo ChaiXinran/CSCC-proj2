@@ -14,6 +14,7 @@ use crate::ast::{
     OptionalChainStep, Program, PropertyName, Statement, SwitchCase, UnaryOperator, UpdateOperator,
     VariableKind,
 };
+use crate::runtime::JsValue;
 
 use super::{
     Chunk, ChunkError, Constant, DynamicScopePolicy, EnvironmentCapturePolicy, ExceptionHandler,
@@ -2283,6 +2284,12 @@ impl Compiler {
         context: &mut CompileContext,
     ) -> Result<(), CompileError> {
         self.checkpoint_node()?;
+        if matches!(expression, Expression::Binary { .. })
+            && contains_unary_plus_string(expression)
+            && let Some(number) = constant_numeric_expression(expression)
+        {
+            return self.compile_literal(&Literal::Number(number), chunk);
+        }
         match expression {
             Expression::Literal(literal) => self.compile_literal(literal, chunk),
             Expression::Unary { operator, argument } => {
@@ -5761,6 +5768,56 @@ impl Compiler {
         chunk.emit(Instruction::PopEnvironment);
         context.pending_loop_labels = loop_labels;
         Ok(())
+    }
+}
+
+fn unary_plus_literal(literal: &Literal) -> Option<f64> {
+    match literal {
+        Literal::Undefined => JsValue::Undefined.to_number(),
+        Literal::Null => JsValue::Null.to_number(),
+        Literal::Boolean(value) => JsValue::Boolean(*value).to_number(),
+        Literal::Number(value) => JsValue::Number(*value).to_number(),
+        Literal::String(value) => JsValue::String(value.clone().into()).to_number(),
+        Literal::BigInt(_) | Literal::RegExp { .. } => None,
+    }
+}
+
+fn constant_numeric_expression(expression: &Expression) -> Option<f64> {
+    match expression {
+        Expression::Parenthesized(inner) => constant_numeric_expression(inner),
+        Expression::Literal(Literal::Number(value)) => Some(*value),
+        Expression::Unary {
+            operator: UnaryOperator::Plus,
+            argument,
+        } => match argument.as_ref() {
+            Expression::Parenthesized(inner) => constant_numeric_expression(inner),
+            Expression::Literal(literal) => unary_plus_literal(literal),
+            _ => None,
+        },
+        Expression::Binary {
+            operator: BinaryOperator::Add,
+            left,
+            right,
+        } => Some(constant_numeric_expression(left)? + constant_numeric_expression(right)?),
+        _ => None,
+    }
+}
+
+fn contains_unary_plus_string(expression: &Expression) -> bool {
+    match expression {
+        Expression::Parenthesized(inner) => contains_unary_plus_string(inner),
+        Expression::Unary {
+            operator: UnaryOperator::Plus,
+            argument,
+        } => match argument.as_ref() {
+            Expression::Literal(Literal::String(_)) => true,
+            Expression::Parenthesized(inner) => contains_unary_plus_string(inner),
+            _ => false,
+        },
+        Expression::Binary { left, right, .. } => {
+            contains_unary_plus_string(left) || contains_unary_plus_string(right)
+        }
+        _ => false,
     }
 }
 

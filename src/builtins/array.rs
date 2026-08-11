@@ -1061,8 +1061,12 @@ fn array_push(
     this_value: JsValue,
     arguments: &[JsValue],
 ) -> Result<JsValue, VmError> {
-    let (_object, target, mut length) = array_object_target(vm, context, this_value)?;
+    let (object, target, mut length) = array_object_target(vm, context, this_value)?;
     for value in arguments {
+        if context.push_dense_array_element(object, length, value.clone())? {
+            length += 1;
+            continue;
+        }
         // Spec step 4a: ? Set(O, ToString(len), E, true) — always strict
         set_array_index_strict(vm, context, target.clone(), length, value.clone())?;
         length += 1;
@@ -1081,6 +1085,9 @@ fn array_pop(
     if length == 0 {
         set_array_length_strict(vm, context, target, 0)?;
         return Ok(JsValue::Undefined);
+    }
+    if let Some(value) = context.pop_dense_array_last(object)? {
+        return Ok(value);
     }
     let new_length = length - 1;
     let key = new_length.to_string();

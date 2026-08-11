@@ -30,6 +30,41 @@ pub struct GetPropertyCacheEntry {
     pub slot: PropertySlotId,
 }
 
+const GET_CACHE_POLYMORPHISM: usize = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GetPropertyCacheEntries {
+    entries: [Option<GetPropertyCacheEntry>; GET_CACHE_POLYMORPHISM],
+}
+
+impl GetPropertyCacheEntries {
+    pub fn iter(self) -> impl Iterator<Item = GetPropertyCacheEntry> {
+        self.entries.into_iter().flatten()
+    }
+
+    pub fn find(self, receiver_shape: ShapeId) -> Option<GetPropertyCacheEntry> {
+        self.iter()
+            .find(|entry| entry.receiver_shape == receiver_shape)
+    }
+
+    fn insert(&mut self, entry: GetPropertyCacheEntry) -> bool {
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .flatten()
+            .find(|existing| existing.receiver_shape == entry.receiver_shape)
+        {
+            *existing = entry;
+            return true;
+        }
+        let Some(empty) = self.entries.iter_mut().find(|entry| entry.is_none()) else {
+            return false;
+        };
+        *empty = Some(entry);
+        true
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SetPropertyCacheEntry {
     pub receiver_shape: ShapeId,
@@ -39,7 +74,7 @@ pub struct SetPropertyCacheEntry {
 
 #[derive(Debug)]
 pub struct PropertyInlineCaches {
-    get: HashMap<BytecodeSite, GetPropertyCacheEntry>,
+    get: HashMap<BytecodeSite, GetPropertyCacheEntries>,
     set: HashMap<BytecodeSite, SetPropertyCacheEntry>,
     observed_get: HashSet<BytecodeSite>,
     observed_set: HashSet<BytecodeSite>,
@@ -78,13 +113,18 @@ impl PropertyInlineCaches {
     }
 
     #[must_use]
-    pub fn get(&self, site: BytecodeSite) -> Option<GetPropertyCacheEntry> {
+    pub fn get(&self, site: BytecodeSite) -> Option<GetPropertyCacheEntries> {
         self.enabled.then(|| self.get.get(&site).copied()).flatten()
     }
 
     pub fn update_get(&mut self, site: BytecodeSite, entry: GetPropertyCacheEntry) {
         if self.enabled {
-            self.get.insert(site, entry);
+            let entries = self.get.entry(site).or_insert(GetPropertyCacheEntries {
+                entries: [None; GET_CACHE_POLYMORPHISM],
+            });
+            if !entries.insert(entry) {
+                self.reject_get(site);
+            }
         }
     }
 

@@ -1940,14 +1940,18 @@ impl Vm {
                     let cache_allowed = !context.has_active_deadline();
                     if cache_allowed
                         && let Some(object_id) = object_id
-                        && let Some(cache) = self.property_caches.get(site)
+                        && let Some(caches) = self.property_caches.get(site)
                     {
-                        if let Some(value) = context.get_cached_own_data_property(
-                            object_id,
-                            cache.receiver_shape,
-                            cache.property_generation,
-                            cache.slot,
-                        ) {
+                        if let Some(cache) = context
+                            .object_shape(object_id)
+                            .and_then(|shape| caches.find(shape))
+                            && let Some(value) = context.get_cached_own_data_property(
+                                object_id,
+                                cache.receiver_shape,
+                                cache.property_generation,
+                                cache.slot,
+                            )
+                        {
                             context.record_property_get_cache(true);
                             self.stack.push(value);
                             continue 'dispatch;
@@ -3153,9 +3157,44 @@ impl Vm {
                     let arguments = self.pop_arguments(argument_count)?;
                     let this_value = self.pop_value()?;
                     let callee = self.pop_value()?;
-                    match self
-                        .invoke_call(CallRequest::new(callee, this_value, arguments), context)?
-                    {
+                    let fast_array_result = match (&callee, &this_value, arguments.as_slice()) {
+                        (JsValue::BuiltinFunction(id), JsValue::Object(object), [value])
+                            if context.builtin(*id).is_some_and(|builtin| {
+                                builtin.name == "push" && builtin.bound.is_none()
+                            }) =>
+                        {
+                            let length = context
+                                .heap()
+                                .object(*object)
+                                .and_then(JsObject::array_length);
+                            match length {
+                                Some(length)
+                                    if context.push_dense_array_element(
+                                        *object,
+                                        length,
+                                        value.clone(),
+                                    )? =>
+                                {
+                                    Some(JsValue::Number((length + 1) as f64))
+                                }
+                                _ => None,
+                            }
+                        }
+                        (JsValue::BuiltinFunction(id), JsValue::Object(object), [])
+                            if context.builtin(*id).is_some_and(|builtin| {
+                                builtin.name == "pop" && builtin.bound.is_none()
+                            }) =>
+                        {
+                            context.pop_dense_array_last(*object)?
+                        }
+                        _ => None,
+                    };
+                    let outcome = if let Some(value) = fast_array_result {
+                        InvocationOutcome::Value(value)
+                    } else {
+                        self.invoke_call(CallRequest::new(callee, this_value, arguments), context)?
+                    };
+                    match outcome {
                         InvocationOutcome::Value(value) => self.stack.push(value),
                         InvocationOutcome::Throw(value) => {
                             abrupt = Some(Completion::Throw(value));
@@ -7132,6 +7171,12 @@ impl Vm {
                 }
                 Err(error) => return self.error_to_operation_result(error),
             }
+        }
+
+        if let JsValue::Object(object) = &receiver
+            && let Some(value) = context.cached_array_prototype_property(*object, key)?
+        {
+            return Ok(OperationResult::Value(value));
         }
 
         if context.value_object(&receiver).is_some() {

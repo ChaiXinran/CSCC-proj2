@@ -206,6 +206,19 @@ impl StringPrototypePropertyCache {
     }
 }
 
+#[derive(Debug, Default)]
+struct ArrayPrototypePropertyCache {
+    prototype: Option<ObjectId>,
+    push: Option<JsValue>,
+    pop: Option<JsValue>,
+}
+
+impl ArrayPrototypePropertyCache {
+    fn clear(&mut self) {
+        *self = Self::default();
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RuntimeSideMemoryStats {
     pub promise_records: usize,
@@ -294,6 +307,7 @@ pub struct NativeContext {
     builtin_realm_globals: HashMap<BuiltinId, ObjectId>,
     current_builtin_stack: Vec<BuiltinId>,
     string_prototype_property_cache: StringPrototypePropertyCache,
+    array_prototype_property_cache: ArrayPrototypePropertyCache,
     intrinsics: Option<Intrinsics>,
     array_iterator_prototype: Option<ObjectId>,
     function_prototype_call: Option<BuiltinId>,
@@ -404,6 +418,7 @@ impl NativeContext {
             builtin_realm_globals: HashMap::new(),
             current_builtin_stack: Vec::new(),
             string_prototype_property_cache: StringPrototypePropertyCache::default(),
+            array_prototype_property_cache: ArrayPrototypePropertyCache::default(),
             intrinsics: None,
             array_iterator_prototype: None,
             function_prototype_call: None,
@@ -1390,8 +1405,61 @@ impl NativeContext {
         }
     }
 
+    pub fn cached_array_prototype_property(
+        &mut self,
+        receiver: ObjectId,
+        key: &str,
+    ) -> Result<Option<JsValue>, VmError> {
+        if !matches!(key, "push" | "pop") {
+            return Ok(None);
+        }
+        let Some(prototype) = self.array_prototype() else {
+            return Ok(None);
+        };
+        if self.array_prototype_property_cache.prototype != Some(prototype) {
+            self.clear_array_prototype_property_cache();
+            self.array_prototype_property_cache.prototype = Some(prototype);
+        }
+        let cached = match key {
+            "push" => self.array_prototype_property_cache.push.clone(),
+            "pop" => self.array_prototype_property_cache.pop.clone(),
+            _ => unreachable!(),
+        };
+        let receiver_object = self
+            .heap
+            .object(receiver)
+            .ok_or_else(|| VmError::runtime("missing object"))?;
+        if !matches!(receiver_object.kind, ObjectKind::Array { .. })
+            || receiver_object.prototype != Some(prototype)
+            || receiver_object.has_own_property(key)
+        {
+            return Ok(None);
+        }
+        if cached.is_some() {
+            return Ok(cached);
+        }
+
+        let Some(descriptor) = self.get_own_property_descriptor(prototype, key) else {
+            return Ok(None);
+        };
+        let PropertyKind::Data { value, .. } = descriptor.kind else {
+            return Ok(None);
+        };
+        match key {
+            "push" => self.array_prototype_property_cache.push = Some(value.clone()),
+            "pop" => self.array_prototype_property_cache.pop = Some(value.clone()),
+            _ => unreachable!(),
+        }
+        self.array_prototype_property_cache.prototype = Some(prototype);
+        Ok(Some(value))
+    }
+
     fn clear_string_prototype_property_cache(&mut self) {
         self.string_prototype_property_cache.clear();
+    }
+
+    fn clear_array_prototype_property_cache(&mut self) {
+        self.array_prototype_property_cache.clear();
     }
 
     #[must_use]
@@ -3692,6 +3760,10 @@ impl NativeContext {
         let clear_string_prototype_cache = self
             .string_prototype()
             .is_some_and(|prototype| prototype == object);
+        let clear_array_prototype_cache = self
+            .array_prototype()
+            .is_some_and(|prototype| prototype == object)
+            || self.array_prototype_property_cache.prototype == Some(object);
         if let Some(index) = array_index(&key)
             && let Some((view, length)) = self.typed_array_indexed_view(object)
         {
@@ -3730,6 +3802,9 @@ impl NativeContext {
         }
         if clear_string_prototype_cache {
             self.clear_string_prototype_property_cache();
+        }
+        if clear_array_prototype_cache {
+            self.clear_array_prototype_property_cache();
         }
         Ok(true)
     }
@@ -3860,6 +3935,10 @@ impl NativeContext {
         let clear_string_prototype_cache = self
             .string_prototype()
             .is_some_and(|prototype| prototype == object);
+        let clear_array_prototype_cache = self
+            .array_prototype()
+            .is_some_and(|prototype| prototype == object)
+            || self.array_prototype_property_cache.prototype == Some(object);
         if key == "length" && self.is_array_object(object)? {
             return strict_error_or_false(strict, "cannot delete array length");
         }
@@ -3890,7 +3969,63 @@ impl NativeContext {
         if removed && clear_string_prototype_cache {
             self.clear_string_prototype_property_cache();
         }
+        if removed && clear_array_prototype_cache {
+            self.clear_array_prototype_property_cache();
+        }
         Ok(removed)
+    }
+
+    /// Attempts the guarded O(1) dense-Array tail-pop path.
+    pub fn pop_dense_array_last(&mut self, object: ObjectId) -> Result<Option<JsValue>, VmError> {
+        let value = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?
+            .pop_dense_array_last();
+        if value.is_some() {
+            self.record_property_cache_invalidation();
+        }
+        Ok(value)
+    }
+
+    /// Attempts the guarded dense-Array append path used by Array.prototype.push.
+    pub fn push_dense_array_element(
+        &mut self,
+        object: ObjectId,
+        expected_length: usize,
+        value: JsValue,
+    ) -> Result<bool, VmError> {
+        let key = expected_length.to_string();
+        let mut prototype = self
+            .heap
+            .object(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?
+            .prototype;
+        let mut depth = 0usize;
+        while let Some(prototype_id) = prototype {
+            if depth > PROTOTYPE_CHAIN_LIMIT {
+                return Err(VmError::runtime_limit("prototype chain limit exceeded"));
+            }
+            let prototype_object = self
+                .heap
+                .object(prototype_id)
+                .ok_or_else(|| VmError::runtime("missing prototype object"))?;
+            if prototype_object.has_own_property(&key) {
+                return Ok(false);
+            }
+            prototype = prototype_object.prototype;
+            depth += 1;
+        }
+
+        let appended = self
+            .heap
+            .object_mut(object)
+            .ok_or_else(|| VmError::runtime("missing object"))?
+            .push_dense_array_element(expected_length, value);
+        if appended {
+            self.record_property_cache_invalidation();
+        }
+        Ok(appended)
     }
 
     pub fn has_property(&self, object: ObjectId, key: &str) -> Result<bool, VmError> {

@@ -35,8 +35,8 @@ pub use crate::{
         resolve_module_specifier,
     },
     vm::{
-        BytecodeSite, CallFrame, Completion, GetPropertyCacheEntry, PropertyInlineCaches,
-        SetPropertyCacheEntry, Vm, VmError, VmErrorKind,
+        BytecodeSite, CallFrame, Completion, GetPropertyCacheEntries, GetPropertyCacheEntry,
+        PropertyInlineCaches, SetPropertyCacheEntry, Vm, VmError, VmErrorKind,
     },
 };
 

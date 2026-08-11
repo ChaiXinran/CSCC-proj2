@@ -14,6 +14,7 @@ use agentjs::{
 };
 
 const DEFAULT_JETSTREAM_THREAD_STACK_MIB: usize = 32;
+const DEFAULT_SCRIPT_THREAD_STACK_MIB: usize = 32;
 const MIN_JETSTREAM_THREAD_STACK_MIB: usize = 4;
 const MAX_JETSTREAM_THREAD_STACK_MIB: usize = 256;
 
@@ -58,9 +59,7 @@ fn command_eval(args: &[String]) -> Result<(), String> {
     let (_backend, source_args) =
         parse_backend_prefixed_args(args, "usage: agentjs eval [--backend native] <source>")?;
     let source = source_args.join(" ");
-    let report = Engine::new(RuntimeConfig::default())
-        .execute(&source, ExecutionOptions::default())
-        .map_err(|error| error.to_string())?;
+    let report = execute_script_on_sized_stack(source)?;
     print_report(report);
     Ok(())
 }
@@ -72,11 +71,23 @@ fn command_run(args: &[String]) -> Result<(), String> {
         .first()
         .ok_or_else(|| "usage: agentjs run [--backend native] <file.js>".to_string())?;
     let source = fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
-    let report = Engine::new(RuntimeConfig::default())
-        .execute(&source, ExecutionOptions::default())
-        .map_err(|error| error.to_string())?;
+    let report = execute_script_on_sized_stack(source)?;
     print_report(report);
     Ok(())
+}
+
+fn execute_script_on_sized_stack(source: String) -> Result<agentjs::ExecutionReport, String> {
+    std::thread::Builder::new()
+        .name("agentjs-script".into())
+        .stack_size(DEFAULT_SCRIPT_THREAD_STACK_MIB * 1024 * 1024)
+        .spawn(move || {
+            Engine::new(RuntimeConfig::default())
+                .execute(&source, ExecutionOptions::default())
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| format!("failed to start script thread: {error}"))?
+        .join()
+        .map_err(|_| "script thread panicked".to_string())?
 }
 
 fn command_jetstream(args: &[String]) -> Result<(), String> {

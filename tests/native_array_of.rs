@@ -54,3 +54,43 @@ fn array_identity_recurses_through_proxies() {
         "true,0"
     );
 }
+
+#[test]
+fn dense_push_and_pop_preserve_values_and_length() {
+    assert_eq!(
+        run(
+            "let array = []; for (let i = 0; i < 1000; i++) array.push(i); let last = array.pop(); [last, array.length, array[998]].join(',')"
+        ),
+        "999,999,998"
+    );
+}
+
+#[test]
+fn push_fast_path_defers_to_an_inherited_index_setter() {
+    assert_eq!(
+        run(
+            "let seen = -1; Object.defineProperty(Array.prototype, '0', { set(value) { seen = value; }, configurable: true }); let array = []; array.push(7); [seen, Object.hasOwn(array, '0'), array.length].join(',')"
+        ),
+        "7,false,1"
+    );
+}
+
+#[test]
+fn pop_fast_path_defers_to_prototype_lookup_for_a_hole() {
+    assert_eq!(
+        run(
+            "Array.prototype[0] = 9; let array = new Array(1); let value = array.pop(); [value, array.length].join(',')"
+        ),
+        "9,0"
+    );
+}
+
+#[test]
+fn array_prototype_method_cache_is_invalidated_by_redefinition() {
+    assert_eq!(
+        run(
+            "let array = []; array.push(1); Array.prototype.push = function(value) { return value + 40; }; [array.push(2), array.length].join(',')"
+        ),
+        "42,1"
+    );
+}
