@@ -282,3 +282,42 @@ Final comparison results:
   0.112x, and Oxide 0.924x.
 - Reports, environment metadata, executable hashes, and binary sizes are in
   `benchmarks/agent/results/four-engine-comparison/`.
+
+## JetStream2 four-engine portable kernel runner
+
+- Added a four-engine runner for AgentJS, Boa, QuickJS, and Oxide using
+  identical self-contained files generated from the pinned JetStream2
+  JavaScript workload sources.
+- Correctness requires each workload's deterministic completion summary;
+  zero exit status alone is not accepted.
+- The report separates workload kernel time from process wall time and records
+  peak RSS, all samples, revisions, executable hashes, and binary sizes.
+- The runner is explicitly not presented as the browser suite's official
+  composite score; browser, worker, Wasm, and full-driver lifecycle tests stay
+  outside this portable comparison.
+
+Final JetStream2 kernel results:
+
+- The six-workload common set passed 6/6 on all four engines, with seven
+  measured processes per engine/workload pair.
+- Geometric-mean reference/AgentJS kernel-time ratios: Boa 0.202x, QuickJS
+  0.047x, and Oxide 0.945x.
+- Maximum observed peak RSS: AgentJS 27.04 MiB, Boa 16.43 MiB, QuickJS 7.02
+  MiB, and Oxide 1,123.82 MiB.
+- In a three-iteration pressure run, Oxide exceeded the 1,536 MiB limit on the
+  SHA-1 and MD5 kernels; the other three engines passed all selected kernels.
+- Consolidated interpretation is in
+  `benchmarks/jetstream/results/summary.md`.
+
+Validation:
+
+```powershell
+python -m py_compile benchmarks/jetstream/run_four_engine.py
+node --check scripts/prepare-simple-benchmark.mjs
+python benchmarks/jetstream/run_four_engine.py --iterations 1 --warmup 0 --repeat 1 --out-dir benchmarks/jetstream/results/four-engine-smoke
+python benchmarks/jetstream/run_four_engine.py --tests n-body-SP,crypto-sha1-SP,crypto-md5-SP,3d-cube-SP,navier-stokes,richards --iterations 1 --warmup 2 --repeat 7 --timeout 180 --out-dir benchmarks/jetstream/results/four-engine
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
+```

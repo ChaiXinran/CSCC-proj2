@@ -1,0 +1,1161 @@
+{
+  "meta": {
+    "label_a": "agentjs-video",
+    "label_b": "boa",
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": ".\\boa\\target\\release\\boa.exe",
+    "repeat": 3,
+    "timeout": 60,
+    "tests_dir": "D:\\00_OS\\CSCC\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs-video": {
+      "3d-cube": {
+        "status": "pass",
+        "median_ms": 298.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 341.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 253.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 298.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "3d-morph": {
+        "status": "pass",
+        "median_ms": 273.4,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 273.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 281.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 272.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "3d-raytrace": {
+        "status": "pass",
+        "median_ms": 423.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 423.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 435.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 419.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-binary-trees": {
+        "status": "pass",
+        "median_ms": 564.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 659.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 564.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 511.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-fannkuch": {
+        "status": "pass",
+        "median_ms": 380.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 381.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 379.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 380.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-nbody": {
+        "status": "pass",
+        "median_ms": 173.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 179.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 169.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 173.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-nsieve": {
+        "status": "pass",
+        "median_ms": 126.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 126.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 132.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 124.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-3bit-bits-in-byte": {
+        "status": "pass",
+        "median_ms": 278.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 278.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 291.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 277.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-bits-in-byte": {
+        "status": "pass",
+        "median_ms": 324.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 329.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 308.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 324.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-bitwise-and": {
+        "status": "pass",
+        "median_ms": 299.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 303.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 294.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 299.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-nsieve-bits": {
+        "status": "pass",
+        "median_ms": 233.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 233.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 227.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 265.4,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "controlflow-recursive": {
+        "status": "pass",
+        "median_ms": 390.7,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 390.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 402.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 386.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-aes": {
+        "status": "pass",
+        "median_ms": 207.6,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 207.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 208.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 180.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-md5": {
+        "status": "pass",
+        "median_ms": 332.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 351.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 332.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 288.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-sha1": {
+        "status": "pass",
+        "median_ms": 243.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 243.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 250.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 243.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "date-format-tofte": {
+        "status": "pass",
+        "median_ms": 375.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 375.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 384.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 364.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "date-format-xparb": {
+        "status": "pass",
+        "median_ms": 199.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 199.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 198.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 201.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-cordic": {
+        "status": "pass",
+        "median_ms": 371.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 390.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 367.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 371.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-partial-sums": {
+        "status": "pass",
+        "median_ms": 171.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 170.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 173.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 171.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-spectral-norm": {
+        "status": "pass",
+        "median_ms": 236.7,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 253.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 231.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 236.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "regexp-dna": {
+        "status": "pass",
+        "median_ms": 126.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 127.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 126.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 126.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-base64": {
+        "status": "pass",
+        "median_ms": 180.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 187.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 180.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 174.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-fasta": {
+        "status": "pass",
+        "median_ms": 739.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 740.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 739.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 736.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-tagcloud": {
+        "status": "pass",
+        "median_ms": 431.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 403.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 431.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 438.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-unpack-code": {
+        "status": "pass",
+        "median_ms": 605.6,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 605.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 622.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 604.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-validate-input": {
+        "status": "pass",
+        "median_ms": 566.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 500.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 666.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 566.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    },
+    "boa": {
+      "3d-cube": {
+        "status": "pass",
+        "median_ms": 62.7,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 62.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 66.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 59.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "3d-morph": {
+        "status": "pass",
+        "median_ms": 65.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 74.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "3d-raytrace": {
+        "status": "pass",
+        "median_ms": 74.7,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 75.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 72.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 74.7,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-binary-trees": {
+        "status": "pass",
+        "median_ms": 61.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 61.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 58.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 66.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-fannkuch": {
+        "status": "pass",
+        "median_ms": 141.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 141.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 144.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 135.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-nbody": {
+        "status": "pass",
+        "median_ms": 59.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 59.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 54.4,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "access-nsieve": {
+        "status": "pass",
+        "median_ms": 124.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 125.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 124.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 119.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-3bit-bits-in-byte": {
+        "status": "pass",
+        "median_ms": 40.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 43.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 40.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 40.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-bits-in-byte": {
+        "status": "pass",
+        "median_ms": 54.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 54.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 53.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 54.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-bitwise-and": {
+        "status": "pass",
+        "median_ms": 269.5,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 271.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 269.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 267.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "bitops-nsieve-bits": {
+        "status": "pass",
+        "median_ms": 79.0,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 79.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 77.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 80.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "controlflow-recursive": {
+        "status": "pass",
+        "median_ms": 39.6,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 41.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 38.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 39.6,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-aes": {
+        "status": "pass",
+        "median_ms": 75.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 78.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 75.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 74.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-md5": {
+        "status": "pass",
+        "median_ms": 44.4,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 46.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 44.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 39.0,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "crypto-sha1": {
+        "status": "pass",
+        "median_ms": 40.9,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 41.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 37.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 40.9,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "date-format-tofte": {
+        "status": "pass",
+        "median_ms": 87.6,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 92.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 87.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 87.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "date-format-xparb": {
+        "status": "pass",
+        "median_ms": 54.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 57.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 54.2,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 52.4,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-cordic": {
+        "status": "pass",
+        "median_ms": 68.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 72.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 68.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 67.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-partial-sums": {
+        "status": "pass",
+        "median_ms": 105.7,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 105.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 106.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 99.8,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "math-spectral-norm": {
+        "status": "pass",
+        "median_ms": 42.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 42.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 42.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 39.5,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "regexp-dna": {
+        "status": "pass",
+        "median_ms": 107.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 103.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.3,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 107.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-base64": {
+        "status": "pass",
+        "median_ms": 61.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 64.6,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 53.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 61.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-fasta": {
+        "status": "pass",
+        "median_ms": 142.8,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 142.8,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 152.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 135.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-tagcloud": {
+        "status": "pass",
+        "median_ms": 146.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 144.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 148.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 146.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-unpack-code": {
+        "status": "pass",
+        "median_ms": 282.3,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 284.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 281.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 282.3,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "string-validate-input": {
+        "status": "pass",
+        "median_ms": 119.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 119.1,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 116.5,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 122.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}

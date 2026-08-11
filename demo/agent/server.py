@@ -40,7 +40,7 @@ except ImportError:  # Development mode may intentionally omit the desktop shell
 SOURCE_ROOT = Path(__file__).resolve().parents[2]
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", SOURCE_ROOT))
 ROOT = SOURCE_ROOT
-STATIC_ROOT = BUNDLE_ROOT / "frontend"
+STATIC_ROOT = BUNDLE_ROOT / "demo" / "agent" / "frontend"
 RESULT_MARKER = "__AGENTJS_RESULT__"
 RENDER_MARKER = "__AGENTJS_RENDER__"
 AGENTJS_TIME_MARKER = "__AGENTJS_INTERNAL_MS__"

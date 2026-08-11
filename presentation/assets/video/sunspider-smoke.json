@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "label_a": "agentjs-smoke",
+    "label_b": "boa",
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": ".\\boa\\target\\release\\boa.exe",
+    "repeat": 1,
+    "timeout": 60,
+    "tests_dir": "D:\\00_OS\\CSCC\\benchmarks\\sunspider\\webkit-sunspider\\PerformanceTests\\SunSpider\\tests\\sunspider-1.0.2"
+  },
+  "results": {
+    "agentjs-smoke": {
+      "3d-cube": {
+        "status": "pass",
+        "median_ms": 285.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 285.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    },
+    "boa": {
+      "3d-cube": {
+        "status": "pass",
+        "median_ms": 77.1,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 77.1,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  }
+}

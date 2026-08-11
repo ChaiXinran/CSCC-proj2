@@ -44,7 +44,7 @@ pub const NATIVE_V2_TESTS: [&str; 15] = [
 
 /// Official Test262 files used as the Native V3 function acceptance gate.
 ///
-/// These are the V3 candidates from `docs/version/native-v3-scope.md` that exist in
+/// These are the V3 candidates summarized in `docs/runtime-evolution.md` that exist in
 /// the pinned Test262 revision and only depend on the implemented V3 subset.
 pub const NATIVE_V3_TESTS: [&str; 26] = [
     "test/language/statements/function/S10.1.1_A1_T1.js",

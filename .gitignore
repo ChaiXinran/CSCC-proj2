@@ -10,19 +10,11 @@
 /reports/
 !/reports/
 /reports/*
-!/reports/test262-latest-common-errors-2026-07-28.md
-!/reports/agent-host-demo-report.md
-!/reports/v17-partA-report.md
-!/reports/v17-partB-report.md
-!/reports/v17-partC-report.md
-!/reports/phase2-partD-report.md
-!/reports/phase3-partG-report.md
-!/reports/phase3-integration-report.md
 !/reports/test262-85-target-summary.md
 !/reports/version-history-v8-v12.md
 !/reports/version-history-v13-v18.md
 !/reports/optimization-and-demo-history.md
-!/reports/phase4-partK-report.md
+!/reports/agentjs-experiment-report.md
 # Local editor and agent state
 /.vscode/
 /.idea/

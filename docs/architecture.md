@@ -16,8 +16,9 @@ the ECMAScript backend so the two can evolve independently.
 4. `backend/boa.rs` contains the complete compatibility implementation:
    context creation, host functions, limits, script caching, jobs, and error
    conversion.
-5. `backend/native.rs` is the compiling entry point for the self-developed
-   engine. It currently returns an explicit `Unsupported` error.
+5. `backend/native.rs` is the assembly entry point for the self-developed
+   engine and delegates parsing, compilation, and execution to the native
+   pipeline.
 6. `Engine` creates a fresh isolate for each unrelated execution. This prevents
    globals and prototype mutations from leaking between agent actions.
 7. `Runtime` keeps one isolate alive for related calls such as a REPL session.
@@ -67,14 +68,14 @@ require team review; implementation details remain inside their owning folder.
 The detailed normative rules are defined in
 [the module interface specification](interface-spec.md).
 
-This is an explicit bootstrap architecture. AgentJS already owns the bounded
-script cache and isolation policy; planned native backend work includes:
+AgentJS also owns the bounded script cache and isolation policy. Implemented
+native optimization layers include:
 
-- compact immutable bytecode shared safely across warm isolates;
-- isolate pooling with deterministic reset;
-- per-execution allocation accounting and hard memory budgets;
-- snapshotting of initialized agent tool environments;
-- tiered fast paths for JSON, property access, and host calls.
+- compact immutable bytecode shared across warm executions;
+- local and upvalue slots for lexical access;
+- shapes and monomorphic property inline caches;
+- allocation accounting, adaptive GC, and hard runtime limits;
+- focused fast paths for strings, arrays, property access, and host calls.
 
 The backend should remain replaceable through the `Runtime` interface so these
 features can be developed without changing the CLI or Test262 reporting layer.

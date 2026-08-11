@@ -1,0 +1,228 @@
+{
+  "meta": {
+    "benchmark": "JetStream2 portable workload kernels",
+    "iterations": 1,
+    "warmup": 0,
+    "repeat": 1,
+    "timeout_seconds": 120,
+    "max_rss_mb": 1536,
+    "tests": [
+      "sync-fs",
+      "js-tokens"
+    ],
+    "engines": [
+      "agentjs",
+      "boa",
+      "quickjs",
+      "oxide"
+    ]
+  },
+  "environment": {
+    "generated_at_utc": "2026-08-11T15:32:21.082454+00:00",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.5",
+    "project_revision": "30f023992ecced51b2c7789ba8d57e47797d8f20",
+    "jetstream_revision": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+    "memory_sampler": "psutil",
+    "commands": {
+      "agentjs": [
+        "D:\\00_OS\\CSCC\\target\\release\\agentjs.exe",
+        "run",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+      ],
+      "boa": [
+        "D:\\00_OS\\CSCC\\boa\\target\\release\\boa.exe",
+        "D:\\00_OS\\CSCC\\reports\\jetstream2-2026-08-04\\boa-visible-prelude.js",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+      ],
+      "quickjs": [
+        "D:\\00_OS\\CSCC\\quickjs\\qjs.exe",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+      ],
+      "oxide": [
+        "D:\\00_OS\\CSCC\\target\\oxide-compare\\release\\oxide.exe",
+        "run",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+      ]
+    },
+    "binary_size_bytes": {
+      "agentjs": 10785280,
+      "boa": 29936640,
+      "quickjs": 1142784,
+      "oxide": 5715968
+    },
+    "binary_sha256": {
+      "agentjs": "427b4acd131cdab743751c4e488079c5dfa4c79a2b5523a87affc9fbcb407b66",
+      "boa": "9a6ced13a4b9f6f3a4a2b30c6db12ac78ba923e11d09820ebc1ccf0d32c0418f",
+      "quickjs": "7110a4522bbe43d63eedf2ec883be11a854cf92e995ddc21802d11d5897bda95",
+      "oxide": "805adc395b18d7469e1f50874156c77845388a73ac9298e639177df6c5308370"
+    }
+  },
+  "results": {
+    "agentjs": {
+      "sync-fs": {
+        "status": "runtime-error",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 117.17,
+        "error": "agentjs: Error: execution error: builtin registry full",
+        "samples": [
+          {
+            "status": "runtime-error",
+            "wall_time_ms": 53000.814,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 117.17,
+            "exit_code": 1,
+            "output_tail": "agentjs: Error: execution error: builtin registry full"
+          }
+        ]
+      },
+      "js-tokens": {
+        "status": "runtime-error",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 5.41,
+        "error": "agentjs: SyntaxError: execution error: invalid regular expression /(['\"])(?:(?!\\1)[^\\\\\\n\\r]|\\\\(?:\\r\\n|[^]))*(\\1)?/y: Parsing error at position 42: Invalid character class",
+        "samples": [
+          {
+            "status": "runtime-error",
+            "wall_time_ms": 36.644,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 5.41,
+            "exit_code": 1,
+            "output_tail": "agentjs: SyntaxError: execution error: invalid regular expression /(['\"])(?:(?!\\1)[^\\\\\\n\\r]|\\\\(?:\\r\\n|[^]))*(\\1)?/y: Parsing error at position 42: Invalid character class"
+          }
+        ]
+      }
+    },
+    "boa": {
+      "sync-fs": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 558.0,
+        "median_wall_ms": 591.747,
+        "p90_wall_ms": 591.747,
+        "peak_rss_mb": 20.96,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 591.747,
+            "workload_avg_ms": 558.0,
+            "peak_rss_mb": 20.96,
+            "exit_code": 0,
+            "output_tail": "sync-fs iteration 1/1: 558ms\nsync-fs avg: 558ms  total: 558ms  iterations: 1"
+          }
+        ]
+      },
+      "js-tokens": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 2139.0,
+        "median_wall_ms": 2173.532,
+        "p90_wall_ms": 2173.532,
+        "peak_rss_mb": 20.29,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 2173.532,
+            "workload_avg_ms": 2139.0,
+            "peak_rss_mb": 20.29,
+            "exit_code": 0,
+            "output_tail": "js-tokens iteration 1/1: 2139ms\njs-tokens avg: 2139ms  total: 2139ms  iterations: 1"
+          }
+        ]
+      }
+    },
+    "quickjs": {
+      "sync-fs": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 126.0,
+        "median_wall_ms": 151.621,
+        "p90_wall_ms": 151.621,
+        "peak_rss_mb": 8.94,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 151.621,
+            "workload_avg_ms": 126.0,
+            "peak_rss_mb": 8.94,
+            "exit_code": 0,
+            "output_tail": "sync-fs iteration 1/1: 126ms\nsync-fs avg: 126ms  total: 126ms  iterations: 1"
+          }
+        ]
+      },
+      "js-tokens": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 84.0,
+        "median_wall_ms": 109.701,
+        "p90_wall_ms": 109.701,
+        "peak_rss_mb": 4.78,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 109.701,
+            "workload_avg_ms": 84.0,
+            "peak_rss_mb": 4.78,
+            "exit_code": 0,
+            "output_tail": "js-tokens iteration 1/1: 84ms\njs-tokens avg: 84ms  total: 84ms  iterations: 1"
+          }
+        ]
+      }
+    },
+    "oxide": {
+      "sync-fs": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 5.4,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: Identifier 'file' has already been declared\n\u001b[31mIdentifier 'file' has already been declared\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 33.479,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 5.4,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: Identifier 'file' has already been declared\n\u001b[31mIdentifier 'file' has already been declared\u001b[0m"
+          }
+        ]
+      },
+      "js-tokens": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 14.27,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: IC_GET_PROP on non-object\n\u001b[31muncaught TypeError: IC_GET_PROP on non-object\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 43.778,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 14.27,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: IC_GET_PROP on non-object\n\u001b[31muncaught TypeError: IC_GET_PROP on non-object\u001b[0m"
+          }
+        ]
+      }
+    }
+  },
+  "geomean_ratios": {
+    "boa": null,
+    "quickjs": null,
+    "oxide": null
+  }
+}

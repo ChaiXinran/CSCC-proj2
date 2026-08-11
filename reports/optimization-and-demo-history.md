@@ -16,3 +16,45 @@ The Demo reads `Test262-final/full-test262-summary.json` first, searches the
 project only when that file is absent, and reruns the full suite as the final
 fallback. Its 37 orchestration tests passed and the executable was rebuilt
 after this behavior was finalized.
+
+## Retained measured evidence
+
+Phase 2 local-slot lowering improved the five-workload JetStream median
+geometric mean by approximately 21.6%. Representative median changes were
+crypto -41.69%, navier-stokes -45.07%, splay -7.43%, richards -0.95%, and
+raytrace +0.75%; no common passing workload regressed beyond 5%.
+
+Phase 3 upvalue-slot work preserved the directly reproducible Test262 baseline
+and improved a closure-dense 500k-call workload by 19.87%. Its protected
+JetStream integration matrix established passing coverage for crypto,
+gaussian-blur, hash-map, cdjs, intl, mobx, navier-stokes, and web-ssr while
+identifying memory limits in ai-astar, jsdom/D3, threejs, and WSL workloads.
+
+Phase 4 added side-registry lifetime management and adaptive GC. The later
+shared-string RegExp fix reduced protected jsdom/D3 peak RSS from 1606.8 MiB
+to 88.0 MiB, after which execution reached a separate semantic error instead
+of the memory limit.
+
+The Agent Host and desktop Demo use a constrained render-event contract rather
+than HTML interpretation. The packaged Demo compares AgentJS, Boa, and the
+local competitor runtime and includes the official Test262 summary.
+
+## Repository consolidation
+
+The current Demo serves and packages `demo/agent/frontend/agent-chat.html`; its earlier
+standalone `demo/agent/static/` page was removed. The JetStream toolchain was
+reduced to the official runner generator, verifier, AgentJS/Node runners,
+measurement, comparison, and diagnostic scripts. Legacy simple-runner and
+one-off generation scripts were removed, as was the text-log Test262 folder
+statistics helper after raw Test262 logs ceased to be retained.
+
+The examples directory now contains only maintained JavaScript demonstrations.
+An unrelated compiled Rust Fibonacci executable/source pair and superseded
+V3/V8-A/generator smoke scripts were removed. The V2 control-flow program was
+moved to `tests/fixtures/control_flow_v2.js`, where its integration-test role
+is explicit.
+
+The standalone root `frontend/` directory was then folded into
+`demo/agent/frontend/`, keeping all Demo source, protocol, UI, tests, and
+packaging inputs under one project boundary. The public browser route remains
+`/frontend/agent-chat.html` for compatibility.
