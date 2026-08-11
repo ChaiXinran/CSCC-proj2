@@ -732,7 +732,11 @@ return average.toFixed(2) + "%";`
 
     async function fetchAgent(body) {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      const prompt = String(body?.prompt || body?.task || "").toLowerCase();
+      const accuracyQuery = ["test262", "准确率", "通过率", "正确率", "pass rate", "conformance"]
+        .some(term => prompt.includes(term));
+      const timeoutMs = accuracyQuery ? 15 * 60 * 1000 : REQUEST_TIMEOUT_MS;
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         return await fetch(AGENT_API, {
           method: "POST",

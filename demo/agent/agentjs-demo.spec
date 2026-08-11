@@ -2,6 +2,10 @@
 from pathlib import Path
 
 project = Path(SPECPATH).parents[1]
+datas = [(str(project / "frontend" / "agent-chat.html"), "frontend")]
+test262_report = project / "reports" / "full-test262-summary.json"
+if test262_report.is_file():
+    datas.append((str(test262_report), "reports"))
 
 a = Analysis(
     [str(project / "demo" / "agent" / "server.py")],
@@ -11,7 +15,7 @@ a = Analysis(
         (str(project / "boa" / "target" / "release" / "boa.exe"), "."),
         (str(project / "target" / "oxide-compare" / "release" / "oxide.exe"), "."),
     ],
-    datas=[(str(project / "frontend" / "agent-chat.html"), "frontend")],
+    datas=datas,
     hiddenimports=["webview"],
     hookspath=[],
     runtime_hooks=[],

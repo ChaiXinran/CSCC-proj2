@@ -20,12 +20,18 @@ if (-not $OxideProjectRoot) {
     }
 }
 
+$ErrorActionPreference = "Continue"
 & $PackagingPython -m PyInstaller --version *> $null
-if ($LASTEXITCODE -ne 0) {
+$pyInstallerProbeExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($pyInstallerProbeExit -ne 0) {
     throw "PyInstaller is not installed for $PackagingPython. Run: $PackagingPython -m pip install pyinstaller"
 }
+$ErrorActionPreference = "Continue"
 & $PackagingPython -c "import webview" *> $null
-if ($LASTEXITCODE -ne 0) {
+$webviewProbeExit = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($webviewProbeExit -ne 0) {
     throw "pywebview is not installed for $PackagingPython. Run: $PackagingPython -m pip install pywebview"
 }
 

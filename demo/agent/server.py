@@ -51,6 +51,11 @@ MAX_HISTORY_MESSAGES = 20
 MAX_SESSIONS = 128
 MAX_RENDER_BYTES = 64 * 1024
 MAX_RENDER_DEPTH = 8
+MIN_FULL_TEST262_TOTAL = 50_000
+TEST262_QUERY_TERMS = (
+    "test262", "准确率", "通过率", "正确率", "兼容率", "兼容性数据",
+    "accuracy", "pass rate", "conformance",
+)
 DEFAULT_MODEL = "deepseek-v4-pro"
 DEFAULT_API_URL = "https://api.deepseek.com/chat/completions"
 ALLOWED_RENDER_TYPES = {"panel", "text", "metrics", "statuses", "table", "list"}
@@ -268,6 +273,151 @@ FIXED_PROGRAMS["chat"] = {
     "code": CHAT_CODE,
 }
 FIXED_PROGRAMS["test262_dashboard"] = FIXED_PROGRAMS["chat"]
+
+
+def is_test262_accuracy_query(prompt: str) -> bool:
+    normalized = prompt.casefold()
+    return any(term in normalized for term in TEST262_QUERY_TERMS)
+
+
+def parse_full_test262_summary(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        total = int(payload["total"])
+        passed = int(payload["passed"])
+        failed = int(payload["failed"])
+        skipped = int(payload["skipped"])
+    except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+    if total < MIN_FULL_TEST262_TOTAL or min(passed, failed, skipped) < 0:
+        return None
+    if passed + failed + skipped != total:
+        return None
+    return {
+        "total": total,
+        "passed": passed,
+        "failed": failed,
+        "skipped": skipped,
+        "conformancePercent": round(passed * 100 / total, 4),
+        "elapsedMs": payload.get("elapsed_ms"),
+        "path": str(path.resolve()),
+        "modifiedAt": path.stat().st_mtime,
+    }
+
+
+def project_root_candidates() -> list[Path]:
+    configured = os.environ.get("AGENTJS_PROJECT_ROOT")
+    seeds = [Path(configured)] if configured else []
+    seeds.extend([Path.cwd(), SOURCE_ROOT, BUNDLE_ROOT, Path(sys.executable).resolve().parent])
+    candidates: list[Path] = []
+    for seed in seeds:
+        for candidate in [seed, *seed.parents]:
+            if candidate not in candidates:
+                candidates.append(candidate)
+    return candidates
+
+
+def find_project_root() -> Path | None:
+    for candidate in project_root_candidates():
+        if (candidate / "test262").is_dir() or (candidate / "reports" / "full-test262-summary.json").is_file():
+            return candidate
+    return None
+
+
+def newest_full_test262_summary(directory: Path) -> dict[str, Any] | None:
+    if not directory.is_dir():
+        return None
+    summaries = filter(None, (parse_full_test262_summary(path) for path in directory.glob("*.json")))
+    return max(summaries, key=lambda item: item["modifiedAt"], default=None)
+
+
+def search_project_test262_summaries(project_root: Path) -> dict[str, Any] | None:
+    ignored = {".git", "target", "node_modules", "test262", "JetStream", "third_party"}
+    summaries: list[dict[str, Any]] = []
+    for current, directories, files in os.walk(project_root):
+        directories[:] = [name for name in directories if name not in ignored]
+        for name in files:
+            if not name.lower().endswith(".json"):
+                continue
+            summary = parse_full_test262_summary(Path(current) / name)
+            if summary is not None:
+                summaries.append(summary)
+    return max(summaries, key=lambda item: item["modifiedAt"], default=None)
+
+
+def run_full_test262(project_root: Path) -> dict[str, Any]:
+    suite_root = project_root / "test262"
+    if not suite_root.is_dir():
+        raise AgentError("test262_missing", "未找到固定的 test262 测试集，无法重新运行全量准确率", 503)
+    output_directory = project_root / "reports"
+    output_directory.mkdir(parents=True, exist_ok=True)
+    output = output_directory / "full-test262-summary.json"
+    command = [
+        str(find_agentjs_binary()), "test262", "--root", str(suite_root), "--suite", "test",
+        "--jobs", str(min(os.cpu_count() or 1, 4)), "--json", str(output),
+    ]
+    try:
+        completed = subprocess.run(
+            command, cwd=project_root, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=1_800, check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AgentError("test262_timeout", "全量 Test262 在 30 分钟内未完成", 504) from error
+    except OSError as error:
+        raise AgentError("test262_failed", f"无法启动全量 Test262: {error}", 503) from error
+    summary = parse_full_test262_summary(output) if completed.returncode == 0 else None
+    if summary is None:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "未生成有效的全量摘要"
+        raise AgentError("test262_failed", detail[-1_000:], 422)
+    summary["source"] = "rerun"
+    return summary
+
+
+def resolve_test262_accuracy() -> dict[str, Any]:
+    project_root = find_project_root()
+    fixed_reports: list[Path] = []
+    configured = os.environ.get("AGENTJS_TEST262_REPORT")
+    if configured:
+        fixed_reports.append(Path(configured))
+    if project_root is not None:
+        fixed_reports.append(project_root / "reports" / "full-test262-summary.json")
+    fixed_reports.append(BUNDLE_ROOT / "reports" / "full-test262-summary.json")
+    for report in fixed_reports:
+        summary = parse_full_test262_summary(report)
+        if summary is not None:
+            summary["source"] = "fixed-report"
+            return summary
+    if project_root is not None:
+        summary = search_project_test262_summaries(project_root)
+        if summary is not None:
+            summary["source"] = "project-search"
+            return summary
+        return run_full_test262(project_root)
+    raise AgentError("test262_missing", "未找到 Test262 报告或包含 test262/ 的项目目录", 503)
+
+
+def test262_accuracy_script(summary: dict[str, Any]) -> GeneratedScript:
+    data = json.dumps(summary, ensure_ascii=True, separators=(",", ":"))
+    code = f"""const summary = {data};
+const rate = summary.conformancePercent.toFixed(2) + "%";
+agent.render({{
+  type: "panel", title: "AgentJS Test262 accuracy",
+  children: [
+    {{ type: "metrics", items: [
+      {{ label: "Passed", value: summary.passed }},
+      {{ label: "Total", value: summary.total }},
+      {{ label: "Pass rate", value: rate }}
+    ]}},
+    {{ type: "statuses", items: [
+      {{ label: "Failed", status: String(summary.failed) }},
+      {{ label: "Skipped", status: String(summary.skipped) }},
+      {{ label: "Data source", status: summary.source }}
+    ]}},
+    {{ type: "text", value: "Report: " + summary.path }}
+  ]
+}});
+return rate;"""
+    return GeneratedScript(code=code, title="AgentJS Test262 accuracy")
 
 
 class AgentError(RuntimeError):
@@ -970,9 +1120,13 @@ def run_benchmark(payload: Any) -> dict[str, Any]:
 def run_agent(payload: Any, store: SessionStore = SESSION_STORE) -> dict[str, Any]:
     request = validate_request(payload)
     history = store.history(request.session_id)
-    generator: CodeGenerator = FixedCodeGenerator() if request.mode == "fixed" else DeepSeekCodeGenerator()
     model_started = time.perf_counter()
-    script = validate_generated_script(generator.generate(history, request), require_render=True)
+    if is_test262_accuracy_query(request.prompt):
+        script = test262_accuracy_script(resolve_test262_accuracy())
+    else:
+        generator: CodeGenerator = FixedCodeGenerator() if request.mode == "fixed" else DeepSeekCodeGenerator()
+        script = generator.generate(history, request)
+    script = validate_generated_script(script, require_render=True)
     model_ms = (time.perf_counter() - model_started) * 1_000
 
     runners = {"agentjs": execute_agentjs, "boa": execute_boa}

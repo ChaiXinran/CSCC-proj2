@@ -1,5 +1,25 @@
 # AgentJS Integrated Chat Demo
 
+## Live Test262 accuracy routing
+
+- Accuracy-related questions no longer use the hard-coded 92.56% demo data or
+  ask the language model to guess. The orchestrator first reads the canonical
+  `reports/full-test262-summary.json`, then searches other project JSON
+  reports, and only if neither source exists runs the pinned full Test262 suite
+  with the current AgentJS binary and writes that canonical report.
+- A report is accepted only when it contains at least 50,000 cases and its
+  passed, failed, and skipped counts add up exactly to total. The response
+  exposes its source and absolute report path.
+- Standalone packaging includes the newest full summary available at build
+  time. When launched beside a checkout, a newer checkout report takes
+  precedence; a live rerun requires that checkout's `test262/` directory.
+- The browser allows accuracy queries up to 15 minutes because a genuine full
+  run takes several minutes; ordinary model requests retain the 35-second
+  timeout.
+- Packaging dependency probes now judge PyInstaller and pywebview by their
+  process exit codes, so a benign Conda-environment warning on stderr no longer
+  aborts the Windows build script.
+
 ## Scope and merge boundary
 
 The local integration combines the conversational frontend and Rust Agent Host

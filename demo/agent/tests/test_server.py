@@ -3,6 +3,7 @@ import http.client
 import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -196,6 +197,88 @@ class DeepSeekGeneratorTests(unittest.TestCase):
             with self.assertRaisesRegex(server.AgentError, "DEEPSEEK_API_KEY") as raised:
                 server.DeepSeekCodeGenerator().generate([], request)
         self.assertEqual(raised.exception.code, "missing_api_key")
+
+
+class Test262AccuracyTests(unittest.TestCase):
+    @staticmethod
+    def write_summary(path: Path, passed: int = 48_564) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "total": 53_379,
+            "passed": passed,
+            "failed": 53_379 - passed - 2,
+            "skipped": 2,
+            "conformance_percent": passed * 100 / 53_379,
+            "elapsed_ms": 123,
+        }), encoding="utf-8")
+
+    def test_accuracy_query_detection_is_narrow(self):
+        self.assertTrue(server.is_test262_accuracy_query("我们当前 Test262 通过率是多少"))
+        self.assertTrue(server.is_test262_accuracy_query("current conformance"))
+        self.assertFalse(server.is_test262_accuracy_query("生成一个普通销售表格"))
+
+    def test_fixed_report_directory_wins_before_project_search(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixed = root / "reports" / "full-test262-summary.json"
+            other = root / "other" / "newer.json"
+            self.write_summary(fixed, 48_564)
+            self.write_summary(other, 48_600)
+            os.utime(other, (fixed.stat().st_mtime + 10, fixed.stat().st_mtime + 10))
+            with mock.patch.dict(os.environ, {}, clear=True), \
+                 mock.patch.object(server, "find_project_root", return_value=root), \
+                 mock.patch.object(server, "BUNDLE_ROOT", root / "bundle"):
+                summary = server.resolve_test262_accuracy()
+            self.assertEqual(summary["passed"], 48_564)
+            self.assertEqual(summary["source"], "fixed-report")
+
+    def test_project_search_is_used_when_fixed_directory_has_no_full_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.write_summary(root / "archive" / "full.json", 48_570)
+            with mock.patch.dict(os.environ, {}, clear=True), \
+                 mock.patch.object(server, "find_project_root", return_value=root), \
+                 mock.patch.object(server, "BUNDLE_ROOT", root / "bundle"):
+                summary = server.resolve_test262_accuracy()
+            self.assertEqual(summary["passed"], 48_570)
+            self.assertEqual(summary["source"], "project-search")
+
+    @mock.patch.object(server, "find_agentjs_binary", return_value=Path("agentjs.exe"))
+    @mock.patch("subprocess.run")
+    def test_missing_reports_trigger_full_test262(self, run, _binary):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "test262").mkdir()
+
+            def complete(command, **_kwargs):
+                output = Path(command[command.index("--json") + 1])
+                self.write_summary(output)
+                return mock.Mock(returncode=0, stdout="", stderr="")
+
+            run.side_effect = complete
+            summary = server.run_full_test262(root)
+        self.assertEqual(summary["source"], "rerun")
+        self.assertIn("--suite", run.call_args.args[0])
+        self.assertIn("test", run.call_args.args[0])
+
+    @mock.patch.object(server, "resolve_test262_accuracy")
+    @mock.patch.object(server, "execute_agentjs")
+    def test_accuracy_question_bypasses_model_and_uses_report(self, execute, resolve):
+        resolve.return_value = {
+            "total": 53_379, "passed": 48_564, "failed": 4_813, "skipped": 2,
+            "conformancePercent": 90.9796, "path": "report.json",
+            "modifiedAt": 0, "elapsedMs": 1, "source": "fixed-report",
+        }
+        execute.return_value = server.ExecutionResult(
+            "90.98%", [], [{"type": "panel", "title": "accuracy", "children": []}], 1.0
+        )
+        with mock.patch.object(server.DeepSeekCodeGenerator, "generate") as generate:
+            response = server.run_agent({
+                "prompt": "现在准确率是多少", "mode": "deepseek", "engine": "agentjs"
+            }, store=server.SessionStore())
+        generate.assert_not_called()
+        self.assertEqual(response["result"], "90.98%")
+        self.assertIn("48564", execute.call_args.args[0])
 
 
 class SessionStoreTests(unittest.TestCase):
