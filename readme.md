@@ -281,7 +281,7 @@ cargo test --no-default-features --test native_test262
 | 材料 | 路径 |
 | --- | --- |
 | 实验报告 | [`reports/agentjs-experiment-report.md`](reports/agentjs-experiment-report.md) |
-| 最新三引擎 PPT | [`presentation/PPT.pptx.pptx`](presentation/PPT.pptx) |
+| 最新 PPT | [`presentation/PPT.pptx`](presentation/PPT.pptx) |
 | Test262 历史归档 JSON | [`Test262-final/full-test262-summary.json`](Test262-final/full-test262-summary.json) |
 | SunSpider 结果 | [`benchmarks/sunspider/results/`](benchmarks/sunspider/results/) |
 | AgentBench 结果 | [`benchmarks/agent/results/`](benchmarks/agent/results/) |
