@@ -280,12 +280,17 @@ cargo test --no-default-features --test native_test262
 
 | 材料 | 路径 |
 | --- | --- |
-| 实验报告 | [`agentjs-experiment-report.md`](agentjs-experiment-report.md) |
-| 最新三引擎 PPT | [`presentation/PPT-report-final-three-engines.pptx`](presentation/PPT-report-final-three-engines.pptx) |
-| Test262 全量汇总 | [`test262-final/full-test262-summary.json`](test262-final/full-test262-summary.json) |
+| 实验报告 | [`reports/agentjs-experiment-report.md`](reports/agentjs-experiment-report.md) |
+| 最新三引擎 PPT | [`presentation/PPT.pptx.pptx`](presentation/PPT.pptx) |
+| Test262 全量汇总 | [`test262-final/full-test262-summary.json`](Test262-final/full-test262-summary.json) |
 | SunSpider 结果 | [`benchmarks/sunspider/results/`](benchmarks/sunspider/results/) |
 | AgentBench 结果 | [`benchmarks/agent/results/`](benchmarks/agent/results/) |
 | JetStream 公共集结果 | [`benchmarks/jetstream/results/`](benchmarks/jetstream/results/) |
+
+- 展示视频
+
+通过网盘分享的文件：video.mp4
+链接: https://pan.baidu.com/s/12GXHTNZJlgOC4nQpmLEusw?pwd=pcm3 提取码: pcm3
 
 ## 11. 开源协议
 
