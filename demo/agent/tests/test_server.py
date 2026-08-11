@@ -220,7 +220,7 @@ class Test262AccuracyTests(unittest.TestCase):
     def test_fixed_report_directory_wins_before_project_search(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            fixed = root / "reports" / "full-test262-summary.json"
+            fixed = root / "Test262-final" / "full-test262-summary.json"
             other = root / "other" / "newer.json"
             self.write_summary(fixed, 48_564)
             self.write_summary(other, 48_600)

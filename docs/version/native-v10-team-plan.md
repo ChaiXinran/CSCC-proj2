@@ -59,7 +59,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v10-partA-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 3. B Group — TypedArray / ArrayBuffer / DataView Runtime
 
@@ -97,7 +97,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v10-partB-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 4. C Group — Date / Intl / Temporal Builtins
 
@@ -128,7 +128,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v10-partC-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 5. Shared-File Lock
 
@@ -166,9 +166,9 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Reports and docs to update after integration:
 
-- `reports/.version-report/v10-partA-report.md`
-- `reports/.version-report/v10-partB-report.md`
-- `reports/.version-report/v10-partC-report.md`
+- `reports/version-history-v8-v12.md`
+- `reports/version-history-v8-v12.md`
+- `reports/version-history-v8-v12.md`
 - `reports/.native-test262-tmp/native-v10-scan-summary.json`
 - `docs/status.md`
 - `AGENTS.md`

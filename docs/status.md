@@ -55,7 +55,7 @@
 - A sharded Test262 run on revision `de8e621c` executed 47,516 non-staging
   tests and passed 45,310. Treating every unexecuted non-staging test as a
   failure gives a conservative full-suite lower bound of 87.31%. See
-  `reports/.test262/test262-analysis/test262-report.md`.
+  `reports/version-history-v8-v12.md`.
 - V7 bytecode groundwork exposes recursive `ChunkCacheMetadata`, rejects
   invalid chunks before interpretation, and covers high stack depth, handler
   restore invariants, nested-function validation, and source-to-cache-metadata
@@ -75,13 +75,13 @@
   is `cargo run --release --no-default-features -- test262 --native-v7-scan
   --jobs 4 --json reports/.native-test262-tmp/native-v7-parser_basics-summary.json`.
   Current V7 scan results and failure classification are recorded in
-  `reports/.test262/test262-analysis/native-v7-test262-report.md`.
+  `reports/version-history-v8-v12.md`.
 - A direct full `test/` scan, including `test/staging`, now completes and writes
   `reports/.native-test262-tmp/native-full-test262-summary.json`. The 2026-06-24 run passed 14,035
   of 53,379 tests, failed 38,507, skipped 837, and reported 26.29%
   conformance for that exact stress command. Failure classification is recorded
-  in `reports/.test262/test262-analysis/test262-analysis.md`; the short summary is in
-  `reports/.test262/test262-analysis/test262-report.md`.
+  in `reports/version-history-v8-v12.md`; the short summary is in
+  `reports/version-history-v8-v12.md`.
 - The dominant remaining gaps are parser/modern syntax, template literal
   substitutions, missing builtin/global families, module execution, and RegExp
   feature coverage.
@@ -96,13 +96,13 @@
   `cargo run --release --no-default-features -- test262 --backend native --root
   test262 --suite test/language/module-code --jobs 4 --progress --json
   reports/.native-test262-tmp/native-v8-b-module-summary.json`.
-- V8 worker progress is tracked in `reports/.version-report/v8-partA-report.md`,
-  `reports/.version-report/v8-partB-report.md`, and `reports/.version-report/v8-partC-report.md`. Workers and
+- V8 worker progress is tracked in `reports/version-history-v8-v12.md`,
+  `reports/version-history-v8-v12.md`, and `reports/version-history-v8-v12.md`. Workers and
   AI agents should update the relevant report whenever they change that track.
 - The standard V8 lightweight integration command is
   `cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4
   --json reports/.native-test262-tmp/native-v8-scan-summary.json`. It runs the locked 5,000-case
-  manifest in `reports/.test262/test262-scan-failure/native-v8-scan-failures.txt`. The initial summary was
+  manifest in `src/test262_manifests/native-v8-scan-failures.txt`. The initial summary was
   0/5,000 passed, 4,504 failed, and 496 skipped; after V8-B first-stage module
   runner work it is 205/5,000 passed, 4,795 failed, and 0 skipped.
 - The version workflow now requires every future version to create per-track
@@ -111,9 +111,9 @@
 - Native V9 setup has started. Scope, interface, team plan, per-track reports,
   and the locked V9 lightweight scan are recorded in
   `docs/version/native-v9-scope.md`, `docs/version/native-v9-interface.md`,
-  `docs/version/native-v9-team-plan.md`, `reports/.version-report/v9-partA-report.md`,
-  `reports/.version-report/v9-partB-report.md`, `reports/.version-report/v9-partC-report.md`, and
-  `reports/.test262/test262-scan-failure/native-v9-scan-failures.txt`. Initial V9 scan:
+  `docs/version/native-v9-team-plan.md`, `reports/version-history-v8-v12.md`,
+  `reports/version-history-v8-v12.md`, `reports/version-history-v8-v12.md`, and
+  `src/test262_manifests/native-v9-scan-failures.txt`. Initial V9 scan:
   0/5,000 passed, 5,000 failed, 0 skipped.
 - V9-B first runtime substrate pass is implemented: minimal Promise records,
   FIFO native job queue, native `run_jobs()` draining, and array/string iterator
@@ -123,9 +123,9 @@
 - Native V10 setup is complete. Scope, interface, team plan, per-track reports,
   and the locked V10 lightweight scan are recorded in
   `docs/version/native-v10-scope.md`, `docs/version/native-v10-interface.md`,
-  `docs/version/native-v10-team-plan.md`, `reports/.version-report/v10-partA-report.md`,
-  `reports/.version-report/v10-partB-report.md`, `reports/.version-report/v10-partC-report.md`, and
-  `reports/.test262/test262-scan-failure/native-v10-scan-failures.txt`. Initial V10 scan:
+  `docs/version/native-v10-team-plan.md`, `reports/version-history-v8-v12.md`,
+  `reports/version-history-v8-v12.md`, `reports/version-history-v8-v12.md`, and
+  `src/test262_manifests/native-v10-scan-failures.txt`. Initial V10 scan:
   645/5,000 passed, 4,355 failed, 0 skipped.
 - V10-B first runtime substrate pass is implemented: shared ArrayBuffer byte
   storage, typed-array view records, DataView records, detach/range checks, and
@@ -135,9 +135,9 @@
 - Native V11 setup is complete. Scope, interface, team plan, per-track reports,
   and the locked V11 lightweight scan are recorded in
   `docs/version/native-v11-scope.md`, `docs/version/native-v11-interface.md`,
-  `docs/version/native-v11-team-plan.md`, `reports/.version-report/v11-partA-report.md`,
-  `reports/.version-report/v11-partB-report.md`, `reports/.version-report/v11-partC-report.md`, and
-  `reports/.test262/test262-scan-failure/native-v11-scan-failures.txt`. The selector is installed and
+  `docs/version/native-v11-team-plan.md`, `reports/version-history-v8-v12.md`,
+  `reports/version-history-v8-v12.md`, `reports/version-history-v8-v12.md`, and
+  `src/test262_manifests/native-v11-scan-failures.txt`. The selector is installed and
   `tests/native_test262.rs` passes 15/15. The first local V11 scan attempt
   exceeded the 300s tool timeout and did not produce a JSON summary.
 - V11-B first object-key ordering precision fix is implemented:
@@ -163,7 +163,7 @@ Before claiming contest readiness:
 
 V7 engineering milestone is complete. The full direct Test262 command now
 produces a truthful JSON report. The next work is feature development guided by
-`reports/.test262/test262-analysis/test262-analysis.md`: parser_basics unlockers, module runner, builtin/global
+`reports/version-history-v8-v12.md`: parser_basics unlockers, module runner, builtin/global
 families, and semantic precision.
 
 CI is defined in `.github/workflows/ci.yml`. It includes default-feature

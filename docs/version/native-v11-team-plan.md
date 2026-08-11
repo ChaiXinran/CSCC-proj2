@@ -57,7 +57,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v11-partA-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 3. B Group — Object Model / Descriptor Precision
 
@@ -91,7 +91,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v11-partB-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 4. C Group — RegExp / Annex B / Descriptor Builtins
 
@@ -122,7 +122,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v11-partC-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 5. Shared-File Lock
 
@@ -160,9 +160,9 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Reports and docs to update after integration:
 
-- `reports/.version-report/v11-partA-report.md`
-- `reports/.version-report/v11-partB-report.md`
-- `reports/.version-report/v11-partC-report.md`
+- `reports/version-history-v8-v12.md`
+- `reports/version-history-v8-v12.md`
+- `reports/version-history-v8-v12.md`
 - `reports/.native-test262-tmp/native-v11-scan-summary.json`
 - `docs/status.md`
 - `AGENTS.md`

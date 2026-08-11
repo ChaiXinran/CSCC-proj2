@@ -13,7 +13,7 @@ defined in [Native V9 Team Plan](native-v9-team-plan.md).
 V9 uses the locked V9 lightweight scan manifest:
 
 ```text
-reports/.test262/test262-scan-failure/native-v9-scan-failures.txt
+src/test262_manifests/native-v9-scan-failures.txt
 ```
 
 The manifest contains 5,000 previously non-passing Test262 cases sampled from
@@ -144,7 +144,7 @@ V9 is complete only when:
 - old V1-V8 regression gates remain green;
 - focused A/B/C summaries are current;
 - `--native-v9-scan` has a current JSON summary;
-- each `reports/.version-report/v9-part*-report.md` records changes and deltas;
+- each `reports/version-history-v8-v12.md` records changes and deltas;
 - `AGENTS.md`, `readme.md`, `docs/status.md`, and `thoughts/plan_1_version.md` reflect
   the V9 status;
 - skipped tests are never counted as passes.

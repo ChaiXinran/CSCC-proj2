@@ -14,7 +14,7 @@ defined in [Native V10 Team Plan](native-v10-team-plan.md).
 V10 uses the locked V10 lightweight scan manifest:
 
 ```text
-reports/.test262/test262-scan-failure/native-v10-scan-failures.txt
+src/test262_manifests/native-v10-scan-failures.txt
 ```
 
 The manifest contains 5,000 previously non-passing Test262 cases sampled from
@@ -143,7 +143,7 @@ V10 is complete only when:
 - old V1-V9 regression gates remain green;
 - focused A/B/C summaries are current;
 - `--native-v10-scan` has a current JSON summary;
-- each `reports/.version-report/v10-part*-report.md` records changes and deltas;
+- each `reports/version-history-v8-v12.md` records changes and deltas;
 - `AGENTS.md`, `readme.md`, `docs/status.md`, and `thoughts/plan_1_version.md`
   reflect the V10 status;
 - skipped tests are never counted as passes.

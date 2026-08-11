@@ -180,11 +180,11 @@ pub const NATIVE_V7_SCAN_SUITES: [&str; 9] = [
 ///
 /// This manifest contains 5,000 non-passing cases sampled from the locked
 /// 2026-06-24 full direct run recorded in
-/// `reports/.test262/test262-analysis/test262-analysis.md`. It is
+/// `reports/version-history-v8-v12.md`. It is
 /// intentionally file-based instead of directory-based so every collaborator
 /// runs the same lightweight V8 regression workload.
 pub const NATIVE_V8_SCAN_TESTS: &str =
-    include_str!("../reports/.test262/test262-scan-failure/native-v8-scan-failures.txt");
+    include_str!("test262_manifests/native-v8-scan-failures.txt");
 pub const NATIVE_V8_SCAN_TEST_COUNT: usize = 5_000;
 
 /// Fixed Native V9 lightweight diagnostic scan.
@@ -193,7 +193,7 @@ pub const NATIVE_V8_SCAN_TEST_COUNT: usize = 5_000;
 /// locked full direct Test262 output. It focuses on async/generator/for-of,
 /// Promise/job queue, iterator runtime, and Map/Set/Iterator builtin work.
 pub const NATIVE_V9_SCAN_TESTS: &str =
-    include_str!("../reports/.test262/test262-scan-failure/native-v9-scan-failures.txt");
+    include_str!("test262_manifests/native-v9-scan-failures.txt");
 pub const NATIVE_V9_SCAN_TEST_COUNT: usize = 5_000;
 
 /// Fixed Native V10 lightweight diagnostic scan.
@@ -203,7 +203,7 @@ pub const NATIVE_V9_SCAN_TEST_COUNT: usize = 5_000;
 /// syntax tail work, TypedArray/ArrayBuffer/DataView runtime substrate, and
 /// Temporal/Intl/Date builtin semantics.
 pub const NATIVE_V10_SCAN_TESTS: &str =
-    include_str!("../reports/.test262/test262-scan-failure/native-v10-scan-failures.txt");
+    include_str!("test262_manifests/native-v10-scan-failures.txt");
 pub const NATIVE_V10_SCAN_TEST_COUNT: usize = 5_000;
 
 /// Fixed Native V11 lightweight diagnostic scan.
@@ -213,7 +213,7 @@ pub const NATIVE_V10_SCAN_TEST_COUNT: usize = 5_000;
 /// Annex B behavior, object-model precision, and descriptor/property-order
 /// sweeps across implemented builtin families.
 pub const NATIVE_V11_SCAN_TESTS: &str =
-    include_str!("../reports/.test262/test262-scan-failure/native-v11-scan-failures.txt");
+    include_str!("test262_manifests/native-v11-scan-failures.txt");
 pub const NATIVE_V11_SCAN_TEST_COUNT: usize = 5_000;
 
 #[derive(Debug, Clone)]

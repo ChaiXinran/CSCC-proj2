@@ -319,7 +319,7 @@ def project_root_candidates() -> list[Path]:
 
 def find_project_root() -> Path | None:
     for candidate in project_root_candidates():
-        if (candidate / "test262").is_dir() or (candidate / "reports" / "full-test262-summary.json").is_file():
+        if (candidate / "test262").is_dir() or (candidate / "Test262-final" / "full-test262-summary.json").is_file():
             return candidate
     return None
 
@@ -349,7 +349,7 @@ def run_full_test262(project_root: Path) -> dict[str, Any]:
     suite_root = project_root / "test262"
     if not suite_root.is_dir():
         raise AgentError("test262_missing", "未找到固定的 test262 测试集，无法重新运行全量准确率", 503)
-    output_directory = project_root / "reports"
+    output_directory = project_root / "Test262-final"
     output_directory.mkdir(parents=True, exist_ok=True)
     output = output_directory / "full-test262-summary.json"
     command = [
@@ -380,8 +380,8 @@ def resolve_test262_accuracy() -> dict[str, Any]:
     if configured:
         fixed_reports.append(Path(configured))
     if project_root is not None:
-        fixed_reports.append(project_root / "reports" / "full-test262-summary.json")
-    fixed_reports.append(BUNDLE_ROOT / "reports" / "full-test262-summary.json")
+        fixed_reports.append(project_root / "Test262-final" / "full-test262-summary.json")
+    fixed_reports.append(BUNDLE_ROOT / "Test262-final" / "full-test262-summary.json")
     for report in fixed_reports:
         summary = parse_full_test262_summary(report)
         if summary is not None:

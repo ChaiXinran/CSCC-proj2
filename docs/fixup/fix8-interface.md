@@ -800,14 +800,14 @@ Add one selector for the 5,000-case scan.
 Use one naming convention. Recommended:
 
 ```rust
-pub const FIXUP8_SCAN_TESTS: &str = include_str!("../reports/.test262/test262-scan-failure/fixup8-scan-failures.txt");
+pub const FIXUP8_SCAN_TESTS: &str = include_str!("../src/test262_manifests/fixup8-scan-failures.txt");
 pub const FIXUP8_SCAN_TEST_COUNT: usize = 5_000;
 ```
 
 Alternative project-style name:
 
 ```rust
-pub const NATIVE_FIXUP8_SCAN_TESTS: &str = include_str!("../reports/.test262/test262-scan-failure/fixup8-scan-failures.txt");
+pub const NATIVE_FIXUP8_SCAN_TESTS: &str = include_str!("../src/test262_manifests/fixup8-scan-failures.txt");
 pub const NATIVE_FIXUP8_SCAN_TEST_COUNT: usize = 5_000;
 ```
 
@@ -859,10 +859,10 @@ Required reports:
 
 ```text
 reports/fixup8-p1-report.md
-reports/.test262/test262-analysis/fixup8-p2-report.md
+reports/version-history-v8-v12.md
 reports/fixup8-p3-report.md
 reports/.native-test262-tmp/fixup8-scan-summary.json
-reports/.test262/test262-analysis/fixup8-test262-analysis.md
+reports/version-history-v8-v12.md
 ```
 
 Each report must include:

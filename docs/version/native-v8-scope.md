@@ -1,7 +1,7 @@
 # Native V8 Scope: Parallel Feature Unlock Batch
 
 Native V8 is the first post-V7 feature-growth milestone driven by the full
-Test262 analysis in `reports/.test262/test262-analysis/test262-analysis.md`.
+Test262 analysis in `reports/version-history-v8-v12.md`.
 
 V8 uses three parallel tracks. Each track develops a different feature area in
 the same version window, then all tracks merge into one V8 integration pass.
@@ -162,7 +162,7 @@ cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 -
 ```
 
 This command runs the locked 5,000-case manifest in
-`reports/.test262/test262-scan-failure/native-v8-scan-failures.txt`, sampled from cases that did not pass in
+`src/test262_manifests/native-v8-scan-failures.txt`, sampled from cases that did not pass in
 the 2026-06-24 full direct run. The initial summary is
 `reports/.native-test262-tmp/native-v8-scan-summary.json`: initially 0/5,000 passed, 4,504 failed,
 and 496 skipped; after the first V8-B module runner pass it is 205/5,000
@@ -183,6 +183,6 @@ V8 is complete only when:
 - the V8 focused commands have current JSON summaries;
 - `--native-v8-scan` has a current JSON summary;
 - the full direct Test262 command has been rerun;
-- `reports/.test262/test262-analysis/test262-report.md` and `reports/.test262/test262-analysis/test262-analysis.md` are updated;
+- `reports/version-history-v8-v12.md` and `reports/version-history-v8-v12.md` are updated;
 - `AGENTS.md` and `thoughts/plan_1_version.md` describe the new status;
 - no skipped tests are counted as passes.

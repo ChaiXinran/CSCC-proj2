@@ -759,11 +759,11 @@ next action
 Required files:
 
 ```text
-reports/.version-report/v12-partA-report.md
-reports/.version-report/v12-partB-report.md
-reports/.version-report/v12-partC-report.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
 reports/.native-test262-tmp/native-v12-scan-summary.json
-reports/.test262/test262-analysis/native-v12-test262-analysis.md
+reports/version-history-v8-v12.md
 ```
 
 If a contributor changes code but does not run tests, the report must say:

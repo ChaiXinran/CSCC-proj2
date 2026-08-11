@@ -10,8 +10,8 @@ JavaScript 生态已经成为 AI 时代的重要技术设施。相比传统浏�
 
 | 核心指标 | 当前结果 |
 | --- | ---: |
-| Test262 完整扫描 | **38,315 / 53,379** |
-| Test262 通过率 | **71.78%** |
+| Test262 完整扫描 | **48,557 / 53,379** |
+| Test262 通过率 | **90.97%** |
 | SunSpider 1.0.2 | **26 / 26 passed** |
 | Native-only release 体积 | **7.11 MiB** |
 
@@ -19,7 +19,7 @@ JavaScript 生态已经成为 AI 时代的重要技术设施。相比传统浏�
 
 项目默认使用自研 Native Runtime 执行 JavaScript。V12 移除了嵌入式 Boa 后端分发路径。Boa 作为外部参考引擎独立构建（`cargo build --release --manifest-path boa/Cargo.toml -p boa_cli`），用于正确性验证和性能对比。AgentJS 不会在 Native 执行失败时静默回退到任何外部引擎。
 
-![image.png](image.png)
+![image.png](presentation/image.png)
 
 Native Runtime 的核心执行链由项目独立实现：
 
@@ -31,19 +31,19 @@ source -> lexer -> parser / AST -> bytecode -> VM -> runtime / builtins -> JsVal
 
 ### Test262
 
-根据 `test262-final/final-all.json` 的最新完整运行结果，最终统计如下。
+根据 `Test262-final/full-test262-summary.json` 的最新完整运行结果，最终统计如下。
 
 | 指标 | 数值 |
 | --- | ---: |
 | Total | 53,379 |
-| Passed | **38,315** |
-| Failed | 15,062 |
+| Passed | **48,557** |
+| Failed | 4,820 |
 | Skipped | 2 |
-| Conformance | **71.78%** |
-| Elapsed | 253.021 s |
+| Conformance | **90.97%** |
+| Elapsed | 452.354 s |
 
-该结果超过赛题要求的 60% 通过率 **11.78 个百分点**。
-同批次顶层目录独立运行结果如下：
+该结果超过赛题要求的 60% 通过率 **30.97 个百分点**。
+以下分目录数据为历史快照，不代表本次最新全量运行：
 
 | 目录 | 通过情况 | 通过率 |
 | --- | ---: | ---: |
@@ -54,7 +54,7 @@ source -> lexer -> parser / AST -> bytecode -> VM -> runtime / builtins -> JsVal
 | `staging` | 754 / 1,482 | 50.88% |
 | `intl402` | 474 / 3,341 | 14.19% |
 
-完整结果见 [全量运行报告](test262-final/final-all.md) 和 [最终汇总报告](test262-final/final-latest-summary.md)。同批次六个目录独立运行合计与完整单次运行相差 1 个通过用例，因此总体通过率始终以 `final-all.json` 为准。
+完整机器可读结果统一保存在 `Test262-final/full-test262-summary.json`，总体通过率以该文件为准。
 
 表现较好的代表性子目录：
 
@@ -71,7 +71,7 @@ source -> lexer -> parser / AST -> bytecode -> VM -> runtime / builtins -> JsVal
 | `built-ins/Date`     |     554 / 594 |  **93.27%** |
 | `built-ins/Object`   | 3,130 / 3,411 |  **91.76%** |
 
-详细数据见 [一级目录统计](test262-final/test262-final-level1-pass-stats.csv)、[二级目录统计](test262-final/test262-final-level2-pass-stats.csv) 和 [三级目录统计](test262-final/test262-final-level3-pass-stats.csv)。
+历史分目录全量报告已清理；需要分目录数据时应从最新全量运行重新生成。
 
 ### SunSpider
 
@@ -134,7 +134,7 @@ cargo run --release  -- test262 \
   --root test262 \
   --suite test \
   --jobs 4 \
-  --json test262-final/final-all.json
+  --json Test262-final/full-test262-summary.json
 ```
 
 使用外部 Boa CLI 对比结果（V12 起嵌入式 Boa 后端已移除）：
@@ -175,8 +175,8 @@ python benchmarks/agent/run_agentbench.py `
 | 材料类型    | 对应内容                                          | 仓库或文件位置                                 |
 | ------- | --------------------------------------------- | --------------------------------------- |
 | 源代码     | Rust JS 引擎实现、CLI、Native 后端、测试入口               | `src/`, `Cargo.toml`, `tests/`          |
-| 设计方案文档  | 本文档，包含设计思路、实现说明、测试分析、问题解决、非本队来源说明、AI 工具使用说明   | `report.md`                             |
-| 进展汇报幻灯片 | 队员分工、开发计划、阶段成果、测试结果、创新点、AI 使用声明               | `PPT.pptx`                      |
+| 设计方案文档  | 本文档，包含设计思路、实现说明、测试分析、问题解决、非本队来源说明、AI 工具使用说明   | `presentation/report.md`                             |
+| 进展汇报幻灯片 | 队员分工、开发计划、阶段成果、测试结果、创新点、AI 使用声明               | `presentation/PPT.pptx`                      |
 | 作品演示视频  | 环境介绍、构建运行、JS 脚本执行、Test262 / benchmark 演示、结果说明 | `AgentJs_Video.mp4`                     |
 | 迭代提交记录  | Git commit 历史、开发报告、版本报告                       | Git 历史、`reports/`, `docs/`, `thoughts/` |
 
