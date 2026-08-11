@@ -90,8 +90,8 @@ AgentJS/
 ├── tests/                 # 集成测试与 Native 固定门
 ├── benchmarks/            # AgentBench、SunSpider、JetStream 输入与结果
 ├── test262/               # pinned ECMAScript 一致性测试集
-├── reports/               # 版本报告、扫描结果与实验报告
-├── presentation/          # 答辩报告、PPT 与演示素材
+├── reports/               # 版本报告与扫描结果
+├── presentation/          # PPT 与演示素材
 ├── boa/                   # 外部参考引擎 submodule
 └── quickjs/               # 外部参考引擎 submodule
 ```
@@ -280,8 +280,7 @@ cargo test --no-default-features --test native_test262
 
 | 材料 | 路径 |
 | --- | --- |
-| 实验报告 | [`reports/agentjs-experiment-report.md`](reports/agentjs-experiment-report.md) |
-| 详细设计与答辩报告 | [`presentation/report.md`](presentation/report.md) |
+| 实验报告 | [`agentjs-experiment-report.md`](agentjs-experiment-report.md) |
 | 最新三引擎 PPT | [`presentation/PPT-report-final-three-engines.pptx`](presentation/PPT-report-final-three-engines.pptx) |
 | Test262 全量汇总 | [`test262-final/full-test262-summary.json`](test262-final/full-test262-summary.json) |
 | SunSpider 结果 | [`benchmarks/sunspider/results/`](benchmarks/sunspider/results/) |
