@@ -39,6 +39,7 @@ fn run() -> Result<(), String> {
     match command.as_str() {
         "eval" => command_eval(&args),
         "run" => command_run(&args),
+        "cache-bench" => command_cache_bench(&args),
         "jetstream" => command_jetstream(&args),
         "repl" => command_repl(&args),
         "test262" => command_test262(&args),
@@ -65,13 +66,27 @@ fn command_eval(args: &[String]) -> Result<(), String> {
 }
 
 fn command_run(args: &[String]) -> Result<(), String> {
-    let (_backend, file_args) =
-        parse_backend_prefixed_args(args, "usage: agentjs run [--backend native] <file.js>")?;
+    let show_time = args.iter().any(|argument| argument == "--time");
+    let filtered_args = args
+        .iter()
+        .filter(|argument| argument.as_str() != "--time")
+        .cloned()
+        .collect::<Vec<_>>();
+    let (_backend, file_args) = parse_backend_prefixed_args(
+        &filtered_args,
+        "usage: agentjs run [--backend native] [--time] <file.js>",
+    )?;
     let path = file_args
         .first()
-        .ok_or_else(|| "usage: agentjs run [--backend native] <file.js>".to_string())?;
+        .ok_or_else(|| "usage: agentjs run [--backend native] [--time] <file.js>".to_string())?;
     let source = fs::read_to_string(path).map_err(|error| format!("{path}: {error}"))?;
     let report = execute_script_on_sized_stack(source)?;
+    if show_time {
+        eprintln!(
+            "__AGENTJS_INTERNAL_MS__{:.6}",
+            report.elapsed.as_secs_f64() * 1_000.0
+        );
+    }
     print_report(report);
     Ok(())
 }
@@ -88,6 +103,77 @@ fn execute_script_on_sized_stack(source: String) -> Result<agentjs::ExecutionRep
         .map_err(|error| format!("failed to start script thread: {error}"))?
         .join()
         .map_err(|_| "script thread panicked".to_string())?
+}
+
+fn command_cache_bench(args: &[String]) -> Result<(), String> {
+    let mut path = None;
+    let mut warmup = 5usize;
+    let mut iterations = 50usize;
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--warmup" => {
+                index += 1;
+                warmup = parse_usize(required_value(args, index, "--warmup")?)?;
+            }
+            "--iterations" => {
+                index += 1;
+                iterations = parse_usize(required_value(args, index, "--iterations")?)?;
+            }
+            argument if argument.starts_with('-') => {
+                return Err(format!("unknown cache-bench option {argument}"));
+            }
+            argument if path.is_none() => path = Some(argument.to_string()),
+            _ => {
+                return Err(
+                    "usage: agentjs cache-bench <file.js> [--warmup N] [--iterations N]".into(),
+                );
+            }
+        }
+        index += 1;
+    }
+    if warmup > 100 || !(1..=1_000).contains(&iterations) {
+        return Err("cache-bench requires warmup <= 100 and iterations in 1..=1000".into());
+    }
+    let path = path.ok_or_else(|| {
+        "usage: agentjs cache-bench <file.js> [--warmup N] [--iterations N]".to_string()
+    })?;
+    let source = fs::read_to_string(&path).map_err(|error| format!("{path}: {error}"))?;
+    let mut runtime = Runtime::new(RuntimeConfig::default()).map_err(|error| error.to_string())?;
+    let mut expected = None;
+    for _ in 0..warmup {
+        let report = runtime
+            .eval(&source, ExecutionOptions::default())
+            .map_err(|error| error.to_string())?;
+        expected.get_or_insert(report.value);
+    }
+    let mut samples = Vec::with_capacity(iterations);
+    for _ in 0..iterations {
+        let report = runtime
+            .eval(&source, ExecutionOptions::default())
+            .map_err(|error| error.to_string())?;
+        if expected
+            .as_ref()
+            .is_some_and(|value| value != &report.value)
+        {
+            return Err("cache-bench result changed between iterations".into());
+        }
+        expected.get_or_insert_with(|| report.value.clone());
+        samples.push(report.elapsed.as_secs_f64() * 1_000.0);
+    }
+    let stats = runtime.cache_stats();
+    let samples_json = samples
+        .iter()
+        .map(|sample| format!("{sample:.6}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    println!(
+        "{{\"warmup\":{warmup},\"iterations\":{iterations},\"cacheHits\":{},\"cacheMisses\":{},\"result\":{:?},\"samplesMs\":[{samples_json}]}}",
+        stats.hits,
+        stats.misses,
+        expected.unwrap_or_else(|| "undefined".into())
+    );
+    Ok(())
 }
 
 fn command_jetstream(args: &[String]) -> Result<(), String> {
@@ -652,7 +738,8 @@ AgentJS - lightweight JavaScript execution for AI agents
 
 USAGE:
   agentjs eval [--backend native] <source>
-  agentjs run [--backend native] <file.js>
+  agentjs run [--backend native] [--time] <file.js>
+  agentjs cache-bench <file.js> [--warmup N] [--iterations N]
   agentjs jetstream <generated-runner.js>
                   --resource-root <JetStream2-root>
                   [--loop-limit N] [--wall-clock-seconds N]

@@ -1,6 +1,6 @@
 use agentjs::{
     backend::NativeRuntime,
-    engine::{ExecutionOptions, RuntimeConfig},
+    engine::{ExecutionOptions, Runtime, RuntimeConfig},
 };
 
 #[test]
@@ -69,4 +69,14 @@ fn native_script_cache_keys_include_strictness() {
 
     assert_eq!(runtime.cache_stats().misses, 2);
     assert_eq!(runtime.cache_stats().hits, 0);
+}
+
+#[test]
+fn public_runtime_reports_cache_hits_for_persistent_isolates() {
+    let mut runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    let source = "(function () { var x = 40; return x + 2; })();";
+    runtime.eval(source, ExecutionOptions::default()).unwrap();
+    runtime.eval(source, ExecutionOptions::default()).unwrap();
+    assert_eq!(runtime.cache_stats().misses, 1);
+    assert_eq!(runtime.cache_stats().hits, 1);
 }

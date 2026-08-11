@@ -6,7 +6,11 @@ project = Path(SPECPATH).parents[1]
 a = Analysis(
     [str(project / "demo" / "agent" / "server.py")],
     pathex=[str(project)],
-    binaries=[(str(project / "target" / "release" / "agentjs.exe"), ".")],
+    binaries=[
+        (str(project / "target" / "release" / "agentjs.exe"), "."),
+        (str(project / "boa" / "target" / "release" / "boa.exe"), "."),
+        (str(project / "target" / "oxide-compare" / "release" / "oxide.exe"), "."),
+    ],
     datas=[(str(project / "frontend" / "agent-chat.html"), "frontend")],
     hiddenimports=["webview"],
     hookspath=[],

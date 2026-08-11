@@ -1,0 +1,31 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "machine": "AMD64",
+  "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "python": "3.14.5",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "manifest_version": "2.0",
+  "commands": {
+    "primary": ".\\target\\release\\agentjs.exe",
+    "references": {
+      "boa": ".\\boa\\target\\release\\boa.exe",
+      "node": "D:\\Program Files\\nodejs\\node.exe"
+    }
+  },
+  "binary_sha256": {
+    "primary": "cc012c31d977e3fdd2320d47714b09fddcd0eb01b57d70125179574dffd66626",
+    "references": {
+      "boa": "c32d98d47a14c576f161775de4a13916cd5987c5840df633e98a9778b0d5a913",
+      "node": "b3094d0b49f9ad602262a9921551737bb97637c05dd357a06ae98188d7290aa3"
+    }
+  },
+  "binary_size_bytes": {
+    "primary": 10859520,
+    "references": {
+      "boa": 29693440,
+      "node": 92279112
+    }
+  },
+  "memory_sampler": "windows-psapi",
+  "generated_at_utc": "2026-08-11T10:15:20Z"
+}

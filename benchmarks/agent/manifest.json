@@ -1,0 +1,54 @@
+{
+  "version": "2.0",
+  "description": "Deterministic workloads for short, frequent Agent JavaScript actions.",
+  "cases": {
+    "descriptor-side-table-array": {
+      "group": "pressure",
+      "scenario": "mostly-default array elements with rare descriptor overrides"
+    },
+    "large-index-dense-array": {
+      "group": "pressure",
+      "scenario": "locally dense writes at large array indexes"
+    },
+    "rule-filter-dense-window": {
+      "group": "general",
+      "scenario": "filter tool-result records using numeric and boolean rules"
+    },
+    "string-ascii-index-scan": {
+      "group": "pressure",
+      "scenario": "scan a large ASCII tool-output buffer"
+    },
+    "string-cleanup-replace-window": {
+      "group": "general",
+      "scenario": "normalize and search a short API payload"
+    },
+    "string-log-token-slice": {
+      "group": "general",
+      "scenario": "extract numeric fields from transient logs"
+    },
+    "json-record-aggregate": {
+      "group": "general",
+      "scenario": "aggregate structured tool records by region and status"
+    },
+    "tool-result-schema-filter": {
+      "group": "general",
+      "scenario": "validate and select nested tool results"
+    },
+    "object-property-hot-loop": {
+      "group": "general",
+      "scenario": "repeat reads from objects with one stable shape"
+    },
+    "short-lived-object-churn": {
+      "group": "pressure",
+      "scenario": "create and discard temporary records"
+    },
+    "json-parse-transform": {
+      "group": "pressure",
+      "scenario": "parse and transform a serialized tool response"
+    },
+    "startup-noop": {
+      "group": "general",
+      "scenario": "cold-start an empty Agent action"
+    }
+  }
+}
