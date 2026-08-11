@@ -1,0 +1,498 @@
+{"kind":"deck","id":"pr/zhuc7r","name":"Deck"}
+{"kind":"layout","layoutId":"/ppt/slideMasters/slideMaster1.xml","name":"","type":"master"}
+{"kind":"layout","layoutId":"/ppt/slideLayouts/slideLayout1.xml","name":"Title Slide","type":"title"}
+{"kind":"slide","id":"sl/1rjqp8","slide":1,"title":"作品进展汇报 / CSCC 功能挑战赛道作品","textShapes":9}
+{"kind":"shape","id":"sh/t47iponu","slide":1,"name":"矩形: 圆角 16","bbox":[168.24,396.44,983.41,185.16]}
+{"kind":"shape","id":"sh/u5gji9of","slide":1,"name":"矩形: 圆角 17","bbox":[214.2,413.36,238,151.33]}
+{"kind":"textbox","id":"sh/v6p0re50","slide":1,"name":"矩形 18","text":"作品进展汇报 / CSCC 功能挑战赛道作品","textPreview":"作品进展汇报 / CSCC 功能挑战赛道作品","textChars":22,"textLines":1,"bbox":[56,48,502.93,28]}
+{"kind":"textbox","id":"sh/ra9gzel8","slide":1,"name":"矩形 19","text":"Agent","textPreview":"Agent","textChars":5,"textLines":1,"bbox":[210.73,112.07,612.4,165.41]}
+{"kind":"textbox","id":"sh/q9gz6tkn","slide":1,"name":"矩形 20","text":"—— 基于 Rust 的轻量级 JavaScript 执行引擎","textPreview":"—— 基于 Rust 的轻量级 JavaScript 执行引擎","textChars":31,"textLines":1,"bbox":[564.56,340,610.33,42]}
+{"kind":"textbox","id":"sh/dwri1o3e","slide":1,"name":"矩形 21","text":"面向短时、高频、可嵌入的脚本执行场景\n默认使用自研 Native Runtime\n以 Test262 与 benchmark 报告作为阶段成果证据","textPreview":"面向短时、高频、可嵌入的脚本执行场景 | 默认使用自研 Native Runtime | 以 Test262 与 benchmark 报告作为阶段成果证据","textChars":73,"textLines":3,"bbox":[558.93,427,552.83,137.69]}
+{"kind":"textbox","id":"sh/sbih8j2t","slide":1,"name":"矩形 22","text":"71.78%","textPreview":"71.78%","textChars":6,"textLines":1,"bbox":[230.2,429.93,222,78]}
+{"kind":"textbox","id":"sh/36pgvelc","slide":1,"name":"矩形 23","text":"Test262 全量通过率","textPreview":"Test262 全量通过率","textChars":13,"textLines":1,"bbox":[222.2,504.31,222,45.3]}
+{"kind":"shape","id":"sh/i5gz29kr","slide":1,"name":"矩形 24","bbox":[56,610,640,1]}
+{"kind":"textbox","id":"sh/587yxo32","slide":1,"name":"矩形 25","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[56,628,650,28]}
+{"kind":"textbox","id":"sh/47yh4j2h","slide":1,"name":"矩形 26","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"textbox","id":"sh/v25grul0","slide":1,"name":"文本框 27","text":"JS","textPreview":"JS","textChars":2,"textLines":1,"bbox":[803.88,42.5,330,331.2]}
+{"kind":"notes","id":"nt/1rjqp8","slide":1,"text":""}
+{"kind":"slide","id":"sl/xc981c","slide":2,"title":"汇报结构","textShapes":15}
+{"kind":"textbox","id":"sh/psvixsni","slide":2,"name":"矩形 1","text":"汇报结构","textPreview":"汇报结构","textChars":4,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"shape","id":"sh/rud0z25o","slide":2,"name":"矩形 3","bbox":[83,163.61,1168,1]}
+{"kind":"textbox","id":"sh/qt4jqx43","slide":2,"name":"矩形 4","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[78.33,205.95,54.67,34]}
+{"kind":"textbox","id":"sh/dwvi1snu","slide":2,"name":"矩形 5","text":"项目定位","textPreview":"项目定位","textChars":4,"textLines":1,"bbox":[153,205.95,420,38]}
+{"kind":"textbox","id":"sh/cvm1snm9","slide":2,"name":"矩形 6","text":"说明 AgentJS 的轻量化目标、自研 Native 路径与非套壳边界。","textPreview":"说明 AgentJS 的轻量化目标、自研 Native 路径与非套壳边界。","textChars":37,"textLines":1,"bbox":[133,261.01,440.47,70]}
+{"kind":"shape","id":"sh/7y90ny5k","slide":2,"name":"矩形 7","bbox":[83,360.21,500,1]}
+{"kind":"textbox","id":"sh/6x0zetoz","slide":2,"name":"矩形 8","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[668,209.95,56.87,34]}
+{"kind":"textbox","id":"sh/wnqhczql","slide":2,"name":"矩形 9","text":"开发推进","textPreview":"开发推进","textChars":4,"textLines":1,"bbox":[738,209.01,420,38]}
+{"kind":"textbox","id":"sh/hozy5476","slide":2,"name":"矩形 10","text":"展示队员分工、时间进度、版本化开发流程和任务完成情况。","textPreview":"展示队员分工、时间进度、版本化开发流程和任务完成情况。","textChars":27,"textLines":1,"bbox":[722.53,261.88,430,70]}
+{"kind":"shape","id":"sh/u18za98v","slide":2,"name":"矩形 11","bbox":[668,360.21,500,1]}
+{"kind":"textbox","id":"sh/vmhg3e90","slide":2,"name":"矩形 12","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[78.33,400.01,57.13,34]}
+{"kind":"textbox","id":"sh/4rahgjqx","slide":2,"name":"矩形 13","text":"成果证据","textPreview":"成果证据","textChars":4,"textLines":1,"bbox":[153,400.01,420,38]}
+{"kind":"textbox","id":"sh/5sjy9o7i","slide":2,"name":"矩形 14","text":"展示 Test262 全量结果、SunSpider benchmark 与代表性修复。","textPreview":"展示 Test262 全量结果、SunSpider benchmark 与代表性修复。","textChars":43,"textLines":1,"bbox":[133,452.01,459.33,70]}
+{"kind":"shape","id":"sh/ip8ze98r","slide":2,"name":"矩形 15","bbox":[83,571.88,500,1]}
+{"kind":"textbox","id":"sh/jq1g7epc","slide":2,"name":"矩形 16","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[667,404.01,55.53,34]}
+{"kind":"textbox","id":"sh/kv6h4fqd","slide":2,"name":"矩形 17","text":"AI 披露","textPreview":"AI 披露","textChars":5,"textLines":1,"bbox":[738,405.55,420,38]}
+{"kind":"textbox","id":"sh/lwfyxkry","slide":2,"name":"矩形 18","text":"单独章节说明 AI 工具、使用场景、成果、复核方式与交互记录。","textPreview":"单独章节说明 AI 工具、使用场景、成果、复核方式与交互记录。","textChars":31,"textLines":1,"bbox":[719.93,453.75,430,70]}
+{"kind":"shape","id":"sh/1gn6lcfq","slide":2,"name":"矩形 19","bbox":[668,570.88,500,1]}
+{"kind":"textbox","id":"sh/0fe5cre5","slide":2,"name":"矩形 20","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/4rm1on6d","slide":2,"name":"矩形 2","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/fe5ojmxk","slide":2,"name":"矩形 21","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,655.64,650,28]}
+{"kind":"notes","id":"nt/xc981c","slide":2,"text":""}
+{"kind":"slide","id":"sl/ch8b9r","slide":3,"title":"项目定位与赛题理解","textShapes":11}
+{"kind":"textbox","id":"sh/bexw7alk","slide":3,"name":"矩形 1","text":"项目定位与赛题理解","textPreview":"项目定位与赛题理解","textChars":9,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/adofy54z","slide":3,"name":"矩形 2","text":"轻量、高效、可验证：先把自研执行链路跑通，再用标准测试和 benchmark 持续收敛。","textPreview":"轻量、高效、可验证：先把自研执行链路跑通，再用标准测试和 benchmark 持续收敛。","textChars":44,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/l4zexk3m","slide":3,"name":"矩形 3","bbox":[64.31,155.87,1168,1]}
+{"kind":"textbox","id":"sh/k36x4zm1","slide":3,"name":"矩形 4","text":"JavaScript 在 AI Agent 工具调用、动态脚本执行和嵌入式运行环境中很常见。\nAgentJS 的目标不是复刻浏览器级大型引擎，而是在 Rust 中实现一条可审计、可扩展、默认自研的 Native 执行路径。","textPreview":"JavaScript 在 AI Agent 工具调用、动态脚本执行和嵌入式运行环境中很常见。 | AgentJS 的目标不是复刻浏览器级大型引擎，而是在 Rust 中实现一条可审计、可扩展、默认自研的 Native 执行路径。","textChars":111,"textLines":2,"bbox":[56,206.73,1081.07,112]}
+{"kind":"textbox","id":"sh/z2xwvulg","slide":3,"name":"矩形 5","text":"轻量","textPreview":"轻量","textChars":2,"textLines":1,"bbox":[69.53,409.93,140,28]}
+{"kind":"textbox","id":"sh/yhof2p4v","slide":3,"name":"矩形 6","text":"关注启动、嵌入、短脚本和可控资源，而不是浏览器宿主环境。","textPreview":"关注启动、嵌入、短脚本和可控资源，而不是浏览器宿主环境。","textChars":28,"textLines":1,"bbox":[69.53,447.73,330,96]}
+{"kind":"shape","id":"sh/18ve103i","slide":3,"name":"矩形 7","bbox":[71.4,561.13,320,3]}
+{"kind":"textbox","id":"sh/07mdsvmx","slide":3,"name":"矩形 8","text":"高效","textPreview":"高效","textChars":2,"textLines":1,"bbox":[461.53,409.93,140,28]}
+{"kind":"textbox","id":"sh/apo7alo7","slide":3,"name":"矩形 9","text":"用脚本缓存、对象复用、字符串快速路径和 benchmark 热点分析推进优化。","textPreview":"用脚本缓存、对象复用、字符串快速路径和 benchmark 热点分析推进优化。","textChars":39,"textLines":1,"bbox":[461.53,447.73,330,96]}
+{"kind":"shape","id":"sh/bqx8jq5s","slide":3,"name":"矩形 10","bbox":[464.53,558.27,320,3]}
+{"kind":"textbox","id":"sh/wr6pcv6x","slide":3,"name":"矩形 11","text":"可验证","textPreview":"可验证","textChars":3,"textLines":1,"bbox":[853.53,409.93,140,28]}
+{"kind":"textbox","id":"sh/xszqlgni","slide":3,"name":"矩形 12","text":"以 Test262、分目录报告、SunSpider 和版本报告形成可复现证据。","textPreview":"以 Test262、分目录报告、SunSpider 和版本报告形成可复现证据。","textChars":39,"textLines":1,"bbox":[853.53,447.73,330,96]}
+{"kind":"shape","id":"sh/yt87elo3","slide":3,"name":"矩形 13","bbox":[855.13,558.47,320,3]}
+{"kind":"textbox","id":"sh/juh8nq5o","slide":3,"name":"矩形 14","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/kvqpgv69","slide":3,"name":"矩形 15","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/lwzqp0nu","slide":3,"name":"矩形 16","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,655.64,650,28]}
+{"kind":"notes","id":"nt/ch8b9r","slide":3,"text":""}
+{"kind":"slide","id":"sl/yeax86","slide":4,"title":"参赛队员分工","textShapes":23}
+{"kind":"textbox","id":"sh/ml4byx8f","slide":4,"name":"矩形 1","text":"参赛队员分工","textPreview":"参赛队员分工","textChars":6,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"shape","id":"sh/wb6t4r6h","slide":4,"name":"矩形 3","bbox":[56,118.07,1168,1]}
+{"kind":"shape","id":"sh/xcfaxc72","slide":4,"name":"矩形 4","bbox":[54.13,173.8,1146,56]}
+{"kind":"shape","id":"sh/apob2hob","slide":4,"name":"矩形 5","bbox":[54.13,229.8,1146,1]}
+{"kind":"textbox","id":"sh/vaxsvmpw","slide":4,"name":"矩形 6","text":"成员记录","textPreview":"成员记录","textChars":4,"textLines":1,"bbox":[64.13,183.8,170,40]}
+{"kind":"textbox","id":"sh/cf2tsnqd","slide":4,"name":"矩形 7","text":"主要职责","textPreview":"主要职责","textChars":4,"textLines":1,"bbox":[254.13,183.8,290,40]}
+{"kind":"textbox","id":"sh/dgbals7y","slide":4,"name":"矩形 8","text":"代表任务","textPreview":"代表任务","textChars":4,"textLines":1,"bbox":[564.13,183.8,340,40]}
+{"kind":"textbox","id":"sh/lk3edcji","slide":4,"name":"矩形 9","text":"最终提交前动作","textPreview":"最终提交前动作","textChars":7,"textLines":1,"bbox":[924.13,183.8,266,40]}
+{"kind":"shape","id":"sh/kjudk7ix","slide":4,"name":"矩形 10","bbox":[54.13,306.8,1146,1]}
+{"kind":"textbox","id":"sh/jilwb21s","slide":4,"name":"矩形 11","text":"柴欣然","textPreview":"柴欣然","textChars":3,"textLines":1,"bbox":[64.13,248,170,48]}
+{"kind":"textbox","id":"sh/yhcvix07","slide":4,"name":"矩形 12","text":"项目统筹 / 集成","textPreview":"项目统筹 / 集成","textChars":9,"textLines":1,"bbox":[251.8,248,290,48]}
+{"kind":"textbox","id":"sh/tonehcju","slide":4,"name":"矩形 13","text":"Native 主线、最终报告、测试口径统一","textPreview":"Native 主线、最终报告、测试口径统一","textChars":21,"textLines":1,"bbox":[564.13,239.8,340,48]}
+{"kind":"textbox","id":"sh/8nedo7i9","slide":4,"name":"矩形 14","text":"替换实名并核对 commit 贡献","textPreview":"替换实名并核对 commit 贡献","textChars":17,"textLines":1,"bbox":[924.13,239.8,266,48]}
+{"kind":"shape","id":"sh/7m5wf21o","slide":4,"name":"矩形 15","bbox":[56,390.47,1146,1]}
+{"kind":"textbox","id":"sh/6lcvmh03","slide":4,"name":"矩形 16","text":"攸英茹","textPreview":"攸英茹","textChars":3,"textLines":1,"bbox":[64.13,326.67,170,48]}
+{"kind":"textbox","id":"sh/hcnelwjq","slide":4,"name":"矩形 17","text":"前端与语法","textPreview":"前端与语法","textChars":5,"textLines":1,"bbox":[254.13,326.87,290,48]}
+{"kind":"textbox","id":"sh/gbedsri5","slide":4,"name":"矩形 18","text":"lexer、parser、AST、语法边界修复","textPreview":"lexer、parser、AST、语法边界修复","textChars":23,"textLines":1,"bbox":[564.13,320,340,48]}
+{"kind":"textbox","id":"sh/gvmxovqh","slide":4,"name":"矩形 19","text":"补充负责版本和测试证据","textPreview":"补充负责版本和测试证据","textChars":11,"textLines":1,"bbox":[925.4,330.73,266,48]}
+{"kind":"textbox","id":"sh/et4fml8b","slide":4,"name":"矩形 21","text":"邓宇翔","textPreview":"邓宇翔","textChars":3,"textLines":1,"bbox":[64.13,413.93,170,48]}
+{"kind":"textbox","id":"sh/fudgfqpw","slide":4,"name":"矩形 22","text":"运行时与标准库","textPreview":"运行时与标准库","textChars":7,"textLines":1,"bbox":[254.87,413.93,290,48]}
+{"kind":"textbox","id":"sh/oj6xsfqd","slide":4,"name":"矩形 23","text":"Runtime、Builtins、对象模型、descriptor","textPreview":"Runtime、Builtins、对象模型、descriptor","textChars":32,"textLines":1,"bbox":[565.67,409.2,340,48]}
+{"kind":"textbox","id":"sh/pkfyl07y","slide":4,"name":"矩形 24","text":"补充具体模块与结果","textPreview":"补充具体模块与结果","textChars":9,"textLines":1,"bbox":[924.13,418.4,266,48]}
+{"kind":"shape","id":"sh/2xofq58n","slide":4,"name":"矩形 25","bbox":[56,574.13,1146,1]}
+{"kind":"textbox","id":"sh/nixgjap8","slide":4,"name":"矩形 26","text":"全队","textPreview":"全队","textChars":2,"textLines":1,"bbox":[63.8,508.73,170,48]}
+{"kind":"textbox","id":"sh/4n2xgbq9","slide":4,"name":"矩形 27","text":"测试与 benchmark","textPreview":"测试与 benchmark","textChars":13,"textLines":1,"bbox":[253.8,506,290,48]}
+{"kind":"textbox","id":"sh/5oby9g7u","slide":4,"name":"矩形 28","text":"Test262 runner、SunSpider、对比报告","textPreview":"Test262 runner、SunSpider、对比报告","textChars":29,"textLines":1,"bbox":[563.8,498.4,340,48]}
+{"kind":"textbox","id":"sh/7i10fe9c","slide":4,"name":"矩形 29","text":"补充运行环境与报告链接","textPreview":"补充运行环境与报告链接","textChars":11,"textLines":1,"bbox":[923.8,508.33,266,48]}
+{"kind":"textbox","id":"sh/9kjihori","slide":4,"name":"矩形 31","text":"来源：git log 作者记录、docs/version-development-workflow.md、reports/.version-report/*","textPreview":"来源：git log 作者记录、docs/version-development-workflow.md、reports/.version-report/*","textChars":78,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/8ja1ojax","slide":4,"name":"矩形 32","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/yd8ji9sv","slide":4,"name":"矩形 34","bbox":[56,478.6,1146,1]}
+{"kind":"shape","id":"sh/nmdsr2p0","slide":4,"name":"矩形 2","bbox":[41.18,649.24,640,1]}
+{"kind":"notes","id":"nt/yeax86","slide":4,"text":""}
+{"kind":"slide","id":"sl/yl3xij","slide":5,"title":"开发时间进度与任务完成情况","textShapes":20}
+{"kind":"textbox","id":"sh/m5cr6xs7","slide":5,"name":"矩形 1","text":"开发时间进度与任务完成情况","textPreview":"开发时间进度与任务完成情况","textChars":13,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/n6l8z2ts","slide":5,"name":"矩形 2","text":"从主线能力建设到 Fixup 准确率冲刺，任务推进保持“计划、接口、实现、测试、报告”闭环。","textPreview":"从主线能力建设到 Fixup 准确率冲刺，任务推进保持“计划、接口、实现、测试、报告”闭环。","textChars":46,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/wbe9cra9","slide":5,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"shape","id":"sh/xwnq5cbu","slide":5,"name":"矩形 4","bbox":[56,266,200,4]}
+{"kind":"textbox","id":"sh/a9crahsj","slide":5,"name":"矩形 5","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[56,232,51.07,28]}
+{"kind":"textbox","id":"sh/bal83mt4","slide":5,"name":"矩形 6","text":"基础框架","textPreview":"基础框架","textChars":4,"textLines":1,"bbox":[56,284,200,34]}
+{"kind":"textbox","id":"sh/kze9gral","slide":5,"name":"矩形 7","text":"建立 Rust 项目、CLI、Engine 抽象和默认 Native 路径","textPreview":"建立 Rust 项目、CLI、Engine 抽象和默认 Native 路径","textChars":37,"textLines":1,"bbox":[56.64,326.64,204.8,96]}
+{"kind":"shape","id":"sh/l0na9wb6","slide":5,"name":"矩形 8","bbox":[286,266,200,4]}
+{"kind":"textbox","id":"sh/pcfmt4vm","slide":5,"name":"矩形 9","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[286,232,56.8,28]}
+{"kind":"textbox","id":"sh/ob650zu1","slide":5,"name":"矩形 10","text":"Native V1-V7","textPreview":"Native V1-V7","textChars":12,"textLines":1,"bbox":[286,284,200,34]}
+{"kind":"textbox","id":"sh/3ax4rudg","slide":5,"name":"矩形 11","text":"打通前端、字节码、虚拟机、运行时与标准库闭环","textPreview":"打通前端、字节码、虚拟机、运行时与标准库闭环","textChars":22,"textLines":1,"bbox":[286,326,200,96]}
+{"kind":"shape","id":"sh/2ponypcb","slide":5,"name":"矩形 12","bbox":[516,266,200,4]}
+{"kind":"textbox","id":"sh/dgzmx4vy","slide":5,"name":"矩形 13","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[516,232,60.67,28]}
+{"kind":"textbox","id":"sh/cf654zud","slide":5,"name":"矩形 14","text":"Native V8-V11","textPreview":"Native V8-V11","textChars":13,"textLines":1,"bbox":[516,284,200,34]}
+{"kind":"textbox","id":"sh/bex4vuds","slide":5,"name":"矩形 15","text":"扩展模块、异步、类型数组、日期、正则和属性描述符","textPreview":"扩展模块、异步、类型数组、日期、正则和属性描述符","textChars":24,"textLines":1,"bbox":[516,326,200,96]}
+{"kind":"shape","id":"sh/qdon2pc7","slide":5,"name":"矩形 16","bbox":[746,266,200,4]}
+{"kind":"textbox","id":"sh/tkvmlkve","slide":5,"name":"矩形 17","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[746,232,59.87,28]}
+{"kind":"textbox","id":"sh/sjmlsfut","slide":5,"name":"矩形 18","text":"Fixup 冲刺","textPreview":"Fixup 冲刺","textChars":8,"textLines":1,"bbox":[746,284,200,34]}
+{"kind":"textbox","id":"sh/k3q58f2p","slide":5,"name":"矩形 19","text":"围绕 Test262 高失败簇，定向修复内建对象、字符串和语言语义","textPreview":"围绕 Test262 高失败簇，定向修复内建对象、字符串和语言语义","textChars":33,"textLines":1,"bbox":[746,326,200,96]}
+{"kind":"shape","id":"sh/54zm1k3a","slide":5,"name":"矩形 20","bbox":[976,266,200,4]}
+{"kind":"textbox","id":"sh/i1on65kz","slide":5,"name":"矩形 21","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[976,232,53.6,28]}
+{"kind":"textbox","id":"sh/j2h4zal4","slide":5,"name":"矩形 22","text":"交付收尾","textPreview":"交付收尾","textChars":4,"textLines":1,"bbox":[976,284,200,34]}
+{"kind":"textbox","id":"sh/srq5cf21","slide":5,"name":"矩形 23","text":"生成中文报告、全量测试、SunSpider 对比和答辩材料","textPreview":"生成中文报告、全量测试、SunSpider 对比和答辩材料","textChars":29,"textLines":1,"bbox":[976,326,210,96]}
+{"kind":"shape","id":"sh/tszm5k3m","slide":5,"name":"矩形 24","bbox":[50.33,488,1120,82.53]}
+{"kind":"textbox","id":"sh/6p8napkv","slide":5,"name":"矩形 25","text":"当前状态：主要实现已成型，最新 Test262 全量通过率 71.78%，SunSpider 26/26 正确；\n\t  交付前重点是数据核对、文档一致性和未支持范围说明。","textPreview":"当前状态：主要实现已成型，最新 Test262 全量通过率 71.78%，SunSpider 26/26 正确； | \t  交付前重点是数据核对、文档一致性和未支持范围说明。","textChars":85,"textLines":2,"bbox":[74.87,497.67,1060,67.38]}
+{"kind":"textbox","id":"sh/7qh43ulg","slide":5,"name":"矩形 26","text":"来源：docs/version-development-workflow.md、reports/test262-final/final-latest-summary.md","textPreview":"来源：docs/version-development-workflow.md、reports/test262-final/final-latest-summary.md","textChars":85,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/gva5gz2x","slide":5,"name":"矩形 27","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/hwjm943i","slide":5,"name":"矩形 28","bbox":[41.18,649.24,640,1]}
+{"kind":"notes","id":"nt/yl3xij","slide":5,"text":""}
+{"kind":"slide","id":"sl/a46lj6","slide":6,"title":"系统架构与 Native 执行链路","textShapes":20}
+{"kind":"textbox","id":"sh/knat0fyx","slide":6,"name":"矩形 1","text":"系统架构与 Native 执行链路","textPreview":"系统架构与 Native 执行链路","textChars":17,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/lo3a9kz2","slide":6,"name":"矩形 2","text":"默认路径为自研 Native Runtime；Boa、QuickJS、Node/V8 仅作为参考和对比对象。","textPreview":"默认路径为自研 Native Runtime；Boa、QuickJS、Node/V8 仅作为参考和对比对象。","textChars":54,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/ahsbu5gf","slide":6,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"textbox","id":"sh/bi1s3ah0","slide":6,"name":"矩形 4","text":"source","textPreview":"source","textChars":6,"textLines":1,"bbox":[60.75,249.7,142,44]}
+{"kind":"shape","id":"sh/cjatwfyl","slide":6,"name":"矩形 5","bbox":[70.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/xkja5kz6","slide":6,"name":"矩形 6","text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[192.75,249.23,28,44]}
+{"kind":"textbox","id":"sh/udcb6pgz","slide":6,"name":"矩形 7","text":"lexer","textPreview":"lexer","textChars":5,"textLines":1,"bbox":[220.75,249.23,142,44]}
+{"kind":"shape","id":"sh/velsfuhk","slide":6,"name":"矩形 8","bbox":[230.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/zy9sfyxw","slide":6,"name":"矩形 9","text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[352.75,249.23,28,44]}
+{"kind":"textbox","id":"sh/yxgbmtgb","slide":6,"name":"矩形 10","text":"parser / AST","textPreview":"parser / AST","textChars":12,"textLines":1,"bbox":[380.75,241.7,142,44]}
+{"kind":"shape","id":"sh/l0rah8fm","slide":6,"name":"矩形 11","bbox":[390.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/0zito3yh","slide":6,"name":"矩形 12","text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[512.75,249.23,28,44]}
+{"kind":"textbox","id":"sh/n29sjyxs","slide":6,"name":"矩形 13","text":"bytecode","textPreview":"bytecode","textChars":8,"textLines":1,"bbox":[540.75,249.23,142,44]}
+{"kind":"shape","id":"sh/m10bqtg7","slide":6,"name":"矩形 14","bbox":[550.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/9oral8fy","slide":6,"name":"矩形 15","text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[672.75,249.23,28,44]}
+{"kind":"textbox","id":"sh/8nits3yd","slide":6,"name":"矩形 16","text":"VM","textPreview":"VM","textChars":2,"textLines":1,"bbox":[700.75,249.23,142,44]}
+{"kind":"shape","id":"sh/vqtcnix4","slide":6,"name":"矩形 17","bbox":[710.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/ap0budgj","slide":6,"name":"矩形 18","text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[832.75,249.23,28,44]}
+{"kind":"textbox","id":"sh/6l4vmh0r","slide":6,"name":"矩形 19","text":"runtime / builtins","textPreview":"runtime / builtins","textChars":18,"textLines":1,"bbox":[860.75,241.7,142,44]}
+{"kind":"shape","id":"sh/7mdwvmhc","slide":6,"name":"矩形 20","bbox":[870.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/snmdorih","slide":6,"name":"矩形 21","text":">","textPreview":">","textChars":1,"textLines":1,"bbox":[992.75,249.23,28,44]}
+{"kind":"textbox","id":"sh/tovexcz2","slide":6,"name":"矩形 22","text":"JsValue","textPreview":"JsValue","textChars":7,"textLines":1,"bbox":[1020.75,249.23,142,44]}
+{"kind":"shape","id":"sh/ih4vix0f","slide":6,"name":"矩形 23","bbox":[1030.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/jidwr2h0","slide":6,"name":"矩形 24","text":"架构边界采用单向依赖：\n前端产生 AST，编译器生成 Chunk，VM 解释字节码\nruntime / builtins 访问对象模型、作用域、异常、堆对象和标准库能力\nbackend/native.rs 负责装配，不承载具体语义实现。","textPreview":"架构边界采用单向依赖： | 前端产生 AST，编译器生成 Chunk，VM 解释字节码 | runtime / builtins 访问对象模型、作用域、异常、堆对象和标准库能力 | backend/native.rs 负责装配，不承载具体语义实现。","textChars":118,"textLines":4,"bbox":[60.75,381,932,197.39]}
+{"kind":"shape","id":"sh/kjmdk7il","slide":6,"name":"矩形 25","bbox":[941.75,400.39,253,178]}
+{"kind":"textbox","id":"sh/5kvetcz6","slide":6,"name":"矩形 26","text":"非套壳说明","textPreview":"非套壳说明","textChars":5,"textLines":1,"bbox":[988.75,425.61,206,30]}
+{"kind":"textbox","id":"sh/2dofu10z","slide":6,"name":"矩形 27","text":"最终功能通过率来自 Native 路径；Boa 仅用于显式 reference backend 和差分验证。","textPreview":"最终功能通过率来自 Native 路径；Boa 仅用于显式 reference backend 和差分验证。","textChars":54,"textLines":1,"bbox":[970.15,474,204,86]}
+{"kind":"textbox","id":"sh/3exw36h4","slide":6,"name":"矩形 28","text":"06","textPreview":"06","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/xkjq9kny","slide":6,"name":"矩形 29","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/cjapgz6d","slide":6,"name":"矩形 30","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,655.64,650,28]}
+{"kind":"notes","id":"nt/a46lj6","slide":6,"text":""}
+{"kind":"slide","id":"sl/bw37k4","slide":7,"title":"开发工作流","textShapes":20}
+{"kind":"textbox","id":"sh/7ahoj25k","slide":7,"name":"矩形 1","text":"开发工作流","textPreview":"开发工作流","textChars":5,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/m98naxoz","slide":7,"name":"矩形 2","text":"项目不是一次性堆功能，而是用版本化文档和测试报告持续收敛。","textPreview":"项目不是一次性堆功能，而是用版本化文档和测试报告持续收敛。","textChars":29,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/l8z6hcne","slide":7,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"textbox","id":"sh/k7q5876t","slide":7,"name":"矩形 4","text":"每个版本先冻结 scope、interface 和 team plan，再分组实现、运行分层测试、更新报告。\n后期 Fixup 阶段按失败簇拆分任务，把 Test262 反馈转成明确的修复优先级。","textPreview":"每个版本先冻结 scope、interface 和 team plan，再分组实现、运行分层测试、更新报告。 | 后期 Fixup 阶段按失败簇拆分任务，把 Test262 反馈转成明确的修复优先级。","textChars":98,"textLines":2,"bbox":[77.8,186.1,1116.62,133.26]}
+{"kind":"textbox","id":"sh/z6hof258","slide":7,"name":"矩形 5","text":"01","textPreview":"01","textChars":2,"textLines":1,"bbox":[89.66,436.93,48.88,32]}
+{"kind":"textbox","id":"sh/y58n6xon","slide":7,"name":"矩形 6","text":"冻结范围","textPreview":"冻结范围","textChars":4,"textLines":1,"bbox":[89.66,482.93,181.25,34]}
+{"kind":"textbox","id":"sh/x4f6dsn2","slide":7,"name":"矩形 7","text":"scope / interface / team plan","textPreview":"scope / interface / team plan","textChars":29,"textLines":1,"bbox":[89.66,526.93,187.36,52]}
+{"kind":"shape","id":"sh/c3654n6h","slide":7,"name":"矩形 8","bbox":[89.66,619,173.1,2]}
+{"kind":"textbox","id":"sh/6xoz6xgj","slide":7,"name":"矩形 9","text":"02","textPreview":"02","textChars":2,"textLines":1,"bbox":[308.64,409.39,48.88,32]}
+{"kind":"textbox","id":"sh/7yxgfix4","slide":7,"name":"矩形 10","text":"分组实现","textPreview":"分组实现","textChars":4,"textLines":1,"bbox":[308.64,455.39,181.25,34]}
+{"kind":"textbox","id":"sh/8zqh8ny9","slide":7,"name":"矩形 11","text":"前端、编译器、运行时、集成","textPreview":"前端、编译器、运行时、集成","textChars":13,"textLines":1,"bbox":[308.64,499.39,187.36,52]}
+{"kind":"shape","id":"sh/t0zi1sfu","slide":7,"name":"矩形 12","bbox":[308.64,589.39,173.1,2]}
+{"kind":"textbox","id":"sh/y9oz2dg7","slide":7,"name":"矩形 13","text":"03","textPreview":"03","textChars":2,"textLines":1,"bbox":[534.94,390.93,48.88,32]}
+{"kind":"textbox","id":"sh/juxgbixs","slide":7,"name":"矩形 14","text":"测试门禁","textPreview":"测试门禁","textChars":4,"textLines":1,"bbox":[534.94,436.93,181.25,34]}
+{"kind":"textbox","id":"sh/kv6h4nyd","slide":7,"name":"矩形 15","text":"unit / native / focused Test262","textPreview":"unit / native / focused Test262","textChars":31,"textLines":1,"bbox":[534.94,480.93,187.36,52]}
+{"kind":"shape","id":"sh/lwfydsfy","slide":7,"name":"矩形 16","bbox":[538.41,570.93,173.1,2]}
+{"kind":"textbox","id":"sh/a54zytgb","slide":7,"name":"矩形 17","text":"04","textPreview":"04","textChars":2,"textLines":1,"bbox":[768.18,370.24,48.88,32]}
+{"kind":"textbox","id":"sh/b6dg7yxw","slide":7,"name":"矩形 18","text":"报告归档","textPreview":"报告归档","textChars":4,"textLines":1,"bbox":[768.18,416.24,181.25,34]}
+{"kind":"textbox","id":"sh/zatwzudo","slide":7,"name":"矩形 19","text":"version report / final report","textPreview":"version report / final report","textChars":29,"textLines":1,"bbox":[768.18,460.24,187.36,52]}
+{"kind":"shape","id":"sh/e9kv69w3","slide":7,"name":"矩形 20","bbox":[768.18,550.24,173.1,2]}
+{"kind":"textbox","id":"sh/1cbe14ve","slide":7,"name":"矩形 21","text":"05","textPreview":"05","textChars":2,"textLines":1,"bbox":[1024.64,341.93,48.88,32]}
+{"kind":"textbox","id":"sh/0b2d8ze9","slide":7,"name":"矩形 22","text":"回归修复","textPreview":"回归修复","textChars":4,"textLines":1,"bbox":[1024.64,387.93,181.25,34]}
+{"kind":"textbox","id":"sh/netw3edk","slide":7,"name":"矩形 23","text":"失败簇分析与下一轮 fixup","textPreview":"失败簇分析与下一轮 fixup","textChars":15,"textLines":1,"bbox":[1024.64,431.93,187.36,52]}
+{"kind":"shape","id":"sh/mdkfa9wz","slide":7,"name":"矩形 24","bbox":[1024.64,519.93,173.1,2]}
+{"kind":"textbox","id":"sh/90ve5ovq","slide":7,"name":"矩形 25","text":"来源：docs/version-development-workflow.md","textPreview":"来源：docs/version-development-workflow.md","textChars":39,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/ofmxcje5","slide":7,"name":"矩形 26","text":"07","textPreview":"07","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"notes","id":"nt/bw37k4","slide":7,"text":""}
+{"kind":"slide","id":"sl/4s73jj","slide":8,"title":"Test262 全量测试结果","textShapes":40}
+{"kind":"textbox","id":"sh/wjmd4vq1","slide":8,"name":"矩形 1","text":"Test262 全量测试结果","textPreview":"Test262 全量测试结果","textChars":14,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/xkved0rm","slide":8,"name":"矩形 2","text":"最新中文 final 报告显示通过率 71.78%，超过 60% 赛题要求。","textPreview":"最新中文 final 报告显示通过率 71.78%，超过 60% 赛题要求。","textChars":38,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/yl4f6587","slide":8,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"shape","id":"sh/jmdwfa9s","slide":8,"name":"矩形 4","bbox":[56,226,250,170]}
+{"kind":"textbox","id":"sh/kn6x8fqd","slide":8,"name":"矩形 5","text":"38,315","textPreview":"38,315","textChars":6,"textLines":1,"bbox":[82.6,254.13,196.73,78]}
+{"kind":"textbox","id":"sh/lofeh0ry","slide":8,"name":"矩形 6","text":"通过用例 / 总 53,379","textPreview":"通过用例 / 总 53,379","textChars":15,"textLines":1,"bbox":[75.47,344,222,34]}
+{"kind":"shape","id":"sh/epkvu183","slide":8,"name":"矩形 7","bbox":[352.73,226,244.73,170]}
+{"kind":"textbox","id":"sh/zqtw369o","slide":8,"name":"矩形 8","text":"71.78%","textPreview":"71.78%","textChars":6,"textLines":1,"bbox":[375.4,254.13,215.87,78]}
+{"kind":"textbox","id":"sh/7q547uxk","slide":8,"name":"矩形 9","text":"全量 test 通过率","textPreview":"全量 test 通过率","textChars":11,"textLines":1,"bbox":[396,344,167,34]}
+{"kind":"shape","id":"sh/6pw3epgz","slide":8,"name":"矩形 10","bbox":[648.87,226,235.73,170]}
+{"kind":"textbox","id":"sh/tsnm94fq","slide":8,"name":"矩形 11","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[738.27,254,64.4,78]}
+{"kind":"textbox","id":"sh/8relgzy5","slide":8,"name":"矩形 12","text":"跳过用例，不计入通过","textPreview":"跳过用例，不计入通过","textChars":10,"textLines":1,"bbox":[662.67,344,222,34]}
+{"kind":"shape","id":"sh/jm543uxo","slide":8,"name":"矩形 13","bbox":[937.07,226,237,170]}
+{"kind":"textbox","id":"sh/ylw3apg3","slide":8,"name":"矩形 14","text":"4.22m","textPreview":"4.22m","textChars":5,"textLines":1,"bbox":[972.6,254,182,78]}
+{"kind":"textbox","id":"sh/lonm5kfu","slide":8,"name":"矩形 15","text":"整体全量运行耗时","textPreview":"整体全量运行耗时","textChars":8,"textLines":1,"bbox":[972.6,344,182,34]}
+{"kind":"shape","id":"sh/knelczy9","slide":8,"name":"矩形 16","bbox":[56,443.13,1118.07,44]}
+{"kind":"shape","id":"sh/bil4zaxc","slide":8,"name":"矩形 17","bbox":[56,482.4,1118.07,4.8]}
+{"kind":"textbox","id":"sh/ahc365gr","slide":8,"name":"矩形 18","text":"目录","textPreview":"目录","textChars":2,"textLines":1,"bbox":[113.27,453.13,200,28]}
+{"kind":"textbox","id":"sh/etsni50z","slide":8,"name":"矩形 19","text":"总数","textPreview":"总数","textChars":2,"textLines":1,"bbox":[333.27,453.13,110,28]}
+{"kind":"textbox","id":"sh/zul4ra1k","slide":8,"name":"矩形 20","text":"通过","textPreview":"通过","textChars":2,"textLines":1,"bbox":[463.27,453.13,110,28]}
+{"kind":"textbox","id":"sh/0fu5kfip","slide":8,"name":"矩形 21","text":"失败","textPreview":"失败","textChars":2,"textLines":1,"bbox":[593.27,453.13,110,28]}
+{"kind":"textbox","id":"sh/1g3mtkja","slide":8,"name":"矩形 22","text":"跳过","textPreview":"跳过","textChars":2,"textLines":1,"bbox":[723.27,453.13,110,28]}
+{"kind":"textbox","id":"sh/mhcnmp0v","slide":8,"name":"矩形 23","text":"通过率","textPreview":"通过率","textChars":3,"textLines":1,"bbox":[853.27,453.13,110,28]}
+{"kind":"textbox","id":"sh/nil4vu1g","slide":8,"name":"矩形 24","text":"耗时","textPreview":"耗时","textChars":2,"textLines":1,"bbox":[983.27,453.13,150,28]}
+{"kind":"shape","id":"sh/oju5ofi1","slide":8,"name":"矩形 25","bbox":[56,522.4,1118.07,4.8]}
+{"kind":"textbox","id":"sh/9k3mxkzm","slide":8,"name":"矩形 26","text":"test/language","textPreview":"test/language","textChars":13,"textLines":1,"bbox":[113.27,497.13,200,24]}
+{"kind":"textbox","id":"sh/alcnqp07","slide":8,"name":"矩形 27","text":"23,711","textPreview":"23,711","textChars":6,"textLines":1,"bbox":[333.27,497.13,110,24]}
+{"kind":"textbox","id":"sh/bm5ozuhc","slide":8,"name":"矩形 28","text":"19,156","textPreview":"19,156","textChars":6,"textLines":1,"bbox":[463.27,497.13,110,24]}
+{"kind":"textbox","id":"sh/lg7qpo3u","slide":8,"name":"矩形 29","text":"4,555","textPreview":"4,555","textChars":5,"textLines":1,"bbox":[593.27,497.13,110,24]}
+{"kind":"textbox","id":"sh/kfypgj29","slide":8,"name":"矩形 30","text":"0","textPreview":"0","textChars":1,"textLines":1,"bbox":[723.27,497.13,110,24]}
+{"kind":"textbox","id":"sh/jep8nelo","slide":8,"name":"矩形 31","text":"80.79%","textPreview":"80.79%","textChars":6,"textLines":1,"bbox":[853.27,497.13,110,24]}
+{"kind":"textbox","id":"sh/ydg7etk3","slide":8,"name":"矩形 32","text":"35.36 秒","textPreview":"35.36 秒","textChars":7,"textLines":1,"bbox":[983.27,497.13,150,24]}
+{"kind":"shape","id":"sh/tk7qt8jq","slide":8,"name":"矩形 33","bbox":[56,566.4,1118.07,4.8]}
+{"kind":"textbox","id":"sh/8jypk325","slide":8,"name":"矩形 34","text":"test/built-ins","textPreview":"test/built-ins","textChars":14,"textLines":1,"bbox":[113.27,541.13,200,24]}
+{"kind":"textbox","id":"sh/7ip8ry1k","slide":8,"name":"矩形 35","text":"23,643","textPreview":"23,643","textChars":6,"textLines":1,"bbox":[333.27,541.13,110,24]}
+{"kind":"textbox","id":"sh/6hg7itkf","slide":8,"name":"矩形 36","text":"16,996","textPreview":"16,996","textChars":6,"textLines":1,"bbox":[463.27,541.13,110,24]}
+{"kind":"textbox","id":"sh/h8rqx8j2","slide":8,"name":"矩形 37","text":"6,645","textPreview":"6,645","textChars":5,"textLines":1,"bbox":[593.27,541.13,110,24]}
+{"kind":"textbox","id":"sh/g7ipo32h","slide":8,"name":"矩形 38","text":"2","textPreview":"2","textChars":1,"textLines":1,"bbox":[723.27,541.13,110,24]}
+{"kind":"textbox","id":"sh/cfm1cbq1","slide":8,"name":"矩形 39","text":"71.89%","textPreview":"71.89%","textChars":6,"textLines":1,"bbox":[853.27,541.13,110,24]}
+{"kind":"textbox","id":"sh/dgv25g76","slide":8,"name":"矩形 40","text":"2.78 分钟","textPreview":"2.78 分钟","textChars":7,"textLines":1,"bbox":[983.27,541.13,150,24]}
+{"kind":"shape","id":"sh/qd4ja18v","slide":8,"name":"矩形 41","bbox":[56,610.4,1118.07,4.8]}
+{"kind":"textbox","id":"sh/redk36pg","slide":8,"name":"矩形 42","text":"test/annexB","textPreview":"test/annexB","textChars":11,"textLines":1,"bbox":[113.27,585.13,200,24]}
+{"kind":"textbox","id":"sh/4bm18rqp","slide":8,"name":"矩形 43","text":"1,086","textPreview":"1,086","textChars":5,"textLines":1,"bbox":[333.27,585.13,110,24]}
+{"kind":"textbox","id":"sh/pcv21wra","slide":8,"name":"矩形 44","text":"848","textPreview":"848","textChars":3,"textLines":1,"bbox":[463.27,585.13,110,24]}
+{"kind":"textbox","id":"sh/2pkj618j","slide":8,"name":"矩形 45","text":"238","textPreview":"238","textChars":3,"textLines":1,"bbox":[593.27,585.13,110,24]}
+{"kind":"textbox","id":"sh/3adkzm94","slide":8,"name":"矩形 46","text":"0","textPreview":"0","textChars":1,"textLines":1,"bbox":[723.27,585.13,110,24]}
+{"kind":"textbox","id":"sh/8761kvqt","slide":8,"name":"矩形 47","text":"78.08%","textPreview":"78.08%","textChars":6,"textLines":1,"bbox":[853.27,585.13,110,24]}
+{"kind":"textbox","id":"sh/98f2d07e","slide":8,"name":"矩形 48","text":"2.20 秒","textPreview":"2.20 秒","textChars":6,"textLines":1,"bbox":[983.27,585.13,150,24]}
+{"kind":"textbox","id":"sh/j2143u9w","slide":8,"name":"矩形 49","text":"来源：reports/test262-final/final-latest-summary.md、final-all.md","textPreview":"来源：reports/test262-final/final-latest-summary.md、final-all.md","textChars":61,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/i1snapsb","slide":8,"name":"矩形 50","text":"08","textPreview":"08","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"notes","id":"nt/4s73jj","slide":8,"text":""}
+{"kind":"slide","id":"sl/xzdlic","slide":9,"title":"准确率推进与结果可信度","textShapes":13}
+{"kind":"textbox","id":"sh/329sr29k","slide":9,"name":"矩形 1","text":"准确率推进与结果可信度","textPreview":"准确率推进与结果可信度","textChars":11,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/210ryx8z","slide":9,"name":"矩形 2","text":"阶段数据用于说明迭代过程，最终展示以 clean full scan 和中文 final 报告为准。","textPreview":"阶段数据用于说明迭代过程，最终展示以 clean full scan 和中文 final 报告为准。","textChars":50,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/10rapsre","slide":9,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"textbox","id":"sh/gzi9wnqt","slide":9,"name":"矩形 4","text":"项目早期全量 baseline 约 26.29%，后续通过 Native V11、Fix、Fixup 等阶段持续提升。\n当前 final full run 已经稳定超过 70%，但 PPT 和提交文档需要避免混用旧 README 中的 72.02% 草稿数据。","textPreview":"项目早期全量 baseline 约 26.29%，后续通过 Native V11、Fix、Fixup 等阶段持续提升。 | 当前 final full run 已经稳定超过 70%，但 PPT 和提交文档需要避免混用旧 README 中的 72.02% 草稿数据。","textChars":130,"textLines":2,"bbox":[54.59,213,760,222.93]}
+{"kind":"textbox","id":"sh/fy9sni98","slide":9,"name":"矩形 5","text":"2026-06-24 baseline","textPreview":"2026-06-24 baseline","textChars":19,"textLines":1,"bbox":[53.09,459.93,280,28]}
+{"kind":"shape","id":"sh/edgrud8n","slide":9,"name":"矩形 6","bbox":[353.09,464.93,430,18]}
+{"kind":"shape","id":"sh/tc7alsri","slide":9,"name":"矩形 7","bbox":[353.09,464.93,141.31,18]}
+{"kind":"textbox","id":"sh/sby9snqx","slide":9,"name":"矩形 8","text":"26.29%","textPreview":"26.29%","textChars":6,"textLines":1,"bbox":[797.09,458.93,81.27,28]}
+{"kind":"textbox","id":"sh/idgnulsz","slide":9,"name":"矩形 9","text":"FixRTLE / Fixup8 baseline","textPreview":"FixRTLE / Fixup8 baseline","textChars":25,"textLines":1,"bbox":[53.09,511.93,280,28]}
+{"kind":"shape","id":"sh/3epo3qtk","slide":9,"name":"矩形 10","bbox":[353.09,516.93,430,18]}
+{"kind":"shape","id":"sh/4fy5wba5","slide":9,"name":"矩形 11","bbox":[353.09,516.93,357.17,18]}
+{"kind":"textbox","id":"sh/5g765gbq","slide":9,"name":"矩形 12","text":"66.45%","textPreview":"66.45%","textChars":6,"textLines":1,"bbox":[797.09,510.93,79.67,28]}
+{"kind":"textbox","id":"sh/upgnq1s3","slide":9,"name":"矩形 13","text":"Final clean full scan","textPreview":"Final clean full scan","textChars":21,"textLines":1,"bbox":[53.09,563.93,280,28]}
+{"kind":"shape","id":"sh/vap4z6to","slide":9,"name":"矩形 14","bbox":[353.09,568.93,430,18]}
+{"kind":"shape","id":"sh/gby5sbat","slide":9,"name":"矩形 15","bbox":[353.09,568.93,385.82,18]}
+{"kind":"textbox","id":"sh/hc761gbe","slide":9,"name":"矩形 16","text":"71.78%","textPreview":"71.78%","textChars":6,"textLines":1,"bbox":[797.09,562.93,81.27,28]}
+{"kind":"shape","id":"sh/6lwnm1sr","slide":9,"name":"矩形 17","bbox":[912.13,254.67,276.53,301.4]}
+{"kind":"textbox","id":"sh/7m54v6tc","slide":9,"name":"矩形 18","text":"可信口径","textPreview":"可信口径","textChars":4,"textLines":1,"bbox":[934.51,278.95,190,34]}
+{"kind":"textbox","id":"sh/bqlk3294","slide":9,"name":"矩形 19","text":"跳过不计入通过\n运行时错误不能伪通过分目录与全量交叉校验\n报告保存中文 md 与 JSON","textPreview":"跳过不计入通过 | 运行时错误不能伪通过分目录与全量交叉校验 | 报告保存中文 md 与 JSON","textChars":45,"textLines":3,"bbox":[934.53,332.2,246.2,255]}
+{"kind":"textbox","id":"sh/aps3ux8j","slide":9,"name":"矩形 20","text":"来源：README-polished.md 草稿、reports/test262-final/final-latest-summary.md","textPreview":"来源：README-polished.md 草稿、reports/test262-final/final-latest-summary.md","textChars":70,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/xs32psra","slide":9,"name":"矩形 21","text":"09","textPreview":"09","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/wrulw7qp","slide":9,"name":"矩形 22","bbox":[41.18,649.88,640,1]}
+{"kind":"notes","id":"nt/xzdlic","slide":9,"text":""}
+{"kind":"slide","id":"sl/zwllfz","slide":10,"title":"SunSpider Benchmark 结果","textShapes":32}
+{"kind":"textbox","id":"sh/wbqd0n6d","slide":10,"name":"矩形 1","text":"SunSpider Benchmark 结果","textPreview":"SunSpider Benchmark 结果","textChars":22,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/xwzutsny","slide":10,"name":"矩形 2","text":"Correctness 已全部通过；性能上仍显著落后成熟引擎，瓶颈集中在字符串和正则 workload。","textPreview":"Correctness 已全部通过；性能上仍显著落后成熟引擎，瓶颈集中在字符串和正则 workload。","textChars":52,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/ix8v2do3","slide":10,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"shape","id":"sh/jyhcvi5o","slide":10,"name":"矩形 4","bbox":[50.33,220,266.87,185.47]}
+{"kind":"textbox","id":"sh/kzad4nm9","slide":10,"name":"矩形 5","text":"26/26","textPreview":"26/26","textChars":5,"textLines":1,"bbox":[94.47,248,178.67,78]}
+{"kind":"textbox","id":"sh/50juxsnu","slide":10,"name":"矩形 6","text":"AgentJS Native 正确完成 SunSpider 1.0.2 全部用例","textPreview":"AgentJS Native 正确完成 SunSpider 1.0.2 全部用例","textChars":40,"textLines":1,"bbox":[57.87,338,272,34]}
+{"kind":"shape","id":"sh/y1obqtoz","slide":10,"name":"矩形 7","bbox":[363.2,220,258.53,185.47]}
+{"kind":"textbox","id":"sh/z2xcjy5k","slide":10,"name":"矩形 8","text":"25.03s","textPreview":"25.03s","textChars":6,"textLines":1,"bbox":[398.07,248,194.07,78]}
+{"kind":"textbox","id":"sh/by1obqxw","slide":10,"name":"矩形 9","text":"AgentJS median 总耗时","textPreview":"AgentJS median 总耗时","textChars":18,"textLines":1,"bbox":[375.4,344.87,246.33,34]}
+{"kind":"shape","id":"sh/axs725wr","slide":10,"name":"矩形 10","bbox":[662.67,223.87,256.8,185.47]}
+{"kind":"textbox","id":"sh/x0jqd0f2","slide":10,"name":"矩形 11","text":"2.52s","textPreview":"2.52s","textChars":5,"textLines":1,"bbox":[715.6,248,160.4,78]}
+{"kind":"textbox","id":"sh/czap4veh","slide":10,"name":"矩形 12","text":"Boa reference 总耗时","textPreview":"Boa reference 总耗时","textChars":17,"textLines":1,"bbox":[681.47,344.87,219.2,34]}
+{"kind":"shape","id":"sh/nuho7qx0","slide":10,"name":"矩形 13","bbox":[957.53,223.8,245.4,185.53]}
+{"kind":"textbox","id":"sh/2t87ylwf","slide":10,"name":"矩形 14","text":"1.43s","textPreview":"1.43s","textChars":5,"textLines":1,"bbox":[1001.67,246.6,162,78]}
+{"kind":"textbox","id":"sh/pwz690f6","slide":10,"name":"矩形 15","text":"Node/V8 control 总耗时","textPreview":"Node/V8 control 总耗时","textChars":19,"textLines":1,"bbox":[995.33,338,165.87,34]}
+{"kind":"shape","id":"sh/ovqp0vel","slide":10,"name":"矩形 16","bbox":[78,439,1090,46]}
+{"kind":"shape","id":"sh/fqho36x4","slide":10,"name":"矩形 17","bbox":[78,485,1090,1]}
+{"kind":"textbox","id":"sh/ep87u1wj","slide":10,"name":"矩形 18","text":"热点用例","textPreview":"热点用例","textChars":4,"textLines":1,"bbox":[88,449,280,30]}
+{"kind":"textbox","id":"sh/i1o7m10b","slide":10,"name":"矩形 19","text":"AgentJS","textPreview":"AgentJS","textChars":7,"textLines":1,"bbox":[388,449,160,30]}
+{"kind":"textbox","id":"sh/32x8f6hw","slide":10,"name":"矩形 20","text":"Node/V8","textPreview":"Node/V8","textChars":7,"textLines":1,"bbox":[568,449,160,30]}
+{"kind":"textbox","id":"sh/4n6pobih","slide":10,"name":"矩形 21","text":"倍率","textPreview":"倍率","textChars":2,"textLines":1,"bbox":[748,449,160,30]}
+{"kind":"textbox","id":"sh/5ofqhgz2","slide":10,"name":"矩形 22","text":"说明","textPreview":"说明","textChars":2,"textLines":1,"bbox":[928,449,230,30]}
+{"kind":"shape","id":"sh/qp87ql07","slide":10,"name":"矩形 23","bbox":[78,527,1090,1]}
+{"kind":"textbox","id":"sh/rqh8jqhs","slide":10,"name":"矩形 24","text":"string-unpack-code","textPreview":"string-unpack-code","textChars":18,"textLines":1,"bbox":[88,495,280,26]}
+{"kind":"textbox","id":"sh/srq9svid","slide":10,"name":"矩形 25","text":"9132ms","textPreview":"9132ms","textChars":6,"textLines":1,"bbox":[388,495,160,26]}
+{"kind":"textbox","id":"sh/dszqlgzy","slide":10,"name":"矩形 26","text":"65ms","textPreview":"65ms","textChars":4,"textLines":1,"bbox":[568,495,160,26]}
+{"kind":"textbox","id":"sh/et8rul0j","slide":10,"name":"矩形 27","text":"139.8x","textPreview":"139.8x","textChars":6,"textLines":1,"bbox":[748,495,160,26]}
+{"kind":"textbox","id":"sh/fuh8nqh4","slide":10,"name":"矩形 28","text":"字符串拼接与替换路径仍重","textPreview":"字符串拼接与替换路径仍重","textChars":12,"textLines":1,"bbox":[928,495,230,26]}
+{"kind":"shape","id":"sh/90329oni","slide":10,"name":"矩形 29","bbox":[78,573,1090,1]}
+{"kind":"textbox","id":"sh/ozu10j6x","slide":10,"name":"矩形 30","text":"string-tagcloud","textPreview":"string-tagcloud","textChars":15,"textLines":1,"bbox":[88,541,280,26]}
+{"kind":"textbox","id":"sh/nylk7e5c","slide":10,"name":"矩形 31","text":"3435ms","textPreview":"3435ms","textChars":6,"textLines":1,"bbox":[388,541,160,26]}
+{"kind":"textbox","id":"sh/mxcjy9or","slide":10,"name":"矩形 32","text":"60ms","textPreview":"60ms","textChars":4,"textLines":1,"bbox":[568,541,160,26]}
+{"kind":"textbox","id":"sh/xon2done","slide":10,"name":"矩形 33","text":"57.0x","textPreview":"57.0x","textChars":5,"textLines":1,"bbox":[748,541,160,26]}
+{"kind":"textbox","id":"sh/w3e1436t","slide":10,"name":"矩形 34","text":"文本处理和属性访问热点","textPreview":"文本处理和属性访问热点","textChars":11,"textLines":1,"bbox":[928,541,230,26]}
+{"kind":"shape","id":"sh/b25kby58","slide":10,"name":"矩形 35","bbox":[78,619,1090,1]}
+{"kind":"textbox","id":"sh/a1cj2to3","slide":10,"name":"矩形 36","text":"regexp-dna","textPreview":"regexp-dna","textChars":10,"textLines":1,"bbox":[88,587,280,26]}
+{"kind":"textbox","id":"sh/lsn2h8nq","slide":10,"name":"矩形 37","text":"3257ms","textPreview":"3257ms","textChars":6,"textLines":1,"bbox":[388,587,160,26]}
+{"kind":"textbox","id":"sh/krel8365","slide":10,"name":"矩形 38","text":"54ms","textPreview":"54ms","textChars":4,"textLines":1,"bbox":[568,587,160,26]}
+{"kind":"textbox","id":"sh/gni507qd","slide":10,"name":"矩形 39","text":"60.2x","textPreview":"60.2x","textChars":5,"textLines":1,"bbox":[748,587,160,26]}
+{"kind":"textbox","id":"sh/horm9c7y","slide":10,"name":"矩形 40","text":"正则引擎特性与 dispatch 成本","textPreview":"正则引擎特性与 dispatch 成本","textChars":19,"textLines":1,"bbox":[928,587,240.07,26]}
+{"kind":"textbox","id":"sh/ul0nyx87","slide":10,"name":"矩形 41","text":"来源：benchmarks/sunspider/results/agentjs-after-string-opt-sunspider.md/json、boa-sunspider.json","textPreview":"来源：benchmarks/sunspider/results/agentjs-after-string-opt-sunspider.md/json、boa-sunspider.json","textChars":93,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/fm9472ps","slide":10,"name":"矩形 42","text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"notes","id":"nt/zwllfz","slide":10,"text":""}
+{"kind":"slide","id":"sl/t3k2o8","slide":11,"title":"SunSpider Benchmark 结果","textShapes":32}
+{"kind":"textbox","id":"sh/ozy9k7et","slide":11,"name":"矩形 1","text":"SunSpider Benchmark 结果","textPreview":"SunSpider Benchmark 结果","textChars":22,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"textbox","id":"sh/p0rqdcfe","slide":11,"name":"矩形 2","text":"Correctness 已全部通过；性能上仍显著落后成熟引擎，瓶颈集中在字符串和正则 workload。","textPreview":"Correctness 已全部通过；性能上仍显著落后成熟引擎，瓶颈集中在字符串和正则 workload。","textChars":52,"textLines":1,"bbox":[56,106,980,56]}
+{"kind":"shape","id":"sh/al0rmhwz","slide":11,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"shape","id":"sh/bm98fmx4","slide":11,"name":"矩形 4","bbox":[50.33,220,266.87,185.47]}
+{"kind":"textbox","id":"sh/cni9orep","slide":11,"name":"矩形 5","text":"26/26","textPreview":"26/26","textChars":5,"textLines":1,"bbox":[94.47,248,178.67,78]}
+{"kind":"textbox","id":"sh/xorqhwfa","slide":11,"name":"矩形 6","text":"AgentJS Native 正确完成 SunSpider 1.0.2 全部用例","textPreview":"AgentJS Native 正确完成 SunSpider 1.0.2 全部用例","textChars":40,"textLines":1,"bbox":[57.87,338,272,34]}
+{"kind":"shape","id":"sh/yp0rq1wv","slide":11,"name":"矩形 7","bbox":[363.2,220,258.53,185.47]}
+{"kind":"textbox","id":"sh/zq98jmxg","slide":11,"name":"矩形 8","text":"25.03s","textPreview":"25.03s","textChars":6,"textLines":1,"bbox":[398.07,248,194.07,78]}
+{"kind":"textbox","id":"sh/va1cby1c","slide":11,"name":"矩形 9","text":"AgentJS median 总耗时","textPreview":"AgentJS median 总耗时","textChars":18,"textLines":1,"bbox":[375.4,344.87,246.33,34]}
+{"kind":"shape","id":"sh/u9sv2t0r","slide":11,"name":"矩形 10","bbox":[662.67,223.87,256.8,185.47]}
+{"kind":"textbox","id":"sh/hcjud8j2","slide":11,"name":"矩形 11","text":"2.52s","textPreview":"2.52s","textChars":5,"textLines":1,"bbox":[715.6,248,160.4,78]}
+{"kind":"textbox","id":"sh/gbad43ix","slide":11,"name":"矩形 12","text":"Boa reference 总耗时","textPreview":"Boa reference 总耗时","textChars":17,"textLines":1,"bbox":[681.47,344.87,219.2,34]}
+{"kind":"shape","id":"sh/761c7y10","slide":11,"name":"矩形 13","bbox":[957.53,223.8,245.4,185.53]}
+{"kind":"textbox","id":"sh/658vyt0f","slide":11,"name":"矩形 14","text":"1.43s","textPreview":"1.43s","textChars":5,"textLines":1,"bbox":[1001.67,246.6,162,78]}
+{"kind":"textbox","id":"sh/t8ju9oj6","slide":11,"name":"矩形 15","text":"Node/V8 control 总耗时","textPreview":"Node/V8 control 总耗时","textChars":19,"textLines":1,"bbox":[995.33,338,165.87,34]}
+{"kind":"shape","id":"sh/87ad0jil","slide":11,"name":"矩形 16","bbox":[78,439,1090,46]}
+{"kind":"shape","id":"sh/r2lwjihk","slide":11,"name":"矩形 17","bbox":[78,485,1090,1]}
+{"kind":"textbox","id":"sh/q1cvad0z","slide":11,"name":"矩形 18","text":"热点用例","textPreview":"热点用例","textChars":4,"textLines":1,"bbox":[88,449,280,30]}
+{"kind":"textbox","id":"sh/2xgfihk7","slide":11,"name":"矩形 19","text":"AgentJS","textPreview":"AgentJS","textChars":7,"textLines":1,"bbox":[388,449,160,30]}
+{"kind":"textbox","id":"sh/nypgbm1s","slide":11,"name":"矩形 20","text":"Node/V8","textPreview":"Node/V8","textChars":7,"textLines":1,"bbox":[568,449,160,30]}
+{"kind":"textbox","id":"sh/ozyxkr2x","slide":11,"name":"矩形 21","text":"倍率","textPreview":"倍率","textChars":2,"textLines":1,"bbox":[748,449,160,30]}
+{"kind":"textbox","id":"sh/p07ydwji","slide":11,"name":"矩形 22","text":"说明","textPreview":"说明","textChars":2,"textLines":1,"bbox":[928,449,230,30]}
+{"kind":"shape","id":"sh/a1gfm1k3","slide":11,"name":"矩形 23","bbox":[78,527,1090,1]}
+{"kind":"textbox","id":"sh/b2pgf61o","slide":11,"name":"矩形 24","text":"string-unpack-code","textPreview":"string-unpack-code","textChars":18,"textLines":1,"bbox":[88,495,280,26]}
+{"kind":"textbox","id":"sh/c3yxor29","slide":11,"name":"矩形 25","text":"9132ms","textPreview":"9132ms","textChars":6,"textLines":1,"bbox":[388,495,160,26]}
+{"kind":"textbox","id":"sh/xoryhwju","slide":11,"name":"矩形 26","text":"65ms","textPreview":"65ms","textChars":4,"textLines":1,"bbox":[568,495,160,26]}
+{"kind":"textbox","id":"sh/q5wfaxkz","slide":11,"name":"矩形 27","text":"139.8x","textPreview":"139.8x","textChars":6,"textLines":1,"bbox":[748,495,160,26]}
+{"kind":"textbox","id":"sh/r65w32lk","slide":11,"name":"矩形 28","text":"字符串拼接与替换路径仍重","textPreview":"字符串拼接与替换路径仍重","textChars":12,"textLines":1,"bbox":[928,495,230,26]}
+{"kind":"shape","id":"sh/twva547e","slide":11,"name":"矩形 29","bbox":[78,573,1090,1]}
+{"kind":"textbox","id":"sh/svm9wzqt","slide":11,"name":"矩形 30","text":"string-tagcloud","textPreview":"string-tagcloud","textChars":15,"textLines":1,"bbox":[88,541,280,26]}
+{"kind":"textbox","id":"sh/7uds3u98","slide":11,"name":"矩形 31","text":"3435ms","textPreview":"3435ms","textChars":6,"textLines":1,"bbox":[388,541,160,26]}
+{"kind":"textbox","id":"sh/6t4rup8n","slide":11,"name":"矩形 32","text":"60ms","textPreview":"60ms","textChars":4,"textLines":1,"bbox":[568,541,160,26]}
+{"kind":"textbox","id":"sh/h0fa947a","slide":11,"name":"矩形 33","text":"57.0x","textPreview":"57.0x","textChars":5,"textLines":1,"bbox":[748,541,160,26]}
+{"kind":"textbox","id":"sh/gzm90zqp","slide":11,"name":"矩形 34","text":"文本处理和属性访问热点","textPreview":"文本处理和属性访问热点","textChars":11,"textLines":1,"bbox":[928,541,230,26]}
+{"kind":"shape","id":"sh/fyds7up4","slide":11,"name":"矩形 35","bbox":[78,619,1090,1]}
+{"kind":"textbox","id":"sh/ux4ry98j","slide":11,"name":"矩形 36","text":"regexp-dna","textPreview":"regexp-dna","textChars":10,"textLines":1,"bbox":[88,587,280,26]}
+{"kind":"textbox","id":"sh/x4bqxkr6","slide":11,"name":"矩形 37","text":"3257ms","textPreview":"3257ms","textChars":6,"textLines":1,"bbox":[388,587,160,26]}
+{"kind":"textbox","id":"sh/w329ofql","slide":11,"name":"矩形 38","text":"54ms","textPreview":"54ms","textChars":4,"textLines":1,"bbox":[568,587,160,26]}
+{"kind":"textbox","id":"sh/0jadwna9","slide":11,"name":"矩形 39","text":"60.2x","textPreview":"60.2x","textChars":5,"textLines":1,"bbox":[748,587,160,26]}
+{"kind":"textbox","id":"sh/1kju5sre","slide":11,"name":"矩形 40","text":"正则引擎特性与 dispatch 成本","textPreview":"正则引擎特性与 dispatch 成本","textChars":19,"textLines":1,"bbox":[928,587,240.07,26]}
+{"kind":"textbox","id":"sh/ex8vuds3","slide":11,"name":"矩形 41","text":"来源：benchmarks/sunspider/results/agentjs-after-string-opt-sunspider.md/json、boa-sunspider.json","textPreview":"来源：benchmarks/sunspider/results/agentjs-after-string-opt-sunspider.md/json、boa-sunspider.json","textChars":93,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/zyhc3i9o","slide":11,"name":"矩形 42","text":"10","textPreview":"10","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"notes","id":"nt/t3k2o8","slide":11,"text":""}
+{"kind":"slide","id":"sl/7mgyoa","slide":12,"title":"代表性问题与已完成修复","textShapes":11}
+{"kind":"textbox","id":"sh/l0vihkn2","slide":12,"name":"矩形 1","text":"代表性问题与已完成修复","textPreview":"代表性问题与已完成修复","textChars":11,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"shape","id":"sh/n2d0ju58","slide":12,"name":"矩形 3","bbox":[56,133.2,1168,1]}
+{"kind":"textbox","id":"sh/m14jqpon","slide":12,"name":"矩形 4","text":"Runner 稳定性","textPreview":"Runner 稳定性","textChars":10,"textLines":1,"bbox":[56,174.8,460,36]}
+{"kind":"textbox","id":"sh/9ovil4ny","slide":12,"name":"矩形 5","text":"Test262 runner 增加运行时错误跳过/记录能力，避免单个崩溃中断整批测试。","textPreview":"Test262 runner 增加运行时错误跳过/记录能力，避免单个崩溃中断整批测试。","textChars":43,"textLines":1,"bbox":[56,222.8,500,78]}
+{"kind":"shape","id":"sh/83m1sz6d","slide":12,"name":"矩形 6","bbox":[56,342.87,480,2]}
+{"kind":"textbox","id":"sh/vqx0ne54","slide":12,"name":"矩形 7","text":"SunSpider 正确性","textPreview":"SunSpider 正确性","textChars":13,"textLines":1,"bbox":[641,174.8,460,36]}
+{"kind":"textbox","id":"sh/apoju9oj","slide":12,"name":"矩形 8","text":"修复 date-format-tofte、3d-raytrace 等 benchmark 可运行性问题，最终 26/26 通过。","textPreview":"修复 date-format-tofte、3d-raytrace 等 benchmark 可运行性问题，最终 26/26 通过。","textChars":64,"textLines":1,"bbox":[641,222.8,500,78]}
+{"kind":"shape","id":"sh/kbal0jm5","slide":12,"name":"矩形 9","bbox":[640,344.87,480,2]}
+{"kind":"textbox","id":"sh/lcjmto3q","slide":12,"name":"矩形 10","text":"字符串性能","textPreview":"字符串性能","textChars":5,"textLines":1,"bbox":[56,380.93,460,36]}
+{"kind":"textbox","id":"sh/y9s3y94z","slide":12,"name":"矩形 11","text":"增加 ASCII fast path、replace 无 `$` 快速路径、预分配字符串拼接，降低 tagcloud / validate-input 等耗时。","textPreview":"增加 ASCII fast path、replace 无 `$` 快速路径、预分配字符串拼接，降低 tagcloud / validate-input 等耗时。","textChars":80,"textLines":1,"bbox":[56,428.93,500,78]}
+{"kind":"shape","id":"sh/ja14relk","slide":12,"name":"矩形 12","bbox":[50.33,556.6,480,2]}
+{"kind":"textbox","id":"sh/8zal4jm1","slide":12,"name":"矩形 13","text":"执行路径开销","textPreview":"执行路径开销","textChars":6,"textLines":1,"bbox":[641,380.93,460,36]}
+{"kind":"textbox","id":"sh/t03mxo3m","slide":12,"name":"矩形 14","text":"lazy arguments object、Array.sort merge sort、部分 RegExp literal replacement 快速路径。","textPreview":"lazy arguments object、Array.sort merge sort、部分 RegExp literal replacement 快速路径。","textChars":79,"textLines":1,"bbox":[641,428.93,500,78]}
+{"kind":"shape","id":"sh/6ds3294v","slide":12,"name":"矩形 15","bbox":[640,554.6,480,2]}
+{"kind":"textbox","id":"sh/7e14velg","slide":12,"name":"矩形 16","text":"来源：reports/test262-final/*、benchmarks/sunspider/results/*、近期修复记录","textPreview":"来源：reports/test262-final/*、benchmarks/sunspider/results/*、近期修复记录","textChars":64,"textLines":1,"bbox":[56,664,920,26]}
+{"kind":"textbox","id":"sh/g3u583md","slide":12,"name":"矩形 17","text":"11","textPreview":"11","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"notes","id":"nt/7mgyoa","slide":12,"text":""}
+{"kind":"slide","id":"sl/lsof7f","slide":13,"title":"创新点：数据结构与运行时优化","textShapes":12}
+{"kind":"shape","id":"sh/6l4belw3","slide":13,"name":"矩形 1","bbox":[0,0,1280,720]}
+{"kind":"textbox","id":"sh/7mxc7qxo","slide":13,"name":"矩形 2","text":"创新点：数据结构与运行时优化","textPreview":"创新点：数据结构与运行时优化","textChars":14,"textLines":1,"bbox":[66,48,760,62]}
+{"kind":"shape","id":"sh/kzmtcbex","slide":13,"name":"矩形 3","bbox":[57.87,168.07,1168,1]}
+{"kind":"textbox","id":"sh/lkva5gfi","slide":13,"name":"矩形 4","text":"围绕短时高频脚本执行中的热点路径，优先做轻量、可控、可审计的结构性优化。","textPreview":"围绕短时高频脚本执行中的热点路径，优先做轻量、可控、可审计的结构性优化。","textChars":36,"textLines":1,"bbox":[65.4,111.73,1040,42]}
+{"kind":"textbox","id":"sh/yx4ba1g7","slide":13,"name":"矩形 5","text":"分段稠密数组","textPreview":"分段稠密数组","textChars":6,"textLines":1,"bbox":[66,206,480,38]}
+{"kind":"textbox","id":"sh/jyds36xc","slide":13,"name":"矩形 6","text":"前 64K 槽位 inline，之后 4K 惰性分段；大索引转 sparse property。AgentBench 比 Boa 快 2.39x。","textPreview":"前 64K 槽位 inline，之后 4K 惰性分段；大索引转 sparse property。AgentBench 比 Boa 快 2.39x。","textChars":73,"textLines":1,"bbox":[66,255.87,480,98]}
+{"kind":"shape","id":"sh/wvmt8by1","slide":13,"name":"矩形 7","bbox":[56,376,470,2]}
+{"kind":"textbox","id":"sh/xwva1wfm","slide":13,"name":"矩形 8","text":"Descriptor 旁路表","textPreview":"Descriptor 旁路表","textChars":14,"textLines":1,"bbox":[650,206,500,38]}
+{"kind":"textbox","id":"sh/h0n2twva","slide":13,"name":"矩形 9","text":"普通元素只存 value，非默认 descriptor 进入旁路表；混合访问用例比 Boa 快 1.67x。","textPreview":"普通元素只存 value，非默认 descriptor 进入旁路表；混合访问用例比 Boa 快 1.67x。","textChars":54,"textLines":1,"bbox":[650,258,500,98]}
+{"kind":"shape","id":"sh/gzul0rup","slide":13,"name":"矩形 10","bbox":[640,376,490,2]}
+{"kind":"textbox","id":"sh/vylkrmd4","slide":13,"name":"矩形 11","text":"Free List 堆对象复用","textPreview":"Free List 堆对象复用","textChars":15,"textLines":1,"bbox":[66,404,480,38]}
+{"kind":"textbox","id":"sh/uxcjy1cj","slide":13,"name":"矩形 12","text":"GC 后复用 object、function、environment 等 arena slot，减少短任务重复分配压力。","textPreview":"GC 后复用 object、function、environment 等 arena slot，减少短任务重复分配压力。","textChars":60,"textLines":1,"bbox":[66,451.07,480,98]}
+{"kind":"shape","id":"sh/tw32pwve","slide":13,"name":"矩形 13","bbox":[56,574,470,3]}
+{"kind":"textbox","id":"sh/8vu1wrut","slide":13,"name":"矩形 14","text":"ASCII Fast Path","textPreview":"ASCII Fast Path","textChars":15,"textLines":1,"bbox":[650,404,500,38]}
+{"kind":"textbox","id":"sh/7ulknmd8","slide":13,"name":"矩形 15","text":"ASCII 字符串走 byte length / code unit 快速路径；string-base64 从 769.9ms 降至 273.0ms，提升 2.82x。","textPreview":"ASCII 字符串走 byte length / code unit 快速路径；string-base64 从 769.9ms 降至 273.0ms，提升 2.82x。","textChars":84,"textLines":1,"bbox":[650,451.07,500,98]}
+{"kind":"shape","id":"sh/6tcjuhcn","slide":13,"name":"矩形 16","bbox":[640,574,490,2]}
+{"kind":"textbox","id":"sh/lsj2lcv2","slide":13,"name":"矩形 17","text":"来源：report.md 10.4 数据结构与运行时优化","textPreview":"来源：report.md 10.4 数据结构与运行时优化","textChars":28,"textLines":1,"bbox":[66,668,760,22]}
+{"kind":"shape","id":"sh/kra1s7uh","slide":13,"name":"矩形 18","bbox":[1166,660,58,28]}
+{"kind":"textbox","id":"sh/wnyt4b6p","slide":13,"name":"矩形 19","text":"12","textPreview":"12","textChars":2,"textLines":1,"bbox":[1168,664,52,22]}
+{"kind":"notes","id":"nt/lsof7f","slide":13,"text":""}
+{"kind":"slide","id":"sl/xvrnlo","slide":14,"title":"当前风险与已交付内容","textShapes":10}
+{"kind":"textbox","id":"sh/8jqdsvm1","slide":14,"name":"矩形 1","text":"当前风险与已交付内容","textPreview":"当前风险与已交付内容","textChars":10,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"shape","id":"sh/ul8vu54r","slide":14,"name":"矩形 3","bbox":[57.87,130,1168,1]}
+{"kind":"textbox","id":"sh/v6hcnalc","slide":14,"name":"矩形 4","text":"当前最终材料和可复现实验保持一致：Native 与 Boa/QuickJS/Node 口径分开，Test262 与 benchmark 数据注明命令、环境和报告路径，写明未支持特性。","textPreview":"当前最终材料和可复现实验保持一致：Native 与 Boa/QuickJS/Node 口径分开，Test262 与 benchmark 数据注明命令、环境和报告路径，写明未支持特性。","textChars":91,"textLines":1,"bbox":[56,163.4,1117.2,86]}
+{"kind":"shape","id":"sh/g7qdwfmx","slide":14,"name":"矩形 5","bbox":[71.53,276.8,1089.49,81.53]}
+{"kind":"textbox","id":"sh/h8jupk3i","slide":14,"name":"矩形 6","text":"未支持范围","textPreview":"未支持范围","textChars":5,"textLines":1,"bbox":[110.8,297.4,280,32]}
+{"kind":"textbox","id":"sh/i9svyp43","slide":14,"name":"矩形 7","text":"Intl402 / Temporal 完整语义、复杂 RegExp、模块/async 宿主行为仍需边界说明。","textPreview":"Intl402 / Temporal 完整语义、复杂 RegExp、模块/async 宿主行为仍需边界说明。","textChars":54,"textLines":1,"bbox":[285.8,301.75,824.69,48]}
+{"kind":"shape","id":"sh/3a1cralo","slide":14,"name":"矩形 8","bbox":[71.53,399.03,1089.49,82.4]}
+{"kind":"textbox","id":"sh/belwnipc","slide":14,"name":"矩形 9","text":"性能差距","textPreview":"性能差距","textChars":4,"textLines":1,"bbox":[110.8,420.2,280,32]}
+{"kind":"textbox","id":"sh/adcvexor","slide":14,"name":"矩形 10","text":"字符串、正则、属性访问和函数调用仍是 SunSpider 热点，短期不承诺追平成熟引擎。","textPreview":"字符串、正则、属性访问和函数调用仍是 SunSpider 热点，短期不承诺追平成熟引擎。","textChars":44,"textLines":1,"bbox":[285.8,420.2,846.22,48]}
+{"kind":"shape","id":"sh/xg3eps7i","slide":14,"name":"矩形 11","bbox":[71.53,530.06,1089.49,85.2]}
+{"kind":"textbox","id":"sh/wfudgn6x","slide":14,"name":"矩形 12","text":"测试口径","textPreview":"测试口径","textChars":4,"textLines":1,"bbox":[110.8,551.4,280,32]}
+{"kind":"textbox","id":"sh/nalwjipg","slide":14,"name":"矩形 13","text":"Test262 是一致性主基准，配合 benchmark、差分测试和人工 code review 防止过拟合。","textPreview":"Test262 是一致性主基准，配合 benchmark、差分测试和人工 code review 防止过拟合。","textChars":55,"textLines":1,"bbox":[273.37,556.6,887.65,48]}
+{"kind":"textbox","id":"sh/m9cvqdov","slide":14,"name":"矩形 14","text":"13","textPreview":"13","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/tkzul036","slide":14,"name":"矩形 2","bbox":[41.18,638.93,640,1]}
+{"kind":"textbox","id":"sh/9c3els76","slide":14,"name":"矩形 15","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,656.93,650,28]}
+{"kind":"notes","id":"nt/xvrnlo","slide":14,"text":""}
+{"kind":"slide","id":"sl/ztux7j","slide":15,"title":"当前风险与已交付内容","textShapes":10}
+{"kind":"textbox","id":"sh/ze5w7qlg","slide":15,"name":"矩形 1","text":"当前风险与已交付内容","textPreview":"当前风险与已交付内容","textChars":10,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"shape","id":"sh/dcne5g3q","slide":15,"name":"矩形 3","bbox":[57.87,130,1168,1]}
+{"kind":"textbox","id":"sh/cbedcb25","slide":15,"name":"矩形 4","text":"当前最终材料和可复现实验保持一致：Native 与 Boa/QuickJS/Node 口径分开，Test262 与 benchmark 数据注明命令、环境和报告路径，写明未支持特性。","textPreview":"当前最终材料和可复现实验保持一致：Native 与 Boa/QuickJS/Node 口径分开，Test262 与 benchmark 数据注明命令、环境和报告路径，写明未支持特性。","textChars":91,"textLines":1,"bbox":[56,163.4,1117.2,86]}
+{"kind":"shape","id":"sh/ba5w3qlk","slide":15,"name":"矩形 5","bbox":[71.53,276.8,1089.49,81.53]}
+{"kind":"textbox","id":"sh/q9cvalkz","slide":15,"name":"矩形 6","text":"未支持范围","textPreview":"未支持范围","textChars":5,"textLines":1,"bbox":[110.8,297.4,280,32]}
+{"kind":"textbox","id":"sh/p83e1g3e","slide":15,"name":"矩形 7","text":"Intl402 / Temporal 完整语义、复杂 RegExp、模块/async 宿主行为仍需边界说明。","textPreview":"Intl402 / Temporal 完整语义、复杂 RegExp、模块/async 宿主行为仍需边界说明。","textChars":54,"textLines":1,"bbox":[285.8,301.75,824.69,48]}
+{"kind":"shape","id":"sh/o7ud8b2t","slide":15,"name":"矩形 8","bbox":[71.53,399.03,1089.49,82.4]}
+{"kind":"textbox","id":"sh/i14nytwz","slide":15,"name":"矩形 9","text":"性能差距","textPreview":"性能差距","textChars":4,"textLines":1,"bbox":[110.8,420.2,280,32]}
+{"kind":"textbox","id":"sh/j2d4rydk","slide":15,"name":"矩形 10","text":"字符串、正则、属性访问和函数调用仍是 SunSpider 热点，短期不承诺追平成熟引擎。","textPreview":"字符串、正则、属性访问和函数调用仍是 SunSpider 热点，短期不承诺追平成熟引擎。","textChars":44,"textLines":1,"bbox":[285.8,420.2,846.22,48]}
+{"kind":"shape","id":"sh/43m503e5","slide":15,"name":"矩形 11","bbox":[71.53,530.06,1089.49,85.2]}
+{"kind":"textbox","id":"sh/54fmt8vq","slide":15,"name":"矩形 12","text":"测试口径","textPreview":"测试口径","textChars":4,"textLines":1,"bbox":[110.8,551.4,280,32]}
+{"kind":"textbox","id":"sh/ud4nu9w3","slide":15,"name":"矩形 13","text":"Test262 是一致性主基准，配合 benchmark、差分测试和人工 code review 防止过拟合。","textPreview":"Test262 是一致性主基准，配合 benchmark、差分测试和人工 code review 防止过拟合。","textChars":55,"textLines":1,"bbox":[273.37,556.6,887.65,48]}
+{"kind":"textbox","id":"sh/ved4nedo","slide":15,"name":"矩形 14","text":"13","textPreview":"13","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/ydwvelkb","slide":15,"name":"矩形 2","bbox":[41.18,638.93,640,1]}
+{"kind":"textbox","id":"sh/wfm5wjet","slide":15,"name":"矩形 15","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,656.93,650,28]}
+{"kind":"notes","id":"nt/ztux7j","slide":15,"text":""}
+{"kind":"slide","id":"sl/3wzgn2","slide":16,"title":"AI 工具使用声明","textShapes":16}
+{"kind":"textbox","id":"sh/61432dgf","slide":16,"name":"矩形 1","text":"AI 工具使用声明","textPreview":"AI 工具使用声明","textChars":9,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"shape","id":"sh/4f2l03y9","slide":16,"name":"矩形 3","bbox":[56,118.07,1168,1]}
+{"kind":"textbox","id":"sh/5gvm98fu","slide":16,"name":"矩形 4","text":"本队在开发过程中合理使用 AI 工具辅助代码阅读、错误定位建议、测试脚本生成、报告整理和答辩材料初稿。\nAI 产出不直接替代最终判断；代码修改、测试结果和最终结论均以队员复核后的仓库 commit、测试输出和报告文件为准。","textPreview":"本队在开发过程中合理使用 AI 工具辅助代码阅读、错误定位建议、测试脚本生成、报告整理和答辩材料初稿。 | AI 产出不直接替代最终判断；代码修改、测试结果和最终结论均以队员复核后的仓库 commit、测试输出和报告文件为准。","textChars":111,"textLines":2,"bbox":[55.36,157.36,1137.27,104]}
+{"kind":"shape","id":"sh/idk3ydg3","slide":16,"name":"矩形 5","bbox":[66,423.83,1150,48]}
+{"kind":"shape","id":"sh/jet47ixo","slide":16,"name":"矩形 6","bbox":[66,471.83,1150,1]}
+{"kind":"textbox","id":"sh/ob65c7yd","slide":16,"name":"矩形 7","text":"工具 / 模型","textPreview":"工具 / 模型","textChars":7,"textLines":1,"bbox":[76,433.83,240,32]}
+{"kind":"textbox","id":"sh/pcfmlcfy","slide":16,"name":"矩形 8","text":"使用场景","textPreview":"使用场景","textChars":4,"textLines":1,"bbox":[336,433.83,280,32]}
+{"kind":"textbox","id":"sh/l4felwry","slide":16,"name":"矩形 9","text":"产出内容","textPreview":"产出内容","textChars":4,"textLines":1,"bbox":[636,433.83,320,32]}
+{"kind":"textbox","id":"sh/k36dcrqd","slide":16,"name":"矩形 10","text":"复核方式","textPreview":"复核方式","textChars":4,"textLines":1,"bbox":[976,433.83,230,32]}
+{"kind":"shape","id":"sh/j2xcjm9s","slide":16,"name":"矩形 11","bbox":[66,525.83,1150,1]}
+{"kind":"textbox","id":"sh/y1ovah87","slide":16,"name":"矩形 12","text":"OpenAI Codex / GPT-5","textPreview":"OpenAI Codex / GPT-5","textChars":20,"textLines":1,"bbox":[76,481.83,240,38]}
+{"kind":"textbox","id":"sh/x0fuhwrm","slide":16,"name":"矩形 13","text":"代码检索、测试分析、PPT 初稿","textPreview":"代码检索、测试分析、PPT 初稿","textChars":16,"textLines":1,"bbox":[336,481.83,280,38]}
+{"kind":"textbox","id":"sh/wzmd8rq1","slide":16,"name":"矩形 14","text":"修复建议、报告脚本、汇报结构","textPreview":"修复建议、报告脚本、汇报结构","textChars":14,"textLines":1,"bbox":[636,481.83,320,38]}
+{"kind":"textbox","id":"sh/bydcfm9w","slide":16,"name":"矩形 15","text":"队员阅读源码并运行测试","textPreview":"队员阅读源码并运行测试","textChars":11,"textLines":1,"bbox":[976,481.83,230,38]}
+{"kind":"shape","id":"sh/ax4v6h8b","slide":16,"name":"矩形 16","bbox":[66,583.83,1150,1]}
+{"kind":"textbox","id":"sh/hwzetgr6","slide":16,"name":"矩形 17","text":"VSCode / 本地编辑器","textPreview":"VSCode / 本地编辑器","textChars":14,"textLines":1,"bbox":[76,539.83,240,38]}
+{"kind":"textbox","id":"sh/gvqdkbql","slide":16,"name":"矩形 18","text":"人工实现与审阅","textPreview":"人工实现与审阅","textChars":7,"textLines":1,"bbox":[336,539.83,280,38]}
+{"kind":"textbox","id":"sh/0zyxgfyh","slide":16,"name":"矩形 19","text":"代码修改、文档整理、提交检查","textPreview":"代码修改、文档整理、提交检查","textChars":14,"textLines":1,"bbox":[636,539.83,320,38]}
+{"kind":"textbox","id":"sh/107ypkf2","slide":16,"name":"矩形 20","text":"git diff / test / review","textPreview":"git diff / test / review","textChars":24,"textLines":1,"bbox":[976,539.83,230,38]}
+{"kind":"textbox","id":"sh/sbexcfyl","slide":16,"name":"矩形 23","text":"14","textPreview":"14","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"shape","id":"sh/r2d4bix0","slide":16,"name":"矩形 2","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/edgfepgr","slide":16,"name":"矩形 21","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,655.64,650,28]}
+{"kind":"notes","id":"nt/3wzgn2","slide":16,"text":""}
+{"kind":"slide","id":"sl/e33a8j","slide":17,"title":"AI 工具成果与交互记录","textShapes":23}
+{"kind":"textbox","id":"sh/7ydo7m1o","slide":17,"name":"矩形 1","text":"AI 工具成果与交互记录","textPreview":"AI 工具成果与交互记录","textChars":12,"textLines":1,"bbox":[56,40,920,62]}
+{"kind":"shape","id":"sh/5wv65cjy","slide":17,"name":"矩形 3","bbox":[56,118,1168,1]}
+{"kind":"shape","id":"sh/kvmpc7id","slide":17,"name":"矩形 4","bbox":[63.86,171.87,1140,50]}
+{"kind":"shape","id":"sh/judo321s","slide":17,"name":"矩形 5","bbox":[63.86,221.87,1140,1]}
+{"kind":"textbox","id":"sh/i947ah07","slide":17,"name":"矩形 6","text":"使用场景","textPreview":"使用场景","textChars":4,"textLines":1,"bbox":[73.86,181.87,210,34]}
+{"kind":"textbox","id":"sh/pszqhgz2","slide":17,"name":"矩形 7","text":"AI 辅助成果","textPreview":"AI 辅助成果","textChars":7,"textLines":1,"bbox":[303.86,181.87,290,34]}
+{"kind":"textbox","id":"sh/4rqpobih","slide":17,"name":"矩形 8","text":"人工复核","textPreview":"人工复核","textChars":4,"textLines":1,"bbox":[613.86,181.87,270,34]}
+{"kind":"textbox","id":"sh/u1w7ipk7","slide":17,"name":"矩形 9","text":"记录留存","textPreview":"记录留存","textChars":4,"textLines":1,"bbox":[903.86,181.87,290,34]}
+{"kind":"shape","id":"sh/v2p8buls","slide":17,"name":"矩形 10","bbox":[63.86,306.93,1140,1]}
+{"kind":"textbox","id":"sh/w3ypkz2x","slide":17,"name":"矩形 11","text":"Test262 分析","textPreview":"Test262 分析","textChars":10,"textLines":1,"bbox":[72.26,242.47,210,54]}
+{"kind":"textbox","id":"sh/h47qd43i","slide":17,"name":"矩形 12","text":"失败分类、runner 继续执行策略、分目录 final 报告命令","textPreview":"失败分类、runner 继续执行策略、分目录 final 报告命令","textChars":33,"textLines":1,"bbox":[303.86,234.4,290,54]}
+{"kind":"textbox","id":"sh/mxw7epkv","slide":17,"name":"矩形 13","text":"重新运行 final 脚本并核对 JSON / md","textPreview":"重新运行 final 脚本并核对 JSON / md","textChars":26,"textLines":1,"bbox":[615.46,234.4,270,54]}
+{"kind":"textbox","id":"sh/ny587ulg","slide":17,"name":"矩形 14","text":"reports/test262-final/*","textPreview":"reports/test262-final/*","textChars":23,"textLines":1,"bbox":[903.86,244.2,290,54]}
+{"kind":"shape","id":"sh/8zepgf21","slide":17,"name":"矩形 15","bbox":[63.86,398,1140,1]}
+{"kind":"textbox","id":"sh/90nq9k3m","slide":17,"name":"矩形 16","text":"Benchmark 分析","textPreview":"Benchmark 分析","textChars":12,"textLines":1,"bbox":[73.86,336.07,210,54]}
+{"kind":"textbox","id":"sh/6t0rq9kf","slide":17,"name":"矩形 17","text":"SunSpider、Boa、QuickJS、Node 对比脚本和热点解释","textPreview":"SunSpider、Boa、QuickJS、Node 对比脚本和热点解释","textChars":36,"textLines":1,"bbox":[303.86,326.47,290,54]}
+{"kind":"textbox","id":"sh/ru98jelk","slide":17,"name":"矩形 18","text":"用 release binary 复跑并保存结果","textPreview":"用 release binary 复跑并保存结果","textChars":24,"textLines":1,"bbox":[613.86,326.47,270,54]}
+{"kind":"textbox","id":"sh/32hwvmx0","slide":17,"name":"矩形 19","text":"benchmarks/*/results/*","textPreview":"benchmarks/*/results/*","textChars":22,"textLines":1,"bbox":[903.86,334.93,290,54]}
+{"kind":"shape","id":"sh/218vmhwf","slide":17,"name":"矩形 20","bbox":[63.86,510.27,1140,1]}
+{"kind":"textbox","id":"sh/pozexcf6","slide":17,"name":"矩形 21","text":"代码修复建议","textPreview":"代码修复建议","textChars":6,"textLines":1,"bbox":[73.86,435,210,54]}
+{"kind":"textbox","id":"sh/43qdo7el","slide":17,"name":"矩形 22","text":"字符串快速路径、运行时错误处理、数组/RegExp 热点定位","textPreview":"字符串快速路径、运行时错误处理、数组/RegExp 热点定位","textChars":30,"textLines":1,"bbox":[303.86,414,290,54]}
+{"kind":"textbox","id":"sh/rq1wzmxw","slide":17,"name":"矩形 23","text":"队员实现、review、focused tests","textPreview":"队员实现、review、focused tests","textChars":25,"textLines":1,"bbox":[613.86,422.13,270,54]}
+{"kind":"textbox","id":"sh/qpsvqhwb","slide":17,"name":"矩形 24","text":"git commit / reports/.version-report/*","textPreview":"git commit / reports/.version-report/*","textChars":38,"textLines":1,"bbox":[903.86,422.6,290,54]}
+{"kind":"shape","id":"sh/dsje1wf2","slide":17,"name":"矩形 25","bbox":[63.86,601,1140,1]}
+{"kind":"textbox","id":"sh/craxsreh","slide":17,"name":"矩形 26","text":"文档与 PPT","textPreview":"文档与 PPT","textChars":7,"textLines":1,"bbox":[72,532.93,210,54]}
+{"kind":"textbox","id":"sh/zu1w36x8","slide":17,"name":"矩形 27","text":"README、提交报告框架、答辩 PPT 初稿","textPreview":"README、提交报告框架、答辩 PPT 初稿","textChars":23,"textLines":1,"bbox":[303.86,525.4,290,54]}
+{"kind":"textbox","id":"sh/etsfu1wn","slide":17,"name":"矩形 28","text":"队员真实分工与最终数据","textPreview":"队员真实分工与最终数据","textChars":11,"textLines":1,"bbox":[615.73,532.93,270,54]}
+{"kind":"textbox","id":"sh/wzudkbul","slide":17,"name":"矩形 29","text":"docs / thoughts / outputs","textPreview":"docs / thoughts / outputs","textChars":25,"textLines":1,"bbox":[907.6,532.93,290,54]}
+{"kind":"textbox","id":"sh/axcvi1cv","slide":17,"name":"矩形 31","text":"15","textPreview":"15","textChars":2,"textLines":1,"bbox":[1168,671.53,56,26]}
+{"kind":"shape","id":"sh/6x47eh03","slide":17,"name":"矩形 2","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/x03edgb6","slide":17,"name":"矩形 30","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,655.64,650,28]}
+{"kind":"notes","id":"nt/e33a8j","slide":17,"text":""}
+{"kind":"slide","id":"sl/qukax9","slide":18,"title":"15","textShapes":17}
+{"kind":"textbox","id":"sh/knaxk3u5","slide":18,"name":"矩形 14","text":"15","textPreview":"15","textChars":2,"textLines":1,"bbox":[1168,664,56,26]}
+{"kind":"textbox","id":"sh/zmhgbydk","slide":18,"name":"矩形 15","text":"敬请批评指正！","textPreview":"敬请批评指正！","textChars":7,"textLines":1,"bbox":[319.27,222.33,641.47,125.87]}
+{"kind":"textbox","id":"sh/o3uxwj2p","slide":18,"name":"矩形 19","text":"Agent","textPreview":"Agent","textChars":5,"textLines":1,"bbox":[215.53,376.53,140.47,55.8]}
+{"kind":"textbox","id":"sh/0veh432x","slide":18,"name":"文本框 27","text":"JS","textPreview":"JS","textChars":2,"textLines":1,"bbox":[335.87,365,71.87,74.2]}
+{"kind":"textbox","id":"sh/po3y5o3a","slide":18,"name":"矩形 20","text":"—— 基于 Rust 的轻量级 JavaScript 执行引擎","textPreview":"—— 基于 Rust 的轻量级 JavaScript 执行引擎","textChars":31,"textLines":1,"bbox":[403.09,383.47,610.33,42]}
+{"kind":"textbox","id":"sh/cjqxgju9","slide":18,"name":"矩形 18","text":"作品进展汇报 / CSCC 功能挑战赛道作品","textPreview":"作品进展汇报 / CSCC 功能挑战赛道作品","textChars":22,"textLines":1,"bbox":[56,48,523.27,28]}
+{"kind":"textbox","id":"sh/exsfq9kn","slide":18,"name":"矩形 25","text":"By Team PanicKing\t柴欣然 攸英茹 邓宇翔","textPreview":"By Team PanicKing\t柴欣然 攸英茹 邓宇翔","textChars":29,"textLines":1,"bbox":[425.33,439.2,384.07,28]}
+{"kind":"shape","id":"sh/lwnyx83i","slide":18,"name":"矩形 28","bbox":[0,0,1279.93,720.07]}
+{"kind":"textbox","id":"sh/vqp0325k","slide":18,"name":"矩形 29","text":"作品进展汇报 / CSCC 功能挑战赛道作品","textPreview":"作品进展汇报 / CSCC 功能挑战赛道作品","textChars":22,"textLines":1,"bbox":[66,56,520,34]}
+{"kind":"textbox","id":"sh/apgjuh4f","slide":18,"name":"矩形 30","text":"谢谢聆听","textPreview":"谢谢聆听","textChars":4,"textLines":1,"bbox":[161.2,168.73,520,90]}
+{"kind":"textbox","id":"sh/hsri5cnq","slide":18,"name":"矩形 31","text":"敬请批评指正","textPreview":"敬请批评指正","textChars":6,"textLines":1,"bbox":[161.2,283.4,560,64]}
+{"kind":"shape","id":"sh/wri1w7m5","slide":18,"name":"矩形 32","bbox":[827,162.93,381.4,381.93]}
+{"kind":"textbox","id":"sh/je907m5w","slide":18,"name":"矩形 33","text":"最后回顾","textPreview":"最后回顾","textChars":4,"textLines":1,"bbox":[851.67,180.33,320,42]}
+{"kind":"textbox","id":"sh/it0jyh4b","slide":18,"name":"矩形 34","text":"自研 Native Runtime，默认执行路径不依赖 Boa / QuickJS\n\nTest262 全量通过率 71.78%，超过 60% 赛题要求\n\nSunSpider 1.0.2 全部 26/26 正确通过\n\n面向短时高频脚本执行，保留可复现实验和报告链路","textPreview":"自研 Native Runtime，默认执行路径不依赖 Boa / QuickJS |  | Test262 全量通过率 71.78%，超过 60% 赛题要求 |  | SunSpider 1.0.2 全部 26/26 正确通过 |  | 面向短时高频脚本执行，保留可复现实...","textChars":131,"textLines":7,"bbox":[851.67,238.53,350,250]}
+{"kind":"shape","id":"sh/zi50vi5s","slide":18,"name":"矩形 37","bbox":[1166,660,58,28]}
+{"kind":"textbox","id":"sh/yxwzmx47","slide":18,"name":"矩形 38","text":"16","textPreview":"16","textChars":2,"textLines":1,"bbox":[1168,664,52,22]}
+{"kind":"textbox","id":"sh/6xofmh0f","slide":18,"name":"矩形 1","text":"Agent","textPreview":"Agent","textChars":5,"textLines":1,"bbox":[103.2,414.33,136.4,57]}
+{"kind":"textbox","id":"sh/7yxwfmh0","slide":18,"name":"文本框 27","text":"JS","textPreview":"JS","textChars":2,"textLines":1,"bbox":[224.2,401.47,71.73,74.2]}
+{"kind":"textbox","id":"sh/kv6xkri9","slide":18,"name":"矩形 3","text":"—— 基于 Rust 的轻量级 JavaScript 执行引擎","textPreview":"—— 基于 Rust 的轻量级 JavaScript 执行引擎","textChars":31,"textLines":1,"bbox":[161.23,480.93,610.33,42]}
+{"kind":"shape","id":"sh/lwfedczu","slide":18,"name":"矩形 4","bbox":[41.18,596.91,640,1]}
+{"kind":"textbox","id":"sh/yt4fih03","slide":18,"name":"矩形 5","text":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textPreview":"队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔","textChars":28,"textLines":1,"bbox":[41.18,618.38,650,28]}
+{"kind":"notes","id":"nt/qukax9","slide":18,"text":""}

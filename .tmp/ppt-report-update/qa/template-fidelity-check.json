@@ -1,0 +1,41 @@
+{
+  "status": "fail",
+  "checkedAt": "2026-08-11T18:43:50.073Z",
+  "workspace": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update",
+  "finalPptx": "D:\\00_OS\\CSCC\\presentation\\PPT-report-slide10-reflow.pptx",
+  "starterPptx": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-starter.pptx",
+  "mapPath": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-map.json",
+  "starterLayoutDir": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-starter-layout",
+  "finalLayoutDir": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-final-layout",
+  "editDir": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update",
+  "issueCount": 3,
+  "issues": [
+    {
+      "severity": "fail",
+      "id": "mask-cover-overlay",
+      "message": "Large new opaque shape appears to cover inherited template content.",
+      "slide": 10,
+      "finalLayout": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-final-layout\\final-slide-010.layout.json",
+      "starterLayout": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-starter-layout\\starter-slide-10.layout.json",
+      "inheritedText": "26/26"
+    },
+    {
+      "severity": "fail",
+      "id": "mask-cover-overlay",
+      "message": "Large new opaque shape appears to cover inherited template content.",
+      "slide": 10,
+      "finalLayout": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-final-layout\\final-slide-010.layout.json",
+      "starterLayout": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-starter-layout\\starter-slide-10.layout.json",
+      "inheritedText": "9 类"
+    },
+    {
+      "severity": "fail",
+      "id": "mask-cover-overlay",
+      "message": "Large new opaque shape appears to cover inherited template content.",
+      "slide": 10,
+      "finalLayout": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-final-layout\\final-slide-010.layout.json",
+      "starterLayout": "D:\\00_OS\\CSCC\\.tmp\\ppt-report-update\\slide10-reflow-starter-layout\\starter-slide-10.layout.json",
+      "inheritedText": "诊断"
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "outputSlides": [
+    {"outputSlide":1,"sourceSlide":1,"narrativeRole":"opening thesis","reuseMode":"duplicate-slide","editTargets":[{"sourceElementId":"sh/e94v2hon","action":"rewrite"}]},
+    {"outputSlide":2,"sourceSlide":2,"narrativeRole":"agenda","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":3,"sourceSlide":3,"narrativeRole":"positioning","reuseMode":"duplicate-slide","editTargets":[{"sourceElementId":"sh/pcjqtg36","action":"rewrite"}]},
+    {"outputSlide":4,"sourceSlide":4,"narrativeRole":"team","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":5,"sourceSlide":5,"narrativeRole":"progress","reuseMode":"duplicate-slide","editTargets":[{"sourceElementId":"sh/3i94r61s","action":"rewrite"}]},
+    {"outputSlide":6,"sourceSlide":6,"narrativeRole":"architecture","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":7,"sourceSlide":7,"narrativeRole":"workflow","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":8,"sourceSlide":8,"narrativeRole":"test262 evidence","reuseMode":"duplicate-slide","editTargets":[{"sourceElementIds":["sh/g72x4zyd","sh/tkby9kzm","sh/id0fu50z","sh/1k7edwv2","sh/w3ed8r6x","sh/m9sb2x4v","sh/8bat47ml","sh/9w3uds36","sh/72ho7upg"],"action":"rewrite"}]},
+    {"outputSlide":9,"sourceSlide":9,"narrativeRole":"test262 interpretation","reuseMode":"duplicate-slide","editTargets":[{"sourceElementIds":["sh/1cfmhgne","sh/mdonql4z","sh/bml0buxs","sh/98ji147e"],"action":"rewrite"}]},
+    {"outputSlide":10,"sourceSlide":10,"narrativeRole":"sunspider evidence","reuseMode":"duplicate-slide","editTargets":[{"sourceElementIds":["sh/cbu58j2h","sh/xwnupgvy","sh/wvetgbud","sh/jypcrqd4","sh/yxgbilcj","sh/1o3ahwvq","sh/0nut8rul","sh/cva9k7a9","sh/dwjqtcbu","sh/exsrmhsf","sh/zyl8vmt0","sh/u187adsv","sh/f2h8jitg","sh/bmpgrah8","sh/algfy50n","sh/xo7ytkzy"],"action":"rewrite"}]},
+    {"outputSlide":11,"sourceSlide":11,"narrativeRole":"jetstream evidence","reuseMode":"duplicate-slide","editTargets":[{"sourceElementIds":["sh/xcryxg7y","sh/wbih4b6d","sh/o7ih0r6h","sh/7650nq5s","sh/j2lgjq5w","sh/y1czalob","sh/p07ixkn6","sh/o7axk7m9","sh/98jedc3u","sh/eh8fex47","sh/ydcfq1kb","sh/jylwj6lw","sh/3qhsfypc","sh/5sjah872"],"action":"rewrite"}]},
+    {"outputSlide":12,"sourceSlide":12,"narrativeRole":"problems and fixes","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":13,"sourceSlide":13,"narrativeRole":"innovation native","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":14,"sourceSlide":14,"narrativeRole":"innovation host","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":15,"sourceSlide":15,"narrativeRole":"innovation benchmark","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":16,"sourceSlide":16,"narrativeRole":"performance synthesis","reuseMode":"duplicate-slide","editTargets":[{"sourceElementIds":["sh/ip4zel83","sh/e1sf65o3","sh/nqlg3a5k"],"action":"rewrite"}]},
+    {"outputSlide":17,"sourceSlide":17,"narrativeRole":"agentbench boundary","reuseMode":"duplicate-slide","editTargets":[{"sourceElementIds":["sh/jilcvq54","sh/pc7qhwn6","sh/gnepkr69"],"action":"rewrite"}]},
+    {"outputSlide":18,"sourceSlide":18,"narrativeRole":"ai declaration","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":19,"sourceSlide":19,"narrativeRole":"preserve-only appendix","reuseMode":"duplicate-slide","editTargets":[]},
+    {"outputSlide":20,"sourceSlide":20,"narrativeRole":"closing synthesis","reuseMode":"duplicate-slide","editTargets":[{"sourceElementId":"sh/mdwz2xcj","action":"rewrite"}]}
+  ],
+  "omittedSourceSlides": []
+}

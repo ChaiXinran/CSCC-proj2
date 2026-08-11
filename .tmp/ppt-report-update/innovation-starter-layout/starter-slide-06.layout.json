@@ -1,0 +1,1688 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/iq4ifw",
+    "id": "iq4ifw",
+    "slide": 6,
+    "layoutId": "/ppt/slideLayouts/slideLayout1.xml",
+    "layoutName": "Title Slide",
+    "layoutType": "title",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "ChatGPT",
+    "colors": {
+      "accent1": "#156082",
+      "accent2": "#E97132",
+      "accent3": "#196B24",
+      "accent4": "#0F9ED5",
+      "accent5": "#A02B93",
+      "accent6": "#4EA72E",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#0E2841",
+      "lt2": "#E8E8E8",
+      "hlink": "#467886",
+      "folHlink": "#96607D"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Calibri Light",
+        "eastAsianTypeface": "Calibri Light",
+        "complexScriptTypeface": "Calibri Light"
+      },
+      "minorFont": {
+        "latinTypeface": "微软雅黑",
+        "eastAsianTypeface": "微软雅黑",
+        "complexScriptTypeface": "微软雅黑"
+      }
+    },
+    "typefaces": [
+      "Calibri Light",
+      "微软雅黑"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout1.xml",
+      "name": "Title Slide",
+      "type": "title",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": []
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": []
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/jy9432d0",
+      "id": "2",
+      "name": "矩形 1",
+      "bbox": [
+        56,
+        40,
+        920,
+        62
+      ],
+      "geometry": "rect",
+      "text": "系统架构与 Native 执行链路",
+      "textPreview": "系统架构与 Native 执行链路",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "系统架构与 Native 执行链路"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "系统架构与 Native 执行链路",
+          "resolvedTextStyle": {
+            "fontSize": 38,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "系统架构与 Native 执行链路",
+              "fontSize": 38,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/yx03uxwf",
+      "id": "3",
+      "name": "矩形 2",
+      "bbox": [
+        56,
+        106,
+        980,
+        56
+      ],
+      "geometry": "rect",
+      "text": "默认路径为自研 Native Runtime；Boa 与 QuickJS 仅以外部进程作为行为和性能参照。",
+      "textPreview": "默认路径为自研 Native Runtime；Boa 与 QuickJS 仅以外部进程作为行为和性能参照。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "默认路径为自研 Native Runtime；Boa 与 QuickJS 仅以外部进程作为行为和性能参照。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "默认路径为自研 Native Runtime；Boa 与 QuickJS 仅以外部进程作为行为和性能参照。",
+          "resolvedTextStyle": {
+            "fontSize": 20,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "默认路径为自研 Native Runtime；Boa 与 QuickJS 仅以外部进程作为行为和性能参照。",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/xwrm1svu",
+      "id": "4",
+      "name": "矩形 3",
+      "bbox": [
+        56,
+        172,
+        1168,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/wbils7ep",
+      "id": "5",
+      "name": "矩形 4",
+      "bbox": [
+        60.75,
+        249.7,
+        142,
+        44
+      ],
+      "geometry": "rect",
+      "text": "source",
+      "textPreview": "source",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "source"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "source",
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "source",
+              "fontSize": 21,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ba94z2d4",
+      "id": "6",
+      "name": "矩形 5",
+      "bbox": [
+        70.75,
+        311.23,
+        122,
+        3
+      ],
+      "geometry": "rect",
+      "fillColor": "#FF6B35",
+      "lineWidth": 0
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/a903qxwj",
+      "id": "7",
+      "name": "矩形 6",
+      "bbox": [
+        192.75,
+        249.23,
+        28,
+        44
+      ],
+      "geometry": "rect",
+      "text": ">",
+      "textPreview": ">",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ">"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": ">",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#535963",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": ">",
+              "fontSize": 24,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/98rmxsvy",
+      "id": "8",
+      "name": "矩形 7",
+      "bbox": [
+        220.75,
+        249.23,
+        142,
+        44
+      ],
+      "geometry": "rect",
+      "text": "lexer",
+      "textPreview": "lexer",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "lexer"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "lexer",
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "lexer",
+              "fontSize": 21,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/o7iloned",
+      "id": "9",
+      "name": "矩形 8",
+      "bbox": [
+        230.75,
+        311.23,
+        122,
+        3
+      ],
+      "geometry": "rect",
+      "fillColor": "#1F6F8B",
+      "lineWidth": 0
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/61o3694z",
+      "id": "10",
+      "name": "矩形 9",
+      "bbox": [
+        352.75,
+        249.23,
+        28,
+        44
+      ],
+      "geometry": "rect",
+      "text": ">",
+      "textPreview": ">",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ">"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": ">",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#535963",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": ">",
+              "fontSize": 24,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/r2x4fe5k",
+      "id": "11",
+      "name": "矩形 10",
+      "bbox": [
+        380.75,
+        241.7,
+        142,
+        44
+      ],
+      "geometry": "rect",
+      "text": "parser / AST",
+      "textPreview": "parser / AST",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "parser /"
+          },
+          {
+            "index": 2,
+            "text": "AST"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "parser / AST",
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "parser / AST",
+              "fontSize": 21,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/s36l8jm5",
+      "id": "12",
+      "name": "矩形 11",
+      "bbox": [
+        390.75,
+        311.23,
+        122,
+        3
+      ],
+      "geometry": "rect",
+      "fillColor": "#1F6F8B",
+      "lineWidth": 0
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/t4fmh4nq",
+      "id": "13",
+      "name": "矩形 12",
+      "bbox": [
+        512.75,
+        249.23,
+        28,
+        44
+      ],
+      "geometry": "rect",
+      "text": ">",
+      "textPreview": ">",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ">"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": ">",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#535963",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": ">",
+              "fontSize": 24,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/id432p43",
+      "id": "14",
+      "name": "矩形 13",
+      "bbox": [
+        540.75,
+        249.23,
+        142,
+        44
+      ],
+      "geometry": "rect",
+      "text": "bytecode",
+      "textPreview": "bytecode",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "bytecode"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "bytecode",
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "bytecode",
+              "fontSize": 21,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/jyd4bu5o",
+      "id": "15",
+      "name": "矩形 14",
+      "bbox": [
+        550.75,
+        311.23,
+        122,
+        3
+      ],
+      "geometry": "rect",
+      "fillColor": "#1F6F8B",
+      "lineWidth": 0
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/kzml4zmt",
+      "id": "16",
+      "name": "矩形 15",
+      "bbox": [
+        672.75,
+        249.23,
+        28,
+        44
+      ],
+      "geometry": "rect",
+      "text": ">",
+      "textPreview": ">",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ">"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": ">",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#535963",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": ">",
+              "fontSize": 24,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/50vmd4ne",
+      "id": "17",
+      "name": "矩形 16",
+      "bbox": [
+        700.75,
+        249.23,
+        142,
+        44
+      ],
+      "geometry": "rect",
+      "text": "VM",
+      "textPreview": "VM",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "VM"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "VM",
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "VM",
+              "fontSize": 21,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 17,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/a9k3ypor",
+      "id": "18",
+      "name": "矩形 17",
+      "bbox": [
+        710.75,
+        311.23,
+        122,
+        3
+      ],
+      "geometry": "rect",
+      "fillColor": "#1F6F8B",
+      "lineWidth": 0
+    },
+    {
+      "order": 18,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/vadk7u5c",
+      "id": "19",
+      "name": "矩形 18",
+      "bbox": [
+        832.75,
+        249.23,
+        28,
+        44
+      ],
+      "geometry": "rect",
+      "text": ">",
+      "textPreview": ">",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ">"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": ">",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#535963",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": ">",
+              "fontSize": 24,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 19,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ze90fql4",
+      "id": "20",
+      "name": "矩形 19",
+      "bbox": [
+        860.75,
+        241.7,
+        142,
+        44
+      ],
+      "geometry": "rect",
+      "text": "runtime / builtins",
+      "textPreview": "runtime / builtins",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "runtime /"
+          },
+          {
+            "index": 2,
+            "text": "builtins"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "runtime / builtins",
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "runtime / builtins",
+              "fontSize": 21,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 20,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/yd0j6l4j",
+      "id": "21",
+      "name": "矩形 20",
+      "bbox": [
+        870.75,
+        311.23,
+        122,
+        3
+      ],
+      "geometry": "rect",
+      "fillColor": "#1F6F8B",
+      "lineWidth": 0
+    },
+    {
+      "order": 21,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/lgrihg3a",
+      "id": "22",
+      "name": "矩形 21",
+      "bbox": [
+        992.75,
+        249.23,
+        28,
+        44
+      ],
+      "geometry": "rect",
+      "text": ">",
+      "textPreview": ">",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": ">"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": ">",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#535963",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": ">",
+              "fontSize": 24,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 22,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0fi18v2p",
+      "id": "23",
+      "name": "矩形 22",
+      "bbox": [
+        1020.75,
+        249.23,
+        142,
+        44
+      ],
+      "geometry": "rect",
+      "text": "JsValue",
+      "textPreview": "JsValue",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "JsValue"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "JsValue",
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "JsValue",
+              "fontSize": 21,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 23,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/nit0jqlg",
+      "id": "24",
+      "name": "矩形 23",
+      "bbox": [
+        1030.75,
+        311.23,
+        122,
+        3
+      ],
+      "geometry": "rect",
+      "fillColor": "#FF6B35",
+      "lineWidth": 0
+    },
+    {
+      "order": 24,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/mh0jalkv",
+      "id": "25",
+      "name": "矩形 24",
+      "bbox": [
+        60.75,
+        381,
+        932,
+        197.39
+      ],
+      "geometry": "rect",
+      "text": "架构边界采用单向依赖：\n前端产生 AST，编译器生成 Chunk，VM 解释字节码\nruntime / builtins 访问对象模型、作用域、异常、堆对象和标准库能力\nbackend/native.rs 负责装配，不承载具体语义实现。",
+      "textPreview": "架构边界采用单向依赖： | 前端产生 AST，编译器生成 Chunk，VM 解释字节码 | runtime / builtins 访问对象模型、作用域、异常、堆对象和标准库能力 | backend/native.rs 负责装配，不承载具体语义实现。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 4,
+        "lines": [
+          {
+            "index": 1,
+            "text": "架构边界采用单向依赖："
+          },
+          {
+            "index": 2,
+            "text": "前端产生 AST，编译器生成 Chunk，VM 解释字节码"
+          },
+          {
+            "index": 3,
+            "text": "runtime / builtins 访问对象模型、作用域、异常、堆对象和标准库能力"
+          },
+          {
+            "index": 4,
+            "text": "backend/native.rs 负责装配，不承载具体语义实现。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "架构边界采用单向依赖：",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "架构边界采用单向依赖",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 2,
+              "text": "：",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 2,
+          "text": "前端产生 AST，编译器生成 Chunk，VM 解释字节码",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "前端产生",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 2,
+              "text": " ",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 3,
+              "text": "AST，编译器生成",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 4,
+              "text": " ",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 5,
+              "text": "Chunk，VM",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 6,
+              "text": " ",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 7,
+              "text": "解释字节码",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 3,
+          "text": "runtime / builtins 访问对象模型、作用域、异常、堆对象和标准库能力",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "runtime / ",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 2,
+              "text": "builtins",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 3,
+              "text": " ",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 4,
+              "text": "访问对象模型、作用域、异常、堆对象和标准库能力",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 4,
+          "text": "backend/native.rs 负责装配，不承载具体语义实现。",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "backend/native.rs ",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 2,
+              "text": "负责装配，不承载具体语义实现",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            },
+            {
+              "index": 3,
+              "text": "。",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 25,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/94bil036",
+      "id": "26",
+      "name": "矩形 25",
+      "bbox": [
+        941.75,
+        400.39,
+        253,
+        178
+      ],
+      "geometry": "rect",
+      "fillColor": "#F7F7F8",
+      "lineWidth": 0
+    },
+    {
+      "order": 26,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/8j21cv2l",
+      "id": "27",
+      "name": "矩形 26",
+      "bbox": [
+        988.75,
+        425.61,
+        206,
+        30
+      ],
+      "geometry": "rect",
+      "text": "非套壳说明",
+      "textPreview": "非套壳说明",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "非套壳说明"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "非套壳说明",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "非套壳说明",
+              "fontSize": 22,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 27,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/3mp076lw",
+      "id": "28",
+      "name": "矩形 27",
+      "bbox": [
+        970.15,
+        474,
+        204,
+        86
+      ],
+      "geometry": "rect",
+      "text": "Native 是唯一运行后端；Boa / QuickJS 只作外部参照，不静默回退。",
+      "textPreview": "Native 是唯一运行后端；Boa / QuickJS 只作外部参照，不静默回退。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 5,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Native"
+          },
+          {
+            "index": 2,
+            "text": "是唯一运行后端；Boa /"
+          },
+          {
+            "index": 3,
+            "text": "QuickJS"
+          },
+          {
+            "index": 4,
+            "text": "只作外部参照，不静默"
+          },
+          {
+            "index": 5,
+            "text": "回退。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Native 是唯一运行后端；Boa / QuickJS 只作外部参照，不静默回退。",
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Native 是唯一运行后端；Boa / QuickJS 只作外部参照，不静默回退。",
+              "fontSize": 17,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 28,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/2lgzy14b",
+      "id": "29",
+      "name": "矩形 28",
+      "bbox": [
+        1168,
+        664,
+        56,
+        26
+      ],
+      "geometry": "rect",
+      "text": "6",
+      "textPreview": "6",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "6"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "6",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963",
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "6",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 29,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/sfups3yx",
+      "id": "30",
+      "name": "矩形 29",
+      "bbox": [
+        41.18,
+        637.64,
+        640,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 30,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/tg36l8fi",
+      "id": "31",
+      "name": "矩形 30",
+      "bbox": [
+        41.18,
+        655.64,
+        650,
+        28
+      ],
+      "geometry": "rect",
+      "text": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+      "textPreview": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "队伍名：PanicKing成员：柴欣然 攸英茹 邓宇翔"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+          "resolvedTextStyle": {
+            "fontSize": 16,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "队伍",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 2,
+              "text": "名：",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 3,
+              "text": "PanicKing",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 4,
+              "text": "\t",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 5,
+              "text": "成员：柴欣然",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 6,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 7,
+              "text": "攸英茹",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 8,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 9,
+              "text": "邓宇翔",
+              "fontSize": 16,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    }
+  ],
+  "composeRuns": []
+}

@@ -1,0 +1,860 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/uoh7nu",
+    "id": "uoh7nu",
+    "slide": 12,
+    "layoutId": "/ppt/slideLayouts/slideLayout1.xml",
+    "layoutName": "Title Slide",
+    "layoutType": "title",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "ChatGPT",
+    "colors": {
+      "accent1": "#156082",
+      "accent2": "#E97132",
+      "accent3": "#196B24",
+      "accent4": "#0F9ED5",
+      "accent5": "#A02B93",
+      "accent6": "#4EA72E",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#0E2841",
+      "lt2": "#E8E8E8",
+      "hlink": "#467886",
+      "folHlink": "#96607D"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Calibri Light",
+        "eastAsianTypeface": "Calibri Light",
+        "complexScriptTypeface": "Calibri Light"
+      },
+      "minorFont": {
+        "latinTypeface": "微软雅黑",
+        "eastAsianTypeface": "微软雅黑",
+        "complexScriptTypeface": "微软雅黑"
+      }
+    },
+    "typefaces": [
+      "Calibri Light",
+      "微软雅黑"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout1.xml",
+      "name": "Title Slide",
+      "type": "title",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": []
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": []
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/5k3a54r6",
+      "id": "2",
+      "name": "矩形 1",
+      "bbox": [
+        56,
+        40,
+        920,
+        62
+      ],
+      "geometry": "rect",
+      "text": "代表性问题与已完成修复",
+      "textPreview": "代表性问题与已完成修复",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "代表性问题与已完成修复"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "代表性问题与已完成修复",
+          "resolvedTextStyle": {
+            "fontSize": 38,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "代表性问题与已完成修复",
+              "fontSize": 38,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/vu1sza94",
+      "id": "4",
+      "name": "矩形 3",
+      "bbox": [
+        56,
+        133.2,
+        1168,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/atsrq5sj",
+      "id": "5",
+      "name": "矩形 4",
+      "bbox": [
+        56,
+        174.8,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "跨层语义约束",
+      "textPreview": "跨层语义约束",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "跨层语义约束"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "跨层语义约束",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "跨层语义约束",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/xwja1kra",
+      "id": "6",
+      "name": "矩形 5",
+      "bbox": [
+        56,
+        222.8,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "Parser、Compiler 与 VM 必须共享栈效果、跳转目标、异常区间和环境深度约束。",
+      "textPreview": "Parser、Compiler 与 VM 必须共享栈效果、跳转目标、异常区间和环境深度约束。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Parser、Compiler 与 VM"
+          },
+          {
+            "index": 2,
+            "text": "必须共享栈效果、跳转目标、异常区间和"
+          },
+          {
+            "index": 3,
+            "text": "环境深度约束。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Parser、Compiler 与 VM 必须共享栈效果、跳转目标、异常区间和环境深度约束。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Parser、Compiler 与 VM 必须共享栈效果、跳转目标、异常区间和环境深度约束。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/wva9sfap",
+      "id": "7",
+      "name": "矩形 6",
+      "bbox": [
+        56,
+        342.87,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/nqhsva98",
+      "id": "8",
+      "name": "矩形 7",
+      "bbox": [
+        641,
+        174.8,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "扫描证据闭环",
+      "textPreview": "扫描证据闭环",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "扫描证据闭环"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "扫描证据闭环",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "扫描证据闭环",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/mp8rm5sn",
+      "id": "9",
+      "name": "矩形 8",
+      "bbox": [
+        641,
+        222.8,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "结果包同步保存 commit、suite revision、命令、环境与二进制 SHA-256。",
+      "textPreview": "结果包同步保存 commit、suite revision、命令、环境与二进制 SHA-256。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "结果包同步保存 commit、suite"
+          },
+          {
+            "index": 2,
+            "text": "revision、命令、环境与二进制"
+          },
+          {
+            "index": 3,
+            "text": "SHA-256。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "结果包同步保存 commit、suite revision、命令、环境与二进制 SHA-256。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "结果包同步保存 commit、suite revision、命令、环境与二进制 SHA-256。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/wfex4rep",
+      "id": "10",
+      "name": "矩形 9",
+      "bbox": [
+        640,
+        344.87,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "accent2",
+      "lineWidth": 0
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/hgnedwfa",
+      "id": "11",
+      "name": "矩形 10",
+      "bbox": [
+        56,
+        380.93,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "统计含义分离",
+      "textPreview": "统计含义分离",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "统计含义分离"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "统计含义分离",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "统计含义分离",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/utwf21wz",
+      "id": "12",
+      "name": "矩形 11",
+      "bbox": [
+        56,
+        428.93,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "cold 与 batch 分开解释；当前 batch 不是持久 Runtime，也不是脚本缓存消融。",
+      "textPreview": "cold 与 batch 分开解释；当前 batch 不是持久 Runtime，也不是脚本缓存消融。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "cold 与 batch 分开解释；当前 batch"
+          },
+          {
+            "index": 2,
+            "text": "不是持久"
+          },
+          {
+            "index": 3,
+            "text": "Runtime，也不是脚本缓存消融。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "cold 与 batch 分开解释；当前 batch 不是持久 Runtime，也不是脚本缓存消融。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "cold 与 batch 分开解释；当前 batch 不是持久 Runtime，也不是脚本缓存消融。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ve5wbmxk",
+      "id": "13",
+      "name": "矩形 12",
+      "bbox": [
+        50.33,
+        556.6,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "#FF6B35",
+      "lineWidth": 0
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/8rex0ret",
+      "id": "14",
+      "name": "矩形 13",
+      "bbox": [
+        641,
+        380.93,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "Host 双重校验",
+      "textPreview": "Host 双重校验",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Host 双重校验"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Host 双重校验",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Host 双重校验",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/9sne9wfe",
+      "id": "15",
+      "name": "矩形 14",
+      "bbox": [
+        641,
+        428.93,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "Python 编排器先筛脚本，Native Host 再校验 RenderTree 类型、深度、循环与字节数。",
+      "textPreview": "Python 编排器先筛脚本，Native Host 再校验 RenderTree 类型、深度、循环与字节数。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Python 编排器先筛脚本，Native Host"
+          },
+          {
+            "index": 2,
+            "text": "再校验 RenderTree"
+          },
+          {
+            "index": 3,
+            "text": "类型、深度、循环与字节数。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Python 编排器先筛脚本，Native Host 再校验 RenderTree 类型、深度、循环与字节数。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Python 编排器先筛脚本，Native Host 再校验 RenderTree 类型、深度、循环与字节数。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/mpcfyhwn",
+      "id": "16",
+      "name": "矩形 15",
+      "bbox": [
+        640,
+        554.6,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/7q5w7mx8",
+      "id": "17",
+      "name": "矩形 16",
+      "bbox": [
+        56,
+        664,
+        920,
+        26
+      ],
+      "geometry": "rect",
+      "text": "来源：最终实验报告第五章“现象 → 根因 → 解决思路 → 证据边界”",
+      "textPreview": "来源：最终实验报告第五章“现象 → 根因 → 解决思路 → 证据边界”",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "来源：最终实验报告第五章“现象 → 根因 → 解决思路 → 证据边界”"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "来源：最终实验报告第五章“现象 → 根因 → 解决思路 → 证据边界”",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "来源：最终实验报告第五章“现象 → 根因 → 解决思路 → 证据边界”",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/snyxcbex",
+      "id": "18",
+      "name": "矩形 17",
+      "bbox": [
+        1168,
+        664,
+        56,
+        26
+      ],
+      "geometry": "rect",
+      "text": "12",
+      "textPreview": "12",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "12"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "12",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963",
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "12",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    }
+  ],
+  "composeRuns": []
+}

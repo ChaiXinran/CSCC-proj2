@@ -1,0 +1,860 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/1o0kdi",
+    "id": "1o0kdi",
+    "slide": 11,
+    "layoutId": "/ppt/slideLayouts/slideLayout1.xml",
+    "layoutName": "Title Slide",
+    "layoutType": "title",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "ChatGPT",
+    "colors": {
+      "accent1": "#156082",
+      "accent2": "#E97132",
+      "accent3": "#196B24",
+      "accent4": "#0F9ED5",
+      "accent5": "#A02B93",
+      "accent6": "#4EA72E",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#0E2841",
+      "lt2": "#E8E8E8",
+      "hlink": "#467886",
+      "folHlink": "#96607D"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Calibri Light",
+        "eastAsianTypeface": "Calibri Light",
+        "complexScriptTypeface": "Calibri Light"
+      },
+      "minorFont": {
+        "latinTypeface": "微软雅黑",
+        "eastAsianTypeface": "微软雅黑",
+        "complexScriptTypeface": "微软雅黑"
+      }
+    },
+    "typefaces": [
+      "Calibri Light",
+      "微软雅黑"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout1.xml",
+      "name": "Title Slide",
+      "type": "title",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": []
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": []
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/32xszehc",
+      "id": "2",
+      "name": "矩形 1",
+      "bbox": [
+        56,
+        40,
+        920,
+        62
+      ],
+      "geometry": "rect",
+      "text": "代表性问题与已完成修复",
+      "textPreview": "代表性问题与已完成修复",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "代表性问题与已完成修复"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "代表性问题与已完成修复",
+          "resolvedTextStyle": {
+            "fontSize": 38,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "代表性问题与已完成修复",
+              "fontSize": 38,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/d8fa5oze",
+      "id": "4",
+      "name": "矩形 3",
+      "bbox": [
+        56,
+        133.2,
+        1168,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/c769cjyt",
+      "id": "5",
+      "name": "矩形 4",
+      "bbox": [
+        56,
+        174.8,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "Runner 稳定性",
+      "textPreview": "Runner 稳定性",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Runner 稳定性"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Runner 稳定性",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Runner 稳定性",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/r6xs3eh8",
+      "id": "6",
+      "name": "矩形 5",
+      "bbox": [
+        56,
+        222.8,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "Test262 runner 增加运行时错误跳过/记录能力，避免单个崩溃中断整批测试。",
+      "textPreview": "Test262 runner 增加运行时错误跳过/记录能力，避免单个崩溃中断整批测试。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Test262 runner"
+          },
+          {
+            "index": 2,
+            "text": "增加运行时错误跳过/记录能力，避免单"
+          },
+          {
+            "index": 3,
+            "text": "个崩溃中断整批测试。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Test262 runner 增加运行时错误跳过/记录能力，避免单个崩溃中断整批测试。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Test262 runner 增加运行时错误跳过/记录能力，避免单个崩溃中断整批测试。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/q5ora9gn",
+      "id": "7",
+      "name": "矩形 6",
+      "bbox": [
+        56,
+        342.87,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/1wza98za",
+      "id": "8",
+      "name": "矩形 7",
+      "bbox": [
+        641,
+        174.8,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "SunSpider 正确性",
+      "textPreview": "SunSpider 正确性",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "SunSpider 正确性"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "SunSpider 正确性",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "SunSpider 正确性",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0vq903yp",
+      "id": "9",
+      "name": "矩形 8",
+      "bbox": [
+        641,
+        222.8,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "修复 date-format-tofte、3d-raytrace 等 benchmark 可运行性问题，最终 26/26 通过。",
+      "textPreview": "修复 date-format-tofte、3d-raytrace 等 benchmark 可运行性问题，最终 26/26 通过。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "修复 date-format-tofte、3d-raytrace"
+          },
+          {
+            "index": 2,
+            "text": "等 benchmark 可运行性问题，最终"
+          },
+          {
+            "index": 3,
+            "text": "26/26 通过。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "修复 date-format-tofte、3d-raytrace 等 benchmark 可运行性问题，最终 26/26 通过。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "修复 date-format-tofte、3d-raytrace 等 benchmark 可运行性问题，最终 26/26 通过。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/21ozi14f",
+      "id": "10",
+      "name": "矩形 9",
+      "bbox": [
+        640,
+        344.87,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "accent2",
+      "lineWidth": 0
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/32xgb6l0",
+      "id": "11",
+      "name": "矩形 10",
+      "bbox": [
+        56,
+        380.93,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "字符串性能",
+      "textPreview": "字符串性能",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "字符串性能"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "字符串性能",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "字符串性能",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/436hkbml",
+      "id": "12",
+      "name": "矩形 11",
+      "bbox": [
+        56,
+        428.93,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "增加 ASCII fast path、replace 无 `$` 快速路径、预分配字符串拼接，降低 tagcloud / validate-input 等耗时。",
+      "textPreview": "增加 ASCII fast path、replace 无 `$` 快速路径、预分配字符串拼接，降低 tagcloud / validate-input 等耗时。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "增加 ASCII fast path、replace 无 `$`"
+          },
+          {
+            "index": 2,
+            "text": "快速路径、预分配字符串拼接，降低"
+          },
+          {
+            "index": 3,
+            "text": "tagcloud / validate-input 等耗时。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "增加 ASCII fast path、replace 无 `$` 快速路径、预分配字符串拼接，降低 tagcloud / validate-input 等耗时。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "增加 ASCII fast path、replace 无 `$` 快速路径、预分配字符串拼接，降低 tagcloud / validate-input 等耗时。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/p4fydg36",
+      "id": "13",
+      "name": "矩形 12",
+      "bbox": [
+        50.33,
+        556.6,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "#FF6B35",
+      "lineWidth": 0
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/q5ozm14r",
+      "id": "14",
+      "name": "矩形 13",
+      "bbox": [
+        641,
+        380.93,
+        460,
+        36
+      ],
+      "geometry": "rect",
+      "text": "执行路径开销",
+      "textPreview": "执行路径开销",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "执行路径开销"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "执行路径开销",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "执行路径开销",
+              "fontSize": 26.67,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/r6xgf6lc",
+      "id": "15",
+      "name": "矩形 14",
+      "bbox": [
+        641,
+        428.93,
+        500,
+        78
+      ],
+      "geometry": "rect",
+      "text": "lazy arguments object、Array.sort merge sort、部分 RegExp literal replacement 快速路径。",
+      "textPreview": "lazy arguments object、Array.sort merge sort、部分 RegExp literal replacement 快速路径。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 3,
+        "lines": [
+          {
+            "index": 1,
+            "text": "lazy arguments object、Array.sort"
+          },
+          {
+            "index": 2,
+            "text": "merge sort、部分 RegExp literal"
+          },
+          {
+            "index": 3,
+            "text": "replacement 快速路径。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "lazy arguments object、Array.sort merge sort、部分 RegExp literal replacement 快速路径。",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "lazy arguments object、Array.sort merge sort、部分 RegExp literal replacement 快速路径。",
+              "fontSize": 26.67,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/c7qhobmx",
+      "id": "16",
+      "name": "矩形 15",
+      "bbox": [
+        640,
+        554.6,
+        480,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/dszyhg3i",
+      "id": "17",
+      "name": "矩形 16",
+      "bbox": [
+        56,
+        664,
+        920,
+        26
+      ],
+      "geometry": "rect",
+      "text": "来源：reports/test262-final/*、benchmarks/sunspider/results/*、近期修复记录",
+      "textPreview": "来源：reports/test262-final/*、benchmarks/sunspider/results/*、近期修复记录",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "来源：reports/test262-final/*、benchmarks/sunspider/results/*、近期修复记录"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "来源：reports/test262-final/*、benchmarks/sunspider/results/*、近期修复记录",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "来源：reports/test262-final/*、benchmarks/sunspider/results/*、近期修复记录",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/694fah4n",
+      "id": "18",
+      "name": "矩形 17",
+      "bbox": [
+        1168,
+        664,
+        56,
+        26
+      ],
+      "geometry": "rect",
+      "text": "11",
+      "textPreview": "11",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "11"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "11",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963",
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "11",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    }
+  ],
+  "composeRuns": []
+}

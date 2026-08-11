@@ -1,0 +1,1166 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/952ftu",
+    "id": "952ftu",
+    "slide": 9,
+    "layoutId": "/ppt/slideLayouts/slideLayout1.xml",
+    "layoutName": "Title Slide",
+    "layoutType": "title",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "ChatGPT",
+    "colors": {
+      "accent1": "#156082",
+      "accent2": "#E97132",
+      "accent3": "#196B24",
+      "accent4": "#0F9ED5",
+      "accent5": "#A02B93",
+      "accent6": "#4EA72E",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#0E2841",
+      "lt2": "#E8E8E8",
+      "hlink": "#467886",
+      "folHlink": "#96607D"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Calibri Light",
+        "eastAsianTypeface": "Calibri Light",
+        "complexScriptTypeface": "Calibri Light"
+      },
+      "minorFont": {
+        "latinTypeface": "微软雅黑",
+        "eastAsianTypeface": "微软雅黑",
+        "complexScriptTypeface": "微软雅黑"
+      }
+    },
+    "typefaces": [
+      "Calibri Light",
+      "微软雅黑"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout1.xml",
+      "name": "Title Slide",
+      "type": "title",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": []
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": []
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ih0fehcr",
+      "id": "2",
+      "name": "矩形 1",
+      "bbox": [
+        56,
+        40,
+        920,
+        62
+      ],
+      "geometry": "rect",
+      "text": "Test262：从 26.29% 到 90.97%",
+      "textPreview": "Test262：从 26.29% 到 90.97%",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Test262：从 26.29% 到 90.97%"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Test262：从 26.29% 到 90.97%",
+          "resolvedTextStyle": {
+            "fontSize": 38,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Test262：从 26.29% 到 90.97%",
+              "fontSize": 38,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/3itg7mtw",
+      "id": "3",
+      "name": "矩形 2",
+      "bbox": [
+        56,
+        106,
+        980,
+        56
+      ],
+      "geometry": "rect",
+      "text": "归档结果表明通过率超过赛题门槛；由于缺少完整运行元数据，本页不把历史结果绑定到当前源码。",
+      "textPreview": "归档结果表明通过率超过赛题门槛；由于缺少完整运行元数据，本页不把历史结果绑定到当前源码。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "归档结果表明通过率超过赛题门槛；由于缺少完整运行元数据，本页不把历史结果绑定到当前源码。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "归档结果表明通过率超过赛题门槛；由于缺少完整运行元数据，本页不把历史结果绑定到当前源码。",
+          "resolvedTextStyle": {
+            "fontSize": 20,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "归档结果表明通过率超过赛题门槛；由于缺少完整运行元数据，本页不把历史结果绑定到当前源码。",
+              "fontSize": 20,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/sn2hkbut",
+      "id": "4",
+      "name": "矩形 3",
+      "bbox": [
+        56,
+        172,
+        1168,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/dobydgbe",
+      "id": "5",
+      "name": "矩形 4",
+      "bbox": [
+        54.59,
+        213,
+        760,
+        222.93
+      ],
+      "geometry": "rect",
+      "text": "从 26.29% baseline 提升到 90.97%，累计增加 64.68 个百分点，并超过 60% 赛题门槛 30.97 个百分点。\n\n最终汇总：通过 48,557 / 总计 53,379；失败 4,820，跳过 2。失败与跳过均不计通过。",
+      "textPreview": "从 26.29% baseline 提升到 90.97%，累计增加 64.68 个百分点，并超过 60% 赛题门槛 30.97 个百分点。 |  | 最终汇总：通过 48,557 / 总计 53,379；失败 4,820，跳过 2。失败与跳过均不计通过。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 5,
+        "lines": [
+          {
+            "index": 1,
+            "text": "从 26.29% baseline 提升到 90.97%，累计增加 64.68"
+          },
+          {
+            "index": 2,
+            "text": "个百分点，并超过 60% 赛题门槛 30.97 个百分点。"
+          },
+          {
+            "index": 3,
+            "text": ""
+          },
+          {
+            "index": 4,
+            "text": "最终汇总：通过 48,557 / 总计 53,379；失败 4,820，跳过"
+          },
+          {
+            "index": 5,
+            "text": "2。失败与跳过均不计通过。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "从 26.29% baseline 提升到 90.97%，累计增加 64.68 个百分点，并超过 60% 赛题门槛 30.97 个百分点。",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "从 26.29% baseline 提升到 90.97%，累计增加 64.68 个百分点，并超过 60% 赛题门槛 30.97 个百分点。",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 3,
+          "text": "最终汇总：通过 48,557 / 总计 53,379；失败 4,820，跳过 2。失败与跳过均不计通过。",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 21,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "最终汇总：通过 48,557 / 总计 53,379；失败 4,820，跳过 2。失败与跳过均不计通过。",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/qlkzi1cn",
+      "id": "6",
+      "name": "矩形 5",
+      "bbox": [
+        53.09,
+        459.93,
+        280,
+        28
+      ],
+      "geometry": "rect",
+      "text": "早期全量 baseline",
+      "textPreview": "早期全量 baseline",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "早期全量 baseline"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "早期全量 baseline",
+          "resolvedTextStyle": {
+            "fontSize": 18,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "早期全量 baseline",
+              "fontSize": 18,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/rmtgb6t8",
+      "id": "7",
+      "name": "矩形 6",
+      "bbox": [
+        353.09,
+        464.93,
+        430,
+        18
+      ],
+      "geometry": "rect",
+      "fillColor": "#E7E9EC",
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/8rix87u9",
+      "id": "8",
+      "name": "矩形 7",
+      "bbox": [
+        353.09,
+        464.93,
+        141.31,
+        18
+      ],
+      "geometry": "rect",
+      "fillColor": "#1F6F8B",
+      "lineWidth": 0
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/tsry1cbu",
+      "id": "9",
+      "name": "矩形 8",
+      "bbox": [
+        797.09,
+        458.93,
+        81.27,
+        28
+      ],
+      "geometry": "rect",
+      "text": "26.29%",
+      "textPreview": "26.29%",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "26.29%"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "26.29%",
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "26.29%",
+              "fontSize": 17,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/d4fm1wvq",
+      "id": "10",
+      "name": "矩形 9",
+      "bbox": [
+        53.09,
+        511.93,
+        280,
+        28
+      ],
+      "geometry": "rect",
+      "text": "赛题兼容性门槛",
+      "textPreview": "赛题兼容性门槛",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "赛题兼容性门槛"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "赛题兼容性门槛",
+          "resolvedTextStyle": {
+            "fontSize": 18,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "赛题兼容性门槛",
+              "fontSize": 18,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/c365srul",
+      "id": "11",
+      "name": "矩形 10",
+      "bbox": [
+        353.09,
+        516.93,
+        430,
+        18
+      ],
+      "geometry": "rect",
+      "fillColor": "#E7E9EC",
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/b2x4zmd0",
+      "id": "12",
+      "name": "矩形 11",
+      "bbox": [
+        353.09,
+        516.93,
+        357.17,
+        18
+      ],
+      "geometry": "rect",
+      "fillColor": "#1F6F8B",
+      "lineWidth": 0
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/q1o3qhcf",
+      "id": "13",
+      "name": "矩形 12",
+      "bbox": [
+        797.09,
+        510.93,
+        79.67,
+        28
+      ],
+      "geometry": "rect",
+      "text": "60.00%",
+      "textPreview": "60.00%",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "60.00%"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "60.00%",
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "60.00%",
+              "fontSize": 17,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/l8zm5wv2",
+      "id": "14",
+      "name": "矩形 13",
+      "bbox": [
+        53.09,
+        563.93,
+        280,
+        28
+      ],
+      "geometry": "rect",
+      "text": "最新归档全量汇总",
+      "textPreview": "最新归档全量汇总",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "最新归档全量汇总"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "最新归档全量汇总",
+          "resolvedTextStyle": {
+            "fontSize": 18,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "最新归档全量汇总",
+              "fontSize": 18,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/0765wruh",
+      "id": "15",
+      "name": "矩形 14",
+      "bbox": [
+        353.09,
+        568.93,
+        430,
+        18
+      ],
+      "geometry": "rect",
+      "fillColor": "#E7E9EC",
+      "lineWidth": 0
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/z6x436dw",
+      "id": "16",
+      "name": "矩形 15",
+      "bbox": [
+        353.09,
+        568.93,
+        385.82,
+        18
+      ],
+      "geometry": "rect",
+      "fillColor": "#FF6B35",
+      "lineWidth": 0
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/y5onu1cb",
+      "id": "17",
+      "name": "矩形 16",
+      "bbox": [
+        797.09,
+        562.93,
+        81.27,
+        28
+      ],
+      "geometry": "rect",
+      "text": "90.97%",
+      "textPreview": "90.97%",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "90.97%"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "90.97%",
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#BF4A22"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "90.97%",
+              "fontSize": 17,
+              "color": "#BF4A22"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 17,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/9wzm9gvy",
+      "id": "18",
+      "name": "矩形 17",
+      "bbox": [
+        912.13,
+        254.67,
+        276.53,
+        301.4
+      ],
+      "geometry": "rect",
+      "fillColor": "#F7F7F8",
+      "lineWidth": 0
+    },
+    {
+      "order": 18,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/8vq50bud",
+      "id": "19",
+      "name": "矩形 18",
+      "bbox": [
+        934.51,
+        278.95,
+        190,
+        34
+      ],
+      "geometry": "rect",
+      "text": "证据边界",
+      "textPreview": "证据边界",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "证据边界"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "证据边界",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "证据边界",
+              "fontSize": 32,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 19,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/srixcj61",
+      "id": "20",
+      "name": "矩形 19",
+      "bbox": [
+        934.53,
+        332.2,
+        246.2,
+        255
+      ],
+      "geometry": "rect",
+      "text": "可以证明\n• 90.97% > 60%\n• 失败/跳过未计通过\n\n不能证明\n• 对应当前 HEAD\n• 完整复现实验环境",
+      "textPreview": "可以证明 | • 90.97% > 60% | • 失败/跳过未计通过 |  | 不能证明 | • 对应当前 HEAD | • 完整复现实验环境",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 7,
+        "lines": [
+          {
+            "index": 1,
+            "text": "可以证明"
+          },
+          {
+            "index": 2,
+            "text": "• 90.97% > 60%"
+          },
+          {
+            "index": 3,
+            "text": "• 失败/跳过未计通过"
+          },
+          {
+            "index": 4,
+            "text": ""
+          },
+          {
+            "index": 5,
+            "text": "不能证明"
+          },
+          {
+            "index": 6,
+            "text": "• 对应当前 HEAD"
+          },
+          {
+            "index": 7,
+            "text": "• 完整复现实验环境"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "可以证明",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "可以证明",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 2,
+          "text": "• 90.97% > 60%",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "• 90.97% > 60%",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 3,
+          "text": "• 失败/跳过未计通过",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "• 失败/跳过未计通过",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 5,
+          "text": "不能证明",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "不能证明",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 6,
+          "text": "• 对应当前 HEAD",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "• 对应当前 HEAD",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 7,
+          "text": "• 完整复现实验环境",
+          "lineSpacingPercent": 150000,
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "• 完整复现实验环境",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 20,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/tcrylonm",
+      "id": "21",
+      "name": "矩形 20",
+      "bbox": [
+        56,
+        664,
+        920,
+        26
+      ],
+      "geometry": "rect",
+      "text": "来源：实验报告 4.3–4.4、Test262 全量汇总 JSON；历史批次缺少完整运行元数据",
+      "textPreview": "来源：实验报告 4.3–4.4、Test262 全量汇总 JSON；历史批次缺少完整运行元数据",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "来源：实验报告 4.3–4.4、Test262 全量汇总 JSON；历史批次缺少完整运行元数据"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "来源：实验报告 4.3–4.4、Test262 全量汇总 JSON；历史批次缺少完整运行元数据",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "来源：实验报告 4.3–4.4、Test262 全量汇总 JSON；历史批次缺少完整运行元数据",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 21,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/6p0fa9ov",
+      "id": "22",
+      "name": "矩形 21",
+      "bbox": [
+        1168,
+        664,
+        56,
+        26
+      ],
+      "geometry": "rect",
+      "text": "9",
+      "textPreview": "9",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "9"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "9",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963",
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "9",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 22,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/rq9gje5g",
+      "id": "23",
+      "name": "矩形 22",
+      "bbox": [
+        41.18,
+        649.88,
+        640,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    }
+  ],
+  "composeRuns": []
+}

@@ -1,0 +1,1546 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/qpcrwi",
+    "id": "qpcrwi",
+    "slide": 20,
+    "layoutId": "/ppt/slideLayouts/slideLayout1.xml",
+    "layoutName": "Title Slide",
+    "layoutType": "title",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "ChatGPT",
+    "colors": {
+      "accent1": "#156082",
+      "accent2": "#E97132",
+      "accent3": "#196B24",
+      "accent4": "#0F9ED5",
+      "accent5": "#A02B93",
+      "accent6": "#4EA72E",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#0E2841",
+      "lt2": "#E8E8E8",
+      "hlink": "#467886",
+      "folHlink": "#96607D"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Calibri Light",
+        "eastAsianTypeface": "Calibri Light",
+        "complexScriptTypeface": "Calibri Light"
+      },
+      "minorFont": {
+        "latinTypeface": "微软雅黑",
+        "eastAsianTypeface": "微软雅黑",
+        "complexScriptTypeface": "微软雅黑"
+      }
+    },
+    "typefaces": [
+      "Calibri Light",
+      "Franklin Gothic Book",
+      "微软雅黑"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout1.xml",
+      "name": "Title Slide",
+      "type": "title",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": []
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": []
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/tkfat0zy",
+      "id": "15",
+      "name": "矩形 14",
+      "bbox": [
+        1168,
+        664,
+        56,
+        26
+      ],
+      "geometry": "rect",
+      "text": "20",
+      "textPreview": "20",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "20"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "20",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963",
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "20",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/6h4rilgn",
+      "id": "16",
+      "name": "矩形 15",
+      "bbox": [
+        319.27,
+        222.33,
+        641.47,
+        125.87
+      ],
+      "geometry": "rect",
+      "text": "敬请批评指正！",
+      "textPreview": "敬请批评指正！",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "anchor": 1,
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "verticalAlignment": "top",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "敬请批评指正"
+          },
+          {
+            "index": 2,
+            "text": "！"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "敬请批评指正！",
+          "resolvedTextStyle": {
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "敬请批评指正！",
+              "fontSize": 96,
+              "color": "accent2",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/p4bah0re",
+      "id": "20",
+      "name": "矩形 19",
+      "bbox": [
+        215.53,
+        376.53,
+        140.47,
+        55.8
+      ],
+      "geometry": "rect",
+      "text": "Agent",
+      "textPreview": "Agent",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Agent"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Agent",
+          "resolvedTextStyle": {
+            "fontSize": 66,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Agent",
+              "fontSize": 37.33,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.25
+                }
+              },
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/twrq9gr6",
+      "id": "28",
+      "name": "文本框 27",
+      "bbox": [
+        335.87,
+        365,
+        71.87,
+        74.2
+      ],
+      "geometry": "rect",
+      "text": "JS",
+      "textPreview": "JS",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "JS"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "JS",
+          "runs": [
+            {
+              "index": 1,
+              "text": "JS",
+              "fontSize": 53.33,
+              "typeface": "Franklin Gothic Book",
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.25
+                }
+              },
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/43298vqt",
+      "id": "21",
+      "name": "矩形 20",
+      "bbox": [
+        403.09,
+        383.47,
+        610.33,
+        42
+      ],
+      "geometry": "rect",
+      "text": "—— 基于 Rust 的轻量级 JavaScript 执行引擎",
+      "textPreview": "—— 基于 Rust 的轻量级 JavaScript 执行引擎",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "—— 基于 Rust 的轻量级 JavaScript 执行引擎"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "—— 基于 Rust 的轻量级 JavaScript 执行引擎",
+          "resolvedTextStyle": {
+            "fontSize": 28,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "—— ",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "基于",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": " Rust ",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "的轻量级",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": " JavaScript ",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "执行引擎",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/h8fax0za",
+      "id": "19",
+      "name": "矩形 18",
+      "bbox": [
+        56,
+        48,
+        523.27,
+        28
+      ],
+      "geometry": "rect",
+      "text": "作品进展汇报 / CSCC 功能挑战赛道作品",
+      "textPreview": "作品进展汇报 / CSCC 功能挑战赛道作品",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "作品进展汇报 / CSCC 功能挑战赛道作品"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "作品进展汇报 / CSCC 功能挑战赛道作品",
+          "resolvedTextStyle": {
+            "fontSize": 15,
+            "color": "#BF4A22",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "作品进展汇报 / ",
+              "fontSize": 26.67,
+              "color": "#BF4A22",
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "CSCC",
+              "fontSize": 26.67,
+              "color": "#BF4A22",
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": " 功能挑战",
+              "fontSize": 26.67,
+              "color": "#BF4A22",
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "赛道作品",
+              "fontSize": 26.67,
+              "color": "#BF4A22",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/rqdsja9k",
+      "id": "26",
+      "name": "矩形 25",
+      "bbox": [
+        425.33,
+        439.2,
+        384.07,
+        28
+      ],
+      "geometry": "rect",
+      "text": "By Team PanicKing\t柴欣然 攸英茹 邓宇翔",
+      "textPreview": "By Team PanicKing\t柴欣然 攸英茹 邓宇翔",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "By Team PanicKing柴欣然 攸英茹 邓宇翔"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "By Team PanicKing\t柴欣然 攸英茹 邓宇翔",
+          "resolvedTextStyle": {
+            "fontSize": 16,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "By Team ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 2,
+              "text": "PanicKing\t",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 3,
+              "text": "柴欣然",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 4,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 5,
+              "text": "攸英茹",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 6,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 7,
+              "text": "邓宇翔",
+              "fontSize": 16,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/svi90bql",
+      "id": "29",
+      "name": "矩形 28",
+      "bbox": [
+        0,
+        0,
+        1279.93,
+        720.07
+      ],
+      "geometry": "rect",
+      "fillColor": "#FFFFFF",
+      "lineWidth": 0
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ypwfudk7",
+      "id": "30",
+      "name": "矩形 29",
+      "bbox": [
+        66,
+        56,
+        520,
+        34
+      ],
+      "geometry": "rect",
+      "text": "作品进展汇报 / CSCC 功能挑战赛道作品",
+      "textPreview": "作品进展汇报 / CSCC 功能挑战赛道作品",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "作品进展汇报 / CSCC 功能挑战赛道作品"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "作品进展汇报 / CSCC 功能挑战赛道作品",
+          "resolvedTextStyle": {
+            "fontSize": 24,
+            "color": "#C84E23",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "作品进展汇报 / CSCC 功能挑战赛道作品",
+              "fontSize": 24,
+              "color": "#C84E23",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/zq5gnils",
+      "id": "31",
+      "name": "矩形 30",
+      "bbox": [
+        161.2,
+        168.73,
+        520,
+        90
+      ],
+      "geometry": "rect",
+      "text": "谢谢聆听",
+      "textPreview": "谢谢聆听",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "谢谢聆听"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "谢谢聆听",
+          "resolvedTextStyle": {
+            "fontSize": 72,
+            "color": "#F26B2A",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "谢谢聆听",
+              "fontSize": 80,
+              "color": "#F26B2A",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/krexwn2d",
+      "id": "32",
+      "name": "矩形 31",
+      "bbox": [
+        161.2,
+        283.4,
+        560,
+        64
+      ],
+      "geometry": "rect",
+      "text": "敬请批评指正",
+      "textPreview": "敬请批评指正",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "敬请批评指正"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "敬请批评指正",
+          "resolvedTextStyle": {
+            "fontSize": 42,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "敬请批评指正",
+              "fontSize": 80,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/lsnyps3y",
+      "id": "33",
+      "name": "矩形 32",
+      "bbox": [
+        827,
+        162.93,
+        381.4,
+        381.93
+      ],
+      "geometry": "rect",
+      "fillColor": "#FFF0EA",
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/mtgfyxkj",
+      "id": "34",
+      "name": "矩形 33",
+      "bbox": [
+        851.67,
+        180.33,
+        320,
+        42
+      ],
+      "geometry": "rect",
+      "text": "最后回顾",
+      "textPreview": "最后回顾",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "最后回顾"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "最后回顾",
+          "resolvedTextStyle": {
+            "fontSize": 30,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "最后回顾",
+              "fontSize": 30,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/7upgr2lo",
+      "id": "35",
+      "name": "矩形 34",
+      "bbox": [
+        851.67,
+        238.53,
+        350,
+        250
+      ],
+      "geometry": "rect",
+      "text": "Test262 90.97%，SunSpider 26 / 26\n\nJetStream 三引擎公共集 6 / 6 PASS\n\n三层创新：执行架构、受控运行时、可审计评测\n\n冷启动有亮点，批处理与复杂 workload 仍需追赶",
+      "textPreview": "Test262 90.97%，SunSpider 26 / 26 |  | JetStream 三引擎公共集 6 / 6 PASS |  | 三层创新：执行架构、受控运行时、可审计评测 |  | 冷启动有亮点，批处理与复杂 workload 仍需追赶",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 10,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Test262 90.97%，SunSpider 26 /"
+          },
+          {
+            "index": 2,
+            "text": "26"
+          },
+          {
+            "index": 3,
+            "text": ""
+          },
+          {
+            "index": 4,
+            "text": "JetStream 三引擎公共集 6 / 6 PASS"
+          },
+          {
+            "index": 5,
+            "text": ""
+          },
+          {
+            "index": 6,
+            "text": "三层创新：执行架构、受控运行时、"
+          },
+          {
+            "index": 7,
+            "text": "可审计评测"
+          },
+          {
+            "index": 8,
+            "text": ""
+          },
+          {
+            "index": 9,
+            "text": "冷启动有亮点，批处理与复杂"
+          },
+          {
+            "index": 10,
+            "text": "workload 仍需追赶"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Test262 90.97%，SunSpider 26 / 26",
+          "resolvedTextStyle": {
+            "fontSize": 20,
+            "color": "#545B66"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Test262 90.97%，SunSpider 26 / 26",
+              "fontSize": 20,
+              "color": "#545B66"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 3,
+          "text": "JetStream 三引擎公共集 6 / 6 PASS",
+          "resolvedTextStyle": {
+            "fontSize": 20,
+            "color": "#545B66"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "JetStream 三引擎公共集 6 / 6 PASS",
+              "fontSize": 20,
+              "color": "#545B66"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 5,
+          "text": "三层创新：执行架构、受控运行时、可审计评测",
+          "resolvedTextStyle": {
+            "fontSize": 20,
+            "color": "#545B66"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "三层创新：执行架构、受控运行时、可审计评测",
+              "fontSize": 20,
+              "color": "#545B66"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        },
+        {
+          "index": 7,
+          "text": "冷启动有亮点，批处理与复杂 workload 仍需追赶",
+          "resolvedTextStyle": {
+            "fontSize": 20,
+            "color": "#545B66"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "冷启动有亮点，批处理与复杂 workload 仍需追赶",
+              "fontSize": 20,
+              "color": "#545B66"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/2xcfmtkz",
+      "id": "38",
+      "name": "矩形 37",
+      "bbox": [
+        1166,
+        660,
+        58,
+        28
+      ],
+      "geometry": "rect",
+      "fillColor": "#FFFFFF",
+      "lineWidth": 0
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/nylwfylk",
+      "id": "39",
+      "name": "矩形 38",
+      "bbox": [
+        1168,
+        664,
+        52,
+        22
+      ],
+      "geometry": "rect",
+      "text": "20",
+      "textPreview": "20",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "20"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "20",
+          "resolvedTextStyle": {
+            "fontSize": 12,
+            "color": "#545B66",
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "20",
+              "fontSize": 12,
+              "color": "#545B66"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 17,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/5wnadgbe",
+      "id": "2",
+      "name": "矩形 1",
+      "bbox": [
+        103.2,
+        414.33,
+        136.4,
+        57
+      ],
+      "geometry": "rect",
+      "text": "Agent",
+      "textPreview": "Agent",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Agent"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Agent",
+          "resolvedTextStyle": {
+            "fontSize": 66,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Agent",
+              "fontSize": 37.33,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.25
+                }
+              },
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 18,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/4ve9kbat",
+      "id": "3",
+      "name": "文本框 27",
+      "bbox": [
+        224.2,
+        401.47,
+        71.73,
+        74.2
+      ],
+      "geometry": "rect",
+      "text": "JS",
+      "textPreview": "JS",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "wrap": "square",
+        "autoFit": "resizeShapeToFitText",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "JS"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "JS",
+          "runs": [
+            {
+              "index": 1,
+              "text": "JS",
+              "fontSize": 53.33,
+              "typeface": "Franklin Gothic Book",
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.25
+                }
+              },
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ]
+    },
+    {
+      "order": 19,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ripsfqtk",
+      "id": "4",
+      "name": "矩形 3",
+      "bbox": [
+        161.23,
+        480.93,
+        610.33,
+        42
+      ],
+      "geometry": "rect",
+      "text": "—— 基于 Rust 的轻量级 JavaScript 执行引擎",
+      "textPreview": "—— 基于 Rust 的轻量级 JavaScript 执行引擎",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "—— 基于 Rust 的轻量级 JavaScript 执行引擎"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "—— 基于 Rust 的轻量级 JavaScript 执行引擎",
+          "resolvedTextStyle": {
+            "fontSize": 28,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "—— ",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 2,
+              "text": "基于",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 3,
+              "text": " Rust ",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 4,
+              "text": "的轻量级",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 5,
+              "text": " JavaScript ",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            },
+            {
+              "index": 6,
+              "text": "执行引擎",
+              "fontSize": 28,
+              "color": {
+                "type": "theme",
+                "value": "accent2",
+                "transform": {
+                  "darken": 0.5
+                }
+              },
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 20,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/6xwbmlsz",
+      "id": "5",
+      "name": "矩形 4",
+      "bbox": [
+        41.18,
+        596.91,
+        640,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 21,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/tk7ahgba",
+      "id": "6",
+      "name": "矩形 5",
+      "bbox": [
+        41.18,
+        618.38,
+        650,
+        28
+      ],
+      "geometry": "rect",
+      "text": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+      "textPreview": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "队伍名：PanicKing成员：柴欣然 攸英茹 邓宇翔"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+          "resolvedTextStyle": {
+            "fontSize": 16,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "队伍",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 2,
+              "text": "名：",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 3,
+              "text": "PanicKing",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 4,
+              "text": "\t",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 5,
+              "text": "成员：柴欣然",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 6,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 7,
+              "text": "攸英茹",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 8,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 9,
+              "text": "邓宇翔",
+              "fontSize": 16,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    }
+  ],
+  "composeRuns": []
+}
