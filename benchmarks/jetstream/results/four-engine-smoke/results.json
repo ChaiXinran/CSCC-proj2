@@ -1,0 +1,844 @@
+{
+  "meta": {
+    "benchmark": "JetStream2 portable workload kernels",
+    "iterations": 1,
+    "warmup": 0,
+    "repeat": 1,
+    "timeout_seconds": 120,
+    "max_rss_mb": 1536,
+    "tests": [
+      "ai-astar",
+      "crypto",
+      "gaussian-blur",
+      "hash-map",
+      "cdjs",
+      "navier-stokes",
+      "raytrace",
+      "richards",
+      "splay",
+      "stanford-crypto-sha256"
+    ],
+    "engines": [
+      "agentjs",
+      "boa",
+      "quickjs",
+      "oxide"
+    ]
+  },
+  "environment": {
+    "generated_at_utc": "2026-08-11T15:49:08.871407+00:00",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.5",
+    "project_revision": "30f023992ecced51b2c7789ba8d57e47797d8f20",
+    "jetstream_revision": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+    "memory_sampler": "psutil",
+    "commands": {
+      "agentjs": [
+        "D:\\00_OS\\CSCC\\target\\release\\agentjs.exe",
+        "run",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\ai-astar.js"
+      ],
+      "boa": [
+        "D:\\00_OS\\CSCC\\boa\\target\\release\\boa.exe",
+        "D:\\00_OS\\CSCC\\reports\\jetstream2-2026-08-04\\boa-visible-prelude.js",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\ai-astar.js"
+      ],
+      "quickjs": [
+        "D:\\00_OS\\CSCC\\quickjs\\qjs.exe",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\ai-astar.js"
+      ],
+      "oxide": [
+        "D:\\00_OS\\CSCC\\target\\oxide-compare\\release\\oxide.exe",
+        "run",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\ai-astar.js"
+      ]
+    },
+    "binary_size_bytes": {
+      "agentjs": 10785280,
+      "boa": 29936640,
+      "quickjs": 1142784,
+      "oxide": 5715968
+    },
+    "binary_sha256": {
+      "agentjs": "427b4acd131cdab743751c4e488079c5dfa4c79a2b5523a87affc9fbcb407b66",
+      "boa": "9a6ced13a4b9f6f3a4a2b30c6db12ac78ba923e11d09820ebc1ccf0d32c0418f",
+      "quickjs": "7110a4522bbe43d63eedf2ec883be11a854cf92e995ddc21802d11d5897bda95",
+      "oxide": "805adc395b18d7469e1f50874156c77845388a73ac9298e639177df6c5308370"
+    }
+  },
+  "results": {
+    "agentjs": {
+      "ai-astar": {
+        "status": "runtime-error",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 200.87,
+        "error": "agentjs: RuntimeLimit: execution error: object arena exhausted",
+        "samples": [
+          {
+            "status": "runtime-error",
+            "wall_time_ms": 2469.206,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 200.87,
+            "exit_code": 1,
+            "output_tail": "agentjs: RuntimeLimit: execution error: object arena exhausted"
+          }
+        ]
+      },
+      "crypto": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 1140.0,
+        "median_wall_ms": 1163.799,
+        "p90_wall_ms": 1163.799,
+        "peak_rss_mb": 29.18,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1163.799,
+            "workload_avg_ms": 1140.0,
+            "peak_rss_mb": 29.18,
+            "exit_code": 0,
+            "output_tail": "crypto iteration 1/1: 1140ms\ncrypto avg: 1140ms  total: 1140ms  iterations: 1\ncrypto avg: 1140ms  total: 1140ms  iterations: 1"
+          }
+        ]
+      },
+      "gaussian-blur": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 3749.0,
+        "median_wall_ms": 5990.623,
+        "p90_wall_ms": 5990.623,
+        "peak_rss_mb": 26.01,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 5990.623,
+            "workload_avg_ms": 3749.0,
+            "peak_rss_mb": 26.01,
+            "exit_code": 0,
+            "output_tail": "gaussian-blur iteration 1/1: 3749ms\ngaussian-blur avg: 3749ms  total: 3749ms  iterations: 1\ngaussian-blur avg: 3749ms  total: 3749ms  iterations: 1"
+          }
+        ]
+      },
+      "hash-map": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 12922.0,
+        "median_wall_ms": 12967.089,
+        "p90_wall_ms": 12967.089,
+        "peak_rss_mb": 129.46,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 12967.089,
+            "workload_avg_ms": 12922.0,
+            "peak_rss_mb": 129.46,
+            "exit_code": 0,
+            "output_tail": "hash-map iteration 1/1: 12922ms\nhash-map avg: 12922ms  total: 12922ms  iterations: 1\nhash-map avg: 12922ms  total: 12922ms  iterations: 1"
+          }
+        ]
+      },
+      "cdjs": {
+        "status": "runtime-error",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 233.7,
+        "error": "agentjs: RuntimeLimit: execution error: environment arena exhausted",
+        "samples": [
+          {
+            "status": "runtime-error",
+            "wall_time_ms": 8720.748,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 233.7,
+            "exit_code": 1,
+            "output_tail": "agentjs: RuntimeLimit: execution error: environment arena exhausted"
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 604.0,
+        "median_wall_ms": 649.161,
+        "p90_wall_ms": 649.161,
+        "peak_rss_mb": 18.08,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 649.161,
+            "workload_avg_ms": 604.0,
+            "peak_rss_mb": 18.08,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 604ms\nnavier-stokes avg: 604ms  total: 604ms  iterations: 1\nnavier-stokes avg: 604ms  total: 604ms  iterations: 1"
+          }
+        ]
+      },
+      "raytrace": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 11807.0,
+        "median_wall_ms": 11827.204,
+        "p90_wall_ms": 11827.204,
+        "peak_rss_mb": 19.72,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 11827.204,
+            "workload_avg_ms": 11807.0,
+            "peak_rss_mb": 19.72,
+            "exit_code": 0,
+            "output_tail": "raytrace iteration 1/1: 11807ms\nraytrace avg: 11807ms  total: 11807ms  iterations: 1\nraytrace avg: 11807ms  total: 11807ms  iterations: 1"
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 3576.0,
+        "median_wall_ms": 3601.272,
+        "p90_wall_ms": 3601.272,
+        "peak_rss_mb": 11.99,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3601.272,
+            "workload_avg_ms": 3576.0,
+            "peak_rss_mb": 11.99,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 3576ms\nrichards avg: 3576ms  total: 3576ms  iterations: 1\nrichards avg: 3576ms  total: 3576ms  iterations: 1"
+          }
+        ]
+      },
+      "splay": {
+        "status": "runtime-error",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 206.07,
+        "error": "agentjs: RuntimeLimit: execution error: environment arena exhausted",
+        "samples": [
+          {
+            "status": "runtime-error",
+            "wall_time_ms": 1239.122,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 206.07,
+            "exit_code": 1,
+            "output_tail": "agentjs: RuntimeLimit: execution error: environment arena exhausted"
+          }
+        ]
+      },
+      "stanford-crypto-sha256": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 3176.0,
+        "median_wall_ms": 3207.341,
+        "p90_wall_ms": 3207.341,
+        "peak_rss_mb": 17.84,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3207.341,
+            "workload_avg_ms": 3176.0,
+            "peak_rss_mb": 17.84,
+            "exit_code": 0,
+            "output_tail": "stanford-crypto-sha256 iteration 1/1: 3176ms\nstanford-crypto-sha256 avg: 3176ms  total: 3176ms  iterations: 1\nstanford-crypto-sha256 avg: 3176ms  total: 3176ms  iterations: 1"
+          }
+        ]
+      }
+    },
+    "boa": {
+      "ai-astar": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 419.0,
+        "median_wall_ms": 1261.575,
+        "p90_wall_ms": 1261.575,
+        "peak_rss_mb": 138.09,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1261.575,
+            "workload_avg_ms": 419.0,
+            "peak_rss_mb": 138.09,
+            "exit_code": 0,
+            "output_tail": "ai-astar iteration 1/1: 419ms\nai-astar avg: 419ms  total: 419ms  iterations: 1\n\"ai-astar avg: 419ms  total: 419ms  iterations: 1\""
+          }
+        ]
+      },
+      "crypto": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 373.0,
+        "median_wall_ms": 404.537,
+        "p90_wall_ms": 404.537,
+        "peak_rss_mb": 16.5,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 404.537,
+            "workload_avg_ms": 373.0,
+            "peak_rss_mb": 16.5,
+            "exit_code": 0,
+            "output_tail": "crypto iteration 1/1: 373ms\ncrypto avg: 373ms  total: 373ms  iterations: 1\n\"crypto avg: 373ms  total: 373ms  iterations: 1\""
+          }
+        ]
+      },
+      "gaussian-blur": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 890.0,
+        "median_wall_ms": 1240.309,
+        "p90_wall_ms": 1240.309,
+        "peak_rss_mb": 15.21,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1240.309,
+            "workload_avg_ms": 890.0,
+            "peak_rss_mb": 15.21,
+            "exit_code": 0,
+            "output_tail": "gaussian-blur iteration 1/1: 890ms\ngaussian-blur avg: 890ms  total: 890ms  iterations: 1\n\"gaussian-blur avg: 890ms  total: 890ms  iterations: 1\""
+          }
+        ]
+      },
+      "hash-map": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 871.0,
+        "median_wall_ms": 897.042,
+        "p90_wall_ms": 897.042,
+        "peak_rss_mb": 28.46,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 897.042,
+            "workload_avg_ms": 871.0,
+            "peak_rss_mb": 28.46,
+            "exit_code": 0,
+            "output_tail": "hash-map iteration 1/1: 871ms\nhash-map avg: 871ms  total: 871ms  iterations: 1\n\"hash-map avg: 871ms  total: 871ms  iterations: 1\""
+          }
+        ]
+      },
+      "cdjs": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 3269.0,
+        "median_wall_ms": 3299.34,
+        "p90_wall_ms": 3299.34,
+        "peak_rss_mb": 17.42,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3299.34,
+            "workload_avg_ms": 3269.0,
+            "peak_rss_mb": 17.42,
+            "exit_code": 0,
+            "output_tail": "cdjs iteration 1/1: 3269ms\ncdjs avg: 3269ms  total: 3269ms  iterations: 1\n\"cdjs avg: 3269ms  total: 3269ms  iterations: 1\""
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 182.0,
+        "median_wall_ms": 251.427,
+        "p90_wall_ms": 251.427,
+        "peak_rss_mb": 15.53,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 251.427,
+            "workload_avg_ms": 182.0,
+            "peak_rss_mb": 15.53,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 182ms\nnavier-stokes avg: 182ms  total: 182ms  iterations: 1\n\"navier-stokes avg: 182ms  total: 182ms  iterations: 1\""
+          }
+        ]
+      },
+      "raytrace": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 1220.0,
+        "median_wall_ms": 1245.626,
+        "p90_wall_ms": 1245.626,
+        "peak_rss_mb": 15.54,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1245.626,
+            "workload_avg_ms": 1220.0,
+            "peak_rss_mb": 15.54,
+            "exit_code": 0,
+            "output_tail": "raytrace iteration 1/1: 1220ms\nraytrace avg: 1220ms  total: 1220ms  iterations: 1\n\"raytrace avg: 1220ms  total: 1220ms  iterations: 1\""
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 485.0,
+        "median_wall_ms": 512.445,
+        "p90_wall_ms": 512.445,
+        "peak_rss_mb": 12.52,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 512.445,
+            "workload_avg_ms": 485.0,
+            "peak_rss_mb": 12.52,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 485ms\nrichards avg: 485ms  total: 485ms  iterations: 1\n\"richards avg: 485ms  total: 485ms  iterations: 1\""
+          }
+        ]
+      },
+      "splay": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 269.0,
+        "median_wall_ms": 813.354,
+        "p90_wall_ms": 813.354,
+        "peak_rss_mb": 214.51,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 813.354,
+            "workload_avg_ms": 269.0,
+            "peak_rss_mb": 214.51,
+            "exit_code": 0,
+            "output_tail": "splay iteration 1/1: 269ms\nsplay avg: 269ms  total: 269ms  iterations: 1\n\"splay avg: 269ms  total: 269ms  iterations: 1\""
+          }
+        ]
+      },
+      "stanford-crypto-sha256": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 246.0,
+        "median_wall_ms": 280.449,
+        "p90_wall_ms": 280.449,
+        "peak_rss_mb": 17.15,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 280.449,
+            "workload_avg_ms": 246.0,
+            "peak_rss_mb": 17.15,
+            "exit_code": 0,
+            "output_tail": "stanford-crypto-sha256 iteration 1/1: 246ms\nstanford-crypto-sha256 avg: 246ms  total: 246ms  iterations: 1\n\"stanford-crypto-sha256 avg: 246ms  total: 246ms  iterations: 1\""
+          }
+        ]
+      }
+    },
+    "quickjs": {
+      "ai-astar": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 56.0,
+        "median_wall_ms": 267.206,
+        "p90_wall_ms": 267.206,
+        "peak_rss_mb": 81.36,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 267.206,
+            "workload_avg_ms": 56.0,
+            "peak_rss_mb": 81.36,
+            "exit_code": 0,
+            "output_tail": "ai-astar iteration 1/1: 56ms\nai-astar avg: 56ms  total: 56ms  iterations: 1"
+          }
+        ]
+      },
+      "crypto": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 62.0,
+        "median_wall_ms": 79.102,
+        "p90_wall_ms": 79.102,
+        "peak_rss_mb": 4.89,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 79.102,
+            "workload_avg_ms": 62.0,
+            "peak_rss_mb": 4.89,
+            "exit_code": 0,
+            "output_tail": "crypto iteration 1/1: 62ms\ncrypto avg: 62ms  total: 62ms  iterations: 1"
+          }
+        ]
+      },
+      "gaussian-blur": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 273.0,
+        "median_wall_ms": 361.766,
+        "p90_wall_ms": 361.766,
+        "peak_rss_mb": 7.13,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 361.766,
+            "workload_avg_ms": 273.0,
+            "peak_rss_mb": 7.13,
+            "exit_code": 0,
+            "output_tail": "gaussian-blur iteration 1/1: 273ms\ngaussian-blur avg: 273ms  total: 273ms  iterations: 1"
+          }
+        ]
+      },
+      "hash-map": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 223.0,
+        "median_wall_ms": 237.447,
+        "p90_wall_ms": 237.447,
+        "peak_rss_mb": 19.01,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 237.447,
+            "workload_avg_ms": 223.0,
+            "peak_rss_mb": 19.01,
+            "exit_code": 0,
+            "output_tail": "hash-map iteration 1/1: 223ms\nhash-map avg: 223ms  total: 223ms  iterations: 1"
+          }
+        ]
+      },
+      "cdjs": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 252.0,
+        "median_wall_ms": 265.748,
+        "p90_wall_ms": 265.748,
+        "peak_rss_mb": 8.86,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 265.748,
+            "workload_avg_ms": 252.0,
+            "peak_rss_mb": 8.86,
+            "exit_code": 0,
+            "output_tail": "cdjs iteration 1/1: 252ms\ncdjs avg: 252ms  total: 252ms  iterations: 1"
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 35.0,
+        "median_wall_ms": 56.863,
+        "p90_wall_ms": 56.863,
+        "peak_rss_mb": 6.99,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 56.863,
+            "workload_avg_ms": 35.0,
+            "peak_rss_mb": 6.99,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 35ms\nnavier-stokes avg: 35ms  total: 35ms  iterations: 1"
+          }
+        ]
+      },
+      "raytrace": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 223.0,
+        "median_wall_ms": 239.421,
+        "p90_wall_ms": 239.421,
+        "peak_rss_mb": 4.48,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 239.421,
+            "workload_avg_ms": 223.0,
+            "peak_rss_mb": 4.48,
+            "exit_code": 0,
+            "output_tail": "raytrace iteration 1/1: 223ms\nraytrace avg: 223ms  total: 223ms  iterations: 1"
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 111.0,
+        "median_wall_ms": 121.152,
+        "p90_wall_ms": 121.152,
+        "peak_rss_mb": 4.59,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 121.152,
+            "workload_avg_ms": 111.0,
+            "peak_rss_mb": 4.59,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 111ms\nrichards avg: 111ms  total: 111ms  iterations: 1"
+          }
+        ]
+      },
+      "splay": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 73.0,
+        "median_wall_ms": 395.764,
+        "p90_wall_ms": 395.764,
+        "peak_rss_mb": 164.91,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 395.764,
+            "workload_avg_ms": 73.0,
+            "peak_rss_mb": 164.91,
+            "exit_code": 0,
+            "output_tail": "splay iteration 1/1: 73ms\nsplay avg: 73ms  total: 73ms  iterations: 1"
+          }
+        ]
+      },
+      "stanford-crypto-sha256": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 59.0,
+        "median_wall_ms": 77.955,
+        "p90_wall_ms": 77.955,
+        "peak_rss_mb": 4.75,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 77.955,
+            "workload_avg_ms": 59.0,
+            "peak_rss_mb": 4.75,
+            "exit_code": 0,
+            "output_tail": "stanford-crypto-sha256 iteration 1/1: 59ms\nstanford-crypto-sha256 avg: 59ms  total: 59ms  iterations: 1"
+          }
+        ]
+      }
+    },
+    "oxide": {
+      "ai-astar": {
+        "status": "memory-limit",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 1578.68,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate",
+        "samples": [
+          {
+            "status": "memory-limit",
+            "wall_time_ms": 433.394,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 1578.68,
+            "exit_code": 1,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "crypto": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 8.03,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: class constructor register 919 exceeds u8 limit\n\u001b[31mclass constructor register 919 exceeds u8 limit\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 28.433,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 8.03,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: class constructor register 919 exceeds u8 limit\n\u001b[31mclass constructor register 919 exceeds u8 limit\u001b[0m"
+          }
+        ]
+      },
+      "gaussian-blur": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 172.14,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: IC_GET_PROP on non-object\n\u001b[31muncaught TypeError: IC_GET_PROP on non-object\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 767.856,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 172.14,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: IC_GET_PROP on non-object\n\u001b[31muncaught TypeError: IC_GET_PROP on non-object\u001b[0m"
+          }
+        ]
+      },
+      "hash-map": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 8.5,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: CALL target is not callable\n\u001b[31muncaught TypeError: CALL target is not callable\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 28.676,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 8.5,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: CALL target is not callable\n\u001b[31muncaught TypeError: CALL target is not callable\u001b[0m"
+          }
+        ]
+      },
+      "cdjs": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 9.37,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: CALL target is not callable\n\u001b[31muncaught TypeError: CALL target is not callable\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 37.154,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 9.37,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::vm: runtime error: uncaught TypeError: CALL target is not callable\n\u001b[31muncaught TypeError: CALL target is not callable\u001b[0m"
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 713.0,
+        "median_wall_ms": 775.956,
+        "p90_wall_ms": 775.956,
+        "peak_rss_mb": 13.69,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 775.956,
+            "workload_avg_ms": 713.0,
+            "peak_rss_mb": 13.69,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 713ms  total: 713ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "raytrace": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 1.91,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: unsupported binary operator: Exponential\n\u001b[31munsupported binary operator: Exponential\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 18.24,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 1.91,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: unsupported binary operator: Exponential\n\u001b[31munsupported binary operator: Exponential\u001b[0m"
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 2994.0,
+        "median_wall_ms": 3208.829,
+        "p90_wall_ms": 3208.829,
+        "peak_rss_mb": 681.01,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3208.829,
+            "workload_avg_ms": 2994.0,
+            "peak_rss_mb": 681.01,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 2994ms  total: 2994ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "splay": {
+        "status": "pass",
+        "passes": 1,
+        "median_workload_ms": 728.0,
+        "median_wall_ms": 2139.803,
+        "p90_wall_ms": 2139.803,
+        "peak_rss_mb": 712.45,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 2139.803,
+            "workload_avg_ms": 728.0,
+            "peak_rss_mb": 712.45,
+            "exit_code": 0,
+            "output_tail": "\"splay avg: 728ms  total: 728ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "stanford-crypto-sha256": {
+        "status": "incomplete",
+        "passes": 0,
+        "median_workload_ms": null,
+        "median_wall_ms": null,
+        "p90_wall_ms": null,
+        "peak_rss_mb": 7.67,
+        "error": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: class constructor register 535 exceeds u8 limit\n\u001b[31mclass constructor register 535 exceeds u8 limit\u001b[0m",
+        "samples": [
+          {
+            "status": "incomplete",
+            "wall_time_ms": 26.879,
+            "workload_avg_ms": null,
+            "peak_rss_mb": 7.67,
+            "exit_code": 0,
+            "output_tail": "\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate\nERROR oxide::kernel: compile error: class constructor register 535 exceeds u8 limit\n\u001b[31mclass constructor register 535 exceeds u8 limit\u001b[0m"
+          }
+        ]
+      }
+    }
+  },
+  "geomean_ratios": {
+    "boa": 0.15004844649370186,
+    "quickjs": 0.03305654872672715,
+    "oxide": 0.9941534833693884
+  }
+}

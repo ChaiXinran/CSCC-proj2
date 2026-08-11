@@ -1,0 +1,41 @@
+{
+  "generated_at_utc": "2026-08-11T15:32:21.082454+00:00",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "python": "3.13.5",
+  "project_revision": "30f023992ecced51b2c7789ba8d57e47797d8f20",
+  "jetstream_revision": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+  "memory_sampler": "psutil",
+  "commands": {
+    "agentjs": [
+      "D:\\00_OS\\CSCC\\target\\release\\agentjs.exe",
+      "run",
+      "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+    ],
+    "boa": [
+      "D:\\00_OS\\CSCC\\boa\\target\\release\\boa.exe",
+      "D:\\00_OS\\CSCC\\reports\\jetstream2-2026-08-04\\boa-visible-prelude.js",
+      "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+    ],
+    "quickjs": [
+      "D:\\00_OS\\CSCC\\quickjs\\qjs.exe",
+      "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+    ],
+    "oxide": [
+      "D:\\00_OS\\CSCC\\target\\oxide-compare\\release\\oxide.exe",
+      "run",
+      "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\sync-fs.js"
+    ]
+  },
+  "binary_size_bytes": {
+    "agentjs": 10785280,
+    "boa": 29936640,
+    "quickjs": 1142784,
+    "oxide": 5715968
+  },
+  "binary_sha256": {
+    "agentjs": "427b4acd131cdab743751c4e488079c5dfa4c79a2b5523a87affc9fbcb407b66",
+    "boa": "9a6ced13a4b9f6f3a4a2b30c6db12ac78ba923e11d09820ebc1ccf0d32c0418f",
+    "quickjs": "7110a4522bbe43d63eedf2ec883be11a854cf92e995ddc21802d11d5897bda95",
+    "oxide": "805adc395b18d7469e1f50874156c77845388a73ac9298e639177df6c5308370"
+  }
+}

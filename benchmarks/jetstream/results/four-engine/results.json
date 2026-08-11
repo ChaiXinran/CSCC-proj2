@@ -1,0 +1,1688 @@
+{
+  "meta": {
+    "benchmark": "JetStream2 portable workload kernels",
+    "iterations": 1,
+    "warmup": 2,
+    "repeat": 7,
+    "timeout_seconds": 180,
+    "max_rss_mb": 1536,
+    "tests": [
+      "n-body-SP",
+      "crypto-sha1-SP",
+      "crypto-md5-SP",
+      "3d-cube-SP",
+      "navier-stokes",
+      "richards"
+    ],
+    "engines": [
+      "agentjs",
+      "boa",
+      "quickjs",
+      "oxide"
+    ]
+  },
+  "environment": {
+    "generated_at_utc": "2026-08-11T15:54:45.936002+00:00",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.5",
+    "project_revision": "30f023992ecced51b2c7789ba8d57e47797d8f20",
+    "jetstream_revision": "b7babdf323e64e69bd2f6c376189c15825f5c73a",
+    "memory_sampler": "psutil",
+    "commands": {
+      "agentjs": [
+        "D:\\00_OS\\CSCC\\target\\release\\agentjs.exe",
+        "run",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\n-body-SP.js"
+      ],
+      "boa": [
+        "D:\\00_OS\\CSCC\\boa\\target\\release\\boa.exe",
+        "D:\\00_OS\\CSCC\\reports\\jetstream2-2026-08-04\\boa-visible-prelude.js",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\n-body-SP.js"
+      ],
+      "quickjs": [
+        "D:\\00_OS\\CSCC\\quickjs\\qjs.exe",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\n-body-SP.js"
+      ],
+      "oxide": [
+        "D:\\00_OS\\CSCC\\target\\oxide-compare\\release\\oxide.exe",
+        "run",
+        "D:\\00_OS\\CSCC\\target\\jetstream2-four-engine\\runners\\n-body-SP.js"
+      ]
+    },
+    "binary_size_bytes": {
+      "agentjs": 10785280,
+      "boa": 29936640,
+      "quickjs": 1142784,
+      "oxide": 5715968
+    },
+    "binary_sha256": {
+      "agentjs": "427b4acd131cdab743751c4e488079c5dfa4c79a2b5523a87affc9fbcb407b66",
+      "boa": "9a6ced13a4b9f6f3a4a2b30c6db12ac78ba923e11d09820ebc1ccf0d32c0418f",
+      "quickjs": "7110a4522bbe43d63eedf2ec883be11a854cf92e995ddc21802d11d5897bda95",
+      "oxide": "805adc395b18d7469e1f50874156c77845388a73ac9298e639177df6c5308370"
+    }
+  },
+  "results": {
+    "agentjs": {
+      "n-body-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 1217.0,
+        "median_wall_ms": 1237.842,
+        "p90_wall_ms": 1265.173,
+        "peak_rss_mb": 27.04,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1199.598,
+            "workload_avg_ms": 1181.0,
+            "peak_rss_mb": 26.9,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 1181ms\nn-body-SP avg: 1181ms  total: 1181ms  iterations: 1\nn-body-SP avg: 1181ms  total: 1181ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1212.231,
+            "workload_avg_ms": 1190.0,
+            "peak_rss_mb": 26.7,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 1190ms\nn-body-SP avg: 1190ms  total: 1190ms  iterations: 1\nn-body-SP avg: 1190ms  total: 1190ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1200.986,
+            "workload_avg_ms": 1183.0,
+            "peak_rss_mb": 26.79,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 1183ms\nn-body-SP avg: 1183ms  total: 1183ms  iterations: 1\nn-body-SP avg: 1183ms  total: 1183ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1237.842,
+            "workload_avg_ms": 1217.0,
+            "peak_rss_mb": 27.02,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 1217ms\nn-body-SP avg: 1217ms  total: 1217ms  iterations: 1\nn-body-SP avg: 1217ms  total: 1217ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1262.811,
+            "workload_avg_ms": 1245.0,
+            "peak_rss_mb": 26.89,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 1245ms\nn-body-SP avg: 1245ms  total: 1245ms  iterations: 1\nn-body-SP avg: 1245ms  total: 1245ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1260.703,
+            "workload_avg_ms": 1243.0,
+            "peak_rss_mb": 27.04,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 1243ms\nn-body-SP avg: 1243ms  total: 1243ms  iterations: 1\nn-body-SP avg: 1243ms  total: 1243ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1268.715,
+            "workload_avg_ms": 1243.0,
+            "peak_rss_mb": 26.7,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 1243ms\nn-body-SP avg: 1243ms  total: 1243ms  iterations: 1\nn-body-SP avg: 1243ms  total: 1243ms  iterations: 1"
+          }
+        ]
+      },
+      "crypto-sha1-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 4027.0,
+        "median_wall_ms": 4042.029,
+        "p90_wall_ms": 4117.53,
+        "peak_rss_mb": 14.48,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3982.054,
+            "workload_avg_ms": 3960.0,
+            "peak_rss_mb": 14.3,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 3960ms\ncrypto-sha1-SP avg: 3960ms  total: 3960ms  iterations: 1\ncrypto-sha1-SP avg: 3960ms  total: 3960ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3991.311,
+            "workload_avg_ms": 3971.0,
+            "peak_rss_mb": 14.3,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 3971ms\ncrypto-sha1-SP avg: 3971ms  total: 3971ms  iterations: 1\ncrypto-sha1-SP avg: 3971ms  total: 3971ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4042.029,
+            "workload_avg_ms": 4027.0,
+            "peak_rss_mb": 14.34,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 4027ms\ncrypto-sha1-SP avg: 4027ms  total: 4027ms  iterations: 1\ncrypto-sha1-SP avg: 4027ms  total: 4027ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4085.269,
+            "workload_avg_ms": 4066.0,
+            "peak_rss_mb": 14.37,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 4066ms\ncrypto-sha1-SP avg: 4066ms  total: 4066ms  iterations: 1\ncrypto-sha1-SP avg: 4066ms  total: 4066ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4021.999,
+            "workload_avg_ms": 4001.0,
+            "peak_rss_mb": 14.32,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 4001ms\ncrypto-sha1-SP avg: 4001ms  total: 4001ms  iterations: 1\ncrypto-sha1-SP avg: 4001ms  total: 4001ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4140.651,
+            "workload_avg_ms": 4120.0,
+            "peak_rss_mb": 14.48,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 4120ms\ncrypto-sha1-SP avg: 4120ms  total: 4120ms  iterations: 1\ncrypto-sha1-SP avg: 4120ms  total: 4120ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4102.116,
+            "workload_avg_ms": 4086.0,
+            "peak_rss_mb": 14.42,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 4086ms\ncrypto-sha1-SP avg: 4086ms  total: 4086ms  iterations: 1\ncrypto-sha1-SP avg: 4086ms  total: 4086ms  iterations: 1"
+          }
+        ]
+      },
+      "crypto-md5-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 4139.0,
+        "median_wall_ms": 4162.548,
+        "p90_wall_ms": 4222.957,
+        "peak_rss_mb": 16.05,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 4205.745,
+            "workload_avg_ms": 4174.0,
+            "peak_rss_mb": 16.05,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 4174ms\ncrypto-md5-SP avg: 4174ms  total: 4174ms  iterations: 1\ncrypto-md5-SP avg: 4174ms  total: 4174ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4153.6,
+            "workload_avg_ms": 4136.0,
+            "peak_rss_mb": 15.98,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 4136ms\ncrypto-md5-SP avg: 4136ms  total: 4136ms  iterations: 1\ncrypto-md5-SP avg: 4136ms  total: 4136ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4179.54,
+            "workload_avg_ms": 4165.0,
+            "peak_rss_mb": 15.98,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 4165ms\ncrypto-md5-SP avg: 4165ms  total: 4165ms  iterations: 1\ncrypto-md5-SP avg: 4165ms  total: 4165ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4248.775,
+            "workload_avg_ms": 4225.0,
+            "peak_rss_mb": 15.98,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 4225ms\ncrypto-md5-SP avg: 4225ms  total: 4225ms  iterations: 1\ncrypto-md5-SP avg: 4225ms  total: 4225ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4162.548,
+            "workload_avg_ms": 4139.0,
+            "peak_rss_mb": 15.92,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 4139ms\ncrypto-md5-SP avg: 4139ms  total: 4139ms  iterations: 1\ncrypto-md5-SP avg: 4139ms  total: 4139ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4151.026,
+            "workload_avg_ms": 4135.0,
+            "peak_rss_mb": 15.95,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 4135ms\ncrypto-md5-SP avg: 4135ms  total: 4135ms  iterations: 1\ncrypto-md5-SP avg: 4135ms  total: 4135ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4139.941,
+            "workload_avg_ms": 4120.0,
+            "peak_rss_mb": 15.96,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 4120ms\ncrypto-md5-SP avg: 4120ms  total: 4120ms  iterations: 1\ncrypto-md5-SP avg: 4120ms  total: 4120ms  iterations: 1"
+          }
+        ]
+      },
+      "3d-cube-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 1454.0,
+        "median_wall_ms": 1477.505,
+        "p90_wall_ms": 1570.82,
+        "peak_rss_mb": 23.47,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1451.709,
+            "workload_avg_ms": 1429.0,
+            "peak_rss_mb": 22.41,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 1429ms\n3d-cube-SP avg: 1429ms  total: 1429ms  iterations: 1\n3d-cube-SP avg: 1429ms  total: 1429ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1503.511,
+            "workload_avg_ms": 1481.0,
+            "peak_rss_mb": 23.47,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 1481ms\n3d-cube-SP avg: 1481ms  total: 1481ms  iterations: 1\n3d-cube-SP avg: 1481ms  total: 1481ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1433.676,
+            "workload_avg_ms": 1413.0,
+            "peak_rss_mb": 23.22,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 1413ms\n3d-cube-SP avg: 1413ms  total: 1413ms  iterations: 1\n3d-cube-SP avg: 1413ms  total: 1413ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1477.505,
+            "workload_avg_ms": 1454.0,
+            "peak_rss_mb": 22.58,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 1454ms\n3d-cube-SP avg: 1454ms  total: 1454ms  iterations: 1\n3d-cube-SP avg: 1454ms  total: 1454ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1444.282,
+            "workload_avg_ms": 1428.0,
+            "peak_rss_mb": 22.59,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 1428ms\n3d-cube-SP avg: 1428ms  total: 1428ms  iterations: 1\n3d-cube-SP avg: 1428ms  total: 1428ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1575.142,
+            "workload_avg_ms": 1558.0,
+            "peak_rss_mb": 22.97,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 1558ms\n3d-cube-SP avg: 1558ms  total: 1558ms  iterations: 1\n3d-cube-SP avg: 1558ms  total: 1558ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1567.939,
+            "workload_avg_ms": 1534.0,
+            "peak_rss_mb": 23.33,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 1534ms\n3d-cube-SP avg: 1534ms  total: 1534ms  iterations: 1\n3d-cube-SP avg: 1534ms  total: 1534ms  iterations: 1"
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 594.0,
+        "median_wall_ms": 640.743,
+        "p90_wall_ms": 696.186,
+        "peak_rss_mb": 18.11,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 704.756,
+            "workload_avg_ms": 664.0,
+            "peak_rss_mb": 18.05,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 664ms\nnavier-stokes avg: 664ms  total: 664ms  iterations: 1\nnavier-stokes avg: 664ms  total: 664ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 690.473,
+            "workload_avg_ms": 649.0,
+            "peak_rss_mb": 18.11,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 649ms\nnavier-stokes avg: 649ms  total: 649ms  iterations: 1\nnavier-stokes avg: 649ms  total: 649ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 632.35,
+            "workload_avg_ms": 594.0,
+            "peak_rss_mb": 18.0,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 594ms\nnavier-stokes avg: 594ms  total: 594ms  iterations: 1\nnavier-stokes avg: 594ms  total: 594ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 619.487,
+            "workload_avg_ms": 578.0,
+            "peak_rss_mb": 17.92,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 578ms\nnavier-stokes avg: 578ms  total: 578ms  iterations: 1\nnavier-stokes avg: 578ms  total: 578ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 642.169,
+            "workload_avg_ms": 592.0,
+            "peak_rss_mb": 17.98,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 592ms\nnavier-stokes avg: 592ms  total: 592ms  iterations: 1\nnavier-stokes avg: 592ms  total: 592ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 640.743,
+            "workload_avg_ms": 601.0,
+            "peak_rss_mb": 18.03,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 601ms\nnavier-stokes avg: 601ms  total: 601ms  iterations: 1\nnavier-stokes avg: 601ms  total: 601ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 630.95,
+            "workload_avg_ms": 584.0,
+            "peak_rss_mb": 17.9,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 584ms\nnavier-stokes avg: 584ms  total: 584ms  iterations: 1\nnavier-stokes avg: 584ms  total: 584ms  iterations: 1"
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 3717.0,
+        "median_wall_ms": 3732.741,
+        "p90_wall_ms": 4043.346,
+        "peak_rss_mb": 12.03,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3611.268,
+            "workload_avg_ms": 3595.0,
+            "peak_rss_mb": 11.95,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 3595ms\nrichards avg: 3595ms  total: 3595ms  iterations: 1\nrichards avg: 3595ms  total: 3595ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3707.017,
+            "workload_avg_ms": 3688.0,
+            "peak_rss_mb": 11.92,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 3688ms\nrichards avg: 3688ms  total: 3688ms  iterations: 1\nrichards avg: 3688ms  total: 3688ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3644.464,
+            "workload_avg_ms": 3627.0,
+            "peak_rss_mb": 11.98,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 3627ms\nrichards avg: 3627ms  total: 3627ms  iterations: 1\nrichards avg: 3627ms  total: 3627ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4139.127,
+            "workload_avg_ms": 4118.0,
+            "peak_rss_mb": 11.95,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 4118ms\nrichards avg: 4118ms  total: 4118ms  iterations: 1\nrichards avg: 4118ms  total: 4118ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3979.492,
+            "workload_avg_ms": 3959.0,
+            "peak_rss_mb": 12.03,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 3959ms\nrichards avg: 3959ms  total: 3959ms  iterations: 1\nrichards avg: 3959ms  total: 3959ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3913.329,
+            "workload_avg_ms": 3891.0,
+            "peak_rss_mb": 12.02,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 3891ms\nrichards avg: 3891ms  total: 3891ms  iterations: 1\nrichards avg: 3891ms  total: 3891ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3732.741,
+            "workload_avg_ms": 3717.0,
+            "peak_rss_mb": 11.97,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 3717ms\nrichards avg: 3717ms  total: 3717ms  iterations: 1\nrichards avg: 3717ms  total: 3717ms  iterations: 1"
+          }
+        ]
+      }
+    },
+    "boa": {
+      "n-body-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 347.0,
+        "median_wall_ms": 371.461,
+        "p90_wall_ms": 407.266,
+        "peak_rss_mb": 12.46,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 401.324,
+            "workload_avg_ms": 378.0,
+            "peak_rss_mb": 12.0,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 378ms\nn-body-SP avg: 378ms  total: 378ms  iterations: 1\n\"n-body-SP avg: 378ms  total: 378ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 336.925,
+            "workload_avg_ms": 318.0,
+            "peak_rss_mb": 11.99,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 318ms\nn-body-SP avg: 318ms  total: 318ms  iterations: 1\n\"n-body-SP avg: 318ms  total: 318ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 359.239,
+            "workload_avg_ms": 334.0,
+            "peak_rss_mb": 12.01,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 334ms\nn-body-SP avg: 334ms  total: 334ms  iterations: 1\n\"n-body-SP avg: 334ms  total: 334ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 412.612,
+            "workload_avg_ms": 379.0,
+            "peak_rss_mb": 12.02,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 379ms\nn-body-SP avg: 379ms  total: 379ms  iterations: 1\n\"n-body-SP avg: 379ms  total: 379ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 403.702,
+            "workload_avg_ms": 378.0,
+            "peak_rss_mb": 12.03,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 378ms\nn-body-SP avg: 378ms  total: 378ms  iterations: 1\n\"n-body-SP avg: 378ms  total: 378ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 361.234,
+            "workload_avg_ms": 336.0,
+            "peak_rss_mb": 12.46,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 336ms\nn-body-SP avg: 336ms  total: 336ms  iterations: 1\n\"n-body-SP avg: 336ms  total: 336ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 371.461,
+            "workload_avg_ms": 347.0,
+            "peak_rss_mb": 12.01,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 347ms\nn-body-SP avg: 347ms  total: 347ms  iterations: 1\n\"n-body-SP avg: 347ms  total: 347ms  iterations: 1\""
+          }
+        ]
+      },
+      "crypto-sha1-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 527.0,
+        "median_wall_ms": 552.498,
+        "p90_wall_ms": 562.606,
+        "peak_rss_mb": 14.05,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 540.647,
+            "workload_avg_ms": 518.0,
+            "peak_rss_mb": 14.04,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 518ms\ncrypto-sha1-SP avg: 518ms  total: 518ms  iterations: 1\n\"crypto-sha1-SP avg: 518ms  total: 518ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 537.182,
+            "workload_avg_ms": 516.0,
+            "peak_rss_mb": 14.05,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 516ms\ncrypto-sha1-SP avg: 516ms  total: 516ms  iterations: 1\n\"crypto-sha1-SP avg: 516ms  total: 516ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 538.221,
+            "workload_avg_ms": 511.0,
+            "peak_rss_mb": 14.04,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 511ms\ncrypto-sha1-SP avg: 511ms  total: 511ms  iterations: 1\n\"crypto-sha1-SP avg: 511ms  total: 511ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 552.498,
+            "workload_avg_ms": 527.0,
+            "peak_rss_mb": 14.03,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 527ms\ncrypto-sha1-SP avg: 527ms  total: 527ms  iterations: 1\n\"crypto-sha1-SP avg: 527ms  total: 527ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 553.098,
+            "workload_avg_ms": 528.0,
+            "peak_rss_mb": 14.02,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 528ms\ncrypto-sha1-SP avg: 528ms  total: 528ms  iterations: 1\n\"crypto-sha1-SP avg: 528ms  total: 528ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 557.762,
+            "workload_avg_ms": 530.0,
+            "peak_rss_mb": 14.05,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 530ms\ncrypto-sha1-SP avg: 530ms  total: 530ms  iterations: 1\n\"crypto-sha1-SP avg: 530ms  total: 530ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 569.871,
+            "workload_avg_ms": 551.0,
+            "peak_rss_mb": 14.04,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 551ms\ncrypto-sha1-SP avg: 551ms  total: 551ms  iterations: 1\n\"crypto-sha1-SP avg: 551ms  total: 551ms  iterations: 1\""
+          }
+        ]
+      },
+      "crypto-md5-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 483.0,
+        "median_wall_ms": 505.359,
+        "p90_wall_ms": 529.447,
+        "peak_rss_mb": 15.74,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 515.905,
+            "workload_avg_ms": 498.0,
+            "peak_rss_mb": 15.49,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 498ms\ncrypto-md5-SP avg: 498ms  total: 498ms  iterations: 1\n\"crypto-md5-SP avg: 498ms  total: 498ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 484.318,
+            "workload_avg_ms": 465.0,
+            "peak_rss_mb": 15.51,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 465ms\ncrypto-md5-SP avg: 465ms  total: 465ms  iterations: 1\n\"crypto-md5-SP avg: 465ms  total: 465ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 507.787,
+            "workload_avg_ms": 483.0,
+            "peak_rss_mb": 15.74,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 483ms\ncrypto-md5-SP avg: 483ms  total: 483ms  iterations: 1\n\"crypto-md5-SP avg: 483ms  total: 483ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 549.761,
+            "workload_avg_ms": 519.0,
+            "peak_rss_mb": 15.47,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 519ms\ncrypto-md5-SP avg: 519ms  total: 519ms  iterations: 1\n\"crypto-md5-SP avg: 519ms  total: 519ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 487.083,
+            "workload_avg_ms": 466.0,
+            "peak_rss_mb": 15.52,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 466ms\ncrypto-md5-SP avg: 466ms  total: 466ms  iterations: 1\n\"crypto-md5-SP avg: 466ms  total: 466ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 505.359,
+            "workload_avg_ms": 483.0,
+            "peak_rss_mb": 15.54,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 483ms\ncrypto-md5-SP avg: 483ms  total: 483ms  iterations: 1\n\"crypto-md5-SP avg: 483ms  total: 483ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 476.029,
+            "workload_avg_ms": 455.0,
+            "peak_rss_mb": 15.46,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 455ms\ncrypto-md5-SP avg: 455ms  total: 455ms  iterations: 1\n\"crypto-md5-SP avg: 455ms  total: 455ms  iterations: 1\""
+          }
+        ]
+      },
+      "3d-cube-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 364.0,
+        "median_wall_ms": 384.215,
+        "p90_wall_ms": 396.4,
+        "peak_rss_mb": 16.43,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 383.769,
+            "workload_avg_ms": 358.0,
+            "peak_rss_mb": 16.29,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 358ms\n3d-cube-SP avg: 358ms  total: 358ms  iterations: 1\n\"3d-cube-SP avg: 358ms  total: 358ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 372.228,
+            "workload_avg_ms": 351.0,
+            "peak_rss_mb": 16.31,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 351ms\n3d-cube-SP avg: 351ms  total: 351ms  iterations: 1\n\"3d-cube-SP avg: 351ms  total: 351ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 380.844,
+            "workload_avg_ms": 357.0,
+            "peak_rss_mb": 16.43,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 357ms\n3d-cube-SP avg: 357ms  total: 357ms  iterations: 1\n\"3d-cube-SP avg: 357ms  total: 357ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 384.215,
+            "workload_avg_ms": 364.0,
+            "peak_rss_mb": 16.34,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 364ms\n3d-cube-SP avg: 364ms  total: 364ms  iterations: 1\n\"3d-cube-SP avg: 364ms  total: 364ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 393.134,
+            "workload_avg_ms": 370.0,
+            "peak_rss_mb": 16.34,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 370ms\n3d-cube-SP avg: 370ms  total: 370ms  iterations: 1\n\"3d-cube-SP avg: 370ms  total: 370ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 401.298,
+            "workload_avg_ms": 376.0,
+            "peak_rss_mb": 16.3,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 376ms\n3d-cube-SP avg: 376ms  total: 376ms  iterations: 1\n\"3d-cube-SP avg: 376ms  total: 376ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 392.047,
+            "workload_avg_ms": 369.0,
+            "peak_rss_mb": 16.38,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 369ms\n3d-cube-SP avg: 369ms  total: 369ms  iterations: 1\n\"3d-cube-SP avg: 369ms  total: 369ms  iterations: 1\""
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 218.0,
+        "median_wall_ms": 291.257,
+        "p90_wall_ms": 440.563,
+        "peak_rss_mb": 15.53,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 291.257,
+            "workload_avg_ms": 221.0,
+            "peak_rss_mb": 15.52,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 221ms\nnavier-stokes avg: 221ms  total: 221ms  iterations: 1\n\"navier-stokes avg: 221ms  total: 221ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 277.458,
+            "workload_avg_ms": 206.0,
+            "peak_rss_mb": 15.51,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 206ms\nnavier-stokes avg: 206ms  total: 206ms  iterations: 1\n\"navier-stokes avg: 206ms  total: 206ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 268.049,
+            "workload_avg_ms": 202.0,
+            "peak_rss_mb": 15.53,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 202ms\nnavier-stokes avg: 202ms  total: 202ms  iterations: 1\n\"navier-stokes avg: 202ms  total: 202ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 266.316,
+            "workload_avg_ms": 204.0,
+            "peak_rss_mb": 15.51,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 204ms\nnavier-stokes avg: 204ms  total: 204ms  iterations: 1\n\"navier-stokes avg: 204ms  total: 204ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 508.327,
+            "workload_avg_ms": 429.0,
+            "peak_rss_mb": 15.52,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 429ms\nnavier-stokes avg: 429ms  total: 429ms  iterations: 1\n\"navier-stokes avg: 429ms  total: 429ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 395.387,
+            "workload_avg_ms": 261.0,
+            "peak_rss_mb": 15.37,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 261ms\nnavier-stokes avg: 261ms  total: 261ms  iterations: 1\n\"navier-stokes avg: 261ms  total: 261ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 299.497,
+            "workload_avg_ms": 218.0,
+            "peak_rss_mb": 15.52,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 218ms\nnavier-stokes avg: 218ms  total: 218ms  iterations: 1\n\"navier-stokes avg: 218ms  total: 218ms  iterations: 1\""
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 625.0,
+        "median_wall_ms": 652.947,
+        "p90_wall_ms": 668.555,
+        "peak_rss_mb": 12.77,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 537.384,
+            "workload_avg_ms": 513.0,
+            "peak_rss_mb": 12.51,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 513ms\nrichards avg: 513ms  total: 513ms  iterations: 1\n\"richards avg: 513ms  total: 513ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 663.662,
+            "workload_avg_ms": 644.0,
+            "peak_rss_mb": 12.51,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 644ms\nrichards avg: 644ms  total: 644ms  iterations: 1\n\"richards avg: 644ms  total: 644ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 601.773,
+            "workload_avg_ms": 575.0,
+            "peak_rss_mb": 12.52,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 575ms\nrichards avg: 575ms  total: 575ms  iterations: 1\n\"richards avg: 575ms  total: 575ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 675.006,
+            "workload_avg_ms": 655.0,
+            "peak_rss_mb": 12.49,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 655ms\nrichards avg: 655ms  total: 655ms  iterations: 1\n\"richards avg: 655ms  total: 655ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 652.947,
+            "workload_avg_ms": 625.0,
+            "peak_rss_mb": 12.77,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 625ms\nrichards avg: 625ms  total: 625ms  iterations: 1\n\"richards avg: 625ms  total: 625ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 664.254,
+            "workload_avg_ms": 636.0,
+            "peak_rss_mb": 12.51,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 636ms\nrichards avg: 636ms  total: 636ms  iterations: 1\n\"richards avg: 636ms  total: 636ms  iterations: 1\""
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 645.565,
+            "workload_avg_ms": 623.0,
+            "peak_rss_mb": 12.54,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 623ms\nrichards avg: 623ms  total: 623ms  iterations: 1\n\"richards avg: 623ms  total: 623ms  iterations: 1\""
+          }
+        ]
+      }
+    },
+    "quickjs": {
+      "n-body-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 74.0,
+        "median_wall_ms": 88.596,
+        "p90_wall_ms": 102.313,
+        "peak_rss_mb": 4.36,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 88.125,
+            "workload_avg_ms": 70.0,
+            "peak_rss_mb": 4.36,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 70ms\nn-body-SP avg: 70ms  total: 70ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 88.112,
+            "workload_avg_ms": 70.0,
+            "peak_rss_mb": 4.36,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 70ms\nn-body-SP avg: 70ms  total: 70ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 87.53,
+            "workload_avg_ms": 74.0,
+            "peak_rss_mb": 4.36,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 74ms\nn-body-SP avg: 74ms  total: 74ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 88.596,
+            "workload_avg_ms": 72.0,
+            "peak_rss_mb": 4.36,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 72ms\nn-body-SP avg: 72ms  total: 72ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 97.316,
+            "workload_avg_ms": 80.0,
+            "peak_rss_mb": 4.36,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 80ms\nn-body-SP avg: 80ms  total: 80ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 97.94,
+            "workload_avg_ms": 90.0,
+            "peak_rss_mb": 4.36,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 90ms\nn-body-SP avg: 90ms  total: 90ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 108.872,
+            "workload_avg_ms": 91.0,
+            "peak_rss_mb": 4.36,
+            "exit_code": 0,
+            "output_tail": "n-body-SP iteration 1/1: 91ms\nn-body-SP avg: 91ms  total: 91ms  iterations: 1"
+          }
+        ]
+      },
+      "crypto-sha1-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 200.0,
+        "median_wall_ms": 213.47,
+        "p90_wall_ms": 254.864,
+        "peak_rss_mb": 4.57,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 213.47,
+            "workload_avg_ms": 200.0,
+            "peak_rss_mb": 4.57,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 200ms\ncrypto-sha1-SP avg: 200ms  total: 200ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 266.058,
+            "workload_avg_ms": 242.0,
+            "peak_rss_mb": 4.57,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 242ms\ncrypto-sha1-SP avg: 242ms  total: 242ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 247.401,
+            "workload_avg_ms": 232.0,
+            "peak_rss_mb": 4.57,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 232ms\ncrypto-sha1-SP avg: 232ms  total: 232ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 224.679,
+            "workload_avg_ms": 206.0,
+            "peak_rss_mb": 4.57,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 206ms\ncrypto-sha1-SP avg: 206ms  total: 206ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 193.922,
+            "workload_avg_ms": 182.0,
+            "peak_rss_mb": 4.57,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 182ms\ncrypto-sha1-SP avg: 182ms  total: 182ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 173.551,
+            "workload_avg_ms": 156.0,
+            "peak_rss_mb": 4.57,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 156ms\ncrypto-sha1-SP avg: 156ms  total: 156ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 141.139,
+            "workload_avg_ms": 132.0,
+            "peak_rss_mb": 4.57,
+            "exit_code": 0,
+            "output_tail": "crypto-sha1-SP iteration 1/1: 132ms\ncrypto-sha1-SP avg: 132ms  total: 132ms  iterations: 1"
+          }
+        ]
+      },
+      "crypto-md5-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 129.0,
+        "median_wall_ms": 140.318,
+        "p90_wall_ms": 150.341,
+        "peak_rss_mb": 4.72,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 139.811,
+            "workload_avg_ms": 129.0,
+            "peak_rss_mb": 4.66,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 129ms\ncrypto-md5-SP avg: 129ms  total: 129ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 140.318,
+            "workload_avg_ms": 124.0,
+            "peak_rss_mb": 4.66,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 124ms\ncrypto-md5-SP avg: 124ms  total: 124ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 150.168,
+            "workload_avg_ms": 136.0,
+            "peak_rss_mb": 4.66,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 136ms\ncrypto-md5-SP avg: 136ms  total: 136ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 150.601,
+            "workload_avg_ms": 136.0,
+            "peak_rss_mb": 4.66,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 136ms\ncrypto-md5-SP avg: 136ms  total: 136ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 139.955,
+            "workload_avg_ms": 128.0,
+            "peak_rss_mb": 4.66,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 128ms\ncrypto-md5-SP avg: 128ms  total: 128ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 140.29,
+            "workload_avg_ms": 129.0,
+            "peak_rss_mb": 4.72,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 129ms\ncrypto-md5-SP avg: 129ms  total: 129ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 140.521,
+            "workload_avg_ms": 129.0,
+            "peak_rss_mb": 4.66,
+            "exit_code": 0,
+            "output_tail": "crypto-md5-SP iteration 1/1: 129ms\ncrypto-md5-SP avg: 129ms  total: 129ms  iterations: 1"
+          }
+        ]
+      },
+      "3d-cube-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 97.0,
+        "median_wall_ms": 109.271,
+        "p90_wall_ms": 113.868,
+        "peak_rss_mb": 5.51,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 109.271,
+            "workload_avg_ms": 98.0,
+            "peak_rss_mb": 5.5,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 98ms\n3d-cube-SP avg: 98ms  total: 98ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 119.773,
+            "workload_avg_ms": 106.0,
+            "peak_rss_mb": 5.51,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 106ms\n3d-cube-SP avg: 106ms  total: 106ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 108.635,
+            "workload_avg_ms": 96.0,
+            "peak_rss_mb": 5.51,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 96ms\n3d-cube-SP avg: 96ms  total: 96ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 108.727,
+            "workload_avg_ms": 97.0,
+            "peak_rss_mb": 5.5,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 97ms\n3d-cube-SP avg: 97ms  total: 97ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 109.584,
+            "workload_avg_ms": 95.0,
+            "peak_rss_mb": 5.5,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 95ms\n3d-cube-SP avg: 95ms  total: 95ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 109.931,
+            "workload_avg_ms": 97.0,
+            "peak_rss_mb": 5.5,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 97ms\n3d-cube-SP avg: 97ms  total: 97ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 107.946,
+            "workload_avg_ms": 98.0,
+            "peak_rss_mb": 5.5,
+            "exit_code": 0,
+            "output_tail": "3d-cube-SP iteration 1/1: 98ms\n3d-cube-SP avg: 98ms  total: 98ms  iterations: 1"
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 34.0,
+        "median_wall_ms": 46.452,
+        "p90_wall_ms": 63.471,
+        "peak_rss_mb": 7.02,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 71.207,
+            "workload_avg_ms": 35.0,
+            "peak_rss_mb": 6.98,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 35ms\nnavier-stokes avg: 35ms  total: 35ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 46.024,
+            "workload_avg_ms": 33.0,
+            "peak_rss_mb": 6.98,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 33ms\nnavier-stokes avg: 33ms  total: 33ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 45.87,
+            "workload_avg_ms": 34.0,
+            "peak_rss_mb": 6.98,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 34ms\nnavier-stokes avg: 34ms  total: 34ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 46.452,
+            "workload_avg_ms": 35.0,
+            "peak_rss_mb": 6.98,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 35ms\nnavier-stokes avg: 35ms  total: 35ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 58.313,
+            "workload_avg_ms": 36.0,
+            "peak_rss_mb": 7.02,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 36ms\nnavier-stokes avg: 36ms  total: 36ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 46.335,
+            "workload_avg_ms": 32.0,
+            "peak_rss_mb": 6.98,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 32ms\nnavier-stokes avg: 32ms  total: 32ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 47.486,
+            "workload_avg_ms": 33.0,
+            "peak_rss_mb": 6.98,
+            "exit_code": 0,
+            "output_tail": "navier-stokes iteration 1/1: 33ms\nnavier-stokes avg: 33ms  total: 33ms  iterations: 1"
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 116.0,
+        "median_wall_ms": 129.532,
+        "p90_wall_ms": 132.461,
+        "peak_rss_mb": 4.59,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 129.532,
+            "workload_avg_ms": 116.0,
+            "peak_rss_mb": 4.59,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 116ms\nrichards avg: 116ms  total: 116ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 119.589,
+            "workload_avg_ms": 112.0,
+            "peak_rss_mb": 4.58,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 112ms\nrichards avg: 112ms  total: 112ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 129.272,
+            "workload_avg_ms": 113.0,
+            "peak_rss_mb": 4.59,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 113ms\nrichards avg: 113ms  total: 113ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 129.334,
+            "workload_avg_ms": 116.0,
+            "peak_rss_mb": 4.59,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 116ms\nrichards avg: 116ms  total: 116ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 134.634,
+            "workload_avg_ms": 117.0,
+            "peak_rss_mb": 4.59,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 117ms\nrichards avg: 117ms  total: 117ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 131.013,
+            "workload_avg_ms": 116.0,
+            "peak_rss_mb": 4.58,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 116ms\nrichards avg: 116ms  total: 116ms  iterations: 1"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 130.014,
+            "workload_avg_ms": 118.0,
+            "peak_rss_mb": 4.58,
+            "exit_code": 0,
+            "output_tail": "richards iteration 1/1: 118ms\nrichards avg: 118ms  total: 118ms  iterations: 1"
+          }
+        ]
+      }
+    },
+    "oxide": {
+      "n-body-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 970.0,
+        "median_wall_ms": 992.207,
+        "p90_wall_ms": 1008.755,
+        "peak_rss_mb": 20.76,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1019.394,
+            "workload_avg_ms": 996.0,
+            "peak_rss_mb": 20.68,
+            "exit_code": 0,
+            "output_tail": "\"n-body-SP avg: 996ms  total: 996ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 990.475,
+            "workload_avg_ms": 965.0,
+            "peak_rss_mb": 20.72,
+            "exit_code": 0,
+            "output_tail": "\"n-body-SP avg: 965ms  total: 965ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 992.207,
+            "workload_avg_ms": 970.0,
+            "peak_rss_mb": 20.76,
+            "exit_code": 0,
+            "output_tail": "\"n-body-SP avg: 970ms  total: 970ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 978.748,
+            "workload_avg_ms": 951.0,
+            "peak_rss_mb": 20.7,
+            "exit_code": 0,
+            "output_tail": "\"n-body-SP avg: 951ms  total: 951ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1001.432,
+            "workload_avg_ms": 972.0,
+            "peak_rss_mb": 20.67,
+            "exit_code": 0,
+            "output_tail": "\"n-body-SP avg: 972ms  total: 972ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 988.812,
+            "workload_avg_ms": 969.0,
+            "peak_rss_mb": 20.74,
+            "exit_code": 0,
+            "output_tail": "\"n-body-SP avg: 969ms  total: 969ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1001.663,
+            "workload_avg_ms": 972.0,
+            "peak_rss_mb": 20.69,
+            "exit_code": 0,
+            "output_tail": "\"n-body-SP avg: 972ms  total: 972ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "crypto-sha1-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 3898.0,
+        "median_wall_ms": 4205.99,
+        "p90_wall_ms": 7171.502,
+        "peak_rss_mb": 1086.47,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3647.842,
+            "workload_avg_ms": 3360.0,
+            "peak_rss_mb": 1086.31,
+            "exit_code": 0,
+            "output_tail": "\"crypto-sha1-SP avg: 3360ms  total: 3360ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4137.649,
+            "workload_avg_ms": 3802.0,
+            "peak_rss_mb": 1085.98,
+            "exit_code": 0,
+            "output_tail": "\"crypto-sha1-SP avg: 3802ms  total: 3802ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4205.99,
+            "workload_avg_ms": 3898.0,
+            "peak_rss_mb": 1086.26,
+            "exit_code": 0,
+            "output_tail": "\"crypto-sha1-SP avg: 3898ms  total: 3898ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4094.565,
+            "workload_avg_ms": 3801.0,
+            "peak_rss_mb": 1086.47,
+            "exit_code": 0,
+            "output_tail": "\"crypto-sha1-SP avg: 3801ms  total: 3801ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 6550.322,
+            "workload_avg_ms": 5764.0,
+            "peak_rss_mb": 814.79,
+            "exit_code": 0,
+            "output_tail": "\"crypto-sha1-SP avg: 5764ms  total: 5764ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 7463.868,
+            "workload_avg_ms": 6582.0,
+            "peak_rss_mb": 786.03,
+            "exit_code": 0,
+            "output_tail": "\"crypto-sha1-SP avg: 6582ms  total: 6582ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 6976.592,
+            "workload_avg_ms": 6320.0,
+            "peak_rss_mb": 1086.41,
+            "exit_code": 0,
+            "output_tail": "\"crypto-sha1-SP avg: 6320ms  total: 6320ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "crypto-md5-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 4019.0,
+        "median_wall_ms": 4318.178,
+        "p90_wall_ms": 5303.571,
+        "peak_rss_mb": 1123.82,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 6252.392,
+            "workload_avg_ms": 5634.0,
+            "peak_rss_mb": 1123.82,
+            "exit_code": 0,
+            "output_tail": "\"crypto-md5-SP avg: 5634ms  total: 5634ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4176.543,
+            "workload_avg_ms": 3851.0,
+            "peak_rss_mb": 1123.7,
+            "exit_code": 0,
+            "output_tail": "\"crypto-md5-SP avg: 3851ms  total: 3851ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4182.637,
+            "workload_avg_ms": 3860.0,
+            "peak_rss_mb": 1123.65,
+            "exit_code": 0,
+            "output_tail": "\"crypto-md5-SP avg: 3860ms  total: 3860ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4380.06,
+            "workload_avg_ms": 4039.0,
+            "peak_rss_mb": 1123.45,
+            "exit_code": 0,
+            "output_tail": "\"crypto-md5-SP avg: 4039ms  total: 4039ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4123.987,
+            "workload_avg_ms": 3796.0,
+            "peak_rss_mb": 1123.57,
+            "exit_code": 0,
+            "output_tail": "\"crypto-md5-SP avg: 3796ms  total: 3796ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4671.024,
+            "workload_avg_ms": 4089.0,
+            "peak_rss_mb": 692.45,
+            "exit_code": 0,
+            "output_tail": "\"crypto-md5-SP avg: 4089ms  total: 4089ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4318.178,
+            "workload_avg_ms": 4019.0,
+            "peak_rss_mb": 1123.44,
+            "exit_code": 0,
+            "output_tail": "\"crypto-md5-SP avg: 4019ms  total: 4019ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "3d-cube-SP": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 1077.0,
+        "median_wall_ms": 1129.801,
+        "p90_wall_ms": 1159.265,
+        "peak_rss_mb": 95.89,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 1133.431,
+            "workload_avg_ms": 1077.0,
+            "peak_rss_mb": 95.88,
+            "exit_code": 0,
+            "output_tail": "\"3d-cube-SP avg: 1077ms  total: 1077ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1183.992,
+            "workload_avg_ms": 1125.0,
+            "peak_rss_mb": 95.89,
+            "exit_code": 0,
+            "output_tail": "\"3d-cube-SP avg: 1125ms  total: 1125ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1070.02,
+            "workload_avg_ms": 1022.0,
+            "peak_rss_mb": 95.77,
+            "exit_code": 0,
+            "output_tail": "\"3d-cube-SP avg: 1022ms  total: 1022ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1142.78,
+            "workload_avg_ms": 1093.0,
+            "peak_rss_mb": 95.73,
+            "exit_code": 0,
+            "output_tail": "\"3d-cube-SP avg: 1093ms  total: 1093ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1014.148,
+            "workload_avg_ms": 965.0,
+            "peak_rss_mb": 95.87,
+            "exit_code": 0,
+            "output_tail": "\"3d-cube-SP avg: 965ms  total: 965ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1003.531,
+            "workload_avg_ms": 959.0,
+            "peak_rss_mb": 95.59,
+            "exit_code": 0,
+            "output_tail": "\"3d-cube-SP avg: 959ms  total: 959ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 1129.801,
+            "workload_avg_ms": 1081.0,
+            "peak_rss_mb": 95.84,
+            "exit_code": 0,
+            "output_tail": "\"3d-cube-SP avg: 1081ms  total: 1081ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "navier-stokes": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 800.0,
+        "median_wall_ms": 868.798,
+        "p90_wall_ms": 902.097,
+        "peak_rss_mb": 13.84,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 879.783,
+            "workload_avg_ms": 809.0,
+            "peak_rss_mb": 13.57,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 809ms  total: 809ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 879.434,
+            "workload_avg_ms": 810.0,
+            "peak_rss_mb": 13.58,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 810ms  total: 810ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 867.195,
+            "workload_avg_ms": 800.0,
+            "peak_rss_mb": 13.77,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 800ms  total: 800ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 815.971,
+            "workload_avg_ms": 753.0,
+            "peak_rss_mb": 13.49,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 753ms  total: 753ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 847.796,
+            "workload_avg_ms": 781.0,
+            "peak_rss_mb": 13.46,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 781ms  total: 781ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 935.567,
+            "workload_avg_ms": 864.0,
+            "peak_rss_mb": 13.84,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 864ms  total: 864ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 868.798,
+            "workload_avg_ms": 779.0,
+            "peak_rss_mb": 13.71,
+            "exit_code": 0,
+            "output_tail": "\"navier-stokes avg: 779ms  total: 779ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      },
+      "richards": {
+        "status": "pass",
+        "passes": 7,
+        "median_workload_ms": 3543.0,
+        "median_wall_ms": 3720.286,
+        "p90_wall_ms": 4999.546,
+        "peak_rss_mb": 680.98,
+        "error": "",
+        "samples": [
+          {
+            "status": "pass",
+            "wall_time_ms": 3720.286,
+            "workload_avg_ms": 3543.0,
+            "peak_rss_mb": 680.97,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 3543ms  total: 3543ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3264.242,
+            "workload_avg_ms": 3083.0,
+            "peak_rss_mb": 680.85,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 3083ms  total: 3083ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3314.119,
+            "workload_avg_ms": 3119.0,
+            "peak_rss_mb": 680.93,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 3119ms  total: 3119ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3325.515,
+            "workload_avg_ms": 3122.0,
+            "peak_rss_mb": 680.69,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 3122ms  total: 3122ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 4767.304,
+            "workload_avg_ms": 4499.0,
+            "peak_rss_mb": 680.98,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 4499ms  total: 4499ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 5347.908,
+            "workload_avg_ms": 5117.0,
+            "peak_rss_mb": 680.95,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 5117ms  total: 5117ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          },
+          {
+            "status": "pass",
+            "wall_time_ms": 3756.491,
+            "workload_avg_ms": 3553.0,
+            "peak_rss_mb": 680.7,
+            "exit_code": 0,
+            "output_tail": "\"richards avg: 3553ms  total: 3553ms  iterations: 1\"\n\n\u001b[1;33mwarning\u001b[0m\u001b[1m:\u001b[0m \u001b[1msome trace filter directives would enable traces that are disabled statically\u001b[0m\n \u001b[1;38;5;21m|\u001b[0m `oxide=trace` would enable the TRACE level for the `oxide` target\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mnote:\u001b[0m the static max level is `debug`\n \u001b[1;38;5;21m=\u001b[0m \u001b[1mhelp:\u001b[0m to enable TRACE logging, remove the `max_level_debug` feature from the `tracing` crate"
+          }
+        ]
+      }
+    }
+  },
+  "geomean_ratios": {
+    "boa": 0.20166739020354355,
+    "quickjs": 0.04731238449223564,
+    "oxide": 0.9450386310182658
+  }
+}
