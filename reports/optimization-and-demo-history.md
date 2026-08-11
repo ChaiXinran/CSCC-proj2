@@ -38,3 +38,12 @@ of the memory limit.
 The Agent Host and desktop Demo use a constrained render-event contract rather
 than HTML interpretation. The packaged Demo compares AgentJS, Boa, and the
 local competitor runtime and includes the official Test262 summary.
+
+## Repository consolidation
+
+The current Demo serves and packages `frontend/agent-chat.html`; its earlier
+standalone `demo/agent/static/` page was removed. The JetStream toolchain was
+reduced to the official runner generator, verifier, AgentJS/Node runners,
+measurement, comparison, and diagnostic scripts. Legacy simple-runner and
+one-off generation scripts were removed, as was the text-log Test262 folder
+statistics helper after raw Test262 logs ceased to be retained.
