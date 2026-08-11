@@ -176,7 +176,7 @@
     .preset-button strong { display: block; font-size: 12px; }
     .preset-button span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; }
 
-    .session-meta {
+    .turn-meta {
       margin: 22px 8px 0;
       padding-top: 15px;
       border-top: 1px solid var(--line);
@@ -185,7 +185,7 @@
       line-height: 1.7;
     }
 
-    .session-meta code { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .turn-meta code { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 
     .conversation {
       min-width: 0;
@@ -598,8 +598,7 @@
         <button class="preset-button" data-prompt="Transform three engine module records into a compact table.">
           <strong>Data transformation</strong><span>JavaScript mapping and table output</span>
         </button>
-        <div class="session-meta">
-          Session<br><code id="sessionId"></code><br><br>
+        <div class="turn-meta">
           Turns<br><code id="turnCount">0</code>
         </div>
       </aside>
@@ -721,7 +720,6 @@ return average.toFixed(2) + "%";`
     const engineSelect = document.getElementById("engineSelect");
     const connection = document.getElementById("connection");
     const turnCount = document.getElementById("turnCount");
-    const sessionLabel = document.getElementById("sessionId");
     let sessionId = createSessionId();
     let turns = [];
     let inputMeta = { source: "none", format: null, fileName: null };
@@ -1223,7 +1221,6 @@ return average.toFixed(2) + "%";`
     function resetSession() {
       sessionId = createSessionId();
       turns = [];
-      sessionLabel.textContent = sessionId;
       turnCount.textContent = "0";
       messages.replaceChildren();
       const empty = element("div", "empty-state");
@@ -1273,7 +1270,6 @@ return average.toFixed(2) + "%";`
     document.getElementById("clearData").addEventListener("click", () => {
       clearInputData();
     });
-    sessionLabel.textContent = sessionId;
     promptInput.focus();
   </script>
 </body>
