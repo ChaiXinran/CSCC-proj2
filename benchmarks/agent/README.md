@@ -36,21 +36,22 @@ python benchmarks/agent/run_agentbench.py `
 python benchmarks/agent/run_agentbench.py `
   --engine .\target\release\agentjs.exe `
   --ref node="D:\Program Files\nodejs\node.exe" `
-  --group all --mode both --warmup 3 --repeat 15 --batch-repeat 25
+  --group all --mode both --warmup 3 --repeat 15 --batch-repeat 5
 ```
 
-与 Boa、QuickJS 和 Node.js 一起比较：
+与 Boa、QuickJS、Oxide 和 Node.js 一起比较：
 
 ```powershell
 python benchmarks/agent/run_agentbench.py `
   --engine .\target\release\agentjs.exe `
   --ref boa=.\boa\target\release\boa.exe `
-  --ref quickjs=.\baseline-quickjs\qjs.exe `
+  --ref quickjs=.\quickjs\qjs.exe `
+  --ref oxide=".\target\oxide-compare\release\oxide.exe run" `
   --ref node=node `
-  --group all --mode both --warmup 3 --repeat 15 --batch-repeat 25
+  --group all --mode both --warmup 3 --repeat 15 --batch-repeat 5
 ```
 
-参考引擎参数使用 `LABEL=COMMAND`，可以重复指定 `--ref`。旧版的 `--ref-engine` 和 `--ref-label` 仍可用于单个参考引擎。
+参考引擎参数使用 `LABEL=COMMAND`，可以重复指定 `--ref`。`COMMAND` 可以包含固定参数，例如 Oxide 的 `run` 子命令；带空格的整个值需要加引号。旧版的 `--ref-engine` 和 `--ref-label` 仍可用于单个参考引擎。
 
 按组或按用例运行：
 
@@ -59,7 +60,7 @@ python benchmarks/agent/run_agentbench.py --group general --mode cold
 python benchmarks/agent/run_agentbench.py --group pressure --mode cold
 python benchmarks/agent/run_agentbench.py `
   --cases startup-noop,string-cleanup-replace-window,descriptor-side-table-array `
-  --mode both --warmup 2 --repeat 5 --batch-repeat 10
+  --mode both --warmup 2 --repeat 5 --batch-repeat 5
 ```
 
 ## 输出和统计口径

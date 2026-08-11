@@ -15,6 +15,7 @@ import json
 import math
 import os
 import platform
+import shlex
 import shutil
 import subprocess
 import sys
@@ -119,11 +120,23 @@ def format_ratio(value: float | None) -> str:
     return "-" if value is None else f"{value:.3f}"
 
 
+def split_command(command: str) -> list[str]:
+    """Split an engine command while preserving Windows path separators."""
+    parts = shlex.split(command, posix=False)
+    return [
+        part[1:-1] if len(part) >= 2 and part[0] == part[-1] and part[0] in {'"', "'"} else part
+        for part in parts
+    ]
+
+
 def resolve_command(command: str) -> str | None:
-    path = Path(command)
+    parts = split_command(command)
+    if not parts:
+        return None
+    path = Path(parts[0])
     if path.exists():
         return str(path.resolve())
-    return shutil.which(command)
+    return shutil.which(parts[0])
 
 
 def file_fingerprint(command: str) -> str | None:
@@ -151,7 +164,10 @@ def file_size(command: str) -> int | None:
 
 
 def build_cmd(engine: str, subcommand: str) -> list[str]:
-    return [engine, subcommand] if subcommand else [engine]
+    command = split_command(engine)
+    if subcommand:
+        command.append(subcommand)
+    return command
 
 
 def make_batch_source(case_path: Path, repeat: int) -> Path:
@@ -518,7 +534,7 @@ def main() -> int:
     parser.add_argument("--mode", choices=["cold", "batch", "both"], default="cold")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeat", type=int, default=5)
-    parser.add_argument("--batch-repeat", type=int, default=25)
+    parser.add_argument("--batch-repeat", type=int, default=5)
     parser.add_argument("--timeout", type=int, default=120, help="seconds per process")
     parser.add_argument("--out-dir", default=None, help="directory for JSON/Markdown/environment outputs")
     args = parser.parse_args()

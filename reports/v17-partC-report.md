@@ -247,3 +247,38 @@ validatorjs now executes its assertion corpus until it reaches a pattern with
 numeric backreferences. The current Rust `regex` backend does not support
 backreferences; resolving that remaining item requires a backtracking-capable
 backend or a separate compatibility execution path.
+
+## AgentBench multi-engine command support
+
+- Extended reference-engine command parsing so an engine can include fixed CLI
+  arguments while retaining executable fingerprint and binary-size reporting.
+- Documented Oxide's required `run` subcommand in the AgentBench comparison
+  command alongside Boa, QuickJS, and Node.js.
+- Restored the default batch size to five tasks. A batch of 25 makes two
+  pressure workloads exceed AgentJS's per-execution loop budget, while the
+  established five-task comparison baseline exercises the same in-process
+  path and keeps all cases inside the correctness gate.
+- No native engine stage or shared contract changed.
+
+Validation:
+
+```powershell
+python -m py_compile benchmarks/agent/run_agentbench.py
+python benchmarks/agent/run_agentbench.py --engine .\target\release\agentjs.exe --ref boa=.\boa\target\release\boa.exe --ref oxide=".\target\oxide-compare\release\oxide.exe run" --cases startup-noop --mode cold --warmup 0 --repeat 1
+python benchmarks/agent/run_agentbench.py --engine .\target\release\agentjs.exe --ref boa=.\boa\target\release\boa.exe --ref quickjs=.\quickjs\qjs.exe --ref oxide=".\target\oxide-compare\release\oxide.exe run" --group all --mode cold --warmup 3 --repeat 15 --out-dir benchmarks\agent\results\four-engine-comparison
+python benchmarks/agent/run_agentbench.py --engine .\target\release\agentjs.exe --ref boa=.\boa\target\release\boa.exe --ref quickjs=.\quickjs\qjs.exe --ref oxide=".\target\oxide-compare\release\oxide.exe run" --group all --mode batch --warmup 3 --repeat 15 --batch-repeat 5 --out-dir .cache\agentbench-fourway-batch-final
+cargo fmt --all -- --check
+cargo check --all-targets
+cargo test --all-targets
+cargo clippy --all-targets -- -D warnings
+```
+
+Final comparison results:
+
+- All four engines passed 12/12 cases in both cold and five-task batch modes.
+- Cold reference/AgentJS geometric-mean ratios: Boa 1.090x, QuickJS 0.186x,
+  and Oxide 1.237x.
+- Batch reference/AgentJS geometric-mean ratios: Boa 0.625x, QuickJS
+  0.112x, and Oxide 0.924x.
+- Reports, environment metadata, executable hashes, and binary sizes are in
+  `benchmarks/agent/results/four-engine-comparison/`.
