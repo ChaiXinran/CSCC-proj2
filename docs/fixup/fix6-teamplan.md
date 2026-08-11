@@ -108,7 +108,7 @@ Shared contracts must be merged before large feature branches.
 | `src/runtime/`                 | B/C shared   | Object model, descriptor, iterator, Promise helpers live here     |
 | `src/builtins/`                | C            | Builtins must use shared runtime helpers                          |
 | `src/test262.rs`               | D            | V12 scan selector and manifest                                    |
-| `reports/.version-report/v12-part*.md`         | track owners | Every code change updates the matching report                     |
+| `reports/version-history-v8-v12.md`         | track owners | Every code change updates the matching report                     |
 | `docs/version/native-v12-interface.md` | all          | Interface authority                                               |
 
 ---
@@ -500,12 +500,12 @@ D owns reproducibility, reports, and Test262 gates.
 ```text
 docs/version/native-v12-team-plan.md
 docs/version/native-v12-interface.md
-reports/.version-report/v12-partA-report.md
-reports/.version-report/v12-partB-report.md
-reports/.version-report/v12-partC-report.md
-reports/.test262/test262-scan-failure/native-v12-scan-failures.txt
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+src/test262_manifests/native-v12-scan-failures.txt
 reports/.native-test262-tmp/native-v12-scan-summary.json
-reports/.test262/test262-analysis/fixbug6-test262-analysis.md
+reports/version-history-v8-v12.md
 docs/status.md
 ```
 
@@ -568,9 +568,9 @@ cargo clippy --release --no-default-features --all-targets -- -D warnings
 Every PR must update the matching report:
 
 ```text
-A changes -> reports/.version-report/v12-partA-report.md
-B changes -> reports/.version-report/v12-partB-report.md
-C changes -> reports/.version-report/v12-partC-report.md
+A changes -> reports/version-history-v8-v12.md
+B changes -> reports/version-history-v8-v12.md
+C changes -> reports/version-history-v8-v12.md
 D changes -> reports/.native-test262-tmp/native-v12-scan-summary.json or integration report
 ```
 

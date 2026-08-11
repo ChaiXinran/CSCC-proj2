@@ -1,6 +1,7 @@
 param(
   [string]$Root = "test262\test",
-  [string]$Log = "reports\.test262\test262-full-output\test262-final-output.txt",
+  [Parameter(Mandatory = $true)]
+  [string]$Log,
   [ValidateSet(1, 2, 3)]
   [int]$Level = 1,
   [string]$Out = "reports\.test262\test262-folder-pass-stats.csv",

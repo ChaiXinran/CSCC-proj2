@@ -34,9 +34,9 @@ V12 contracts
 
 Reports:
 
-- A appends to `reports/.version-report/v12-partA-report.md`.
-- B appends to `reports/.version-report/v12-partB-report.md`.
-- C appends to `reports/.version-report/v12-partC-report.md`.
+- A appends to `reports/version-history-v8-v12.md`.
+- B appends to `reports/version-history-v8-v12.md`.
+- C appends to `reports/version-history-v8-v12.md`.
 
 If `v12-partA-report.md` does not exist, A creates it. B/C must preserve older
 V12 report sections and add dated sections for new work.
@@ -91,7 +91,7 @@ cargo run --release --no-default-features -- eval "1 + 2"
 
 Required report:
 
-- `reports/.version-report/v12-partA-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 3. B Group - BigInt Runtime and Call/Apply
 
@@ -153,7 +153,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v12-partB-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 4. C Group - VM, PropertyKey, Scheduler, and Cleanup
 
@@ -210,7 +210,7 @@ cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 -
 
 Required report:
 
-- `reports/.version-report/v12-partC-report.md`
+- `reports/version-history-v8-v12.md`
 
 ## 5. Shared-File Lock
 
@@ -255,9 +255,9 @@ cargo run --release --no-default-features -- test262 --native-v8-scan --jobs 4 -
 
 Reports and docs to update after integration:
 
-- `reports/.version-report/v12-partA-report.md`
-- `reports/.version-report/v12-partB-report.md`
-- `reports/.version-report/v12-partC-report.md`
+- `reports/version-history-v8-v12.md`
+- `reports/version-history-v8-v12.md`
+- `reports/version-history-v8-v12.md`
 - `docs/status.md`
 - `AGENTS.md` if commands or ownership rules change
 - `README.md` for de-Boa and external Boa comparison wording

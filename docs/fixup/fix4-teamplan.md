@@ -94,7 +94,7 @@ docs/fix4-contracts
 | `src/builtins/`                 | C，B 对 Promise/Iterator 协作 | builtin 不得绕过 runtime 直接维护第二套属性表或迭代协议                          |
 | `src/test262.rs`                | D/集成，三组评审                 | Fix4 scan selector、manifest、JSON summary 保持稳定                 |
 | `tests/`                        | 各组                        | 每组必须补专项 contract test                                         |
-| `reports/.version-report/fix4-part*.md`         | 各组                        | 每个 PR 更新对应报告                                                  |
+| `reports/version-history-v8-v12.md`         | 各组                        | 每个 PR 更新对应报告                                                  |
 | `docs/fixup/fix4-interface.md` | 全组                        | 所有共享接口变化先写文档再改代码                                              |
 
 ---
@@ -903,7 +903,7 @@ D 不直接做大功能实现。
 建议添加：
 
 ```text
-reports/.test262/test262-scan-failure/native-fix4-scan-failures.txt
+src/test262_manifests/native-fix4-scan-failures.txt
 reports/.native-test262-tmp/native-fix4-scan-summary.json
 ```
 
@@ -931,9 +931,9 @@ annexB/built-ins
 新增：
 
 ```text
-reports/.version-report/fix4-partA-report.md
-reports/.version-report/fix4-partB-report.md
-reports/.version-report/fix4-partC-report.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
 reports/fix4-integration-report.md
 ```
 
@@ -1065,9 +1065,9 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 ```text
 docs/fixup/fix4-teamplan.md
 docs/fixup/fix4-interface.md
-reports/.version-report/fix4-partA-report.md
-reports/.version-report/fix4-partB-report.md
-reports/.version-report/fix4-partC-report.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
 ```
 
 完成标准：

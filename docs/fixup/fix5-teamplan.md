@@ -135,7 +135,7 @@ The first merge must be the contract branch. No group should start large feature
 | `src/builtins/`                | C          | Builtins must use shared runtime helpers, not duplicate object/iterator logic       |
 | `src/test262.rs`               | D          | V12 scan selector and locked manifest stay stable                                   |
 | `tests/`                       | all groups | Each group adds focused tests for its contract                                      |
-| `reports/.version-report/v12-part*.md`         | each group | Every change updates the matching report                                            |
+| `reports/version-history-v8-v12.md`         | each group | Every change updates the matching report                                            |
 | `docs/version/native-v12-interface.md` | all groups | Shared contracts are authoritative                                                  |
 
 ---
@@ -636,12 +636,12 @@ Tasks:
 ```text
 docs/version/native-v12-team-plan.md
 docs/version/native-v12-interface.md
-reports/.version-report/v12-partA-report.md
-reports/.version-report/v12-partB-report.md
-reports/.version-report/v12-partC-report.md
-reports/.test262/test262-scan-failure/native-v12-scan-failures.txt
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+src/test262_manifests/native-v12-scan-failures.txt
 reports/.native-test262-tmp/native-v12-scan-summary.json
-reports/.test262/test262-analysis/native-v12-test262-analysis.md
+reports/version-history-v8-v12.md
 ```
 
 ### 8.3 V12 scan manifest
@@ -742,10 +742,10 @@ conformance >= 70.44%
 Required documentation updates:
 
 ```text
-reports/.version-report/v12-partA-report.md
-reports/.version-report/v12-partB-report.md
-reports/.version-report/v12-partC-report.md
-reports/.test262/test262-analysis/native-v12-test262-analysis.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
 docs/status.md
 readme.md
 AGENTS.md

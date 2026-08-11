@@ -3,9 +3,9 @@ from pathlib import Path
 
 project = Path(SPECPATH).parents[1]
 datas = [(str(project / "frontend" / "agent-chat.html"), "frontend")]
-test262_report = project / "reports" / "full-test262-summary.json"
+test262_report = project / "Test262-final" / "full-test262-summary.json"
 if test262_report.is_file():
-    datas.append((str(test262_report), "reports"))
+    datas.append((str(test262_report), "Test262-final"))
 
 a = Analysis(
     [str(project / "demo" / "agent" / "server.py")],

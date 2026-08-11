@@ -36,9 +36,9 @@ V13 contracts
 
 Reports:
 
-- A updates `reports/.version-report/v13-partA-report.md`.
-- B updates `reports/.version-report/v13-partB-report.md`.
-- C updates `reports/.version-report/v13-partC-report.md`.
+- A updates `reports/version-history-v13-v18.md`.
+- B updates `reports/version-history-v13-v18.md`.
+- C updates `reports/version-history-v13-v18.md`.
 
 Each report must include baseline score, current score, pass delta, failure
 delta, commands run, known regressions, and intentionally partial behavior.
@@ -53,7 +53,7 @@ src/builtins/mod.rs
 src/runtime/context.rs
 src/runtime/object.rs
 tests/native_temporal.rs
-reports/.version-report/v13-partA-report.md
+reports/version-history-v13-v18.md
 ```
 
 Primary tasks:
@@ -104,7 +104,7 @@ preferred: +3,000
 
 Required report:
 
-- `reports/.version-report/v13-partA-report.md`
+- `reports/version-history-v13-v18.md`
 
 ## 3. B Group - Dynamic Import / Module / Class
 
@@ -122,7 +122,7 @@ tests/native_modules.rs
 tests/parser_iteration.rs
 tests/native_classes.rs
 tests/parser_classes.rs
-reports/.version-report/v13-partB-report.md
+reports/version-history-v13-v18.md
 ```
 
 Primary tasks:
@@ -171,7 +171,7 @@ preferred: +1,300
 
 Required report:
 
-- `reports/.version-report/v13-partB-report.md`
+- `reports/version-history-v13-v18.md`
 
 ## 4. C Group - Array / TypedArray / Missing Globals
 
@@ -190,7 +190,7 @@ tests/native_array_methods.rs
 tests/native_typed_arrays.rs
 tests/native_errors.rs
 tests/native_stdlib.rs
-reports/.version-report/v13-partC-report.md
+reports/version-history-v13-v18.md
 ```
 
 Primary tasks:
@@ -244,7 +244,7 @@ preferred: +1,000
 
 Required report:
 
-- `reports/.version-report/v13-partC-report.md`
+- `reports/version-history-v13-v18.md`
 
 ## 5. Shared-File Lock
 
@@ -260,9 +260,9 @@ Required report:
 | `src/builtins/error.rs` | C | Error-like constructors |
 | `src/builtins/std_primitives.rs` | C with A review | URI/resource globals; do not edit Temporal here |
 | `src/runtime/context.rs` | shared | Declare whether change serves A, B, or C |
-| `reports/.version-report/v13-partA-report.md` | A | A score report |
-| `reports/.version-report/v13-partB-report.md` | B | B score report |
-| `reports/.version-report/v13-partC-report.md` | C | C score report |
+| `reports/version-history-v13-v18.md` | A | A score report |
+| `reports/version-history-v13-v18.md` | B | B score report |
+| `reports/version-history-v13-v18.md` | C | C score report |
 
 ## 6. Ten-Day Sprint Schedule
 

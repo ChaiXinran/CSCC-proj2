@@ -393,7 +393,7 @@ src/lexer/regexp.rs
 src/runtime/context.rs only for isolated RegExp helpers
 tests/native_regexp.rs
 tests/native_string.rs
-reports/.test262/test262-analysis/fixup8-p2-report.md
+reports/version-history-v8-v12.md
 ```
 
 P2 should avoid:
@@ -789,7 +789,7 @@ No second RegExp dispatch path.
 Create a 5,000-case scan from current fixRTLE failures:
 
 ```text
-reports/.test262/test262-scan-failure/fixup8-scan-failures.txt
+src/test262_manifests/fixup8-scan-failures.txt
 reports/.native-test262-tmp/fixup8-scan-summary.json
 ```
 
@@ -829,7 +829,7 @@ Each person must maintain one report:
 
 ```text
 reports/fixup8-p1-report.md
-reports/.test262/test262-analysis/fixup8-p2-report.md
+reports/version-history-v8-v12.md
 reports/fixup8-p3-report.md
 ```
 
@@ -895,9 +895,9 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 1. Add docs/fixup8-teamplan.md
 2. Add docs/fixup/fix8-interface.md
 3. Add reports/fixup8-p1-report.md
-4. Add reports/.test262/test262-analysis/fixup8-p2-report.md
+4. Add reports/version-history-v8-v12.md
 5. Add reports/fixup8-p3-report.md
-6. Generate reports/.test262/test262-scan-failure/fixup8-scan-failures.txt
+6. Generate src/test262_manifests/fixup8-scan-failures.txt
 7. Add fixup8 scan selector
 ```
 

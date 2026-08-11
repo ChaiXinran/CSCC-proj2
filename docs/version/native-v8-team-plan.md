@@ -63,7 +63,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v8-partA-report.md`
+- `reports/version-history-v8-v12.md`
 
 Every A-track implementation change must update this report with the change
 summary, touched files, tests run, result deltas, and open coordination notes.
@@ -104,7 +104,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v8-partB-report.md`
+- `reports/version-history-v8-v12.md`
 
 Every B-track implementation change must update this report with the change
 summary, touched files, tests run, module skip delta, and open coordination
@@ -153,7 +153,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 
 Required report:
 
-- `reports/.version-report/v8-partC-report.md`
+- `reports/version-history-v8-v12.md`
 
 Every C-track implementation change must update this report with the change
 summary, touched files, tests run, missing-global delta, and newly exposed
@@ -187,7 +187,7 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 ```
 
 `--native-v8-scan` is the standard lightweight V8 integration check. It runs
-the locked 5,000-case manifest in `reports/.test262/test262-scan-failure/native-v8-scan-failures.txt`, sampled
+the locked 5,000-case manifest in `src/test262_manifests/native-v8-scan-failures.txt`, sampled
 from cases that did not pass in the 2026-06-24 full direct run. The initial
 initial summary was `reports/.native-test262-tmp/native-v8-scan-summary.json`: 0/5,000 passed,
 4,504 failed, and 496 skipped. After the first V8-B module runner pass, the
@@ -195,18 +195,18 @@ current summary is 205/5,000 passed, 4,795 failed, and 0 skipped.
 
 Reports and docs to update after the integration run:
 
-- `reports/.test262/test262-analysis/test262-report.md`;
+- `reports/version-history-v8-v12.md`;
 - a new dated or versioned analysis file, not the locked
-  `reports/.test262/test262-analysis/test262-analysis.md`;
-- `reports/.version-report/v8-partA-report.md`;
-- `reports/.version-report/v8-partB-report.md`;
-- `reports/.version-report/v8-partC-report.md`;
+  `reports/version-history-v8-v12.md`;
+- `reports/version-history-v8-v12.md`;
+- `reports/version-history-v8-v12.md`;
+- `reports/version-history-v8-v12.md`;
 - `reports/.native-test262-tmp/native-v8-scan-summary.json` if generated and intentionally kept for
   the integration pass;
 - `docs/status.md`;
 - `AGENTS.md`;
 - `thoughts/plan_1_version.md`.
 
-`reports/.test262/test262-analysis/test262-analysis.md` is the locked 2026-06-24 baseline. For later
+`reports/version-history-v8-v12.md` is the locked 2026-06-24 baseline. For later
 full-suite analysis, create a new dated or versioned analysis file instead of
 rewriting the baseline.

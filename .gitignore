@@ -3,13 +3,13 @@
 /target-linux/
 /build/
 /tmp/
+/project3136859-381686/
 
 
 # Generated benchmark runners and raw measurements
 /reports/
 !/reports/
 /reports/*
-!/reports/full-test262-summary.json
 !/reports/test262-latest-common-errors-2026-07-28.md
 !/reports/agent-host-demo-report.md
 !/reports/v17-partA-report.md
@@ -18,24 +18,11 @@
 !/reports/phase2-partD-report.md
 !/reports/phase3-partG-report.md
 !/reports/phase3-integration-report.md
-!/reports/85-target/
-/reports/85-target/*.txt
-!/reports/.test262
-!/reports/.version-report
-/reports/.version-report/*
-!/reports/.version-report/v13-partB-report.md
-!/reports/.version-report/atomics-partC-report.md
-!/reports/.version-report/jetstream-b-report.md
-!/reports/.version-report/three-track-partB-report.md
-!/reports/.version-report/phase2-partE-report.md
-!/reports/.version-report/phase3-partH-report.md
-!/reports/.version-report/phase4-partJ-report.md
-!/reports/.version-report/phase4-jsdom-memory-report.md
-!/reports/.version-report/agent-demo-report.md
+!/reports/test262-85-target-summary.md
+!/reports/version-history-v8-v12.md
+!/reports/version-history-v13-v18.md
+!/reports/optimization-and-demo-history.md
 !/reports/phase4-partK-report.md
-!/reports/.native-test262-tmp
-/reports/.native-test262-tmp/*
-!/reports/.native-test262-tmp/phase4-partJ-full-final.json
 # Local editor and agent state
 /.vscode/
 /.idea/
@@ -85,4 +72,5 @@ prompt.txt
 *.zip
 
 *.txt
+!/src/test262_manifests/*.txt
 *-zh.md

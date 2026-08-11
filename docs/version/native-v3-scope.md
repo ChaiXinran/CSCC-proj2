@@ -343,7 +343,7 @@ test/language/expressions/object/S11.1.5_A4.3.js
 
 完整路径以代码中的固定数组为准，防止文档与 runner 漂移。
 当前验收结果和相邻目录基线见
-[`reports/.test262/test262-analysis/native-v3-test262-report.md`](../reports/.test262/test262-analysis/native-v3-test262-report.md)。
+[`reports/version-history-v8-v12.md`](../reports/version-history-v8-v12.md)。
 
 ### 5.4 暂不纳入 V3 的相邻测试
 

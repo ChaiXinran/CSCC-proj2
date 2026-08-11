@@ -233,7 +233,7 @@ Rules:
 
 - host helpers are installed only in Test262 mode;
 - host helper failures must be explicit;
-- missing host capabilities should be documented in `reports/.test262/test262-analysis/test262-analysis.md`;
+- missing host capabilities should be documented in `reports/version-history-v8-v12.md`;
 - `$262` support must not leak into normal user scripts unless already part of
   the existing Test262 host configuration.
 

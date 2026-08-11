@@ -119,9 +119,9 @@ From V8 onward, every Native version must create one report per active worker
 track before feature implementation starts:
 
 ```text
-reports/.version-report/vN-partA-report.md
-reports/.version-report/vN-partB-report.md
-reports/.version-report/vN-partC-report.md
+reports/version-history-vN.md
+reports/version-history-vN.md
+reports/version-history-vN.md
 ```
 
 If a future version changes the number or name of tracks, use the same pattern
@@ -141,7 +141,7 @@ Each report must contain:
 - cross-group coordination notes.
 
 Mandatory AI-agent rule: when an AI agent or human contributor changes a track,
-the corresponding `reports/.version-report/vN-part*-report.md` file must be updated in the same
+the corresponding `reports/version-history-vN.md` file must be updated in the same
 change. The user does not need to explicitly ask for this. If no test was run,
 the report must say so and explain why.
 
@@ -149,8 +149,8 @@ Do not overwrite locked baseline analysis files. For later analysis, create a
 new dated or versioned report such as:
 
 ```text
-reports/.test262/test262-analysis/test262-analysis-YYYY-MM-DD.md
-reports/.test262/test262-analysis/native-vN-test262-analysis.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
 ```
 
 ## 10. Lightweight failed-case scan for each version
@@ -166,7 +166,7 @@ The scan must run a locked manifest of 5,000 Test262 cases that did not pass in
 the previous full or version baseline:
 
 ```text
-reports/.test262/test262-scan-failure/native-vN-scan-failures.txt
+src/test262_manifests/native-vN-scan-failures.txt
 ```
 
 The manifest is a planning and regression artifact, not a formal conformance
@@ -176,11 +176,11 @@ module-runner, and builtin-skeleton hotspots.
 
 Required implementation steps for each new version:
 
-1. Generate `reports/.test262/test262-scan-failure/native-vN-scan-failures.txt` with exactly 5,000 normalized
+1. Generate `src/test262_manifests/native-vN-scan-failures.txt` with exactly 5,000 normalized
    `test/.../*.js` paths from previously non-passing cases.
 2. Add allow-list entries to `.gitignore` for:
-   - `reports/.version-report/vN-part*-report.md`;
-   - `reports/.test262/test262-scan-failure/native-vN-scan-failures.txt`;
+   - `reports/version-history-vN.md`;
+   - `src/test262_manifests/native-vN-scan-failures.txt`;
    - `reports/.native-test262-tmp/native-vN-scan-summary.json`.
 3. Add constants in `src/test262.rs`:
    - `NATIVE_VN_SCAN_TESTS`;
@@ -196,7 +196,7 @@ Required implementation steps for each new version:
    - `docs/version/native-vN-scope.md`;
    - `docs/version/native-vN-team-plan.md`;
    - the active roadmap under `thoughts/`.
-8. Record the baseline command and result in every `reports/.version-report/vN-part*-report.md`.
+8. Record the baseline command and result in every `reports/version-history-vN.md`.
 
 Mandatory AI-agent rule: while working on version N, after focused tests the
 agent should run `--native-vN-scan` when the change is likely to affect that
@@ -211,11 +211,11 @@ Use this checklist in addition to the legacy checklist above:
 [ ] Create docs/version/native-vN-scope.md
 [ ] Create docs/version/native-vN-interface.md
 [ ] Create docs/version/native-vN-team-plan.md
-[ ] Create reports/.version-report/vN-partA-report.md
-[ ] Create reports/.version-report/vN-partB-report.md
-[ ] Create reports/.version-report/vN-partC-report.md
+[ ] Create reports/version-history-vN.md
+[ ] Create reports/version-history-vN.md
+[ ] Create reports/version-history-vN.md
 [ ] Lock the baseline analysis; do not overwrite it later
-[ ] Generate reports/.test262/test262-scan-failure/native-vN-scan-failures.txt with 5,000 prior non-passing cases
+[ ] Generate src/test262_manifests/native-vN-scan-failures.txt with 5,000 prior non-passing cases
 [ ] Add --native-vN-scan in src/test262.rs and src/main.rs
 [ ] Add selector coverage in tests/native_test262.rs
 [ ] Run --native-vN-scan once and save reports/.native-test262-tmp/native-vN-scan-summary.json
@@ -295,17 +295,17 @@ platform
 建议文件：
 
 ```text
-reports/.test262/test262-full-output/fixupN-baseline-output.txt
-reports/.test262/test262-analysis/fixupN-test262-analysis.md
+Test262-final/full-test262-summary.json
+reports/version-history-v8-v12.md
 reports/.native-test262-tmp/fixupN-baseline-summary.json
 ```
 
 禁止覆盖旧 baseline。后续分析必须使用新的 dated/versioned 文件，例如：
 
 ```text
-reports/.test262/test262-analysis/fixup8-test262-analysis.md
-reports/.test262/test262-analysis/fixup8-after-p1-analysis.md
-reports/.test262/test262-analysis/test262-analysis-YYYY-MM-DD.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
+reports/version-history-v8-v12.md
 ```
 
 ### 12.3 Fixup 阶段分组方式
@@ -364,10 +364,10 @@ P3 = Language + Module + Async Protocol
 ```text
 docs/fixup/fixN-teamplan.md
 docs/fixup/fixN-interface.md
-reports/.version-report/fixupN-p1-report.md
-reports/.version-report/fixupN-p2-report.md
-reports/.version-report/fixupN-p3-report.md
-reports/.test262/test262-scan-failure/fixupN-scan-failures.txt
+reports/version-history-fixupN.md
+reports/version-history-fixupN.md
+reports/version-history-fixupN.md
+src/test262_manifests/fixupN-scan-failures.txt
 reports/.native-test262-tmp/fixupN-scan-summary.json
 ```
 
@@ -460,7 +460,7 @@ Fixup 阶段必须创建固定 5,000 条失败用例 scan。
 文件：
 
 ```text
-reports/.test262/test262-scan-failure/fixupN-scan-failures.txt
+src/test262_manifests/fixupN-scan-failures.txt
 reports/.native-test262-tmp/fixupN-scan-summary.json
 ```
 
@@ -503,9 +503,9 @@ Fixup scan 是计划和回归工具，不是正式准确率。正式准确率仍
 三人组模板：
 
 ```text
-reports/.version-report/fixupN-p1-report.md
-reports/.version-report/fixupN-p2-report.md
-reports/.version-report/fixupN-p3-report.md
+reports/version-history-fixupN.md
+reports/version-history-fixupN.md
+reports/version-history-fixupN.md
 ```
 
 每个 report 必须包含：
@@ -603,8 +603,8 @@ cargo run --release --no-default-features -- test262 --backend native --root tes
 ```text
 1. docs/fixup/fixN-teamplan.md
 2. docs/fixup/fixN-interface.md
-3. reports/.version-report/fixupN-p*-report.md 初始版本
-4. reports/.test262/test262-scan-failure/fixupN-scan-failures.txt
+3. reports/version-history-fixupN.md 初始版本
+4. src/test262_manifests/fixupN-scan-failures.txt
 5. fixup scan selector
 6. shared interface contract PR
 7. 各 track focused feature PR
@@ -697,13 +697,13 @@ low-risk builtin method sweep
 
 ```text
 [ ] 锁定最新 full Test262 baseline
-[ ] 创建 reports/.test262/test262-analysis/fixupN-test262-analysis.md
+[ ] 创建 reports/version-history-v8-v12.md
 [ ] 创建 docs/fixup/fixN-teamplan.md
 [ ] 创建 docs/fixup/fixN-interface.md
-[ ] 创建 reports/.version-report/fixupN-p1-report.md
-[ ] 创建 reports/.version-report/fixupN-p2-report.md
-[ ] 创建 reports/.version-report/fixupN-p3-report.md
-[ ] 从 baseline failed cases 生成 reports/.test262/test262-scan-failure/fixupN-scan-failures.txt
+[ ] 创建 reports/version-history-fixupN.md
+[ ] 创建 reports/version-history-fixupN.md
+[ ] 创建 reports/version-history-fixupN.md
+[ ] 从 baseline failed cases 生成 src/test262_manifests/fixupN-scan-failures.txt
 [ ] 添加 --fixupN-scan 或 --native-fixupN-scan
 [ ] 添加 selector 测试
 [ ] 运行 fixup scan 并保存 reports/.native-test262-tmp/fixupN-scan-summary.json
