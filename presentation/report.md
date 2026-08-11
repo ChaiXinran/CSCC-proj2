@@ -253,7 +253,7 @@ Native 固定门 / 目录扫描 / 完整 Test262
 
 | Track | 主要职责 | 证据 |
 | --- | --- | --- |
-| A：Frontend | lexer、parser、AST、bytecode lowering | `docs/version/*scope*`、parser/bytecode tests、partA reports |
+| A：Frontend | lexer、parser、AST、bytecode lowering | `docs/runtime-evolution.md`、parser/bytecode tests、consolidated reports |
 | B：Runtime | VM、environment、module、job queue、iterator、GC、buffer | runtime focused tests、partB reports |
 | C：Builtins | JS 可见算法、Test262 目录扫描、性能优化 | native builtin tests、partC reports、benchmark results |
 | Integration | CLI、Test262 runner、scan selector、最终报告 | `src/main.rs`、`src/test262.rs`、`Test262-final/full-test262-summary.json` |

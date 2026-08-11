@@ -5,7 +5,7 @@
 文档版本：`0.1`。本文中的“必须（MUST）”表示合并前必须满足，“建议（SHOULD）”表示若偏离需要在评审中说明。
 
 第一批具体语言功能和 Test262 验收文件见
-[Native V1 表达式里程碑](native-v1-scope.md)。
+[原生运行时演进记录](runtime-evolution.md)。
 
 ## 1. 四部分与所有权
 
@@ -351,7 +351,8 @@ the shared type. Parser/compiler consumers must use
 shared operation helpers rather than native checked-integer operations.
 
 The normative parsing, operation, error, comparison, and resource-limit rules
-are defined in [Native V12 Shared Interface](version/native-v12-interface.md).
+are summarized in [the runtime evolution record](runtime-evolution.md); the
+current normative contract is this document and `src/contracts.rs`.
 
 ## Phase 2 Compact Property Storage Contract
 

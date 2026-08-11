@@ -94,7 +94,7 @@ A 不承担 dynamic import 的子任务，只审查 shared parser/compiler 兼�
 
 ## 9. Shared-file Lock
 
-建议创建 `docs/version/native-v16-locks.md`：
+相关接口冻结历史现汇总于 `docs/runtime-evolution.md`：
 
 ```markdown
 | file/function | owner | feature | start SHA | merge order | released |
