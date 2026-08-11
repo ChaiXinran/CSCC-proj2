@@ -7,7 +7,7 @@
 <p>
   <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024_Edition-EA580C?style=for-the-badge&logo=rust&logoColor=white" />
   <img alt="Native Engine" src="https://img.shields.io/badge/Engine-Native_Only-0F766E?style=for-the-badge" />
-  <img alt="Test262" src="https://img.shields.io/badge/Test262-90.97%25-7C3AED?style=for-the-badge" />
+  <img alt="Test262" src="https://img.shields.io/badge/Test262-90.98%25-7C3AED?style=for-the-badge" />
   <img alt="License MIT" src="https://img.shields.io/badge/License-MIT-2563EB?style=for-the-badge" />
 </p>
 
@@ -33,13 +33,13 @@ AgentJS 默认使用自研 Native 执行链，从源码解析、字节码生成�
 
 | 维度 | 结果 | 结论边界 |
 | --- | ---: | --- |
-| Test262 全量运行 | **48,557 / 53,379（90.97%）** | 失败、跳过、崩溃和超时均不计为通过 |
-| Test262 失败 / 跳过 | 4,820 / 2 | 仍存在明确的标准兼容性缺口 |
+| Test262 全量运行 | **48,566 / 53,379（90.98%）** | 失败、跳过、崩溃和超时均不计为通过 |
+| Test262 失败 / 跳过 | 4,811 / 2 | 仍存在明确的标准兼容性缺口 |
 | SunSpider 1.0.2 | **26 / 26 PASS** | 证明经典 workload 能正确完成，不代表全面快于成熟引擎 |
 | JetStream 2 公共 workload | **三引擎 6 / 6 PASS** | AgentJS、Boa、QuickJS 的 CLI 公共子集，不是浏览器综合总分 |
 | Native release 体积 | **约 7.11 MiB** | 以报告对应的 Windows release 产物为准 |
 
-最新 Test262 汇总来自 [`test262-final/full-test262-summary.json`](test262-final/full-test262-summary.json)。该归档结果尚未完整记录对应源码 commit、CPU 与运行命令，因此 README 不将其表述为“当前 HEAD 的即时结果”；正式复测应同时保存环境、revision、二进制指纹和原始输出。
+最新 Test262 统计为 **48,566 / 53,379（90.98%）**。该汇总尚未完整记录对应源码 commit、CPU 与运行命令，因此 README 不将其表述为“当前 HEAD 的即时结果”；正式复测应同时保存环境、revision、二进制指纹和原始输出。
 
 ## 2. 项目定位
 
@@ -138,13 +138,13 @@ cargo build --release --locked
 
 ### Test262
 
-最新归档全量结果如下：
+最新全量统计如下：
 
 | Total | Passed | Failed | Skipped | Pass rate | Elapsed |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 53,379 | **48,557** | 4,820 | 2 | **90.97%** | 452.354 s |
+| 53,379 | **48,566** | 4,811 | 2 | **90.98%** | 444.347 s |
 
-通过率比赛题 60% 门槛高 **30.97 个百分点**。早期 26.29% 仅用于展示迭代进展，不是当前基线；旧文档中的 71.78% 或 72.02% 也不应替代最新归档结果。
+通过率比赛题 60% 门槛高 **30.98 个百分点**。早期 26.29% 仅用于展示迭代进展，不是当前基线；旧文档中的 71.78% 或 72.02% 也不应替代最新结果。
 
 复测时建议写入新的带日期目录，避免覆盖历史证据：
 
@@ -225,7 +225,7 @@ AgentBench 覆盖局部稠密大索引数组、属性描述符、短数据过滤
 
 ### 1. 自研 Native 执行链
 
-Lexer、Parser/AST、Bytecode、VM、Runtime、Builtins 与 Heap/GC 均由项目实现。Boa 仅作为外部行为与性能参照；Native 未实现能力会返回分类错误，不会借助外部引擎制造通过结果。90.97% 的 Test262 归档结果和 SunSpider 26 / 26 均来自 Native 路径。
+Lexer、Parser/AST、Bytecode、VM、Runtime、Builtins 与 Heap/GC 均由项目实现。Boa 仅作为外部行为与性能参照；Native 未实现能力会返回分类错误，不会借助外部引擎制造通过结果。90.98% 的 Test262 结果和 SunSpider 26 / 26 均来自 Native 路径。
 
 ### 2. 面向 Agent 的轻量、隔离与资源可控设计
 
@@ -269,7 +269,7 @@ cargo test --no-default-features --test native_test262
 
 ## 9. 结果可信度与局限
 
-- Test262 90.97% 是最新归档全量结果，但还需补齐对应 commit 与完整环境元数据；
+- Test262 90.98% 是最新全量统计，但还需补齐对应 commit 与完整环境元数据；
 - SunSpider 的历史逐项耗时只用于定位热点，不进行跨批次总体排名；
 - AgentBench 的优势限定在项目明确覆盖的短任务 workload；
 - JetStream 2 数据是 CLI 公共子集，不是官方浏览器总分；
@@ -282,7 +282,7 @@ cargo test --no-default-features --test native_test262
 | --- | --- |
 | 实验报告 | [`reports/agentjs-experiment-report.md`](reports/agentjs-experiment-report.md) |
 | 最新三引擎 PPT | [`presentation/PPT.pptx.pptx`](presentation/PPT.pptx) |
-| Test262 全量汇总 | [`test262-final/full-test262-summary.json`](Test262-final/full-test262-summary.json) |
+| Test262 历史归档 JSON | [`test262-final/full-test262-summary.json`](test262-final/full-test262-summary.json) |
 | SunSpider 结果 | [`benchmarks/sunspider/results/`](benchmarks/sunspider/results/) |
 | AgentBench 结果 | [`benchmarks/agent/results/`](benchmarks/agent/results/) |
 | JetStream 公共集结果 | [`benchmarks/jetstream/results/`](benchmarks/jetstream/results/) |
