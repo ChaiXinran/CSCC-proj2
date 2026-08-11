@@ -258,6 +258,17 @@ class AgentOrchestratorTests(unittest.TestCase):
         self.assertIn("agentjsMs", response["metrics"])
         self.assertIn("totalMs", response["metrics"])
 
+    @mock.patch.object(server, "execute_boa")
+    @mock.patch.object(server, "execute_agentjs")
+    def test_both_engines_share_one_script_and_return_two_reports(self, agentjs, boa):
+        agentjs.return_value = server.ExecutionResult("native", [], [{"type": "panel", "title": "A", "children": []}], 5.0)
+        boa.return_value = server.ExecutionResult("boa", [], [{"type": "panel", "title": "B", "children": []}], 7.0)
+        response = server.run_agent({"prompt": "compare", "mode": "fixed", "engine": "both"}, store=server.SessionStore())
+        self.assertEqual(response["engine"], "both")
+        self.assertEqual(set(response["executions"]), {"agentjs", "boa"})
+        self.assertEqual(response["executions"]["agentjs"]["elapsedMs"], 5.0)
+        self.assertEqual(response["executions"]["boa"]["elapsedMs"], 7.0)
+        self.assertEqual(agentjs.call_args.args, boa.call_args.args)
     def test_error_response_uses_frozen_shape(self):
         response = server.error_response(
             server.AgentError("execution_failed", "bad", 422),
@@ -267,6 +278,41 @@ class AgentOrchestratorTests(unittest.TestCase):
         self.assertIsNone(response["execution"])
         self.assertIsNone(response["render"])
         self.assertEqual(response["error"]["code"], "execution_failed")
+
+
+class BenchmarkTests(unittest.TestCase):
+    def test_parses_cli_internal_timings(self):
+        self.assertEqual(server.parse_agentjs_internal_ms("__AGENTJS_INTERNAL_MS__12.345600\n"), 12.3456)
+        self.assertEqual(server.parse_boa_internal_ms("Parsing: 1ms\nTotal:     4.49ms\n"), 4.49)
+        self.assertEqual(server.parse_boa_internal_ms("Total:     381.00µs\n"), 0.381)
+
+    @mock.patch.object(server, "execute_agentjs_cached_benchmark")
+    @mock.patch.object(server, "execute_oxide_benchmark")
+    @mock.patch.object(server, "execute_boa")
+    @mock.patch.object(server, "execute_agentjs")
+    def test_benchmark_discards_warmup_and_reports_median_p95(self, agentjs, boa, oxide, cached):
+        result = server.ExecutionResult("same", [], [], 10.0, 4.0)
+        agentjs.return_value = result
+        boa.return_value = result
+        oxide.return_value = server.ExecutionResult("same", [], [], 12.0, None)
+        cached.return_value = {
+            "result": "same",
+            "internal": server.benchmark_summary([3.0] * 30),
+            "cacheHits": 34,
+            "cacheMisses": 1,
+            "processTotalMs": 100.0,
+        }
+        response = server.run_benchmark({"warmup": 5, "iterations": 30})
+        self.assertTrue(response["ok"])
+        self.assertEqual(agentjs.call_count, 35)
+        self.assertEqual(boa.call_count, 35)
+        self.assertEqual(oxide.call_count, 35)
+        self.assertEqual(response["engines"]["agentjs"]["internal"]["medianMs"], 4.0)
+        self.assertEqual(response["engines"]["boa"]["endToEnd"]["p95Ms"], 10.0)
+        self.assertIsNone(response["engines"]["oxide"]["internal"])
+        self.assertEqual(response["engines"]["oxide"]["endToEnd"]["medianMs"], 12.0)
+        self.assertEqual(response["engines"]["agentjs"]["cached"]["cacheHits"], 34)
+        self.assertEqual(len(response["engines"]["agentjs"]["internal"]["samplesMs"]), 30)
 
 
 if __name__ == "__main__":

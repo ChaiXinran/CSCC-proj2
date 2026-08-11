@@ -105,6 +105,8 @@ pub(crate) trait RuntimeBackend {
         session: &mut HostScriptSession,
         fragment: &PreparedHostFragment,
     ) -> Result<BackendExecution, EvalFailure>;
+
+    fn cache_stats(&self) -> NativeScriptCacheStats;
 }
 
 pub(crate) fn create_runtime(
@@ -789,6 +791,10 @@ impl NativeRuntime {
 }
 
 impl RuntimeBackend for NativeRuntime {
+    fn cache_stats(&self) -> NativeScriptCacheStats {
+        self.cache_stats()
+    }
+
     fn eval(
         &mut self,
         source: &str,

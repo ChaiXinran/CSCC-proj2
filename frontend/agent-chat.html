@@ -108,6 +108,15 @@
 
     .connection.fallback { color: var(--amber); }
     .connection.offline { color: var(--red); }
+    .engine-control { display:flex; align-items:center; gap:6px; margin-left:auto; color:var(--muted); font-size:10px; font-weight:750; text-transform:uppercase; }
+    .engine-select { border:1px solid var(--line); border-radius:7px; padding:6px 8px; background:var(--surface); color:var(--ink); font-size:11px; font-weight:700; }
+    .benchmark-button { border:1px solid var(--line); border-radius:7px; padding:7px 10px; background:var(--surface); color:var(--ink); font-size:10px; font-weight:750; cursor:pointer; }
+    .benchmark-button:disabled { cursor:wait; opacity:.55; }
+    .comparison-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+    .engine-result { min-width:0; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--surface-soft); }
+    .engine-result h3 { margin:0 0 8px; font-size:14px; }
+    .engine-time { margin-bottom:10px; color:var(--muted); font-size:11px; }
+    @media (max-width:900px) { .comparison-grid { grid-template-columns:1fr; } }
 
     .icon-button {
       width: 34px;
@@ -565,6 +574,14 @@
         <div class="brand-mark">AJS</div>
         <div><strong>AgentJS Conversation</strong><span>Prompt to JavaScript to Agent UI</span></div>
       </div>
+      <label class="engine-control">Engine
+        <select id="engineSelect" class="engine-select" aria-label="Execution engine">
+          <option value="agentjs">AgentJS</option>
+          <option value="boa">Boa</option>
+          <option value="both">Compare both</option>
+        </select>
+      </label>
+      <button id="runBenchmark" class="benchmark-button" type="button">3-engine benchmark 50×</button>
       <div id="connection" class="connection fallback">Rust preset fallback</div>
       <button id="newSession" class="icon-button" type="button" title="New conversation" aria-label="New conversation">+</button>
     </header>
@@ -700,6 +717,8 @@ return average.toFixed(2) + "%";`
     const dataFile = document.getElementById("dataFile");
     const dataStatus = document.getElementById("dataStatus");
     const sendButton = document.getElementById("send");
+    const benchmarkButton = document.getElementById("runBenchmark");
+    const engineSelect = document.getElementById("engineSelect");
     const connection = document.getElementById("connection");
     const turnCount = document.getElementById("turnCount");
     const sessionLabel = document.getElementById("sessionId");
@@ -709,6 +728,7 @@ return average.toFixed(2) + "%";`
     const MAX_INPUT_BYTES = 200 * 1024;
     const MAX_CSV_ROWS = 10000;
     const REQUEST_TIMEOUT_MS = 35000;
+    const BENCHMARK_TIMEOUT_MS = 120000;
 
     async function fetchAgent(body) {
       const controller = new AbortController();
@@ -724,6 +744,25 @@ return average.toFixed(2) + "%";`
         if (error?.name === "AbortError") {
           throw new Error("模型请求超过 35 秒，已停止等待。请检查网络或 API Key 后重试。");
         }
+        throw error;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    async function fetchBenchmark() {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), BENCHMARK_TIMEOUT_MS);
+      try {
+        const response = await fetch("/api/benchmark", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ warmup: 5, iterations: 50 }),
+          signal: controller.signal
+        });
+        return await parseAgentResponse(response, "Benchmark request failed");
+      } catch (error) {
+        if (error?.name === "AbortError") throw new Error("Benchmark exceeded 120 seconds");
         throw error;
       } finally {
         clearTimeout(timer);
@@ -772,7 +811,7 @@ return average.toFixed(2) + "%";`
 
     async function requestAgent(prompt, input, submittedInputMeta) {
       try {
-        const response = await fetchAgent({ sessionId, prompt, input, inputMeta: submittedInputMeta });
+        const response = await fetchAgent({ sessionId, prompt, input, inputMeta: submittedInputMeta, engine: engineSelect.value });
         const payload = await parseAgentResponse(response, "Agent orchestrator request failed");
         return normalizeAgentResponse(payload);
       } catch (error) {
@@ -789,6 +828,7 @@ return average.toFixed(2) + "%";`
           prompt,
           input,
           inputMeta: submittedInputMeta,
+          engine: engineSelect.value,
           scenario: chooseFallbackScenario(prompt),
           mode: "fixed"
         });
@@ -898,25 +938,27 @@ return average.toFixed(2) + "%";`
       setDataStatus(`${file.name} ready${count === null ? "" : ` · ${count.toLocaleString()} records`}`);
     }
 
-    function normalizeAgentResponse(payload) {
-      if (!payload || !payload.ok) {
-        throw new Error(payload?.error?.message || "Agent orchestrator returned an invalid response");
-      }
-      return {
-        ok: true,
-        code: payload.code || "",
-        render: payload.render || payload.execution?.render || null,
-        execution: {
-          value: payload.execution?.value ?? payload.result ?? null,
-          logs: payload.execution?.logs || payload.logs || [],
-          elapsedMs: payload.execution?.elapsedMs ?? payload.elapsedMs ?? 0,
-          modelMs: payload.execution?.modelMs ?? payload.metrics?.modelMs ?? 0,
-          totalMs: payload.execution?.totalMs ?? payload.metrics?.totalMs ?? 0
-        },
-        source: "orchestrator"
-      };
+    function normalizeExecution(item, fallback = {}) {
+      return { ok: item?.ok !== false, value: item?.value ?? fallback.value ?? null,
+        logs: item?.logs || fallback.logs || [], elapsedMs: item?.elapsedMs ?? fallback.elapsedMs ?? 0,
+        internalMs: item?.internalMs ?? fallback.internalMs ?? null,
+        modelMs: item?.modelMs ?? fallback.modelMs ?? 0, totalMs: item?.totalMs ?? fallback.totalMs ?? 0,
+        render: item?.render || fallback.render || null, error: item?.error || null };
     }
 
+    function normalizeAgentResponse(payload) {
+      if (!payload || !payload.ok) throw new Error(payload?.error?.message || "Agent orchestrator returned an invalid response");
+      const fallback = { value: payload.execution?.value ?? payload.result ?? null,
+        logs: payload.execution?.logs || payload.logs || [], elapsedMs: payload.execution?.elapsedMs ?? payload.elapsedMs ?? 0,
+        internalMs: payload.execution?.internalMs ?? null,
+        modelMs: payload.execution?.modelMs ?? payload.metrics?.modelMs ?? 0,
+        totalMs: payload.execution?.totalMs ?? payload.metrics?.totalMs ?? 0,
+        render: payload.render || payload.execution?.render || null };
+      const executions = {};
+      for (const [name, item] of Object.entries(payload.executions || {})) executions[name] = normalizeExecution(item, fallback);
+      return { ok: true, code: payload.code || "", engine: payload.engine || "agentjs", render: fallback.render,
+        execution: normalizeExecution(payload.execution, fallback), executions, source: "orchestrator" };
+    }
     function appendRenderChildren(panel, children) {
       for (const child of children || []) {
         if (child.type === "metrics") {
@@ -1010,35 +1052,109 @@ return average.toFixed(2) + "%";`
       return { head, body };
     }
 
+    function appendExecutionCard(parent, name, execution) {
+      const card = element("section", "engine-result");
+      card.append(element("h3", "", name === "agentjs" ? "AgentJS" : "Boa"));
+      if (!execution.ok) {
+        card.append(element("div", "error-panel", execution.error?.message || "Execution failed"));
+        parent.append(card); return;
+      }
+      const timing = execution.internalMs == null
+        ? `End-to-end ${Number(execution.elapsedMs).toFixed(2)} ms`
+        : `Internal ${Number(execution.internalMs).toFixed(2)} ms · End-to-end ${Number(execution.elapsedMs).toFixed(2)} ms`;
+      card.append(element("div", "engine-time", timing));
+      card.append(renderNode(execution.render));
+      const logs = element("details");
+      logs.append(element("summary", "", "View execution logs"));
+      logs.append(element("pre", "log-block", execution.logs.length ? execution.logs.join("\n") : "No console output."));
+      card.append(logs); parent.append(card);
+    }
+
     function showResult(view, response) {
       view.body.replaceChildren();
       const badge = view.head.querySelector(".source-badge");
-      badge.textContent = response.source === "orchestrator" ? "DeepSeek + Rust" : "Rust preset";
+      const names = Object.keys(response.executions);
+      badge.textContent = response.engine === "both" ? "AgentJS vs Boa" : (response.engine || "agentjs").toUpperCase();
       badge.classList.toggle("fallback", response.source !== "orchestrator");
-
       const toolbar = element("div", "result-toolbar");
       if (response.execution.modelMs > 0) {
         toolbar.append(element("span", "", "Model "));
         toolbar.append(element("strong", "", Number(response.execution.modelMs).toFixed(0) + " ms"));
       }
-      toolbar.append(element("span", "", "Engine "));
-      toolbar.append(element("strong", "", Number(response.execution.elapsedMs).toFixed(2) + " ms"));
-      if (response.execution.totalMs > 0) {
-        toolbar.append(element("span", "", "Total "));
-        toolbar.append(element("strong", "", Number(response.execution.totalMs).toFixed(0) + " ms"));
-      }
       view.body.append(toolbar);
-      view.body.append(renderNode(response.render));
-
+      if (names.length > 1) {
+        const grid = element("div", "comparison-grid");
+        for (const name of ["agentjs", "boa"]) if (response.executions[name]) appendExecutionCard(grid, name, response.executions[name]);
+        view.body.append(grid);
+      } else {
+        const name = names[0] || response.engine || "agentjs";
+        appendExecutionCard(view.body, name, response.executions[name] || response.execution);
+      }
       const codeDetails = element("details");
-      codeDetails.append(element("summary", "", "View generated JavaScript"));
+      codeDetails.append(element("summary", "", "View generated JavaScript (shared by both engines)"));
       codeDetails.append(element("pre", "code-block", response.code || "No code returned."));
       view.body.append(codeDetails);
+    }
 
-      const logDetails = element("details");
-      logDetails.append(element("summary", "", "View execution logs"));
-      logDetails.append(element("pre", "log-block", response.execution.logs.length ? response.execution.logs.join("\n") : "No console output."));
-      view.body.append(logDetails);
+    function showBenchmark(view, response) {
+      view.body.replaceChildren();
+      const badge = view.head.querySelector(".source-badge");
+      badge.textContent = "50-run benchmark";
+      badge.classList.remove("fallback");
+      view.body.append(element(
+        "p", "engine-time",
+        `${response.warmup} warm-up runs discarded · ${response.iterations} measured runs · alternating order`
+      ));
+      const grid = element("div", "comparison-grid");
+      for (const name of ["agentjs", "boa", "oxide"]) {
+        const result = response.engines[name];
+        const card = element("section", "engine-result");
+        const labels = { agentjs: "AgentJS", boa: "Boa", oxide: "OxideJS" };
+        card.append(element("h3", "", labels[name]));
+        const table = element("table", "render-table");
+        table.innerHTML = `<thead><tr><th>Scope</th><th>Median</th><th>P95</th><th>Min</th><th>Max</th></tr></thead>`;
+        const body = document.createElement("tbody");
+        const rows = [["Internal eval", result.internal]];
+        if (result.cached) rows.push(["Cached eval", result.cached.internal]);
+        rows.push(["End-to-end", result.endToEnd]);
+        for (const [label, stats] of rows) {
+          const row = document.createElement("tr");
+          const values = stats
+            ? [label, stats.medianMs, stats.p95Ms, stats.minMs, stats.maxMs]
+            : [label, "N/A", "N/A", "N/A", "N/A"];
+          for (const value of values) {
+            const cell = document.createElement("td");
+            cell.textContent = typeof value === "number" ? value.toFixed(2) + " ms" : value;
+            row.append(cell);
+          }
+          body.append(row);
+        }
+        table.append(body);
+        card.append(table);
+        if (result.cached) {
+          card.append(element("p", "engine-time", `LRU cache: ${result.cached.cacheHits} hits · ${result.cached.cacheMisses} miss`));
+        }
+        grid.append(card);
+      }
+      view.body.append(grid);
+      view.body.append(element("p", "engine-time", "AgentJS/Boa internal timing covers parse, compile, and eval. OxideJS has no equivalent generic-run timer, so its internal row is intentionally N/A."));
+    }
+
+    async function runRigorousBenchmark() {
+      benchmarkButton.disabled = true;
+      sendButton.disabled = true;
+      const view = createTurn("Run rigorous AgentJS vs Boa vs OxideJS benchmark (5 warm-ups + 50 measured runs).", { source: "none" });
+      try {
+        showBenchmark(view, await fetchBenchmark());
+        connection.textContent = "Benchmark complete";
+        connection.className = "connection";
+      } catch (error) {
+        showError(view, error);
+      } finally {
+        benchmarkButton.disabled = false;
+        sendButton.disabled = false;
+        messages.scrollTop = messages.scrollHeight;
+      }
     }
 
     function showError(view, error) {
@@ -1135,6 +1251,7 @@ return average.toFixed(2) + "%";`
     });
 
     document.getElementById("newSession").addEventListener("click", resetSession);
+    benchmarkButton.addEventListener("click", runRigorousBenchmark);
     jsonInput.addEventListener("input", () => {
       inputMeta = jsonInput.value.trim()
         ? { source: "text", format: "json", fileName: null }

@@ -371,6 +371,12 @@ impl Runtime {
         self.eval(source, options)
     }
 
+    /// Returns isolate-local parsed/compiled script-cache counters.
+    #[must_use]
+    pub fn cache_stats(&self) -> crate::backend::NativeScriptCacheStats {
+        self.backend.cache_stats()
+    }
+
     /// Installs or clears host-level controls shared by subsequent evaluations.
     pub fn set_run_control(&mut self, control: Option<RunControl>) {
         self.backend.set_run_control(control);

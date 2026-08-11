@@ -13,6 +13,7 @@ import http.client
 import json
 import os
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -42,6 +43,7 @@ ROOT = SOURCE_ROOT
 STATIC_ROOT = BUNDLE_ROOT / "frontend"
 RESULT_MARKER = "__AGENTJS_RESULT__"
 RENDER_MARKER = "__AGENTJS_RENDER__"
+AGENTJS_TIME_MARKER = "__AGENTJS_INTERNAL_MS__"
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_PROMPT_CHARS = 2_000
 MAX_CODE_CHARS = 16_000
@@ -294,6 +296,7 @@ class AgentRequest:
     input: Any
     scenario: str
     mode: str
+    engine: str = "agentjs"
 
 
 @dataclass(frozen=True)
@@ -302,6 +305,7 @@ class ExecutionResult:
     logs: list[str]
     render_events: list[dict[str, Any]]
     elapsed_ms: float
+    internal_ms: float | None = None
 
     @property
     def result(self) -> Any:  # Backward-compatible alias used by the old UI/tests.
@@ -450,6 +454,7 @@ def validate_request(payload: Any) -> AgentRequest:
     if raw_mode is None:
         raw_mode = "deepseek" if os.environ.get("DEEPSEEK_API_KEY", "").strip() else "fixed"
     mode = "fixed" if raw_mode == "offline" else raw_mode
+    engine = str(payload.get("engine", "agentjs")).lower()
     data = payload.get("input", {})
     if not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(session_id):
         raise AgentError("invalid_session", "sessionId 只能包含字母、数字、点、下划线和连字符，长度不超过 64")
@@ -461,7 +466,9 @@ def validate_request(payload: Any) -> AgentRequest:
         raise AgentError("invalid_scenario", "不支持的场景")
     if mode not in {"fixed", "deepseek"}:
         raise AgentError("invalid_mode", "mode 必须是 fixed、offline 或 deepseek")
-    return AgentRequest(session_id, prompt.strip(), data, scenario, mode)
+    if engine not in {"agentjs", "boa", "both"}:
+        raise AgentError("invalid_engine", "engine must be agentjs, boa, or both")
+    return AgentRequest(session_id, prompt.strip(), data, scenario, mode, engine)
 
 
 def validate_generated_script(program: Any, require_render: bool = False) -> GeneratedScript:
@@ -524,6 +531,35 @@ def find_agentjs_binary() -> Path:
     raise AgentError("engine_missing", "未找到 AgentJS release 可执行文件，请先运行 cargo build --release --locked", 503)
 
 
+def find_boa_binary() -> Path:
+    configured = os.environ.get("BOA_BIN")
+    candidates = [Path(configured)] if configured else []
+    candidates.extend([
+        BUNDLE_ROOT / "boa.exe",
+        BUNDLE_ROOT / "boa",
+        SOURCE_ROOT / "boa" / "target" / "release" / "boa.exe",
+        SOURCE_ROOT / "boa" / "target" / "release" / "boa",
+    ])
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise AgentError("boa_missing", "Boa release executable not found; build boa_cli first", 503)
+
+
+def find_oxide_binary() -> Path:
+    configured = os.environ.get("OXIDE_BIN")
+    candidates = [Path(configured)] if configured else []
+    candidates.extend([
+        BUNDLE_ROOT / "oxide.exe",
+        BUNDLE_ROOT / "oxide",
+        SOURCE_ROOT / "target" / "oxide-compare" / "release" / "oxide.exe",
+        SOURCE_ROOT / "target" / "oxide-compare" / "release" / "oxide",
+    ])
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise AgentError("oxide_missing", "OxideJS release executable not found", 503)
+
 def build_wrapper(code: str, data: Any) -> str:
     # JSON is a JavaScript expression already. Injecting the parsed value avoids
     # depending on the runtime's JSON.parse implementation for host input.
@@ -539,6 +575,60 @@ const __agentJson = JSON.stringify(__agentValue === undefined ? null : __agentVa
 "{RESULT_MARKER}" + (__agentJson === undefined ? "null" : __agentJson);
 '''
 
+
+def build_boa_wrapper(code: str, data: Any) -> str:
+    input_json = json.dumps(data, ensure_ascii=True, separators=(",", ":"))
+    return f'''"use strict";
+const input = {input_json};
+const __renderEvents = [];
+const agent = Object.freeze({{ render: function (tree) {{ __renderEvents.push(tree); }} }});
+const __agentValue = (function () {{
+{code}
+}})();
+const __agentJson = JSON.stringify(__agentValue === undefined ? null : __agentValue);
+console.log("{RENDER_MARKER}" + JSON.stringify(__renderEvents[__renderEvents.length - 1] || null));
+console.log("{RESULT_MARKER}" + (__agentJson === undefined ? "null" : __agentJson));
+'''
+
+
+BENCHMARK_PROGRAM = r'''
+var checksum = 0;
+var minimum = 2147483647;
+var maximum = 0;
+for (var i = 1; i <= 200000; i++) {
+  var value = (i * 48271) % 2147483647;
+  checksum = (checksum + value) % 2147483647;
+  if (value < minimum) minimum = value;
+  if (value > maximum) maximum = value;
+}
+agent.render({
+  type: "panel",
+  title: "Deterministic CPU benchmark",
+  children: [{
+    type: "metrics",
+    items: [
+      { label: "Iterations", value: "200000" },
+      { label: "Checksum", value: String(checksum) },
+      { label: "Range", value: String(maximum - minimum) }
+    ]
+  }]
+});
+return String(checksum);
+'''
+
+
+OXIDE_BENCHMARK_PROGRAM = r'''
+var checksum = 0;
+var minimum = 2147483647;
+var maximum = 0;
+for (var i = 1; i <= 200000; i++) {
+  var value = (i * 48271) % 2147483647;
+  checksum = (checksum + value) % 2147483647;
+  if (value < minimum) minimum = value;
+  if (value > maximum) maximum = value;
+}
+String(checksum);
+'''
 
 def subprocess_window_options() -> dict[str, Any]:
     """Prevent console-hosted child tools from flashing a window on Windows."""
@@ -592,7 +682,7 @@ def execute_agentjs(code: str, data: Any) -> ExecutionResult:
             temporary_path = handle.name
         try:
             completed = subprocess.run(
-                [str(binary), "run", temporary_path], cwd=ROOT, capture_output=True,
+                [str(binary), "run", "--time", temporary_path], cwd=ROOT, capture_output=True,
                 text=True, encoding="utf-8", timeout=3, check=False,
                 **subprocess_window_options(),
             )
@@ -630,8 +720,252 @@ def execute_agentjs(code: str, data: Any) -> ExecutionResult:
         raise AgentError("render_too_large", "RenderTree 超过 64 KiB", 422)
     validated_events = [validate_render_tree(tree) for tree in render_events]
     logs = [line for line in lines if not line.startswith((RESULT_MARKER, RENDER_MARKER))]
-    return ExecutionResult(value, logs, validated_events, elapsed_ms)
+    return ExecutionResult(
+        value, logs, validated_events, elapsed_ms, parse_agentjs_internal_ms(completed.stderr)
+    )
 
+
+def execute_boa(code: str, data: Any) -> ExecutionResult:
+    binary = find_boa_binary()
+    source = build_boa_wrapper(code, data)
+    started = time.perf_counter()
+    temporary_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as handle:
+            handle.write(source)
+            temporary_path = handle.name
+        completed = subprocess.run(
+            [str(binary), "--quiet", "--time", temporary_path], cwd=ROOT, capture_output=True,
+            text=True, encoding="utf-8", timeout=3, check=False,
+            **subprocess_window_options(),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AgentError("boa_timeout", "Boa execution exceeded 3 seconds", 422) from error
+    except OSError as error:
+        raise AgentError("boa_spawn_failed", f"Boa could not start: {error}", 503) from error
+    finally:
+        if temporary_path:
+            try:
+                Path(temporary_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+    elapsed_ms = (time.perf_counter() - started) * 1_000
+    lines = completed.stdout.splitlines()
+    result_lines = [line[len(RESULT_MARKER):] for line in lines if line.startswith(RESULT_MARKER)]
+    render_lines = [line[len(RENDER_MARKER):] for line in lines if line.startswith(RENDER_MARKER)]
+    if completed.returncode != 0 or not result_lines:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "Boa returned no structured result"
+        raise AgentError("boa_execution_failed", detail[:1_000], 422)
+    try:
+        value = json.loads(result_lines[-1])
+        render_events = [json.loads(line) for line in render_lines if line != "null"]
+    except json.JSONDecodeError as error:
+        raise AgentError("boa_result_invalid", "Boa returned invalid structured JSON", 422) from error
+    validated_events = [validate_render_tree(tree) for tree in render_events]
+    logs = [line for line in lines if not line.startswith((RESULT_MARKER, RENDER_MARKER))]
+    return ExecutionResult(
+        value, logs, validated_events, elapsed_ms, parse_boa_internal_ms(completed.stderr)
+    )
+
+
+def parse_agentjs_internal_ms(stderr: str) -> float | None:
+    pattern = rf"^{re.escape(AGENTJS_TIME_MARKER)}([0-9]+(?:\.[0-9]+)?)$"
+    match = re.search(pattern, stderr, re.MULTILINE)
+    return float(match.group(1)) if match else None
+
+
+def parse_boa_internal_ms(stderr: str) -> float | None:
+    match = re.search(
+        r"^Total:\s+([0-9]+(?:\.[0-9]+)?)(ns|µs|us|ms|s)$", stderr, re.MULTILINE
+    )
+    if not match:
+        return None
+    value = float(match.group(1))
+    scale = {"ns": 0.000001, "µs": 0.001, "us": 0.001, "ms": 1.0, "s": 1000.0}
+    return value * scale[match.group(2)]
+
+
+def execute_oxide_benchmark() -> ExecutionResult:
+    binary = find_oxide_binary()
+    started = time.perf_counter()
+    temporary_path: str | None = None
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as handle:
+            handle.write(OXIDE_BENCHMARK_PROGRAM)
+            temporary_path = handle.name
+        completed = subprocess.run(
+            [str(binary), "--quiet", "run", temporary_path],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=3,
+            check=False,
+            **subprocess_window_options(),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AgentError("oxide_timeout", "OxideJS execution exceeded 3 seconds", 422) from error
+    except OSError as error:
+        raise AgentError("oxide_spawn_failed", f"OxideJS could not start: {error}", 503) from error
+    finally:
+        if temporary_path:
+            try:
+                Path(temporary_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+    elapsed_ms = (time.perf_counter() - started) * 1_000
+    lines = [line.strip() for line in completed.stdout.splitlines() if line.strip()]
+    if completed.returncode != 0 or not lines:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "OxideJS returned no result"
+        raise AgentError("oxide_execution_failed", detail[:1_000], 422)
+    try:
+        value = json.loads(lines[-1])
+    except json.JSONDecodeError as error:
+        raise AgentError("oxide_result_invalid", "OxideJS returned invalid JSON-compatible output", 422) from error
+    return ExecutionResult(value, [], [], elapsed_ms, None)
+
+
+def execute_agentjs_cached_benchmark(warmup: int, iterations: int) -> dict[str, Any]:
+    binary = find_agentjs_binary()
+    source = f"(function () {{\n{BENCHMARK_PROGRAM}\n}})();\n"
+    temporary_path: str | None = None
+    started = time.perf_counter()
+    try:
+        with tempfile.NamedTemporaryFile("w", suffix=".js", encoding="utf-8", delete=False) as handle:
+            handle.write(source)
+            temporary_path = handle.name
+        completed = subprocess.run(
+            [
+                str(binary), "cache-bench", temporary_path,
+                "--warmup", str(warmup), "--iterations", str(iterations),
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            check=False,
+            **subprocess_window_options(),
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AgentError("cache_benchmark_timeout", "AgentJS cached benchmark exceeded 120 seconds", 422) from error
+    except OSError as error:
+        raise AgentError("cache_benchmark_failed", f"AgentJS cached benchmark could not start: {error}", 503) from error
+    finally:
+        if temporary_path:
+            try:
+                Path(temporary_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+    elapsed_ms = (time.perf_counter() - started) * 1_000
+    lines = [line for line in completed.stdout.splitlines() if line.strip()]
+    if completed.returncode != 0 or not lines:
+        detail = completed.stderr.strip() or completed.stdout.strip() or "AgentJS returned no cache benchmark"
+        raise AgentError("cache_benchmark_failed", detail[:1_000], 422)
+    try:
+        payload = json.loads(lines[-1])
+        samples = [float(value) for value in payload["samplesMs"]]
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        raise AgentError("cache_benchmark_invalid", "AgentJS returned invalid cached timing data", 422) from error
+    return {
+        "result": payload.get("result"),
+        "internal": benchmark_summary(samples),
+        "cacheHits": int(payload.get("cacheHits", 0)),
+        "cacheMisses": int(payload.get("cacheMisses", 0)),
+        "processTotalMs": round(elapsed_ms, 2),
+    }
+
+
+def execution_payload(result: ExecutionResult, model_ms: float = 0.0) -> dict[str, Any]:
+    render = result.render_events[-1] if result.render_events else None
+    return {
+        "ok": True, "value": result.value, "logs": result.logs,
+        "elapsedMs": round(result.elapsed_ms, 2),
+        "internalMs": None if result.internal_ms is None else round(result.internal_ms, 4),
+        "modelMs": round(model_ms, 2),
+        "totalMs": round(model_ms + result.elapsed_ms, 2), "render": render, "error": None,
+    }
+
+
+def failed_execution_payload(error: AgentError) -> dict[str, Any]:
+    return {"ok": False, "value": None, "logs": [], "elapsedMs": 0,
+            "internalMs": None, "render": None,
+            "error": {"code": error.code, "message": str(error)}}
+
+
+def benchmark_summary(samples: list[float]) -> dict[str, Any]:
+    ordered = sorted(samples)
+    p95_index = max(0, min(len(ordered) - 1, (95 * len(ordered) + 99) // 100 - 1))
+    return {
+        "medianMs": round(statistics.median(ordered), 4),
+        "p95Ms": round(ordered[p95_index], 4),
+        "minMs": round(ordered[0], 4),
+        "maxMs": round(ordered[-1], 4),
+        "samplesMs": [round(value, 4) for value in samples],
+    }
+
+
+def run_benchmark(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise AgentError("invalid_request", "基准测试请求必须是 JSON 对象", 400)
+    try:
+        warmup = int(payload.get("warmup", 5))
+        iterations = int(payload.get("iterations", 50))
+    except (TypeError, ValueError) as error:
+        raise AgentError("invalid_benchmark", "warmup 和 iterations 必须是整数", 400) from error
+    if not 3 <= warmup <= 5 or not 30 <= iterations <= 100:
+        raise AgentError("invalid_benchmark", "warmup 必须为 3-5，iterations 必须为 30-100", 400)
+
+    runners = {
+        "agentjs": lambda: execute_agentjs(BENCHMARK_PROGRAM, {}),
+        "boa": lambda: execute_boa(BENCHMARK_PROGRAM, {}),
+        "oxide": execute_oxide_benchmark,
+    }
+    engine_names = list(runners)
+    for index in range(warmup):
+        offset = index % len(engine_names)
+        order = engine_names[offset:] + engine_names[:offset]
+        for name in order:
+            runners[name]()
+
+    samples = {name: {"internal": [], "endToEnd": []} for name in runners}
+    expected_value = None
+    for index in range(iterations):
+        offset = index % len(engine_names)
+        order = engine_names[offset:] + engine_names[:offset]
+        for name in order:
+            result = runners[name]()
+            if expected_value is None:
+                expected_value = result.value
+            elif result.value != expected_value:
+                raise AgentError("benchmark_mismatch", "三个引擎产生了不同的基准结果", 422)
+            samples[name]["endToEnd"].append(result.elapsed_ms)
+            if result.internal_ms is not None:
+                samples[name]["internal"].append(result.internal_ms)
+
+    cached_agentjs = execute_agentjs_cached_benchmark(warmup, iterations)
+    if cached_agentjs["result"] != expected_value:
+        raise AgentError("benchmark_mismatch", "AgentJS 缓存模式产生了不同的基准结果", 422)
+
+    engines = {
+        name: {
+            "internal": benchmark_summary(values["internal"]) if values["internal"] else None,
+            "endToEnd": benchmark_summary(values["endToEnd"]),
+        }
+        for name, values in samples.items()
+    }
+    engines["agentjs"]["cached"] = cached_agentjs
+
+    return {
+        "ok": True,
+        "workload": "deterministic-arithmetic-200k",
+        "warmup": warmup,
+        "iterations": iterations,
+        "order": "rotating",
+        "result": expected_value,
+        "engines": engines,
+        "notes": "AgentJS cached timing reuses one isolate and its parsed/compiled-script LRU. The benchmark source keeps mutable state function-local. Cold/fresh-process results remain separate.",
+    }
 
 def run_agent(payload: Any, store: SessionStore = SESSION_STORE) -> dict[str, Any]:
     request = validate_request(payload)
@@ -640,45 +974,40 @@ def run_agent(payload: Any, store: SessionStore = SESSION_STORE) -> dict[str, An
     model_started = time.perf_counter()
     script = validate_generated_script(generator.generate(history, request), require_render=True)
     model_ms = (time.perf_counter() - model_started) * 1_000
-    execution = execute_agentjs(script.code, request.input)
-    total_ms = model_ms + execution.elapsed_ms
-    render = execution.render_events[-1] if execution.render_events else None
+
+    runners = {"agentjs": execute_agentjs, "boa": execute_boa}
+    selected = ["agentjs", "boa"] if request.engine == "both" else [request.engine]
+    executions: dict[str, dict[str, Any]] = {}
+    for engine_name in selected:
+        try:
+            executions[engine_name] = execution_payload(runners[engine_name](script.code, request.input), model_ms)
+        except AgentError as error:
+            if request.engine != "both":
+                raise
+            executions[engine_name] = failed_execution_payload(error)
+
+    primary_name = "agentjs" if "agentjs" in executions else selected[0]
+    primary = executions[primary_name]
+    if not primary["ok"]:
+        primary = next((item for item in executions.values() if item["ok"]), primary)
     response = {
-        "ok": True,
-        "sessionId": request.session_id,
-        "prompt": request.prompt,
-        "code": script.code,
-        "execution": {
-            "value": execution.value,
-            "logs": execution.logs,
-            "elapsedMs": round(execution.elapsed_ms, 2),
-            "modelMs": round(model_ms, 2),
-            "totalMs": round(total_ms, 2),
-        },
-        "render": render,
-        "error": None,
-        # Compatibility fields for the first static UI. Student 3 can remove these.
-        "scenario": request.scenario,
+        "ok": any(item["ok"] for item in executions.values()),
+        "sessionId": request.session_id, "prompt": request.prompt, "code": script.code,
+        "engine": request.engine, "execution": primary, "executions": executions,
+        "render": primary.get("render"), "error": None, "scenario": request.scenario,
         "mode": "offline" if request.mode == "fixed" else request.mode,
         "model": "fixed-script" if request.mode == "fixed" else os.environ.get("DEEPSEEK_MODEL", DEFAULT_MODEL),
-        "plan": script.title or "",
-        "result": execution.value,
-        "metrics": {
-            "modelMs": round(model_ms, 2),
-            "agentjsMs": round(execution.elapsed_ms, 2),
-            "totalMs": round(total_ms, 2),
-        },
+        "plan": script.title or "", "result": primary.get("value"),
+        "metrics": {"modelMs": round(model_ms, 2),
+                    "agentjsMs": executions.get("agentjs", {}).get("elapsedMs"),
+                    "boaMs": executions.get("boa", {}).get("elapsedMs"),
+                    "totalMs": primary.get("totalMs")},
     }
     store.append(request.session_id, request.prompt, script, {
-        "prompt": request.prompt,
-        "code": script.code,
-        "render": render,
-        "logs": execution.logs,
-        "result": execution.value,
-        "elapsedMs": round(execution.elapsed_ms, 2),
+        "prompt": request.prompt, "code": script.code, "engine": request.engine,
+        "executions": executions, "render": primary.get("render"), "result": primary.get("value"),
     })
     return response
-
 
 def error_response(error: AgentError, payload: Any = None) -> dict[str, Any]:
     payload = payload if isinstance(payload, dict) else {}
@@ -710,6 +1039,18 @@ class AgentHandler(SimpleHTTPRequestHandler):
                     SOURCE_ROOT / "target/release/agentjs.exe",
                     SOURCE_ROOT / "target/release/agentjs",
                 ]),
+                "boaAvailable": any(path.is_file() for path in [
+                    BUNDLE_ROOT / "boa.exe",
+                    BUNDLE_ROOT / "boa",
+                    SOURCE_ROOT / "boa" / "target" / "release" / "boa.exe",
+                    SOURCE_ROOT / "boa" / "target" / "release" / "boa",
+                ]),
+                "oxideAvailable": any(path.is_file() for path in [
+                    BUNDLE_ROOT / "oxide.exe",
+                    BUNDLE_ROOT / "oxide",
+                    SOURCE_ROOT / "target" / "oxide-compare" / "release" / "oxide.exe",
+                    SOURCE_ROOT / "target" / "oxide-compare" / "release" / "oxide",
+                ]),
             })
             return
         if request_path.startswith("/api/sessions/"):
@@ -733,7 +1074,7 @@ class AgentHandler(SimpleHTTPRequestHandler):
 
     def do_POST(self) -> None:
         request_path = self.path.split("?", 1)[0]
-        if request_path != "/api/agent":
+        if request_path not in {"/api/agent", "/api/benchmark"}:
             self.send_error(HTTPStatus.NOT_FOUND)
             return
         payload: Any = None
@@ -742,7 +1083,8 @@ class AgentHandler(SimpleHTTPRequestHandler):
             if length <= 0 or length > MAX_REQUEST_BYTES:
                 raise AgentError("request_too_large", "请求体为空或超过 256 KiB", 413)
             payload = json.loads(self.rfile.read(length))
-            self.send_json(HTTPStatus.OK, run_agent(payload))
+            response = run_benchmark(payload) if request_path == "/api/benchmark" else run_agent(payload)
+            self.send_json(HTTPStatus.OK, response)
         except json.JSONDecodeError:
             error = AgentError("invalid_json", "请求不是有效 JSON", 400)
             self.send_json(error.status, error_response(error, payload))

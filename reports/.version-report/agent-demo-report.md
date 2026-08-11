@@ -268,3 +268,78 @@ unaffected by this routing-only correction.
   RenderTree feedback, and `/api/agent` fixed-mode fallback.
 - Both the primary DeepSeek request and the fixed-mode retry now retain
   `input` and `inputMeta`, so JSON/CSV data is not dropped during fallback.
+
+## AgentJS / Boa comparison mode
+
+- Added an `engine` request field with `agentjs`, `boa`, and `both` values. The default remains AgentJS for backward compatibility.
+- Compare mode generates one JavaScript program, then runs it in fresh AgentJS and Boa CLI processes with identical structured input. Per-engine results, logs, RenderTrees, errors, and execution times are returned under `executions`.
+- AgentJS continues to use the native Rust `agent.render` Host API. Boa is an external behavior/performance comparison engine and receives a minimal JavaScript render collector; the pinned `boa/` submodule source was not modified.
+- The chat UI now has an engine selector and renders AgentJS/Boa reports side by side. Model time is displayed separately from engine execution time.
+- The standalone build now embeds both `agentjs.exe` and `boa.exe`.
+- Validation on 2026-08-11: Python orchestrator tests PASS (30/30); frontend JavaScript syntax check PASS; source-server compare request PASS with identical `92.56%` values and identical RenderTrees (sample: AgentJS 39.30 ms, Boa 36.86 ms).
+- Packaged EXE compare validation PASS. Warm repeated runs were AgentJS 27.95/39.02 ms and Boa 36.97/37.39 ms. The first packaged child-process launch was slower (AgentJS 1043.26 ms, Boa 2354.95 ms), consistent with one-file extraction/Windows first-launch scanning overhead, so presentation comparisons should include a warm-up request.
+- Output: `dist/AgentJS-Demo.exe`, 29,660,919 bytes, SHA-256 `84D43178E8ADF4E790CA459DFC7E377C3713EF661C7603CE68BB8CDE839DFC3A`.
+
+## Statistical benchmark mode
+
+- Added machine-readable AgentJS CLI internal timing via `agentjs run --time`;
+  Boa uses its existing `--time` output. No Boa submodule source was modified.
+- Added `POST /api/benchmark` with 3-5 discarded warm-ups, 30-100 measured
+  samples, alternating execution order, checksum equality validation, and
+  median/P95/min/max plus raw samples.
+- Added a deterministic 200,000-iteration arithmetic workload and a
+  **Benchmark 50×** UI action. The result separates internal parse/eval timing
+  from end-to-end process/file/IPC timing.
+- A 30-sample validation run produced identical checksum `2078754680`.
+  AgentJS internal median/P95: 503.6769/518.1897 ms; Boa internal median/P95:
+  12.8/16.02 ms. AgentJS end-to-end median/P95: 543.6837/563.9439 ms; Boa:
+  58.9124/71.1876 ms. These figures characterize this arithmetic workload
+  only and must not be presented as a universal engine ranking.
+- Packaged endpoint validation PASS with 30 samples and the same checksum.
+  Packaged internal median/P95: AgentJS 506.8077/541.6622 ms, Boa
+  12.79/15.85 ms. Output: `dist/AgentJS-Demo.exe`, 29,664,770 bytes,
+  SHA-256 `361C1FA69B8388EAE5ACDB64FF26480DFF4090DA56651E80E8B797A55AC7027C`.
+
+## OxideJS comparison backend
+
+- Added the functionally similar OxideJS project from
+  `D:/00_OS/project3136859-381686` as a third statistical benchmark backend.
+  Its source tree remains unmodified; `oxide_cli` is built into this project's
+  `target/oxide-compare` directory with Rust 1.94.
+- The three engines execute the same deterministic arithmetic workload and
+  must return checksum `2078754680`. Execution order rotates across all three
+  positions for warm-up and measured samples.
+- OxideJS does not expose a comparable parse/compile/eval timer for arbitrary
+  `run` input. Its internal statistic is therefore explicitly `N/A`; using its
+  cached built-in bench timing would create an invalid apples-to-oranges
+  comparison. End-to-end median/P95/min/max and raw samples remain available.
+- Source-tree 30-sample validation PASS. End-to-end median/P95: AgentJS
+  592.8435/634.8089 ms, Boa 51.8102/58.2986 ms, OxideJS
+  58.9983/63.5907 ms. AgentJS/Boa internal median/P95 were
+  559.6096/599.6373 ms and 14.18/15.72 ms respectively.
+- Packaged three-engine benchmark PASS: all runtimes available and checksum
+  `2078754680`. Packaged end-to-end medians were AgentJS 685.3151 ms, Boa
+  59.81 ms, and OxideJS 67.2251 ms. Output: `dist/AgentJS-Demo.exe`,
+  31,985,121 bytes, SHA-256
+  `37C4E641A931ED717225E0FF6E32C1FABB8ABAAC1292EA461371B1C9D2D10269`.
+
+## Persistent AgentJS script-cache benchmark
+
+- Added `agentjs cache-bench <file> --warmup N --iterations N`. It keeps one
+  Runtime/isolate alive, reuses the existing 32-entry parsed/compiled-script
+  LRU, emits raw internal samples, and reports cache hit/miss counters.
+- Exposed read-only cache counters through `Runtime::cache_stats()` and added a
+  persistent-isolate regression test. Normal chat execution remains fresh
+  process/isolate by default.
+- Changed the common arithmetic workload's loop bindings from per-iteration
+  lexical `let`/`const` to function-local `var`. This avoids measuring block
+  environment allocation/GC pressure instead of arithmetic and cache lookup.
+- 30-sample validation: fresh AgentJS internal median/P95 75.9686/84.4056 ms;
+  cached median/P95 76.6080/86.0406 ms with 32 hits and 1 miss. The compute-heavy
+  workload is execution-bound, so bytecode caching correctly works but does not
+  materially improve its median. Fresh end-to-end median/P95 fell to
+  114.8425/128.1383 ms after removing lexical-environment pressure.
+- Packaged cached benchmark PASS with checksum `2078754680`, 32 hits/1 miss,
+  fresh internal median 77.4416 ms, and cached median 78.1633 ms. Output:
+  `dist/AgentJS-Demo.exe`, 31,989,261 bytes, SHA-256
+  `B10C1FFC0317A4B8C4070102F7725C9C227A2E43CA6FDB08B5C27CCE913730AE`.
