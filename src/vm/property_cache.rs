@@ -1,6 +1,6 @@
-//! Per-VM monomorphic named-property inline caches.
+//! Per-VM named-property inline caches.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     bytecode::Chunk,
@@ -72,26 +72,50 @@ pub struct SetPropertyCacheEntry {
     pub slot: PropertySlotId,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+enum GetCacheState {
+    #[default]
+    Unobserved,
+    Observed,
+    Cached(GetPropertyCacheEntries),
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+enum SetCacheState {
+    #[default]
+    Unobserved,
+    Observed,
+    Cached(SetPropertyCacheEntry),
+    Rejected,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct PropertyCacheSite {
+    get: GetCacheState,
+    set: SetCacheState,
+}
+
+#[derive(Debug)]
+struct ChunkPropertyCaches {
+    address: usize,
+    sites: Vec<PropertyCacheSite>,
+}
+
 #[derive(Debug)]
 pub struct PropertyInlineCaches {
-    get: HashMap<BytecodeSite, GetPropertyCacheEntries>,
-    set: HashMap<BytecodeSite, SetPropertyCacheEntry>,
-    observed_get: HashSet<BytecodeSite>,
-    observed_set: HashSet<BytecodeSite>,
-    rejected_get: HashSet<BytecodeSite>,
-    rejected_set: HashSet<BytecodeSite>,
+    chunks: Vec<ChunkPropertyCaches>,
+    chunk_indices: HashMap<usize, usize>,
+    last_chunk: Option<(usize, usize)>,
     enabled: bool,
 }
 
 impl Default for PropertyInlineCaches {
     fn default() -> Self {
         Self {
-            get: HashMap::new(),
-            set: HashMap::new(),
-            observed_get: HashSet::new(),
-            observed_set: HashSet::new(),
-            rejected_get: HashSet::new(),
-            rejected_set: HashSet::new(),
+            chunks: Vec::new(),
+            chunk_indices: HashMap::new(),
+            last_chunk: None,
             enabled: true,
         }
     }
@@ -112,71 +136,134 @@ impl PropertyInlineCaches {
         self.enabled
     }
 
-    #[must_use]
-    pub fn get(&self, site: BytecodeSite) -> Option<GetPropertyCacheEntries> {
-        self.enabled.then(|| self.get.get(&site).copied()).flatten()
+    fn site_mut(&mut self, site: BytecodeSite) -> Option<&mut PropertyCacheSite> {
+        if !self.enabled || site.instruction_offset == u32::MAX {
+            return None;
+        }
+        let chunk_index = match self.last_chunk {
+            Some((address, index)) if address == site.chunk_address => index,
+            _ => {
+                let index = if let Some(index) = self.chunk_indices.get(&site.chunk_address) {
+                    *index
+                } else {
+                    let index = self.chunks.len();
+                    self.chunks.push(ChunkPropertyCaches {
+                        address: site.chunk_address,
+                        sites: Vec::new(),
+                    });
+                    self.chunk_indices.insert(site.chunk_address, index);
+                    index
+                };
+                self.last_chunk = Some((site.chunk_address, index));
+                index
+            }
+        };
+        let offset = site.instruction_offset as usize;
+        let chunk = &mut self.chunks[chunk_index];
+        if chunk.sites.len() <= offset {
+            chunk.sites.resize(offset + 1, PropertyCacheSite::default());
+        }
+        Some(&mut chunk.sites[offset])
+    }
+
+    pub fn get(&mut self, site: BytecodeSite) -> Option<GetPropertyCacheEntries> {
+        match self.site_mut(site)?.get {
+            GetCacheState::Cached(entries) => Some(entries),
+            GetCacheState::Unobserved | GetCacheState::Observed | GetCacheState::Rejected => None,
+        }
     }
 
     pub fn update_get(&mut self, site: BytecodeSite, entry: GetPropertyCacheEntry) {
-        if self.enabled {
-            let entries = self.get.entry(site).or_insert(GetPropertyCacheEntries {
-                entries: [None; GET_CACHE_POLYMORPHISM],
-            });
-            if !entries.insert(entry) {
-                self.reject_get(site);
+        let Some(cache_site) = self.site_mut(site) else {
+            return;
+        };
+        match &mut cache_site.get {
+            GetCacheState::Cached(entries) => {
+                if !entries.insert(entry) {
+                    cache_site.get = GetCacheState::Rejected;
+                }
             }
+            GetCacheState::Unobserved | GetCacheState::Observed => {
+                let mut entries = GetPropertyCacheEntries {
+                    entries: [None; GET_CACHE_POLYMORPHISM],
+                };
+                entries.insert(entry);
+                cache_site.get = GetCacheState::Cached(entries);
+            }
+            GetCacheState::Rejected => {}
         }
     }
 
     pub fn should_specialize_get(&mut self, site: BytecodeSite) -> bool {
-        self.enabled && !self.rejected_get.contains(&site) && !self.observed_get.insert(site)
+        let Some(cache_site) = self.site_mut(site) else {
+            return false;
+        };
+        match cache_site.get {
+            GetCacheState::Unobserved => {
+                cache_site.get = GetCacheState::Observed;
+                false
+            }
+            GetCacheState::Observed | GetCacheState::Cached(_) => true,
+            GetCacheState::Rejected => false,
+        }
     }
 
     pub fn reject_get(&mut self, site: BytecodeSite) {
-        self.get.remove(&site);
-        self.rejected_get.insert(site);
+        if let Some(cache_site) = self.site_mut(site) {
+            cache_site.get = GetCacheState::Rejected;
+        }
     }
 
-    #[must_use]
-    pub fn set(&self, site: BytecodeSite) -> Option<SetPropertyCacheEntry> {
-        self.enabled.then(|| self.set.get(&site).copied()).flatten()
+    pub fn set(&mut self, site: BytecodeSite) -> Option<SetPropertyCacheEntry> {
+        match self.site_mut(site)?.set {
+            SetCacheState::Cached(entry) => Some(entry),
+            SetCacheState::Unobserved | SetCacheState::Observed | SetCacheState::Rejected => None,
+        }
     }
 
     pub fn update_set(&mut self, site: BytecodeSite, entry: SetPropertyCacheEntry) {
-        if self.enabled {
-            self.set.insert(site, entry);
+        if let Some(cache_site) = self.site_mut(site)
+            && !matches!(cache_site.set, SetCacheState::Rejected)
+        {
+            cache_site.set = SetCacheState::Cached(entry);
         }
     }
 
     pub fn should_specialize_set(&mut self, site: BytecodeSite) -> bool {
-        self.enabled && !self.rejected_set.contains(&site) && !self.observed_set.insert(site)
+        let Some(cache_site) = self.site_mut(site) else {
+            return false;
+        };
+        match cache_site.set {
+            SetCacheState::Unobserved => {
+                cache_site.set = SetCacheState::Observed;
+                false
+            }
+            SetCacheState::Observed | SetCacheState::Cached(_) => true,
+            SetCacheState::Rejected => false,
+        }
     }
 
     pub fn reject_set(&mut self, site: BytecodeSite) {
-        self.set.remove(&site);
-        self.rejected_set.insert(site);
+        if let Some(cache_site) = self.site_mut(site) {
+            cache_site.set = SetCacheState::Rejected;
+        }
     }
 
     pub fn clear(&mut self) {
-        self.get.clear();
-        self.set.clear();
-        self.observed_get.clear();
-        self.observed_set.clear();
-        self.rejected_get.clear();
-        self.rejected_set.clear();
+        self.chunks.clear();
+        self.chunk_indices.clear();
+        self.last_chunk = None;
     }
 
     pub fn remove_chunk(&mut self, chunk: &Chunk) {
         let address = std::ptr::from_ref(chunk).addr();
-        self.get.retain(|site, _| site.chunk_address != address);
-        self.set.retain(|site, _| site.chunk_address != address);
-        self.observed_get
-            .retain(|site| site.chunk_address != address);
-        self.observed_set
-            .retain(|site| site.chunk_address != address);
-        self.rejected_get
-            .retain(|site| site.chunk_address != address);
-        self.rejected_set
-            .retain(|site| site.chunk_address != address);
+        let Some(index) = self.chunk_indices.remove(&address) else {
+            return;
+        };
+        self.chunks.swap_remove(index);
+        if let Some(moved) = self.chunks.get(index) {
+            self.chunk_indices.insert(moved.address, index);
+        }
+        self.last_chunk = None;
     }
 }

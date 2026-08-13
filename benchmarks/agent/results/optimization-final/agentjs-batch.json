@@ -1,0 +1,205 @@
+{
+  "meta": {
+    "benchmark": "AgentBench",
+    "version": "2.0",
+    "mode": "batch",
+    "label_a": "agentjs",
+    "references": [],
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": {},
+    "warmup": 1,
+    "repeat": 3,
+    "timeout": 120,
+    "batch_repeat": 3,
+    "cases": [
+      "object-property-hot-loop",
+      "json-record-aggregate",
+      "json-parse-transform",
+      "short-lived-object-churn",
+      "startup-noop"
+    ]
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": "3.14.5",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "manifest_version": "2.0",
+    "commands": {
+      "primary": ".\\target\\release\\agentjs.exe",
+      "references": {}
+    },
+    "binary_sha256": {
+      "primary": "1e65e8c16d0438494be7509ec0ce22e3c4b79d420b99e6e2410793d1b3511706",
+      "references": {}
+    },
+    "binary_size_bytes": {
+      "primary": 10895872,
+      "references": {}
+    },
+    "memory_sampler": "windows-psapi",
+    "generated_at_utc": "2026-08-13T10:59:35Z"
+  },
+  "results": {
+    "agentjs": {
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 120.9,
+        "p90_ms": 125.8,
+        "p95_ms": 125.8,
+        "min_ms": 120.4,
+        "max_ms": 125.8,
+        "tasks_per_second": 24.81,
+        "peak_rss_mb": 21.91,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 125.8,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 120.9,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 120.4,
+            "peak_rss_mb": 21.91,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-record-aggregate": {
+        "status": "pass",
+        "median_ms": 54.3,
+        "p90_ms": 54.3,
+        "p95_ms": 54.3,
+        "min_ms": 54.2,
+        "max_ms": 54.3,
+        "tasks_per_second": 55.25,
+        "peak_rss_mb": 19.43,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 54.2,
+            "peak_rss_mb": 19.42,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 54.3,
+            "peak_rss_mb": 19.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 54.3,
+            "peak_rss_mb": 19.43,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-parse-transform": {
+        "status": "pass",
+        "median_ms": 48.5,
+        "p90_ms": 49.0,
+        "p95_ms": 49.0,
+        "min_ms": 48.4,
+        "max_ms": 49.0,
+        "tasks_per_second": 61.86,
+        "peak_rss_mb": 19.75,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 48.4,
+            "peak_rss_mb": 19.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 48.5,
+            "peak_rss_mb": 19.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 49.0,
+            "peak_rss_mb": 19.73,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "short-lived-object-churn": {
+        "status": "pass",
+        "median_ms": 77.0,
+        "p90_ms": 81.2,
+        "p95_ms": 81.2,
+        "min_ms": 76.0,
+        "max_ms": 81.2,
+        "tasks_per_second": 38.96,
+        "peak_rss_mb": 19.04,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 76.0,
+            "peak_rss_mb": 18.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 77.0,
+            "peak_rss_mb": 18.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 81.2,
+            "peak_rss_mb": 19.04,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "startup-noop": {
+        "status": "pass",
+        "median_ms": 15.7,
+        "p90_ms": 16.0,
+        "p95_ms": 16.0,
+        "min_ms": 15.6,
+        "max_ms": 16.0,
+        "tasks_per_second": 191.08,
+        "peak_rss_mb": 6.99,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 15.7,
+            "peak_rss_mb": 6.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 15.6,
+            "peak_rss_mb": 6.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 16.0,
+            "peak_rss_mb": 6.99,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  },
+  "speedups": {},
+  "memory_ratios": {}
+}

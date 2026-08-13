@@ -452,7 +452,7 @@ fn gc_preserves_module_environments_namespaces_and_evaluation_values() {
 #[test]
 fn repeated_collections_keep_unreachable_growth_bounded() {
     let mut context = NativeContext::default();
-    let baseline = context.heap_stats().live_objects;
+    let baseline = context.heap_stats();
 
     for round in 0..5 {
         for index in 0..1_000 {
@@ -463,9 +463,44 @@ fn repeated_collections_keep_unreachable_growth_bounded() {
                 )])
                 .unwrap();
         }
+        for index in 0..1_000 {
+            context
+                .allocate_function(JsFunction {
+                    name: Some(format!("temporary_{round}_{index}")),
+                    params: Vec::new(),
+                    rest_param: None,
+                    length_override: None,
+                    chunk: Chunk::default().into(),
+                    environment: Some(context.global_environment()),
+                    is_async: false,
+                    is_generator: false,
+                    is_arrow: false,
+                    binds_name_in_activation: false,
+                    is_derived_constructor: false,
+                    is_constructable: true,
+                    has_own_prototype_property: true,
+                    prototype_writable: true,
+                    uses_arguments: false,
+                    local_layout: Default::default(),
+                    upvalue_layout: Default::default(),
+                    dynamic_scope: agentjs::bytecode::DynamicScopePolicy::Static,
+                    lexical_this: None,
+                    lexical_new_target: None,
+                    home_object: None,
+                })
+                .unwrap();
+        }
         let stats = context.collect_garbage_for_vm(&Vm::default()).unwrap();
-        assert_eq!(stats.objects_after, baseline);
+        assert_eq!(stats.objects_after, baseline.live_objects);
+        assert_eq!(stats.functions_after, baseline.live_functions);
+        assert_eq!(
+            context.heap_stats().live_environments,
+            baseline.live_environments
+        );
     }
 
-    assert_eq!(context.heap_stats().live_objects, baseline);
+    let final_stats = context.heap_stats();
+    assert_eq!(final_stats.live_objects, baseline.live_objects);
+    assert_eq!(final_stats.live_functions, baseline.live_functions);
+    assert_eq!(final_stats.live_environments, baseline.live_environments);
 }

@@ -1,0 +1,22 @@
+{
+  "platform": "Windows-11-10.0.26200-SP0",
+  "machine": "AMD64",
+  "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "python": "3.14.5",
+  "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+  "manifest_version": "2.0",
+  "commands": {
+    "primary": ".\\target\\release\\agentjs.exe",
+    "references": {}
+  },
+  "binary_sha256": {
+    "primary": "65b3cd8f02bca11628187b9698f4479630d2bbecb7106f9d6686563f48312f30",
+    "references": {}
+  },
+  "binary_size_bytes": {
+    "primary": 10892288,
+    "references": {}
+  },
+  "memory_sampler": "windows-psapi",
+  "generated_at_utc": "2026-08-13T11:17:09Z"
+}
