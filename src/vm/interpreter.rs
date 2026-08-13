@@ -1942,16 +1942,14 @@ impl Vm {
                         && let Some(object_id) = object_id
                         && let Some(caches) = self.property_caches.get(site)
                     {
-                        if let Some(cache) = context
-                            .object_shape(object_id)
-                            .and_then(|shape| caches.find(shape))
-                            && let Some(value) = context.get_cached_own_data_property(
+                        if let Some(value) = caches.iter().find_map(|cache| {
+                            context.get_cached_own_data_property(
                                 object_id,
                                 cache.receiver_shape,
                                 cache.property_generation,
                                 cache.slot,
                             )
-                        {
+                        }) {
                             context.record_property_get_cache(true);
                             self.stack.push(value);
                             continue 'dispatch;

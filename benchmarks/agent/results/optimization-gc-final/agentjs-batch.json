@@ -1,0 +1,205 @@
+{
+  "meta": {
+    "benchmark": "AgentBench",
+    "version": "2.0",
+    "mode": "batch",
+    "label_a": "agentjs",
+    "references": [],
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": {},
+    "warmup": 1,
+    "repeat": 3,
+    "timeout": 120,
+    "batch_repeat": 3,
+    "cases": [
+      "object-property-hot-loop",
+      "json-record-aggregate",
+      "json-parse-transform",
+      "short-lived-object-churn",
+      "startup-noop"
+    ]
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": "3.14.5",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "manifest_version": "2.0",
+    "commands": {
+      "primary": ".\\target\\release\\agentjs.exe",
+      "references": {}
+    },
+    "binary_sha256": {
+      "primary": "d924a3966e0964cc39f3a3e6d65efc88a51cfe21e2f448df0361ca9d67e72e6d",
+      "references": {}
+    },
+    "binary_size_bytes": {
+      "primary": 10892288,
+      "references": {}
+    },
+    "memory_sampler": "windows-psapi",
+    "generated_at_utc": "2026-08-13T11:23:26Z"
+  },
+  "results": {
+    "agentjs": {
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 136.6,
+        "p90_ms": 137.2,
+        "p95_ms": 137.2,
+        "min_ms": 136.5,
+        "max_ms": 137.2,
+        "tasks_per_second": 21.96,
+        "peak_rss_mb": 21.93,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 136.5,
+            "peak_rss_mb": 21.9,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 137.2,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 136.6,
+            "peak_rss_mb": 21.93,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-record-aggregate": {
+        "status": "pass",
+        "median_ms": 60.9,
+        "p90_ms": 60.9,
+        "p95_ms": 60.9,
+        "min_ms": 60.5,
+        "max_ms": 60.9,
+        "tasks_per_second": 49.26,
+        "peak_rss_mb": 19.61,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 60.9,
+            "peak_rss_mb": 19.42,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 60.5,
+            "peak_rss_mb": 19.61,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 60.9,
+            "peak_rss_mb": 19.45,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-parse-transform": {
+        "status": "pass",
+        "median_ms": 54.6,
+        "p90_ms": 70.4,
+        "p95_ms": 70.4,
+        "min_ms": 54.0,
+        "max_ms": 70.4,
+        "tasks_per_second": 54.95,
+        "peak_rss_mb": 19.81,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 54.6,
+            "peak_rss_mb": 19.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.4,
+            "peak_rss_mb": 19.81,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 54.0,
+            "peak_rss_mb": 19.75,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "short-lived-object-churn": {
+        "status": "pass",
+        "median_ms": 93.4,
+        "p90_ms": 98.0,
+        "p95_ms": 98.0,
+        "min_ms": 89.0,
+        "max_ms": 98.0,
+        "tasks_per_second": 32.12,
+        "peak_rss_mb": 19.03,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 93.4,
+            "peak_rss_mb": 19.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 98.0,
+            "peak_rss_mb": 19.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 89.0,
+            "peak_rss_mb": 19.03,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "startup-noop": {
+        "status": "pass",
+        "median_ms": 17.3,
+        "p90_ms": 22.9,
+        "p95_ms": 22.9,
+        "min_ms": 16.7,
+        "max_ms": 22.9,
+        "tasks_per_second": 173.41,
+        "peak_rss_mb": 7.02,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 17.3,
+            "peak_rss_mb": 7.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 16.7,
+            "peak_rss_mb": 7.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 22.9,
+            "peak_rss_mb": 7.02,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  },
+  "speedups": {},
+  "memory_ratios": {}
+}

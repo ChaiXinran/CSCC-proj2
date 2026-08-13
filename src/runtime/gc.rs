@@ -240,6 +240,8 @@ pub trait Trace {
 pub struct Tracer<'a> {
     pub heap: &'a Heap,
     marks: HeapMarks,
+    function_objects: Option<&'a [Option<ObjectId>]>,
+    object_functions: Option<&'a [Option<FunctionId>]>,
 }
 
 impl<'a> Tracer<'a> {
@@ -248,12 +250,24 @@ impl<'a> Tracer<'a> {
         Self {
             heap,
             marks: HeapMarks::for_heap(heap),
+            function_objects: None,
+            object_functions: None,
         }
     }
 
-    pub(crate) fn with_marks(heap: &'a Heap, mut marks: HeapMarks) -> Self {
+    pub(crate) fn with_runtime_associations(
+        heap: &'a Heap,
+        mut marks: HeapMarks,
+        function_objects: &'a [Option<ObjectId>],
+        object_functions: &'a [Option<FunctionId>],
+    ) -> Self {
         marks.prepare_for_heap(heap);
-        Self { heap, marks }
+        Self {
+            heap,
+            marks,
+            function_objects: Some(function_objects),
+            object_functions: Some(object_functions),
+        }
     }
 
     pub fn mark_object(&mut self, id: ObjectId) {
@@ -262,6 +276,14 @@ impl<'a> Tracer<'a> {
         }
         if let Some(object) = self.heap.object(id) {
             object.trace(self);
+        }
+        let function = self
+            .object_functions
+            .and_then(|functions| functions.get(id.0 as usize))
+            .copied()
+            .flatten();
+        if let Some(function) = function {
+            self.mark_function(function);
         }
     }
 
@@ -280,6 +302,14 @@ impl<'a> Tracer<'a> {
         }
         if let Some(function) = self.heap.function(id) {
             function.trace(self);
+        }
+        let object = self
+            .function_objects
+            .and_then(|objects| objects.get(id.0 as usize))
+            .copied()
+            .flatten();
+        if let Some(object) = object {
+            self.mark_object(object);
         }
     }
 

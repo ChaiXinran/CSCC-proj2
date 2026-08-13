@@ -6,7 +6,7 @@ use super::iterator::IteratorKind;
 use super::{
     ArrayBufferId, BigIntValue, DICTIONARY_SHAPE, DataViewId, EnvironmentId, FunctionId,
     IteratorRecord, JsString, JsValue, PromiseId, PropertyDescriptor, PropertyMap,
-    PropertyMutation, ROOT_SHAPE, ShapeId, SymbolId, Trace, Tracer, TypedArrayViewId,
+    PropertyMutation, PropertyName, ROOT_SHAPE, ShapeId, SymbolId, Trace, Tracer, TypedArrayViewId,
 };
 
 /// Stable handle into the runtime heap.
@@ -571,7 +571,7 @@ impl JsObject {
 
     pub fn define_property(
         &mut self,
-        name: impl Into<String>,
+        name: impl Into<PropertyName>,
         descriptor: PropertyDescriptor,
     ) -> PropertyMutation {
         let mutation = self.properties.define_with_outcome(name.into(), descriptor);

@@ -1,0 +1,744 @@
+{
+  "meta": {
+    "benchmark": "AgentBench",
+    "version": "2.0",
+    "mode": "batch",
+    "label_a": "agentjs",
+    "references": [
+      "baseline"
+    ],
+    "engine_a": ".\\target\\release\\agentjs.exe",
+    "engine_b": {
+      "baseline": "C:\\Users\\36123\\AppData\\Local\\Temp\\agentjs-baseline.exe run"
+    },
+    "warmup": 3,
+    "repeat": 9,
+    "timeout": 120,
+    "batch_repeat": 3,
+    "cases": [
+      "object-property-hot-loop",
+      "json-record-aggregate",
+      "json-parse-transform",
+      "short-lived-object-churn",
+      "startup-noop"
+    ]
+  },
+  "environment": {
+    "platform": "Windows-11-10.0.26200-SP0",
+    "machine": "AMD64",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": "3.14.5",
+    "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
+    "manifest_version": "2.0",
+    "commands": {
+      "primary": ".\\target\\release\\agentjs.exe",
+      "references": {
+        "baseline": "C:\\Users\\36123\\AppData\\Local\\Temp\\agentjs-baseline.exe run"
+      }
+    },
+    "binary_sha256": {
+      "primary": "296afa2a9455412c43e21555c0f747ad5599712f5c0433f708c2f7dfff538676",
+      "references": {
+        "baseline": "8e356f04d0463b93fe36c88c40403b96338355af9e46a82ebc0d0248bf89e24e"
+      }
+    },
+    "binary_size_bytes": {
+      "primary": 10915840,
+      "references": {
+        "baseline": 10891776
+      }
+    },
+    "memory_sampler": "windows-psapi",
+    "generated_at_utc": "2026-08-13T11:54:01Z"
+  },
+  "results": {
+    "agentjs": {
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 140.3,
+        "p90_ms": 162.1,
+        "p95_ms": 162.1,
+        "min_ms": 127.1,
+        "max_ms": 162.1,
+        "tasks_per_second": 21.38,
+        "peak_rss_mb": 22.02,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 143.2,
+            "peak_rss_mb": 21.94,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 139.1,
+            "peak_rss_mb": 21.94,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 138.9,
+            "peak_rss_mb": 21.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 151.0,
+            "peak_rss_mb": 21.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 162.1,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 140.3,
+            "peak_rss_mb": 21.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 127.1,
+            "peak_rss_mb": 21.95,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 133.1,
+            "peak_rss_mb": 22.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 146.1,
+            "peak_rss_mb": 21.93,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-record-aggregate": {
+        "status": "pass",
+        "median_ms": 65.2,
+        "p90_ms": 71.4,
+        "p95_ms": 71.4,
+        "min_ms": 59.8,
+        "max_ms": 71.4,
+        "tasks_per_second": 46.01,
+        "peak_rss_mb": 19.59,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 64.7,
+            "peak_rss_mb": 19.43,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 62.9,
+            "peak_rss_mb": 19.4,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 59.8,
+            "peak_rss_mb": 19.59,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 69.3,
+            "peak_rss_mb": 19.41,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 71.4,
+            "peak_rss_mb": 19.39,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.8,
+            "peak_rss_mb": 19.43,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 66.3,
+            "peak_rss_mb": 19.42,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.2,
+            "peak_rss_mb": 19.42,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 62.6,
+            "peak_rss_mb": 19.43,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-parse-transform": {
+        "status": "pass",
+        "median_ms": 59.6,
+        "p90_ms": 82.1,
+        "p95_ms": 82.1,
+        "min_ms": 56.3,
+        "max_ms": 82.1,
+        "tasks_per_second": 50.34,
+        "peak_rss_mb": 19.73,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 64.5,
+            "peak_rss_mb": 19.68,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 56.4,
+            "peak_rss_mb": 19.66,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 59.6,
+            "peak_rss_mb": 19.46,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 74.4,
+            "peak_rss_mb": 19.47,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 56.3,
+            "peak_rss_mb": 19.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 59.6,
+            "peak_rss_mb": 19.68,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 82.1,
+            "peak_rss_mb": 19.7,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 57.5,
+            "peak_rss_mb": 19.68,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 65.6,
+            "peak_rss_mb": 19.73,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "short-lived-object-churn": {
+        "status": "pass",
+        "median_ms": 99.6,
+        "p90_ms": 112.2,
+        "p95_ms": 112.2,
+        "min_ms": 91.7,
+        "max_ms": 112.2,
+        "tasks_per_second": 30.12,
+        "peak_rss_mb": 19.2,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 99.6,
+            "peak_rss_mb": 19.05,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 91.7,
+            "peak_rss_mb": 18.99,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 97.3,
+            "peak_rss_mb": 18.99,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 112.2,
+            "peak_rss_mb": 18.99,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 91.9,
+            "peak_rss_mb": 19.03,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 98.5,
+            "peak_rss_mb": 19.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 100.8,
+            "peak_rss_mb": 19.04,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 107.6,
+            "peak_rss_mb": 19.03,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 108.1,
+            "peak_rss_mb": 19.2,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "startup-noop": {
+        "status": "pass",
+        "median_ms": 31.8,
+        "p90_ms": 35.8,
+        "p95_ms": 35.8,
+        "min_ms": 21.7,
+        "max_ms": 35.8,
+        "tasks_per_second": 94.34,
+        "peak_rss_mb": 7.02,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 23.3,
+            "peak_rss_mb": 7.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 34.2,
+            "peak_rss_mb": 7.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 31.8,
+            "peak_rss_mb": 7.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 27.9,
+            "peak_rss_mb": 7.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 35.8,
+            "peak_rss_mb": 7.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 33.2,
+            "peak_rss_mb": 7.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 22.9,
+            "peak_rss_mb": 7.02,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 34.2,
+            "peak_rss_mb": 7.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 21.7,
+            "peak_rss_mb": 7.01,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    },
+    "baseline": {
+      "object-property-hot-loop": {
+        "status": "pass",
+        "median_ms": 155.5,
+        "p90_ms": 174.5,
+        "p95_ms": 174.5,
+        "min_ms": 127.6,
+        "max_ms": 174.5,
+        "tasks_per_second": 19.29,
+        "peak_rss_mb": 21.93,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 174.0,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 174.5,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 161.9,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 156.1,
+            "peak_rss_mb": 21.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 155.5,
+            "peak_rss_mb": 21.92,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 136.1,
+            "peak_rss_mb": 21.88,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 142.7,
+            "peak_rss_mb": 21.93,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 127.6,
+            "peak_rss_mb": 21.92,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 147.3,
+            "peak_rss_mb": 21.89,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-record-aggregate": {
+        "status": "pass",
+        "median_ms": 64.5,
+        "p90_ms": 72.3,
+        "p95_ms": 72.3,
+        "min_ms": 59.1,
+        "max_ms": 72.3,
+        "tasks_per_second": 46.51,
+        "peak_rss_mb": 19.39,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 71.0,
+            "peak_rss_mb": 19.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 63.3,
+            "peak_rss_mb": 19.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.5,
+            "peak_rss_mb": 19.38,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 68.1,
+            "peak_rss_mb": 19.36,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 68.8,
+            "peak_rss_mb": 19.36,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 60.0,
+            "peak_rss_mb": 19.39,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 72.3,
+            "peak_rss_mb": 19.31,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 59.1,
+            "peak_rss_mb": 19.37,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 64.3,
+            "peak_rss_mb": 19.34,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "json-parse-transform": {
+        "status": "pass",
+        "median_ms": 57.7,
+        "p90_ms": 70.9,
+        "p95_ms": 70.9,
+        "min_ms": 50.8,
+        "max_ms": 70.9,
+        "tasks_per_second": 51.99,
+        "peak_rss_mb": 19.75,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 57.7,
+            "peak_rss_mb": 19.68,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 61.1,
+            "peak_rss_mb": 19.72,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 53.9,
+            "peak_rss_mb": 19.71,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 50.8,
+            "peak_rss_mb": 19.73,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.6,
+            "peak_rss_mb": 19.71,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 53.5,
+            "peak_rss_mb": 19.67,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 60.3,
+            "peak_rss_mb": 19.68,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 57.7,
+            "peak_rss_mb": 19.75,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 70.9,
+            "peak_rss_mb": 19.69,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "short-lived-object-churn": {
+        "status": "pass",
+        "median_ms": 91.8,
+        "p90_ms": 99.3,
+        "p95_ms": 99.3,
+        "min_ms": 82.0,
+        "max_ms": 99.3,
+        "tasks_per_second": 32.68,
+        "peak_rss_mb": 19.03,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 97.1,
+            "peak_rss_mb": 18.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 97.2,
+            "peak_rss_mb": 18.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 99.3,
+            "peak_rss_mb": 18.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 85.5,
+            "peak_rss_mb": 19.01,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 88.2,
+            "peak_rss_mb": 19.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 82.0,
+            "peak_rss_mb": 18.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 91.8,
+            "peak_rss_mb": 18.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 93.8,
+            "peak_rss_mb": 19.0,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 90.2,
+            "peak_rss_mb": 19.03,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      },
+      "startup-noop": {
+        "status": "pass",
+        "median_ms": 20.4,
+        "p90_ms": 28.8,
+        "p95_ms": 28.8,
+        "min_ms": 15.7,
+        "max_ms": 28.8,
+        "tasks_per_second": 147.06,
+        "peak_rss_mb": 6.98,
+        "runs": [
+          {
+            "status": "pass",
+            "time_ms": 19.2,
+            "peak_rss_mb": 6.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 22.0,
+            "peak_rss_mb": 6.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 15.7,
+            "peak_rss_mb": 6.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 17.7,
+            "peak_rss_mb": 6.96,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 20.4,
+            "peak_rss_mb": 6.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 17.2,
+            "peak_rss_mb": 6.97,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 24.1,
+            "peak_rss_mb": 6.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 28.8,
+            "peak_rss_mb": 6.98,
+            "stderr": ""
+          },
+          {
+            "status": "pass",
+            "time_ms": 23.2,
+            "peak_rss_mb": 6.97,
+            "stderr": ""
+          }
+        ],
+        "error": ""
+      }
+    }
+  },
+  "speedups": {
+    "baseline": {
+      "all": 0.911045688075042,
+      "general": 0.8893293587005481,
+      "pressure": 0.9446185027787817
+    }
+  },
+  "memory_ratios": {
+    "baseline": {
+      "all": 0.9944251854250948,
+      "general": 0.993331787582817,
+      "pressure": 0.9960675392480706
+    }
+  }
+}

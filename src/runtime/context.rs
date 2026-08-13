@@ -37,7 +37,7 @@ use super::{
     BuiltinFunction, BuiltinId, CollectionStats, DataViewId, DataViewRecord, Environment,
     EnvironmentId, FunctionId, GcControllerState, GcMetrics, GcPolicy, GcTriggerReason, Heap,
     HeapMarks, HeapStats, IteratorMode, IteratorRecord, Job, JobQueue, JsFunction, JsObject,
-    JsValue, MemoryClass, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
+    JsString, JsValue, MemoryClass, ModuleRegistry, NativeCall, NativeConstruct, NativeErrorKind,
     NativeErrorValue, NativeJob, ObjectId, ObjectKind, PrimitiveValue, PrivateBrandId, PrivateSlot,
     PromiseCallbackJob, PromiseId, PromiseJob, PromiseReaction, PromiseRecord, PromiseState,
     PromiseThenReaction, PropertyAttributes, PropertyCacheMetrics, PropertyDescriptor,
@@ -286,14 +286,14 @@ pub struct NativeContext {
     next_private_brand: u32,
     private_slots: HashMap<ObjectId, HashMap<(String, PrivateBrandId), PrivateSlot>>,
     function_prototypes: HashMap<FunctionId, ObjectId>,
-    function_objects: HashMap<FunctionId, ObjectId>,
+    function_objects: Vec<Option<ObjectId>>,
     function_realm_globals: HashMap<FunctionId, ObjectId>,
     strict_functions: HashSet<FunctionId>,
     function_restricted_thrower: Option<JsValue>,
     function_legacy_caller_getter: Option<JsValue>,
     function_legacy_arguments_getter: Option<JsValue>,
     function_legacy_setter: Option<JsValue>,
-    object_values: HashMap<ObjectId, JsValue>,
+    object_functions: Vec<Option<FunctionId>>,
     error_objects: HashSet<ObjectId>,
     arguments_objects: HashSet<ObjectId>,
     /// Maps JS error-object ids to their constructor name (e.g. "EvalError").
@@ -400,14 +400,14 @@ impl NativeContext {
             next_private_brand: 1,
             private_slots: HashMap::new(),
             function_prototypes: HashMap::new(),
-            function_objects: HashMap::new(),
+            function_objects: Vec::new(),
             function_realm_globals: HashMap::new(),
             strict_functions: HashSet::new(),
             function_restricted_thrower: None,
             function_legacy_caller_getter: None,
             function_legacy_arguments_getter: None,
             function_legacy_setter: None,
-            object_values: HashMap::new(),
+            object_functions: Vec::new(),
             error_objects: HashSet::new(),
             arguments_objects: HashSet::new(),
             error_object_names: HashMap::new(),
@@ -653,8 +653,11 @@ impl NativeContext {
             data_views: side.data_views,
             data_view_capacity: side.data_view_capacity,
             private_slot_entries,
-            function_object_entries: self.function_objects.len(),
-            object_value_entries: self.object_values.len(),
+            // Every native function is registered with exactly one backing
+            // object. Avoid scanning the arena-indexed association tables in
+            // the allocation-triggered memory sampling path.
+            function_object_entries: heap.live_functions,
+            object_value_entries: heap.live_functions,
             module_records: self.module_registry.len(),
             realm_records: self.realms.len(),
             shape_count: self.shape_table.shape_count(),
@@ -738,7 +741,12 @@ impl NativeContext {
         let tracked_before = self.runtime_memory_stats().tracked_runtime_bytes;
         let marks = std::mem::take(&mut self.gc_marks);
         let (marks, side_marks) = {
-            let mut tracer = Tracer::with_marks(&self.heap, marks);
+            let mut tracer = Tracer::with_runtime_associations(
+                &self.heap,
+                marks,
+                &self.function_objects,
+                &self.object_functions,
+            );
             roots.trace(&mut tracer);
             let side_marks = self.trace_side_graph(&mut tracer);
             (tracer.into_marks(), side_marks)
@@ -757,7 +765,12 @@ impl NativeContext {
         let tracked_before = self.runtime_memory_stats().tracked_runtime_bytes;
         let marks = std::mem::take(&mut self.gc_marks);
         let (marks, side_marks) = {
-            let mut tracer = Tracer::with_marks(&self.heap, marks);
+            let mut tracer = Tracer::with_runtime_associations(
+                &self.heap,
+                marks,
+                &self.function_objects,
+                &self.object_functions,
+            );
             vm.trace_roots(&mut tracer);
             self.trace_context_roots(&mut tracer);
             let side_marks = self.trace_side_graph(&mut tracer);
@@ -951,12 +964,6 @@ impl NativeContext {
                 roots.mark_value_root(value);
             }
         }
-        for object in self.function_prototypes.values() {
-            roots.mark_object_root(*object);
-        }
-        for object in self.function_objects.values() {
-            roots.mark_object_root(*object);
-        }
         for object in self.function_realm_globals.values() {
             roots.mark_object_root(*object);
         }
@@ -1149,9 +1156,20 @@ impl NativeContext {
         self.function_prototypes.retain(|function, object| {
             self.heap.contains_function(*function) && self.heap.contains_object(*object)
         });
-        self.function_objects.retain(|function, object| {
-            self.heap.contains_function(*function) && self.heap.contains_object(*object)
-        });
+        for (index, object) in self.function_objects.iter_mut().enumerate() {
+            let Some(object_id) = *object else {
+                continue;
+            };
+            let Ok(index) = u32::try_from(index) else {
+                *object = None;
+                continue;
+            };
+            if !self.heap.contains_function(FunctionId(index))
+                || !self.heap.contains_object(object_id)
+            {
+                *object = None;
+            }
+        }
         self.function_realm_globals.retain(|function, global| {
             self.heap.contains_function(*function) && self.heap.contains_object(*global)
         });
@@ -1159,9 +1177,20 @@ impl NativeContext {
             .retain(|function| self.heap.contains_function(*function));
         self.private_slots
             .retain(|object, _| self.heap.contains_object(*object));
-        self.object_values.retain(|object, value| {
-            self.heap.contains_object(*object) && value_references_live_heap(value, &self.heap)
-        });
+        for (index, function) in self.object_functions.iter_mut().enumerate() {
+            let Some(function_id) = *function else {
+                continue;
+            };
+            let Ok(index) = u32::try_from(index) else {
+                *function = None;
+                continue;
+            };
+            if !self.heap.contains_object(ObjectId(index))
+                || !self.heap.contains_function(function_id)
+            {
+                *function = None;
+            }
+        }
         self.error_objects
             .retain(|object| self.heap.contains_object(*object));
         self.arguments_objects
@@ -1970,9 +1999,17 @@ impl NativeContext {
     }
 
     pub fn register_function_object(&mut self, function: FunctionId, object: ObjectId) {
-        self.function_objects.insert(function, object);
-        self.object_values
-            .insert(object, JsValue::Function(function));
+        let function_index = function.0 as usize;
+        if self.function_objects.len() <= function_index {
+            self.function_objects.resize(function_index + 1, None);
+        }
+        self.function_objects[function_index] = Some(object);
+
+        let object_index = object.0 as usize;
+        if self.object_functions.len() <= object_index {
+            self.object_functions.resize(object_index + 1, None);
+        }
+        self.object_functions[object_index] = Some(function);
     }
 
     pub fn mark_strict_function(&mut self, function: FunctionId) {
@@ -2042,7 +2079,10 @@ impl NativeContext {
 
     #[must_use]
     pub fn function_object(&self, function: FunctionId) -> Option<ObjectId> {
-        self.function_objects.get(&function).copied()
+        self.function_objects
+            .get(function.0 as usize)
+            .copied()
+            .flatten()
     }
 
     #[must_use]
@@ -2153,10 +2193,11 @@ impl NativeContext {
         {
             return JsValue::BuiltinFunction(BuiltinId(index as u16));
         }
-        self.object_values
-            .get(&object)
-            .cloned()
-            .unwrap_or(JsValue::Object(object))
+        self.object_functions
+            .get(object.0 as usize)
+            .copied()
+            .flatten()
+            .map_or(JsValue::Object(object), JsValue::Function)
     }
 
     #[must_use]
@@ -3413,9 +3454,28 @@ impl NativeContext {
     ) -> Result<JsValue, VmError> {
         let mut object = JsObject::ordinary();
         object.prototype = self.object_prototype();
+        let mut shape = ROOT_SHAPE;
         for (name, value) in properties {
-            object.define_property(name, PropertyDescriptor::data(value));
+            let name = JsString::from(name);
+            let descriptor = PropertyDescriptor::data(value);
+            let attributes = PropertyAttributes::from_descriptor(&descriptor);
+            let mutation = object.define_property(name.clone(), descriptor);
+            if mutation.structural {
+                let slot = mutation
+                    .slot
+                    .expect("a structural property insertion has a slot");
+                let (next, created) = self.shape_table.transition(shape, name, slot, attributes);
+                if created {
+                    self.property_cache_metrics.shape_transitions = self
+                        .property_cache_metrics
+                        .shape_transitions
+                        .saturating_add(1);
+                }
+                shape = next;
+            }
         }
+        object.shape = shape;
+        object.shape_generation = object.properties.generation();
         let id = self
             .heap
             .allocate_object(object)
@@ -6133,21 +6193,6 @@ pub fn checked_utf16_allocation(units: usize) -> Result<(), VmError> {
         return Err(VmError::runtime_limit("string allocation limit exceeded"));
     }
     Ok(())
-}
-fn value_references_live_heap(value: &JsValue, heap: &Heap) -> bool {
-    match value {
-        JsValue::Object(object) => heap.contains_object(*object),
-        JsValue::Function(function) => heap.contains_function(*function),
-        JsValue::Undefined
-        | JsValue::Null
-        | JsValue::Boolean(_)
-        | JsValue::Number(_)
-        | JsValue::BigInt(_)
-        | JsValue::String(_)
-        | JsValue::Symbol(_)
-        | JsValue::BuiltinFunction(_)
-        | JsValue::Error(_) => true,
-    }
 }
 pub fn to_property_key(value: &JsValue) -> Result<PropertyKey, VmError> {
     match value {
