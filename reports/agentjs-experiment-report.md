@@ -43,9 +43,9 @@ AI Agent 的脚本通常服务于一次工具调用：代码量不大，生命�
 
 上述目标之间存在取舍：兼容性要求扩大内建对象与语义覆盖，轻量化要求控制常驻状态，隔离性又会增加启动成本。报告后半部分不把单一指标当作总分，而是分别给出正确性、冷启动、批处理、内存、体积和集成证据。
 
-### 1.3 创新点 1：Native 执行链与双入口隔离
+### 1.3 项目定位与基础功能：Native 执行链与双入口
 
-AgentJS 的第一项核心设计是把“执行实现”和“调用生命周期”分开。所有 Native action 都经过同一条自研链路；宿主根据调用关系选择独立 `Engine` 或持久 `Runtime`，而不是把状态隔离和编译实现混在一个全局上下文中。
+AgentJS 首先是一个能够独立执行 JavaScript 的 Native 引擎。自研 Lexer、Parser/AST、字节码编译器、栈式 VM、Runtime 和 Builtins 组成了完整执行链；`Engine::execute` 与 `Runtime::eval` 则提供不同的调用生命周期。这是项目的定位和基础功能，而不是本报告所主张的创新点。
 
 ```mermaid
 flowchart TB
@@ -71,51 +71,11 @@ flowchart TB
 | `Engine::execute` | 每次 action 新建并销毁 | 不同用户请求、模型生成的相互独立脚本 | 不共享可变全局、原型和异常状态 |
 | `Runtime::eval` | 会话内持续存在 | REPL、同一工具链的连续片段 | 在明确会话内保留环境、Job Queue 和有界脚本缓存 |
 
-Native 是程序唯一的内嵌执行后端。Boa 不参与 AgentJS 的执行，也不存在 Native 失败后静默回退到外部引擎的路径；它只在横向实验中作为性能参照。这一边界使兼容性与执行结果能够归因于 AgentJS 自身实现。
+Native 是程序唯一的内嵌执行后端。外部参考引擎不参与 AgentJS 的执行，也不存在 Native 失败后静默回退的路径。这一边界使兼容性与执行结果能够归因于 AgentJS 自身实现。
 
-### 1.4 创新点 2：按 action 隔离的资源预算与受控 Host
+### 1.4 创新点 1：面向 Agent 负载的数据结构与快速路径
 
-Agent action 的安全边界不是单一的“禁止某个字符串”，而是由运行时预算、宿主 API 边界和进程生命周期共同构成：
-
-```mermaid
-flowchart TB
-    A["模型生成脚本<br/>或 fixed script"]
-    B["Python Orchestrator"]
-    C["Native Runtime"]
-    D["Agent Host<br/>agent.render(tree)"]
-    E["ExecutionReport"]
-    F["Frontend"]
-
-    A -->|"结构与长度检查"| B
-    B -->|"每请求新进程 / 约 3 s 超时"| C
-    C --> D --> E --> F
-
-    C -.-> C1["循环 / 递归 / VM 栈"]
-    C -.-> C2["堆对象 / 堆字节 / deadline"]
-    D -.-> D1["根类型 / JSON 可序列化"]
-    D -.-> D2["循环引用 / 深度 / 字节数"]
-```
-
-*图 2　Agent action 的分层执行与宿主边界*
-
-运行时预算及其作用如下：
-
-| 预算 | 默认值/边界 | 超限行为 | 控制对象 |
-| --- | --- | --- | --- |
-| 循环检查 | 10,000,000 次 | 返回 `RuntimeLimit` | 无限循环与异常长循环 |
-| 递归深度 | 256 层 | 返回 `RuntimeLimit` | 深递归调用 |
-| VM 操作数栈 | 65,536 个值 | 返回 `RuntimeLimit` | 操作数栈深度增长 |
-| 堆对象 | 500,000 个 | 返回 `RuntimeLimit` | 对象、函数和环境数量 |
-| 堆字节 | 256 MiB | 返回 `RuntimeLimit` | Heap 与受保护的大块分配 |
-| 大对象分配 | 单独计量 | 返回 `RuntimeLimit` | 一次性大数组、字符串等 |
-| 墙钟时间 | 可配置 deadline | 返回 `RuntimeLimit` 或宿主超时 | 占用宿主进程的时间 |
-| RenderTree | 字节数与嵌套深度上限 | Host 拒绝事件 | 输出数据规模与递归结构 |
-
-默认 Runtime 不暴露文件系统、进程、网络、DOM 或 Node API；文件读取必须由宿主显式安装根目录受限的加载器。Demo 在这些运行时约束之外再启用进程隔离，形成可审计的 action 边界。需要强调的是，Python 层的字符串黑名单不是形式化沙箱，RenderTree 校验也不是完整字段级 Schema；安全结论限定于所述 API 暴露面和超时策略。
-
-### 1.5 创新点 3：面向 Agent 负载的数据结构与快速路径
-
-Agent 数据通常是“多数普通字段、少量特殊属性、局部大索引、短命临时对象和 ASCII 文本”的组合。AgentJS 针对这一形态做了局部优化，并保持对象 ID 和属性语义稳定：
+Agent 数据通常是“多数普通字段、少量特殊属性、局部大索引、短命临时对象和 ASCII 文本”的组合。AgentJS 不是对通用语言机制做无差别优化，而是针对 Agent action 中反复出现的数据形态设计局部紧凑表示和快速路径，同时保持对象 ID 与 JavaScript 属性语义稳定：
 
 ```mermaid
 flowchart TB
@@ -141,17 +101,111 @@ flowchart TB
     F1 --> G
 ```
 
-*图 3　面向 Agent 数据负载的运行时优化布局*
+*图 2　面向 Agent 数据负载的运行时优化布局*
 
-| 机制 | 核心实现 | 预期收益 |
+| 机制 | 核心实现 | 面向 Agent 负载的收益 |
 | :-- | :-- | :-- |
-| 分段稠密数组 | 前 64K 槽位 inline；之后按 4K 槽位惰性分段；超大索引转入 sparse property | 降低稀疏大索引数组的预分配成本 |
-| Descriptor 旁路表 | 普通元素只保存值；非默认属性描述符存放在覆盖表 | 让普通元素路径保持紧凑 |
-| 非移动 mark-and-sweep + Free List | 标记清扫保持对象 ID 稳定，回收槽位供后续对象复用 | 适合 action 内临时对象的创建与回收 |
-| ASCII 快速路径 | 长度、索引、切片、查找、大小写和替换优先走 ASCII 路径 | 降低日志、JSON 字段和规则文本的处理开销 |
-| 有界脚本缓存 | 键包含源码、严格模式和源码类型；命中后更新 LRU，容量为 32 | 复用重复脚本，同时避免缓存无限增长 |
+| 分段稠密数组 | 前 64K 槽位 inline；之后按 4K 槽位惰性分段；超大索引转入 sparse property | 降低工具结果中稀疏大索引数组的预分配成本 |
+| Descriptor 旁路表 | 普通元素只保存值；非默认属性描述符存放在覆盖表 | 让大多数普通字段与数组元素保持紧凑 |
+| 非移动 mark-and-sweep + Free List | 标记清扫保持对象 ID 稳定，回收槽位供后续对象复用 | 适合 action 内大量短命临时对象的创建与回收 |
+| ASCII 快速路径 | 长度、索引、切片、查找、大小写和替换优先走 ASCII 路径 | 降低日志、JSON 字段、规则文本的扫描与清洗开销 |
+| 有界脚本缓存 | 键包含源码、严格模式和源码类型；命中后更新 LRU，容量为 32 | 复用重复 action 脚本，同时避免缓存无界增长 |
 
-这些优化共同构成 Native Runtime。AgentBench 未将它们设置为独立消融变量，因此单个 case 只能评价完整系统在相应负载上的表现，不能把差值直接归因于某一项优化。
+这些机制共同构成面向 Agent 负载的运行时优化组合。AgentBench 未将它们设置为独立消融变量，因此实验只评价完整系统在相应负载上的表现，不把单个 case 的差值直接归因于某一机制。
+
+### 1.5 创新点 2：按 action 隔离的资源预算与受控 Host
+
+Agent action 的安全边界不是单一的“禁止某个字符串”，而是由运行时预算、宿主 API 边界和进程生命周期共同构成：
+
+```mermaid
+flowchart TB
+    A["模型生成脚本<br/>或 fixed script"]
+    B["Python Orchestrator"]
+    C["Native Runtime"]
+    D["Agent Host<br/>agent.render(tree)"]
+    E["ExecutionReport"]
+    F["Frontend"]
+
+    A -->|"结构与长度检查"| B
+    B -->|"每请求新进程 / 约 3 s 超时"| C
+    C --> D --> E --> F
+
+    C -.-> C1["循环 / 递归 / VM 栈"]
+    C -.-> C2["堆对象 / 堆字节 / deadline"]
+    D -.-> D1["根类型 / JSON 可序列化"]
+    D -.-> D2["循环引用 / 深度 / 字节数"]
+```
+
+*图 3　Agent action 的分层执行与宿主边界*
+
+运行时预算及其作用如下：
+
+| 预算 | 默认值/边界 | 超限行为 | 控制对象 |
+| --- | --- | --- | --- |
+| 循环检查 | 10,000,000 次 | 返回 `RuntimeLimit` | 无限循环与异常长循环 |
+| 递归深度 | 256 层 | 返回 `RuntimeLimit` | 深递归调用 |
+| VM 操作数栈 | 65,536 个值 | 返回 `RuntimeLimit` | 操作数栈深度增长 |
+| 堆对象 | 500,000 个 | 返回 `RuntimeLimit` | 对象、函数和环境数量 |
+| 堆字节 | 256 MiB | 返回 `RuntimeLimit` | Heap 与受保护的大块分配 |
+| 大对象分配 | 单独计量 | 返回 `RuntimeLimit` | 一次性大数组、字符串等 |
+| 墙钟时间 | 可配置 deadline | 返回 `RuntimeLimit` 或宿主超时 | 占用宿主进程的时间 |
+| RenderTree | 字节数与嵌套深度上限 | Host 拒绝事件 | 输出数据规模与递归结构 |
+
+默认 Runtime 不暴露文件系统、进程、网络、DOM 或 Node API；文件读取必须由宿主显式安装根目录受限的加载器。Demo 在这些运行时约束之外再启用进程隔离，形成可审计的 action 边界。需要强调的是，Python 层的字符串黑名单不是形式化沙箱，RenderTree 校验也不是完整字段级 Schema；安全结论限定于所述 API 暴露面和超时策略。
+
+### 1.6 创新点 3：面向 Agent action 的 AgentBench 2.0
+
+传统 JavaScript benchmark 更关注经典算法、浏览器页面或长时吞吐，难以完整表达 AI Agent 中“脚本短、数据转换密集、进程生命周期短、结果需返回宿主”的 action 成本。AgentBench 2.0 因此从 Agent 工作流出发，用 **12 个确定性任务**建立短任务评价体系：
+
+```mermaid
+flowchart LR
+    A["Agent 工作流<br/>工具结果 → 规则处理 → 展示数据"]
+    B["AgentBench 2.0<br/>12 个确定性 action"]
+
+    subgraph M["四类独立指标"]
+        C["cold<br/>单次端到端延迟"]
+        D["batch<br/>连续短任务吞吐"]
+        E["RSS<br/>进程峰值工作集"]
+        F["可执行文件体积<br/>部署产物成本"]
+    end
+
+    G["正确性门控<br/>只统计结果正确的样本"]
+    H["Agent Demo<br/>受控 Host + RenderTree + 前端"]
+
+    A --> B
+    B --> G
+    G --> C
+    G --> D
+    G --> E
+    G --> F
+    B -.->|"量化证据与场景闭环互补"| H
+```
+
+*图 4　AgentBench 2.0 从 Agent 场景到量化指标的评价框架*
+
+任务不是从传统算法榜单中搬运，而是将“读取工具返回值—整理结构—应用规则—生成展示数据”拆成可复现的最小负载：
+
+| Agent action 负载 | AgentBench 覆盖 | 主要观察对象 |
+| :-- | :-- | :-- |
+| 数据输入与整理 | JSON 解析与转换、工具结果聚合 | 常规 Agent 数据管道 |
+| 规则和对象处理 | 规则过滤、对象属性热循环 | 属性访问与数组窗口 |
+| action 内临时状态 | 短命对象压力 | 分配、回收与峰值 RSS |
+| 数组结构 | Descriptor 数组、大索引数组 | 紧凑元素、特殊属性与大索引 |
+| 文本处理 | 字符串扫描、清洗与切片 | 日志、规则文本与展示字段 |
+| 最小 action | `startup-noop` | 引擎启动、最小脚本与进程退出 |
+
+每个任务都带确定性结果检查。跨引擎测试使用相同 case、输入、预热和重复次数；只有输出正确且无错误、超时的样本才进入统计。逐次样本、环境信息和可执行文件指纹均被保存，总体比值对所有共同通过 case 取几何平均。
+
+| 指标 | 回答的问题 | 口径边界 |
+| :-- | :-- | :-- |
+| `cold` | 单次 action 让用户等待多久？ | 从进程启动、解析与执行到进程退出 |
+| `batch` | 连续短任务的端到端吞吐如何？ | 同进程连续执行；不等价于持久 `Runtime` 或缓存消融 |
+| RSS | 一个 action 进程占用多少内存？ | 操作系统记录的峰值工作集，不等同于 VM Heap |
+| 可执行文件体积 | 引擎的部署产物有多轻？ | 实际参测 release 文件的字节数 |
+
+AgentBench 2.0 的创新在于：不把浏览器 benchmark 原样搬到 CLI，而是将 **Agent action 任务模型、正确性门控、冷任务延迟、连续任务吞吐、进程内存与产物体积**组合为一套可复现的专用评价方法。
+
+AgentBench 与项目自研的 **Agent Demo** 互补而不混同：AgentBench 不调用专用 `agent.render`，提供可跨引擎比较的量化证据；Agent Demo 则验证“用户输入 / fixed-script → Python Orchestrator → AgentJS Native CLI → `value` / `logs` / RenderTree → 前端”的受控调用链。前者回答“是否正确、多快、占用多少资源”，后者回答“结果能否安全进入完整 Agent 展示链”，共同构成量化评价与场景闭环。
 
 ## 二、实现描述
 
@@ -183,7 +237,7 @@ flowchart TB
     E -.-> H
 ```
 
-*图 4　一次 AgentJS 求值请求的完整流水线*
+*图 5　一次 AgentJS 求值请求的完整流水线*
 
 `NativePipeline` 以 `SourceParser`、`ProgramCompiler` 和 `ChunkExecutor` 三个契约连接前端、编译器和 VM，使每一层可以独立测试。`NativeRuntime` 负责缓存、预算重置、模块登记和报告组装；`Engine`/`Runtime` 负责把该后端放入正确的 isolate 生命周期。
 
@@ -219,7 +273,7 @@ flowchart TB
     G --> H["per-isolate LRU<br/>最多 32 项"]
 ```
 
-*图 5　字节码 Chunk 的组成、校验与缓存路径*
+*图 6　字节码 Chunk 的组成、校验与缓存路径*
 
 栈式字节码的取舍是明确的：它保留了表达式求值顺序和异常恢复所需的栈深度信息，便于完成语义覆盖与资源检查；代价是部分热点循环会承担更多解释器 dispatch。AgentBench 将字符串扫描和批处理路径识别为主要性能热点。
 
@@ -258,7 +312,7 @@ flowchart TB
     I --> F
 ```
 
-*图 6　Heap 预算检查与非移动 GC 决策流程*
+*图 7　Heap 预算检查与非移动 GC 决策流程*
 
 GC 采用非移动 mark-and-sweep：从全局环境、当前环境、调用帧、操作数栈、待处理异常和内建根集合出发标记对象、环境和函数，清扫不可达槽位；对象 ID 在清扫过程中保持稳定，空槽由 Free List 重新分配。该设计优先保证属性引用和诊断信息的稳定性，换取了在局部压力负载上可能更高的峰值内存。报告中的 RSS 是宿主侧观测值，不能替代 Heap 内部统计。
 
@@ -313,7 +367,7 @@ flowchart LR
     B --> B7["engine.rs + contracts.rs + test262.rs<br/>生命周期、契约与测试 Runner"]
 ```
 
-*图 7　AgentJS 仓库与核心源码层级*
+*图 8　AgentJS 仓库与核心源码层级*
 
 ### 3.2 核心模块职责
 
@@ -354,7 +408,7 @@ flowchart TB
     F -->|"失败"| I
 ```
 
-*图 8　从 CLI 入口到执行报告的代码工作流*
+*图 9　从 CLI 入口到执行报告的代码工作流*
 
 `src/contracts.rs` 是跨层协作边界：Lexer/Parser 实现 `SourceParser`，Compiler 实现 `ProgramCompiler`，VM 实现 `ChunkExecutor`。这些接口隔离各实现层，使测试可以注入 fake stage，而不把测试逻辑耦合到具体实现细节。
 
@@ -607,7 +661,7 @@ sequenceDiagram
     F-->>U: 渲染受控组件
 ```
 
-*图 9　Agent Demo 从脚本生成到结构化展示的调用链*
+*图 10　Agent Demo 从脚本生成到结构化展示的调用链*
 
 Python 编排器支持 fixed-script 和可选 DeepSeek 在线模式。脚本进入 Native 前会经过响应结构、长度、受限能力字符串、`return` 和 `agent.render` 调用次数检查；每个请求在独立进程中执行。Native Host 对 RenderTree 根类型、JSON 可序列化性、循环引用、嵌套深度和字节数进行二次校验，允许 `panel`、`text`、`metrics`、`statuses`、`table`、`list` 六类根节点。
 
