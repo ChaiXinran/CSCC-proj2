@@ -1,0 +1,149 @@
+{"kind":"slide","id":"sl/y90nupkv","slide":1,"title":"作品进展汇报 / CSCC 功能挑战赛道作品","textShapes":9}
+{"kind":"shape","id":"sh/3qxwn2x8","slide":1,"name":"矩形: 圆角 16","bbox":[168.24,396.44,983.41,185.16]}
+{"kind":"shape","id":"sh/sfqdkrep","slide":1,"name":"矩形: 圆角 17","bbox":[214.2,413.36,238,151.33]}
+{"kind":"textbox","id":"sh/dgzetcfa","slide":1,"textChars":22,"textLines":1}
+{"kind":"textbox","id":"sh/1cvuxc7e","slide":1,"textChars":5,"textLines":1}
+{"kind":"textbox","id":"sh/0bmd476t","slide":1,"textChars":31,"textLines":1}
+{"kind":"textbox","id":"sh/zadcv2p8","slide":1,"textChars":73,"textLines":3}
+{"kind":"textbox","id":"sh/e94v2hon","slide":1,"textChars":6,"textLines":1}
+{"kind":"textbox","id":"sh/90ve1w7q","slide":1,"textChars":13,"textLines":1}
+{"kind":"shape","id":"sh/ozmd8r65","slide":1,"name":"矩形 24","bbox":[56,610,640,1]}
+{"kind":"textbox","id":"sh/nydczmpk","slide":1,"textChars":28,"textLines":1}
+{"kind":"textbox","id":"sh/mx4v6hoz","slide":1,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/p4bu5s76","slide":1,"textChars":2,"textLines":1}
+{"kind":"slide","id":"sl/hwbqtkby","slide":2,"title":"汇报结构","textShapes":15}
+{"kind":"textbox","id":"sh/9072xkry","slide":2,"textChars":4,"textLines":1}
+{"kind":"shape","id":"sh/b29kza94","slide":2,"name":"矩形 3","bbox":[83,163.61,1168,1]}
+{"kind":"textbox","id":"sh/a10jqpsj","slide":2,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/x4r21kru","slide":2,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/w3i1sfa9","slide":2,"textChars":37,"textLines":1}
+{"kind":"shape","id":"sh/r65knqtk","slide":2,"name":"矩形 7","bbox":[83,360.21,500,1]}
+{"kind":"textbox","id":"sh/q5wjelsz","slide":2,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/ove9o7yd","slide":2,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/9wnqhczy","slide":2,"textChars":27,"textLines":1}
+{"kind":"shape","id":"sh/mtwrmxg7","slide":2,"name":"矩形 11","bbox":[668,360.21,500,1]}
+{"kind":"textbox","id":"sh/nu58f2hs","slide":2,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/wjy9sry9","slide":2,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/xk7qlczu","slide":2,"textChars":48,"textLines":1}
+{"kind":"shape","id":"sh/ahwrqhgj","slide":2,"name":"矩形 15","bbox":[83,571.88,500,1]}
+{"kind":"textbox","id":"sh/bip8jmho","slide":2,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/cnupgny5","slide":2,"textChars":5,"textLines":1}
+{"kind":"textbox","id":"sh/do3q9szq","slide":2,"textChars":29,"textLines":1}
+{"kind":"shape","id":"sh/t8byxkn2","slide":2,"name":"矩形 19","bbox":[668,570.88,500,1]}
+{"kind":"textbox","id":"sh/s72xofmh","slide":2,"textChars":1,"textLines":1}
+{"kind":"shape","id":"sh/ozy1ofad","slide":2,"name":"矩形 2","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/76twva5c","slide":2,"textChars":28,"textLines":1}
+{"kind":"slide","id":"sl/ofy9wn61","slide":3,"title":"项目定位与赛题理解","textShapes":11}
+{"kind":"textbox","id":"sh/cza94vmx","slide":3,"textChars":9,"textLines":1}
+{"kind":"textbox","id":"sh/d0jax03i","slide":3,"textChars":44,"textLines":1}
+{"kind":"shape","id":"sh/298ryl4v","slide":3,"name":"矩形 3","bbox":[64.31,155.87,1168,1]}
+{"kind":"textbox","id":"sh/3ah8rqlg","slide":3,"textChars":111,"textLines":2}
+{"kind":"textbox","id":"sh/obq90bml","slide":3,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/pcjqtg36","slide":3,"textChars":65,"textLines":1}
+{"kind":"shape","id":"sh/m5cra54z","slide":3,"name":"矩形 7","bbox":[71.4,561.13,320,3]}
+{"kind":"textbox","id":"sh/n6ls3alk","slide":3,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/n2l4fq98","slide":3,"textChars":35,"textLines":1}
+{"kind":"shape","id":"sh/m1c3mlsn","slide":3,"name":"矩形 10","bbox":[464.53,558.27,320,3]}
+{"kind":"textbox","id":"sh/943mhgre","slide":3,"textChars":3,"textLines":1}
+{"kind":"textbox","id":"sh/83ulovat","slide":3,"textChars":54,"textLines":1}
+{"kind":"shape","id":"sh/v6l4jq94","slide":3,"name":"矩形 13","bbox":[855.13,558.47,320,3]}
+{"kind":"textbox","id":"sh/a5c3ql8z","slide":3,"textChars":1,"textLines":1}
+{"kind":"shape","id":"sh/x8nml0ra","slide":3,"name":"矩形 15","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/w7ulsvqp","slide":3,"textChars":28,"textLines":1}
+{"kind":"slide","id":"sl/jyx0ra1s","slide":4,"title":"参赛队员分工","textShapes":23}
+{"kind":"textbox","id":"sh/1cj2d8b6","slide":4,"textChars":6,"textLines":1}
+{"kind":"shape","id":"sh/rm1k7yt4","slide":4,"name":"矩形 3","bbox":[56,118.07,1168,1]}
+{"kind":"shape","id":"sh/ql8jytsj","slide":4,"name":"矩形 4","bbox":[54.13,173.8,1146,56]}
+{"kind":"shape","id":"sh/doj29oba","slide":4,"name":"矩形 5","bbox":[54.13,229.8,1146,1]}
+{"kind":"textbox","id":"sh/sna103ap","slide":4,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/3ihk3et8","slide":4,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/ih8ju9sn","slide":4,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/kbm987y5","slide":4,"textChars":7,"textLines":1}
+{"kind":"shape","id":"sh/5cva1cfq","slide":4,"name":"矩形 10","bbox":[54.13,306.8,1146,1]}
+{"kind":"textbox","id":"sh/i94r6xgz","slide":4,"textChars":3,"textLines":1}
+{"kind":"textbox","id":"sh/jadsz2xk","slide":4,"textChars":9,"textLines":1}
+{"kind":"textbox","id":"sh/w72947yt","slide":4,"textChars":21,"textLines":1}
+{"kind":"textbox","id":"sh/x8vaxsfe","slide":4,"textChars":12,"textLines":1}
+{"kind":"shape","id":"sh/a5kr2xg3","slide":4,"name":"矩形 15","bbox":[56,390.47,1146,1]}
+{"kind":"textbox","id":"sh/v6tsv2xo","slide":4,"textChars":3,"textLines":1}
+{"kind":"textbox","id":"sh/g36tgryd","slide":4,"textChars":5,"textLines":1}
+{"kind":"textbox","id":"sh/h4fa9wfy","slide":4,"textChars":23,"textLines":1}
+{"kind":"textbox","id":"sh/p0batw72","slide":4,"textChars":11,"textLines":1}
+{"kind":"textbox","id":"sh/3ytsrmpw","slide":4,"textChars":3,"textLines":1}
+{"kind":"textbox","id":"sh/2xkrih8b","slide":4,"textChars":7,"textLines":1}
+{"kind":"textbox","id":"sh/1wbapc7q","slide":4,"textChars":32,"textLines":1}
+{"kind":"textbox","id":"sh/gv29g7q5","slide":4,"textChars":16,"textLines":1}
+{"kind":"shape","id":"sh/fu9sn2p0","slide":4,"name":"矩形 25","bbox":[56,574.13,1146,1]}
+{"kind":"textbox","id":"sh/et0reh8f","slide":4,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/tsrqlc7u","slide":4,"textChars":13,"textLines":1}
+{"kind":"textbox","id":"sh/sri9s7q9","slide":4,"textChars":29,"textLines":1}
+{"kind":"textbox","id":"sh/ilwf69kv","slide":4,"textChars":10,"textLines":1}
+{"kind":"textbox","id":"sh/knex8j21","slide":4,"textChars":57,"textLines":1}
+{"kind":"textbox","id":"sh/5ony1oj6","slide":4,"textChars":1,"textLines":1}
+{"kind":"shape","id":"sh/vy5gbe14","slide":4,"name":"矩形 34","bbox":[56,478.6,1146,1]}
+{"kind":"shape","id":"sh/0ba143al","slide":4,"name":"矩形 2","bbox":[41.18,649.24,640,1]}
+{"kind":"slide","id":"sl/i107q5of","slide":5,"title":"开发时间进度与任务完成情况","textShapes":20}
+{"kind":"textbox","id":"sh/dgbulwnm","slide":5,"textChars":13,"textLines":1}
+{"kind":"textbox","id":"sh/cf2tcr61","slide":5,"textChars":46,"textLines":1}
+{"kind":"shape","id":"sh/z2tcnm5s","slide":5,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"shape","id":"sh/yhkbe1o7","slide":5,"name":"矩形 4","bbox":[56,266,200,4]}
+{"kind":"textbox","id":"sh/l4bupwny","slide":5,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/032tgr6d","slide":5,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/n6dcr65o","slide":5,"textChars":37,"textLines":1}
+{"kind":"shape","id":"sh/m5kbi1oj","slide":5,"name":"矩形 8","bbox":[286,266,200,4]}
+{"kind":"textbox","id":"sh/w32dkbuh","slide":5,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/x4vedgvm","slide":5,"textChars":12,"textLines":1}
+{"kind":"textbox","id":"sh/ahkvi1cb","slide":5,"textChars":22,"textLines":1}
+{"kind":"shape","id":"sh/v2twb6dw","slide":5,"name":"矩形 12","bbox":[516,266,200,4]}
+{"kind":"textbox","id":"sh/k7mxovud","slide":5,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/58vehgvy","slide":5,"textChars":13,"textLines":1}
+{"kind":"textbox","id":"sh/i54fmlc7","slide":5,"textChars":31,"textLines":1}
+{"kind":"shape","id":"sh/j6dwfqds","slide":5,"name":"矩形 16","bbox":[746,266,200,4]}
+{"kind":"textbox","id":"sh/sb6xsvu9","slide":5,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/tcfel0vu","slide":5,"textChars":5,"textLines":1}
+{"kind":"textbox","id":"sh/hgrmpwj2","slide":5,"textChars":34,"textLines":1}
+{"kind":"shape","id":"sh/gfi5grih","slide":5,"name":"矩形 20","bbox":[976,266,200,4]}
+{"kind":"textbox","id":"sh/fe94nm1w","slide":5,"textChars":2,"textLines":1}
+{"kind":"textbox","id":"sh/ud0ne10b","slide":5,"textChars":4,"textLines":1}
+{"kind":"textbox","id":"sh/pkr6tgjy","slide":5,"textChars":42,"textLines":1}
+{"kind":"shape","id":"sh/4ji5kbid","slide":5,"name":"矩形 24","bbox":[50.33,488,1120,82.53]}
+{"kind":"textbox","id":"sh/3i94r61s","slide":5,"textChars":101,"textLines":2}
+{"kind":"textbox","id":"sh/2h0ni107","slide":5,"textChars":41,"textLines":1}
+{"kind":"textbox","id":"sh/5o7mhcju","slide":5,"textChars":1,"textLines":1}
+{"kind":"shape","id":"sh/kny587i9","slide":5,"name":"矩形 28","bbox":[41.18,649.24,640,1]}
+{"kind":"slide","id":"sl/x8f69ofe","slide":6,"title":"系统架构与 Native 执行链路","textShapes":20}
+{"kind":"textbox","id":"sh/yhg7epsj","slide":6,"textChars":17,"textLines":1}
+{"kind":"textbox","id":"sh/zi98nu94","slide":6,"textChars":53,"textLines":1}
+{"kind":"shape","id":"sh/87ipkzal","slide":6,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"textbox","id":"sh/98rqt4r6","slide":6,"textChars":6,"textLines":1}
+{"kind":"shape","id":"sh/ml07i9sv","slide":6,"name":"矩形 5","bbox":[70.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/7m98ru9g","slide":6,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/oryp8fah","slide":6,"textChars":5,"textLines":1}
+{"kind":"shape","id":"sh/pc76hkr2","slide":6,"name":"矩形 8","bbox":[230.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/h4bupgn6","slide":6,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/w32twb6l","slide":6,"textChars":12,"textLines":1}
+{"kind":"shape","id":"sh/v2tcn650","slide":6,"name":"矩形 11","bbox":[390.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/u1kbu1ov","slide":6,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/5svutgni","slide":6,"textChars":8,"textLines":1}
+{"kind":"shape","id":"sh/47mt0b6x","slide":6,"name":"矩形 14","bbox":[550.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/j6dcr65c","slide":6,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/i54bylor","slide":6,"textChars":2,"textLines":1}
+{"kind":"shape","id":"sh/twfux0ne","slide":6,"name":"矩形 17","bbox":[710.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/svmt4v6t","slide":6,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/cbe5g3ih","slide":6,"textChars":18,"textLines":1}
+{"kind":"shape","id":"sh/dcnm98zm","slide":6,"name":"矩形 20","bbox":[870.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/qpwnet0b","slide":6,"textChars":1,"textLines":1}
+{"kind":"textbox","id":"sh/bq547yhw","slide":6,"textChars":7,"textLines":1}
+{"kind":"shape","id":"sh/0fy5k3id","slide":6,"name":"矩形 23","bbox":[1030.75,311.23,122,3]}
+{"kind":"textbox","id":"sh/lg76d8zy","slide":6,"textChars":118,"textLines":4}
+{"kind":"shape","id":"sh/ydgnit07","slide":6,"name":"矩形 25","bbox":[941.75,400.39,253,178]}
+{"kind":"textbox","id":"sh/zep4byhs","slide":6,"textChars":5,"textLines":1}
+{"kind":"textbox","id":"sh/gju58ji9","slide":6,"textChars":42,"textLines":1}
+{"kind":"textbox","id":"sh/1k3mhozu","slide":6,"textChars":1,"textLines":1}
+{"kind":"shape","id":"sh/jet8nm1c","slide":6,"name":"矩形 29","bbox":[41.18,637.64,640,1]}
+{"kind":"textbox","id":"sh/idk7ehkr","slide":6,"textChars":28,"textLines":1}
+{"kind":"slide","id":"sl/gnmp4jqx","slide":7,"title":"开发工作流","textShapes":20}
+{"kind":"textbox","id":"sh/cb2tkvap","slide":7,"textChars":5,"textLines":1}
+{"kind":"textbox","id":"sh/dcbud0ra","slide":7,"textChars":39,"textLines":1}
+{"kind":"shape","id":"sh/ydkbm5sv","slide":7,"name":"矩形 3","bbox":[56,172,1168,1]}
+{"kind":"notice","message":"Truncated: omitted 359 lines. Increase maxChars or narrow target."}

@@ -1,0 +1,830 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/14bup87q",
+    "id": "14bup87q",
+    "slide": 17,
+    "layoutId": "/ppt/slideLayouts/slideLayout1.xml",
+    "layoutName": "Title Slide",
+    "layoutType": "title",
+    "masterLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "ChatGPT",
+    "colors": {
+      "accent1": "#156082",
+      "accent2": "#E97132",
+      "accent3": "#196B24",
+      "accent4": "#0F9ED5",
+      "accent5": "#A02B93",
+      "accent6": "#4EA72E",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#0E2841",
+      "lt2": "#E8E8E8",
+      "hlink": "#467886",
+      "folHlink": "#96607D"
+    },
+    "fontScheme": {
+      "name": "Office",
+      "majorFont": {
+        "latinTypeface": "Calibri Light",
+        "eastAsianTypeface": "Calibri Light",
+        "complexScriptTypeface": "Calibri Light"
+      },
+      "minorFont": {
+        "latinTypeface": "微软雅黑",
+        "eastAsianTypeface": "微软雅黑",
+        "complexScriptTypeface": "微软雅黑"
+      }
+    },
+    "typefaces": [
+      "Calibri Light",
+      "微软雅黑"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "/ppt/slideLayouts/slideLayout1.xml",
+      "name": "Title Slide",
+      "type": "title",
+      "parentLayoutId": "/ppt/slideMasters/slideMaster1.xml",
+      "elements": []
+    },
+    {
+      "scope": "master",
+      "id": "/ppt/slideMasters/slideMaster1.xml",
+      "type": "master",
+      "elements": []
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/1c7e50ni",
+      "id": "2",
+      "name": "矩形 1",
+      "bbox": [
+        56,
+        40,
+        920,
+        62
+      ],
+      "geometry": "rect",
+      "text": "AgentBench 2.0：结论与边界",
+      "textPreview": "AgentBench 2.0：结论与边界",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "AgentBench 2.0：结论与边界"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "AgentBench 2.0：结论与边界",
+          "resolvedTextStyle": {
+            "fontSize": 38,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "AgentBench 2.0：结论与边界",
+              "fontSize": 38,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/rm5czq50",
+      "id": "4",
+      "name": "矩形 3",
+      "bbox": [
+        57.87,
+        130,
+        1168,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/6lwvql4v",
+      "id": "5",
+      "name": "矩形 4",
+      "bbox": [
+        56,
+        163.4,
+        1117.2,
+        86
+      ],
+      "geometry": "rect",
+      "text": "12 个共同通过 case 均经过结果、超时与确定性门控；比值统一为“参考引擎 / AgentJS”的几何平均。",
+      "textPreview": "12 个共同通过 case 均经过结果、超时与确定性门控；比值统一为“参考引擎 / AgentJS”的几何平均。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "12 个共同通过 case 均经过结果、超时与确定性门控；比值统一为“参考引擎 /"
+          },
+          {
+            "index": 2,
+            "text": "AgentJS”的几何平均。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "12 个共同通过 case 均经过结果、超时与确定性门控；比值统一为“参考引擎 / AgentJS”的几何平均。",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "color": "#0B0F14"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "12 个共同通过 case 均经过结果、超时与确定性门控；比值统一为“参考引擎 / AgentJS”的几何平均。",
+              "fontSize": 26.67,
+              "color": "#0B0F14"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/t8ne10n6",
+      "id": "6",
+      "name": "矩形 5",
+      "bbox": [
+        71.53,
+        276.8,
+        1089.49,
+        81.53
+      ],
+      "geometry": "rect",
+      "fillColor": "#F7F7F8",
+      "lineWidth": 0
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/snedsvml",
+      "id": "7",
+      "name": "矩形 6",
+      "bbox": [
+        110.8,
+        297.4,
+        280,
+        32
+      ],
+      "geometry": "rect",
+      "text": "cold 即时任务",
+      "textPreview": "cold 即时任务",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "cold 即时任务"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "cold 即时任务",
+          "resolvedTextStyle": {
+            "fontSize": 23,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "cold 即时任务",
+              "fontSize": 21.33,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/jilcvq54",
+      "id": "8",
+      "name": "矩形 7",
+      "bbox": [
+        285.8,
+        301.75,
+        824.69,
+        48
+      ],
+      "geometry": "rect",
+      "text": "耗时：Boa / AgentJS = 1.090×，QuickJS / AgentJS = 0.186×；AgentJS 优于 Boa，仍落后 QuickJS。",
+      "textPreview": "耗时：Boa / AgentJS = 1.090×，QuickJS / AgentJS = 0.186×；AgentJS 优于 Boa，仍落后 QuickJS。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "耗时：Boa / AgentJS = 1.090×，QuickJS / AgentJS = 0.186×；AgentJS 优于"
+          },
+          {
+            "index": 2,
+            "text": "Boa，仍落后 QuickJS。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "耗时：Boa / AgentJS = 1.090×，QuickJS / AgentJS = 0.186×；AgentJS 优于 Boa，仍落后 QuickJS。",
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "耗时：Boa / AgentJS = 1.090×，QuickJS / AgentJS = 0.186×；AgentJS 优于 Boa，仍落后 QuickJS。",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ihcvml4j",
+      "id": "9",
+      "name": "矩形 8",
+      "bbox": [
+        71.53,
+        399.03,
+        1089.49,
+        82.4
+      ],
+      "geometry": "rect",
+      "fillColor": "#FFF2ED",
+      "lineWidth": 0
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/4by9or6l",
+      "id": "10",
+      "name": "矩形 9",
+      "bbox": [
+        110.8,
+        420.2,
+        280,
+        32
+      ],
+      "geometry": "rect",
+      "text": "batch 连续执行",
+      "textPreview": "batch 连续执行",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "batch 连续执行"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "batch 连续执行",
+          "resolvedTextStyle": {
+            "fontSize": 23,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "batch 连续执行",
+              "fontSize": 21.33,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/pc7qhwn6",
+      "id": "11",
+      "name": "矩形 10",
+      "bbox": [
+        285.8,
+        420.2,
+        846.22,
+        48
+      ],
+      "geometry": "rect",
+      "text": "耗时：Boa / AgentJS = 0.625×，QuickJS / AgentJS = 0.112×；三方均正确完成 12 / 12。",
+      "textPreview": "耗时：Boa / AgentJS = 0.625×，QuickJS / AgentJS = 0.112×；三方均正确完成 12 / 12。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "耗时：Boa / AgentJS = 0.625×，QuickJS / AgentJS = 0.112×；三方均正确完成 12"
+          },
+          {
+            "index": 2,
+            "text": "/ 12。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "耗时：Boa / AgentJS = 0.625×，QuickJS / AgentJS = 0.112×；三方均正确完成 12 / 12。",
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "耗时：Boa / AgentJS = 0.625×，QuickJS / AgentJS = 0.112×；三方均正确完成 12 / 12。",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/29grm1of",
+      "id": "12",
+      "name": "矩形 11",
+      "bbox": [
+        71.53,
+        530.06,
+        1089.49,
+        85.2
+      ],
+      "geometry": "rect",
+      "fillColor": "#F7F7F8",
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/3ap8fm50",
+      "id": "13",
+      "name": "矩形 12",
+      "bbox": [
+        110.8,
+        551.4,
+        280,
+        32
+      ],
+      "geometry": "rect",
+      "text": "轻量化边界",
+      "textPreview": "轻量化边界",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "轻量化边界"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "轻量化边界",
+          "resolvedTextStyle": {
+            "fontSize": 23,
+            "color": "#0B0F14",
+            "bold": true
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "轻量化边界",
+              "fontSize": 21.33,
+              "color": "#0B0F14",
+              "bold": true
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/gnepkr69",
+      "id": "14",
+      "name": "矩形 13",
+      "bbox": [
+        273.37,
+        556.6,
+        887.65,
+        48
+      ],
+      "geometry": "rect",
+      "text": "产物：AgentJS 10.29 MiB，Boa 28.55 MiB，QuickJS 1.09 MiB；体积与峰值 RSS 分开评价。",
+      "textPreview": "产物：AgentJS 10.29 MiB，Boa 28.55 MiB，QuickJS 1.09 MiB；体积与峰值 RSS 分开评价。",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 2,
+        "lines": [
+          {
+            "index": 1,
+            "text": "产物：AgentJS 10.29 MiB，Boa 28.55 MiB，QuickJS 1.09 MiB；体积与峰值 RSS"
+          },
+          {
+            "index": 2,
+            "text": "分开评价。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "产物：AgentJS 10.29 MiB，Boa 28.55 MiB，QuickJS 1.09 MiB；体积与峰值 RSS 分开评价。",
+          "resolvedTextStyle": {
+            "fontSize": 17,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "产物：AgentJS 10.29 MiB，Boa 28.55 MiB，QuickJS 1.09 MiB；体积与峰值 RSS 分开评价。",
+              "fontSize": 21.33,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/honqdwnu",
+      "id": "15",
+      "name": "矩形 14",
+      "bbox": [
+        1168,
+        664,
+        56,
+        26
+      ],
+      "geometry": "rect",
+      "text": "17",
+      "textPreview": "17",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "17"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "17",
+          "resolvedTextStyle": {
+            "fontSize": 13,
+            "color": "#535963",
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "17",
+              "fontSize": 13,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/gbedwfmx",
+      "id": "3",
+      "name": "矩形 2",
+      "bbox": [
+        41.18,
+        638.93,
+        640,
+        1
+      ],
+      "geometry": "rect",
+      "fillColor": "#B8BCC4",
+      "lineWidth": 0
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ulw7ihoj",
+      "id": "16",
+      "name": "矩形 15",
+      "bbox": [
+        41.18,
+        656.93,
+        650,
+        28
+      ],
+      "geometry": "rect",
+      "text": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+      "textPreview": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+      "resolvedFontSize": 24,
+      "resolvedTextStyle": {
+        "fontSize": 24,
+        "typeface": "微软雅黑",
+        "color": "tx1",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "队伍名：PanicKing成员：柴欣然 攸英茹 邓宇翔"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "队伍名：PanicKing\t成员：柴欣然 攸英茹 邓宇翔",
+          "resolvedTextStyle": {
+            "fontSize": 16,
+            "color": "#535963"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "队伍",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 2,
+              "text": "名：",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 3,
+              "text": "PanicKing",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 4,
+              "text": "\t",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 5,
+              "text": "成员：柴欣然",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 6,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 7,
+              "text": "攸英茹",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 8,
+              "text": " ",
+              "fontSize": 16,
+              "color": "#535963"
+            },
+            {
+              "index": 9,
+              "text": "邓宇翔",
+              "fontSize": 16,
+              "color": "#535963"
+            }
+          ],
+          "bulletCharacter": "",
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    }
+  ],
+  "composeRuns": []
+}

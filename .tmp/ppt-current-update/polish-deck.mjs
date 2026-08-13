@@ -1,0 +1,16 @@
+import { FileBlob, PresentationFile } from '@oai/artifact-tool';
+const input='D:/00_OS/CSCC/presentation/PPT-agentjs-updated.pptx';
+const deck=await PresentationFile.importPptx(await FileBlob.load(input));
+const snap=await deck.inspect({kind:'textbox',include:'id,slide,name',maxChars:200000});
+const rec=snap.ndjson.split(/\r?\n/).filter(Boolean).map(JSON.parse);
+function set(slide,name,text){const r=rec.find(x=>x.kind==='textbox'&&x.slide===slide&&x.name===name);if(!r)throw new Error(`${slide}:${name}`);deck.resolve(r.id).text=text;}
+set(3,'\u77e9\u5f62 6','\u4ea7\u7269 10.29 MiB\uff08Boa 28.55 MiB\uff09\uff1b\u4fdd\u6301\u6700\u5c0f Host \u66b4\u9732\u9762\u3002');
+set(14,'\u77e9\u5f62 12','\u9ed8\u8ba4\u65e0\u6587\u4ef6\u3001\u7f51\u7edc\u3001\u8fdb\u7a0b\u3001DOM \u4e0e Node API\uff1b\u53d7\u9650\u52a0\u8f7d\u5668\u7531\u5bbf\u4e3b\u663e\u5f0f\u5b89\u88c5\u3002');
+set(15,'\u77e9\u5f62 2','\u521b\u65b0\u70b9 3/3\uff1aAgentBench 2.0');
+set(15,'\u77e9\u5f62 4','\u4ece\u771f\u5b9e Agent \u5de5\u4f5c\u6d41\u62bd\u8c61\u4efb\u52a1\uff0c\u5206\u5f00\u8bc4\u4ef7\u5ef6\u8fdf\u3001\u541e\u5410\u3001\u5185\u5b58\u4e0e\u90e8\u7f72\u6210\u672c\u3002');
+set(15,'\u77e9\u5f62 6','\u8986\u76d6 JSON\u3001\u5de5\u5177\u805a\u5408\u3001\u89c4\u5219\u8fc7\u6ee4\u3001\u5bf9\u8c61\u538b\u529b\u3001Descriptor\u3001\u5927\u7d22\u5f15\u4e0e\u5b57\u7b26\u4e32\u3002');
+set(15,'\u77e9\u5f62 9','\u4ec5\u7ed3\u679c\u6b63\u786e\u4e14\u65e0 error / timeout \u7684\u6837\u672c\u8fdb\u5165\u7edf\u8ba1\uff1b\u5171\u540c\u901a\u8fc7 case \u53d6\u51e0\u4f55\u5e73\u5747\u3002');
+set(15,'\u77e9\u5f62 12','cold \u770b\u5355\u6b21\u7b49\u5f85\uff0cbatch \u770b\u8fde\u7eed\u541e\u5410\uff0cRSS \u770b\u5185\u5b58\uff0c\u4f53\u79ef\u770b\u90e8\u7f72\u6210\u672c\u3002');
+set(15,'\u77e9\u5f62 15','\u8f93\u5165 \u2192 Orchestrator \u2192 Native CLI \u2192 value / logs / RenderTree \u2192 \u524d\u7aef\uff1b\u4e0d\u8ba1\u5165\u6027\u80fd\u3002');
+set(18,'\u77e9\u5f62 4','AI \u5de5\u5177\u7528\u4e8e\u4ee3\u7801\u9605\u8bfb\u3001\u9519\u8bef\u5b9a\u4f4d\u3001\u6d4b\u8bd5\u811a\u672c\u548c\u6750\u6599\u6574\u7406\u3002\n\u6240\u6709\u4ee3\u7801\u3001\u5b9e\u9a8c\u6570\u636e\u4e0e\u7ed3\u8bba\u5747\u7531\u961f\u5458\u590d\u6838\uff0c\u4ee5\u4ed3\u5e93\u63d0\u4ea4\u548c\u6d4b\u8bd5\u8f93\u51fa\u4e3a\u51c6\u3002');
+const pptx=await PresentationFile.exportPptx(deck); await pptx.save(input);

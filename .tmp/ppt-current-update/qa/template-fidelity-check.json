@@ -1,0 +1,13 @@
+{
+  "status": "pass",
+  "checkedAt": "2026-08-13T09:22:31.145Z",
+  "workspace": "D:\\00_OS\\CSCC\\.tmp\\ppt-current-update",
+  "finalPptx": "D:\\00_OS\\CSCC\\presentation\\PPT-agentjs-updated.pptx",
+  "starterPptx": "D:\\00_OS\\CSCC\\.tmp\\ppt-current-update\\template-starter.pptx",
+  "mapPath": "D:\\00_OS\\CSCC\\.tmp\\ppt-current-update\\template-frame-map.json",
+  "starterLayoutDir": "D:\\00_OS\\CSCC\\.tmp\\ppt-current-update\\template-starter-layout",
+  "finalLayoutDir": "D:\\00_OS\\CSCC\\.tmp\\ppt-current-update\\final-layout",
+  "editDir": "D:\\00_OS\\CSCC\\.tmp\\ppt-current-update",
+  "issueCount": 0,
+  "issues": []
+}
